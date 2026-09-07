@@ -20,7 +20,7 @@ import { exactSelectionLimit, forbidsBranding, forbidsCoverPage, requiresSignatu
 import { finalizeClientReadyProposalMarkdown } from "./proposal-benchmark-guard";
 import { appendEvaluatorResponseMatrix } from "./proposal-evaluator-matrix";
 import { loadDurableCompanySupportRecords } from "../prisma-schema-compatibility";
-import { canUseVaultRecord } from "../vault-review-provenance";
+import { canUseVaultRecord, sourceVerifiedListElements } from "../vault-review-provenance";
 import { buildClientProposalStrengtheningSections } from "./proposal-strengthening-sections";
 import { benchmarkAuditSummary } from "./proposal-benchmark-audit";
 import { polishBenchmarkOutput } from "./benchmark-output-polisher";
@@ -1251,7 +1251,32 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // tests/vault-records-are-never-rewritten.test.ts.
   const allSelectedExperts = tender.expertMatches.map((m) => m.expert);
   const allSelectedProjects = tender.projectMatches.map((m) => m.project);
-  let experts = allSelectedExperts.filter((e) => canUseVaultRecord(e, "GENERATION"));
+  // Present only the professions this expert's OWN source document supports.
+  //
+  // A delivered proposal introduced one General Manager as practising
+  // Architecture, Urban Planning, Structural, Civil, Geotechnical, Electrical
+  // and Mechanical Engineering, Quantity Surveying, Materials Engineering and
+  // Highway Engineering — ten professions for one person, which reads to an
+  // evaluator as the firm's service list pasted under an individual's name.
+  //
+  // The app already knew better: the same tender's readiness payload said
+  // "source-verified on identity but 2 inferred field(s) are unverified:
+  // disciplines[6], sectors[6]. Do not cite these fields as authoritative in
+  // the final package." Nothing acted on it, because every renderer took the
+  // stored array whole. Narrowing here rather than in each renderer means the
+  // twenty-odd places that print an expert are correct by construction, and no
+  // renderer has to learn about provenance.
+  //
+  // The stored record is untouched: this shapes what is PRESENTED, and the
+  // values that survive are byte-identical to the verified ones.
+  let experts = allSelectedExperts
+    .filter((e) => canUseVaultRecord(e, "GENERATION"))
+    .map((e) => ({
+      ...e,
+      disciplines: JSON.stringify(sourceVerifiedListElements(e, "disciplines")),
+      sectors: JSON.stringify(sourceVerifiedListElements(e, "sectors")),
+      certifications: JSON.stringify(sourceVerifiedListElements(e, "certifications")),
+    }));
   let projects = allSelectedProjects.filter((p) => canUseVaultRecord(p, "GENERATION"));
 
   // Zero-evidence HARD BLOCK (defense-in-depth, round-2 strengthened):

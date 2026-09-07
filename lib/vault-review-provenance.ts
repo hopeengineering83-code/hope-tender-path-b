@@ -1258,3 +1258,53 @@ export function redactVaultText(value: string | null | undefined, maxLength = 22
   if (redacted.length > boundedLength) redacted = `${redacted.slice(0, boundedLength - 1).trimEnd()}…`;
   return redacted;
 }
+
+/**
+ * The elements of an expert's `disciplines` / `sectors` / `certifications`
+ * that this expert's OWN source document actually supports.
+ *
+ * WHY
+ * ---
+ * A delivered proposal presented one General Manager as practising
+ * Architecture, Urban Planning, Structural Engineering, Civil Engineering,
+ * Geotechnical Engineering, Electrical Engineering, Mechanical Engineering,
+ * Quantity Surveying, Materials Engineering and Highway Engineering — ten
+ * professions for one person. An evaluator reads that as a firm's service list
+ * pasted under an individual's name, and it damages the credibility of every
+ * other claim in the document.
+ *
+ * The app already knew which of those were unsupported: the same tender's
+ * readiness payload carried "Expert \"...\" is source-verified on identity but
+ * 2 inferred field(s) are unverified: disciplines[6], sectors[6]. Do not cite
+ * these fields as authoritative in the final package." Nothing acted on it —
+ * the renderers printed the stored array whole.
+ *
+ * Per-element provenance is exactly the authority needed, so this returns the
+ * verified elements in their original order and drops the inferred ones. It
+ * does NOT reorder, rewrite, normalise or re-title anything: source-verified
+ * values stay byte-identical, and this is a presentation-boundary filter.
+ *
+ * FALLBACK: provenance written before per-element evidence existed carries no
+ * "disciplines[0]"-shaped field at all. Filtering against it would blank every
+ * list on every expert, so when the payload shows no per-element evidence for
+ * ANY of the three lists, the stored list is returned unchanged and the record
+ * is left to the whole-record trust level, exactly as before.
+ */
+export function sourceVerifiedListElements(
+  record: ReviewRecordState,
+  listField: "disciplines" | "sectors" | "certifications",
+): string[] {
+  const stored = parseStoredStringList((record as Record<string, unknown>)[listField]);
+  if (stored.length === 0) return [];
+
+  const payload = parseStoredSourceVerification(record.reviewNotes) ?? parseStoredReviewProvenance(record.reviewNotes);
+  if (!payload) return stored;
+
+  const evidenceFields = new Set(payload.evidence.map((item) => item.field));
+  const carriesPerElementEvidence = [...evidenceFields].some((field) =>
+    /^(?:disciplines|sectors|certifications)\[\d+\]$/.test(field),
+  );
+  if (!carriesPerElementEvidence) return stored;
+
+  return stored.filter((_value, index) => evidenceFields.has(`${listField}[${index}]`));
+}
