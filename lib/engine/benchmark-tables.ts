@@ -1,4 +1,5 @@
 import { safeParseJsonArray, safeParseJsonObject } from "../safe-json";
+import { extractProjectFacts, extractProjectAmounts } from "./project-fact-extractor";
 import { withoutSourceProvenance, factualCardOrEmpty } from "./vault-prose";
 import { inlineEvidenceValue } from "./proposal-intelligence";
 import { withoutPersonalCvFields, withoutCvDocumentFurniture, truncateAtWordBoundary } from "./proposal-intelligence";
@@ -287,11 +288,64 @@ export function buildProjectPortfolioCards(projects: ProjectRecord[], tenderTitl
     // we actually have a value, so a project with no evidence still
     // gets a clean card without empty rows.
     const testimony = extractTestimonyFields(project.evidences ?? []);
+
+    // Read the record's own source text for anything its structured columns do
+    // not carry. The delivered proposal's single portfolio card — the most
+    // important evidence in the whole document — read:
+    //
+    //   Client            Gimba City, South Wollo Zone, Amhara Region,
+    //   Location & Scale  —
+    //   Duration          Dates on file
+    //
+    // while that record's source text says "(7,000 m²)", "2015-2018 E.C." and
+    // "Construction Cost: 550,074,678.02 ETB". The company authority these
+    // records came from declares the gap outright — projectSectorMissing: 114,
+    // projectServiceAreasEmpty: 114 — and states that "structured fields are an
+    // index only. rawText is the factual source".
+    //
+    // project-fact-extractor.ts was written for exactly this and is wired at
+    // IMPORT time, so a record whose source file carried nulls never benefits
+    // from it. Reading it here costs nothing, mutates no record, and disturbs no
+    // provenance hash: it is the same verified record's own words, rendered.
+    const derived = extractProjectFacts(project.summary ?? "", project.name);
+    // NOTE: derived.contractValue is deliberately NOT used for the value row —
+    // it keeps the largest amount, which is the construction cost. See below.
+    const scaleParts = [
+      project.country || derived.country || derived.location,
+      ...safeArr(project.serviceAreas).slice(0, 3),
+    ].filter(Boolean);
+    const duration = fmtDateRange(project.startDate, project.endDate);
+    const derivedDuration = fmtDateRange(derived.startDate ?? null, derived.endDate ?? null);
+
     const rows: string[] = [];
-    rows.push(`| Client | ${escCell(project.clientName || "Client on file")} |`);
-    rows.push(`| Location & Scale | ${escCell([project.country, ...safeArr(project.serviceAreas).slice(0, 3)].filter(Boolean).join(" — ") || "Scale on file")} |`);
-    rows.push(`| Duration | ${escCell(fmtDateRange(project.startDate, project.endDate))} |`);
-    rows.push(`| Contract Value | ${escCell(hasContractValue(project.contractValue) ? fmtMoney(project.contractValue, project.currency) : "Value detail in Appendix B (project reference)")} |`);
+    rows.push(`| Client | ${escCell(project.clientName || derived.clientName || "Client on file")} |`);
+    rows.push(`| Location & Scale | ${escCell(scaleParts.join(" — ") || "Scale on file")} |`);
+    rows.push(`| Duration | ${escCell(duration === "Dates on file" ? derivedDuration : duration)} |`);
+    // Amounts are presented under the role the SOURCE gives them, never
+    // merged. The record behind this card states a construction cost of
+    // 550,074,678.02 ETB, a design fee of 1,100,000 ETB and a supervision rate
+    // of 110,000 ETB/month. Printing the first under "Contract Value" would
+    // overstate this firm's consultancy contract by about five hundred times,
+    // in a document an evaluator may check against the client's own records.
+    //
+    // The consultancy fee is the firm's contract. The construction cost is the
+    // scale of the asset it worked on, and says so. The monthly supervision
+    // rate is deliberately not printed: it is a rate rather than a track-record
+    // fact, and it reads as a price signal in a technical-only envelope.
+    const amounts = extractProjectAmounts(project.summary ?? "");
+    const consultancyFee = amounts.find((a) => a.role === "CONSULTANCY_FEE" && !a.perMonth);
+    const constructionValue = amounts.find((a) => a.role === "CONSTRUCTION" && !a.perMonth);
+
+    if (hasContractValue(project.contractValue)) {
+      rows.push(`| Contract Value | ${escCell(fmtMoney(project.contractValue, project.currency))} |`);
+    } else if (consultancyFee) {
+      rows.push(`| Consultancy Fee | ${escCell(`${fmtMoney(consultancyFee.value, consultancyFee.currency ?? project.currency)} (${consultancyFee.label})`)} |`);
+    } else {
+      rows.push(`| Contract Value | ${escCell("Value detail in Appendix B (project reference)")} |`);
+    }
+    if (constructionValue) {
+      rows.push(`| Construction Value of Works | ${escCell(fmtMoney(constructionValue.value, constructionValue.currency ?? project.currency))} |`);
+    }
 
     if (testimony.referenceNumber) rows.push(`| Testimony Reference | ${escCell(testimony.referenceNumber)} |`);
     if (testimony.date) rows.push(`| Testimony Date | ${escCell(testimony.date)} |`);

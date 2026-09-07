@@ -150,6 +150,78 @@ const SECTOR_KEYWORDS: Array<{ rx: RegExp; sector: string }> = [
   { rx: /contract administration|variation order|interim payment|payment certificate|\bFIDIC\b|claims management|cost control.*contract|quantity survey/i, sector: "Contract Administration" },
 ];
 
+
+/**
+ * Amounts a project's source text states, each kept with the ROLE its own
+ * label gives it.
+ *
+ * WHY THE ROLE MATTERS MORE THAN THE NUMBER
+ * -----------------------------------------
+ * A real record reads:
+ *
+ *   1. Construction Cost: 550,074,678.02 ETB
+ *   2. Feasibility Study, Geotechnical & New Design Cost: 1,100,000 ETB
+ *   3. Contract Administration & Construction Supervision Cost: 110,000 ETB/month
+ *
+ * Three amounts, three different things. The first is what the BUILDING cost;
+ * the second is what the CONSULTANCY was paid; the third is a monthly rate.
+ * parseValueAndCurrency keeps the largest, which is the construction cost —
+ * so presenting it under "Contract Value" on a consultancy proposal would
+ * overstate the firm's contract by roughly five hundred times, in a document an
+ * evaluator may check against the client's own records.
+ *
+ * Each amount is therefore returned with its role, and the caller decides what
+ * a given row is entitled to say.
+ */
+export type ProjectAmountRole = "CONSTRUCTION" | "CONSULTANCY_FEE" | "SUPERVISION_RATE" | "UNLABELLED";
+
+export interface ProjectAmount {
+  readonly role: ProjectAmountRole;
+  readonly value: number;
+  readonly currency?: string;
+  /** True when the source states the amount per month rather than in total. */
+  readonly perMonth: boolean;
+  /** The source's own label, trimmed — so a card can quote it rather than invent one. */
+  readonly label: string;
+}
+
+const AMOUNT_LABEL_ROLES: ReadonlyArray<{ readonly rx: RegExp; readonly role: ProjectAmountRole }> = [
+  { rx: /\bsupervision\b|\bcontract\s+administration\b|\bresident\s+engineer\b/i, role: "SUPERVISION_RATE" },
+  { rx: /\bdesign\b|\bfeasibility\b|\bconsultanc(?:y|ies)\b|\bstudy\b|\bgeotechnical\b|\bmodification\b/i, role: "CONSULTANCY_FEE" },
+  { rx: /\bconstruction\b|\bworks?\b|\bproject\s+cost\b|\bcontract\s+(?:sum|amount)\b/i, role: "CONSTRUCTION" },
+];
+
+/**
+ * Scan for "<label> Cost: <amount> <CUR>" shapes and classify each by its own
+ * label. Deliberately conservative: an amount whose label says nothing useful
+ * is UNLABELLED, and an UNLABELLED amount is never promoted to a fee.
+ */
+export function extractProjectAmounts(summary: string): ProjectAmount[] {
+  const text = (summary || "").replace(/\s+/g, " ");
+  if (!text.trim()) return [];
+  const out: ProjectAmount[] = [];
+
+  // "<label words> Cost: 550,074,678.02 ETB" or "... 110,000 ETB/month"
+  const rx = /([A-Za-z&,'()\/ .-]{0,90}?)\b(?:cost|fee|value|price|sum)\b\s*[:\-]?\s*([0-9][0-9,]*(?:\.[0-9]+)?)\s*([A-Z]{3}|Birr|£|\$|€)?\s*(\/\s*month|per\s+month)?/gi;
+  let m: RegExpExecArray | null;
+  while ((m = rx.exec(text)) !== null) {
+    const raw = Number((m[2] || "").replace(/,/g, ""));
+    if (!Number.isFinite(raw) || raw < 1000) continue;
+    const label = (m[1] || "").replace(/^[\s.,;:\-\d]+/, "").replace(/\s+/g, " ").trim();
+    const perMonth = Boolean(m[4]);
+    let role: ProjectAmountRole = "UNLABELLED";
+    for (const entry of AMOUNT_LABEL_ROLES) {
+      if (entry.rx.test(label)) { role = entry.role; break; }
+    }
+    // A per-month amount is a rate however it is labelled.
+    if (perMonth) role = "SUPERVISION_RATE";
+    const currencyToken = (m[3] || "").trim();
+    const currency = CURRENCY_TOKENS.find((c) => c.token.toLowerCase() === currencyToken.toLowerCase())?.code;
+    out.push({ role, value: raw, currency, perMonth, label: label || "Stated amount" });
+  }
+  return out;
+}
+
 export function extractProjectFacts(summary: string, name?: string): ProjectFactExtraction {
   const text = `${name ?? ""}\n${summary || ""}`;
   if (!text.trim()) return {};
