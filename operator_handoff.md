@@ -123,6 +123,78 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-07 UTC — Claude Code (benchmark scope: two generic defects the Pharo case exposed)
+
+Pharo is the acceptance benchmark, not the product. Both defects below were
+found through it, fixed generically, tested across sectors, and re-verified on
+Pharo. Neither fix contains a hospital, a client name, or a benchmark threshold.
+
+**Defect 1 — one sector had become the default for every tender.** `lib/ai.ts`
+carries the writing prompt every tender receives whatever its sector, and its
+worked examples were all hospital rows: the WEAK/STRONG pair, the "top
+evaluation driver" hint, and the A.4, A.5, B.1, B.2, E, F, G and H table shapes.
+A road, water or geotechnical tender was primed with hospital examples on every
+generation.
+
+**Defect 1b — the quality exemplar asserted company evidence that does not
+exist.** The "STRONG (write like this)" paragraph named "St. Paul's Hospital
+Millennium Medical College specialist wing (ETB 312M)" and "Dr. Almaz Tadesse
+(Lead Architect, EIASC Grade A)"; Section G asserted "two completed G+6
+hospitals". Against the live vault — 114 source-verified projects, 28
+source-verified experts — none exist and exactly one G+6 hospital does. A model
+told "every paragraph must contain at least one specific, verifiable fact from
+the evidence" was being shown that inventing a plausible project, value, expert
+and licence is what strong writing looks like.
+
+*Fix (`41aa309a`):* examples teach shape rather than content — explicitly an
+invented firm, deliberately drawn from a different sector to show the shape is
+sector-independent, every project/value/expert/licence replaced by a slot filled
+from verified evidence. The structural lesson and the specificity rule are both
+preserved, so this does not trade invented specificity for vagueness.
+*Deliberately unchanged:* the conditional sector guidance — 31 detection flags,
+29 guidance blocks, 27 gated on their own flag, `qcbsGuidance` on
+`isQCBS || isQBS`, `allSectorGuidance` merely composing them. That architecture
+already activates water logic for a water tender. Only the shared exemplars were
+biased and only those changed.
+
+**Defect 2 — separators a PDF font cannot map reached the client as NUL.** The
+first artifact from the corrected prompt (run 34121462378) carried sixteen
+U+0000 characters where a hyphen or full stop belonged: "Dr<NUL> Abdul<NUL>
+Seid", "medical<NUL>centre", "healthcare<NUL>specific", "infection<NUL>
+prevention", "clinical<NUL>zone", "well<NUL>placed". The two runs before it had
+none. The writer emitted a typographic separator rather than an ASCII one and
+the embedded font subset carries no ToUnicode entry for it, so extraction
+returns NUL — breaking an evaluator's copy-paste, search and screen-reader. The
+layout pass cannot catch this: it checks clipping, overflow and pagination, not
+glyph mappability.
+
+*Fix (`17c55ff5`):* normalisation at `sanitizeClientFacingText`, the shared
+boundary every tender's client text crosses. Typographic hyphens become "-",
+soft hyphens and zero-width characters are dropped, non-breaking and narrow
+spaces become an ordinary space, and a NUL already in the text becomes a space —
+never a join, which would silently merge two words.
+
+*I introduced this one and then found it:* I skipped the non-ASCII check on the
+`41aa309a` edit that I had run on every earlier one.
+
+**Pharo re-verification — run 34123320260, head `17c55ff5`.** Baseline
+`83b5af4fa49c6fe8` → current `2bca3518287c9c0b`, regeneration proven, every job
+SUCCEEDED, export-readiness `ok=True status=READY blockers=0`, audit 95 PASSED,
+38/38 pages with no clipping, overflow, footer collision or pagination fault.
+
+| Check | Before | After |
+|---|---|---|
+| NUL characters in delivered text | 16 | **0** |
+| Fabricated exemplar identities | present in prompt | **0 in artifact** |
+| Provenance tags / storage codes | 0 / 0 | **0 / 0** |
+| Numbering | gapless | gapless, contents matches body |
+
+Local gates on `17c55ff5`: `npx tsc --noEmit` clean; `npx next lint` no ESLint
+warnings or errors; full RUN_DB_INTEGRATION suite **11474 pass / 0 fail**.
+
+**Merge status:** not reviewed. Do not merge. Do not promote Production.
+Temporary acceptance and inspection tooling stays.
+
 ### 2026-09-07 UTC — Claude Code (CORRECTION: "re-run extraction" would not have worked)
 
 The entry below recommended re-running vault extraction to populate `sector`,
