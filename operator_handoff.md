@@ -123,6 +123,58 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-07T18:15Z — Claude Code (Opus 5)
+
+- **Branch / PR**: `release/consolidated-recovery-20260717` / PR #1175 (draft, base `integration/controlled-recovery`). Not merged. Production untouched.
+- **Scope**: generic quality defects reproduced from the real delivered PDF
+  (`new Technical proposal by App.pdf`, 36 pages) and the live Preview, fixed at
+  the root cause with cross-sector regression tests. Nine commits, `c3e68ce8`
+  through `70638124`.
+
+| # | Defect, reproduced from the artifact | Fix |
+|---|---|---|
+| 1 | Ten literal `#### ...` headings in the client PDF | `markdownToDocx` understood only h1-h3; now renders all six levels |
+| 2 | "The methodology the following provides tailored to ..." | Removed the over-broad `/\bBelow is\b/` AI-tell pattern and narrowed the rewrite that existed to satisfy it |
+| 3 | "All deliverables will undergo" — truncated by an AI refinement pass | New `client-text-hygiene.ts`: producer-side repair on Markdown, byte-level gate on the rendered artifact |
+| 4 | "5 phases" in C.13 vs "6 phases" in C.16 | `canonical-work-plan.ts` is now the single phase spine; the table and the narrative are views of it |
+| 5 | One expert presented with ten professions | `sourceVerifiedListElements` — an expert is presented only with what their own CV supports |
+| 6 | Executive Summary reported the vault's record count, named one project twice, and reprinted the cover letter's bullets | Inventory sentence removed; duplicate sentence removed; differentiators allocated INTRODUCE / DEVELOP / OPERATIONALISE |
+| 7 | A PROJECT_EXPERIENCE requirement mapped to the CV section | The declared requirement type decides; keywords are a fallback only |
+| 8 | "Signed for and on behalf of ..." with no signature and nowhere to sign | The declaration's signature rule is no longer stripped as a placeholder |
+| 9 | PDF carried 36 XObjects and zero images | `pdf-finalizer` renders from extracted TEXT, so DOCX images cannot survive; the renderer now draws the signature and stamp itself |
+| 10 | One project reference selected from a 114-project vault | `sectorBoost` returned 0 for every record because the vault's `sector`/`serviceAreas` are empty; the positive boost now falls back to the record's own source text |
+
+- **Tests**: `npx tsc --noEmit` clean; `npx next lint` no warnings or errors;
+  `npm test` with `RUN_DB_INTEGRATION=true` — **11535 pass, 0 fail** at
+  `70638124`. Eight new test files, all using road / water / geotechnical /
+  urban-planning / supervision vocabulary alongside the building case, because
+  the benchmark that exposed these is a healthcare tender and no fix may depend
+  on that.
+- **Deployment**: Preview healthy throughout; `/api/health` release-matched at
+  each step, `databaseFingerprint 5f9645fb34f5`, `schemaMatchesDeployedCode: true`.
+- **Established from live data, not inferred**:
+  - The vault holds 114 projects and 28 experts, all SOURCE_VERIFIED.
+  - Brand assets are present and healthy — STAMP (JPEG, 103,155 bytes),
+    SIGNATURE (JPEG, 3,246 bytes), LETTERHEAD (DOCX, 126,100 bytes), all ACTIVE,
+    integrity VERIFIED, none storage-backed. The missing signature was never an
+    owner action.
+  - The uploaded company authority declares its own gaps:
+    `projectSectorMissing: 114`, `projectServiceAreasEmpty: 114`, and as policy
+    "Structured fields are an index only. rawText is the factual source." The
+    hierarchical sector headings hoped for in the P2 brief are **not** present
+    in the per-project rawText; what IS present verbatim is service areas,
+    three distinct cost types (construction / design / supervision-per-month),
+    area and dates.
+- **Known risks / assumptions**: the letterhead DOCX and any logo are still lost
+  at the DOCX -> PDF step, because they are page furniture rather than a block in
+  the body flow. `disciplineTags` for the portfolio optimiser is still
+  `[sector, ...serviceAreas]` and therefore still empty for this vault — same
+  root cause as #10, held back so #10 can be measured on its own.
+- **Next action**: hosted acceptance at the exact head, then the 17-dimension
+  score on the newly generated PDF.
+- **Merge status**: not reviewed. Do not merge.
+
+
 ### 2026-09-07 UTC — Claude Code (second Neon switch: rebuilt, owner provisioned)
 
 The Neon project behind Preview was replaced after the previous one hit its
