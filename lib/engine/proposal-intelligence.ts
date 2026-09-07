@@ -1,4 +1,5 @@
 import { logger } from "../observability";
+import { extractProjectFacts, extractProjectAmounts, extractServicesProvided } from "./project-fact-extractor";
 import { tidyTruncation, factualCardOrEmpty } from "./vault-prose";
 import { detectFinancialProposalRequiredFromText, buildTenderDocumentTypeAdvisory, type TenderDocumentTypeAdvisory } from "../document-generation/generation-integration";
 export type TenderRequirementLite = { title: string; description: string; priority: string; requirementType: string };
@@ -1404,11 +1405,69 @@ export function buildProposalIntelligence(params: {
   };
 }
 
+/**
+ * What the writer is told about a project.
+ *
+ * This line IS the writer's knowledge of the record: the Section B card the
+ * model produces asks for "Location & Scale", "Duration" and "Services
+ * Provided", and it can only fill those slots from here. On the owner's vault
+ * every structured column this used to read — country, sector, contractValue —
+ * is null on all 114 records, so the model received a name, a client and a wall
+ * of raw text, and the delivered card read:
+ *
+ *   Location & Scale   Ethiopia — —
+ *   Services Provided  —
+ *
+ * The facts are in the record's own source text, and the same extractor the
+ * deterministic card uses finds them: location on 114 of 114 records, dates on
+ * 91, services on 114. Naming them explicitly here is not new information — it
+ * is the record's own words, stated in a form the writer can use rather than
+ * left for it to find in six hundred characters of prose.
+ *
+ * The consultancy fee and the construction cost are passed under separate
+ * labels for the reason set out in project-fact-extractor.ts: one record states
+ * a construction cost of 550,074,678.02 ETB and a design fee of 1,100,000 ETB,
+ * and a writer given a single unlabelled number would put the larger one in a
+ * "Contract Value" row.
+ */
 export function projectProofLine(project: ProjectLite): string {
-  const value = money(project.contractValue, project.currency);
-  const parts = [project.clientName, project.country, project.sector, value].filter(Boolean);
+  const derived = extractProjectFacts(project.summary ?? "", project.name);
+  const amounts = extractProjectAmounts(project.summary ?? "");
+  const fee = amounts.find((a) => a.role === "CONSULTANCY_FEE" && !a.perMonth);
+  const works = amounts.find((a) => a.role === "CONSTRUCTION" && !a.perMonth);
+  const services = safeParseArr(project.serviceAreas as unknown as string)
+    .filter((entry) => entry.trim().length > 0);
+  const derivedServices = services.length > 0 ? services : extractServicesProvided(project.summary ?? "");
+
+  const storedValue = money(project.contractValue, project.currency);
+  const parts = [
+    project.clientName,
+    project.country || derived.country || derived.location,
+    project.sector || derived.sector,
+    storedValue || (fee ? `Consultancy fee ${money(fee.value, fee.currency ?? project.currency)}` : ""),
+    works ? `Construction value of works ${money(works.value, works.currency ?? project.currency)}` : "",
+    derivedDurationLabel(project, derived),
+    derivedServices.length > 0 ? `Services: ${derivedServices.join(", ")}` : "",
+  ].filter(Boolean);
+
   const summary = truncateAtWordBoundary(clean(project.summary), 600);
   return `${project.name}${parts.length ? ` — ${parts.join(" | ")}` : ""}${summary ? `. ${summary}` : ""}`;
+}
+
+/** "2015-2018" from the record's own dates, stored or derived. */
+function derivedDurationLabel(
+  _project: ProjectLite,
+  derived: ReturnType<typeof extractProjectFacts>,
+): string {
+  // ProjectLite carries no date columns, so the record's own text is the only
+  // source of a duration here.
+  const start = derived.startDate ?? null;
+  const end = derived.endDate ?? null;
+  const y = (d: Date | null): string => (d ? String(new Date(d).getUTCFullYear()) : "");
+  const a = y(start as Date | null);
+  const b = y(end as Date | null);
+  if (a && b && a !== b) return `${a}-${b}`;
+  return a || b || "";
 }
 
 /**

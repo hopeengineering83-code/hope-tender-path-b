@@ -155,3 +155,77 @@ test("an empty cell is omitted rather than rendered as a dash", async () => {
   assert.match(source, /if \(inferredServices\.trim\(\)\.length > 0\) \{/);
   assert.match(source, /\.filter\(\(part\) => part\.length > 0\)/);
 });
+
+/**
+ * WHERE THE DELIVERED CARD ACTUALLY COMES FROM
+ * --------------------------------------------
+ * The Section B card an evaluator reads is written by the model from the
+ * template in lib/ai.ts ("| Location & Scale | [location] — [measurable scale
+ * ...] |"), not by buildProjectPortfolioCards. projectProofLine IS the writer's
+ * knowledge of the record, so a slot the model cannot fill from this line comes
+ * out as a dash — which is exactly what the artifact showed:
+ *
+ *   Location & Scale   Ethiopia — —
+ *   Services Provided  —
+ *
+ * Fixing the deterministic builder alone did not change the delivered card; the
+ * proof-line had to carry the facts.
+ */
+test("the writer's project line names scale, duration and services", async () => {
+  const { projectProofLine } = await import("../lib/engine/proposal-intelligence");
+  const line = projectProofLine({
+    name: "G+6 General Hospital",
+    clientName: "Gimba City Admin",
+    country: null,
+    sector: null,
+    contractValue: null,
+    currency: null,
+    serviceAreas: JSON.stringify([]),
+    summary: "Ethiopia (7,000 m²). 1. Construction Cost: 550,074,678.02 ETB 2. Feasibility Study, "
+      + "Geotechnical & New Design Cost: 1,100,000 ETB. 2015-2018 E.C. Feasibility study, Soil "
+      + "investigation, New Architectural design, New Structural design, Construction supervision.",
+  } as Parameters<typeof projectProofLine>[0]);
+
+  assert.match(line, /Ethiopia/);
+  assert.match(line, /2015-2018/);
+  assert.match(line, /Services: .*Architectural design/);
+  assert.match(line, /Construction supervision/);
+});
+
+test("the writer is never handed one unlabelled number", async () => {
+  const { projectProofLine } = await import("../lib/engine/proposal-intelligence");
+  const line = projectProofLine({
+    name: "Road Rehabilitation",
+    clientName: "Roads Authority",
+    country: null,
+    sector: null,
+    contractValue: null,
+    currency: null,
+    serviceAreas: JSON.stringify([]),
+    summary: "Construction Cost: 240,000,000 ETB. Detailed Design Cost: 2,400,000 ETB. "
+      + "Pavement design and drainage design.",
+  } as Parameters<typeof projectProofLine>[0]);
+
+  // Both amounts appear, each under the role its own label gives it.
+  assert.match(line, /Consultancy fee ETB 2\.4M/);
+  assert.match(line, /Construction value of works ETB 240/);
+  // The larger number must never be presented as the firm's fee.
+  assert.doesNotMatch(line, /Consultancy fee ETB 240/);
+});
+
+test("a record whose columns are populated still uses them", async () => {
+  const { projectProofLine } = await import("../lib/engine/proposal-intelligence");
+  const line = projectProofLine({
+    name: "Water Supply Scheme",
+    clientName: "Water Bureau",
+    country: "Ethiopia",
+    sector: "Water and sanitation",
+    contractValue: 3_000_000,
+    currency: "ETB",
+    serviceAreas: JSON.stringify(["Hydraulic design", "Yield testing"]),
+    summary: "Borehole yield testing and reticulation design.",
+  } as Parameters<typeof projectProofLine>[0]);
+
+  assert.match(line, /Water and sanitation/);
+  assert.match(line, /Services: Hydraulic design, Yield testing/);
+});
