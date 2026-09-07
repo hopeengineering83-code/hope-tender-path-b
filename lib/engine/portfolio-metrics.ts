@@ -95,16 +95,27 @@ export function buildPortfolioMetricsBlock(metrics: PortfolioMetrics, companyNam
   }
 
   const tiles: string[] = [];
-  if (metrics.reviewedProjectCount > 0) {
-    tiles.push(`| **${metrics.reviewedProjectCount}** Reviewed Project Reference${metrics.reviewedProjectCount === 1 ? "" : "s"} |`);
+  // "Reviewed" is this application's internal trust state, not a fact about the
+  // firm. It meant nothing to the evaluator and, worse, a headline block that
+  // opened "1 Reviewed Project Reference" announced thin evidence in the first
+  // line an evaluator reads — while the reference itself is set out in full in
+  // Section B, where it does the firm some good.
+  //
+  // A count of one is not a portfolio statistic; it is the reference. Count
+  // tiles therefore appear only at two or more, and the substantive tiles
+  // below — disciplines, sectors, geography, certifications — carry the block
+  // when the counts are small. Nothing is hidden: every record still appears in
+  // Section A.5 and Section B in full.
+  if (metrics.reviewedProjectCount >= 2) {
+    tiles.push(`| **${metrics.reviewedProjectCount}** Project References |`);
   }
   if (metrics.totalContractValue > 0) {
     tiles.push(`| **${summariseValue(metrics.totalContractValue, metrics.currency)}** Aggregate Portfolio Value |`);
   }
-  if (metrics.reviewedExpertCount > 0) {
-    tiles.push(`| **${metrics.reviewedExpertCount}** Reviewed Specialist${metrics.reviewedExpertCount === 1 ? "" : "s"} on the Proposed Team |`);
+  if (metrics.reviewedExpertCount >= 2) {
+    tiles.push(`| **${metrics.reviewedExpertCount}** Specialists on the Proposed Team |`);
   }
-  if (metrics.certificationsCount > 0) {
+  if (metrics.certificationsCount >= 2) {
     tiles.push(`| **${metrics.certificationsCount}** Documented Professional Certifications & Licences |`);
   }
   if (metrics.countriesCovered.length > 0) {
@@ -120,9 +131,15 @@ export function buildPortfolioMetricsBlock(metrics: PortfolioMetrics, companyNam
     tiles.push(`| ✓ Donor / international institution delivery track record on file |`);
   }
 
+  if (tiles.length === 0) {
+    // Every tile was suppressed. An empty table is worse than no block: the
+    // capability detail lives in Section A and the references in Section B.
+    return "";
+  }
+
   return [
     "## A.0 Portfolio at a Glance",
-    `Headline metrics for ${companyName}, computed from reviewed project and expert records:`,
+    `Headline capability profile for ${companyName}:`,
     "",
     "| Headline Metric |",
     "|---|",

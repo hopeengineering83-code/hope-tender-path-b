@@ -554,8 +554,8 @@ function repairSectionC2SubSections(markdown: string, requirements: string, tend
  * Cover letter introduces, Executive Summary develops, Section D
  * operationalises. See the comment at the cover-letter site.
  */
-const COVER_LETTER_DIFFERENTIATORS = 3;
 const EXECUTIVE_SUMMARY_DIFFERENTIATORS = 3;
+const COVER_LETTER_DIFFERENTIATORS = 2;
 
 function fallbackProposalMarkdown(params: {
   tenderTitle: string;
@@ -640,17 +640,26 @@ function fallbackProposalMarkdown(params: {
     tenderTitle: params.tenderTitle,
     projects: reviewedProjects,
   }));
-  // INTRODUCE / DEVELOP / OPERATIONALISE: each differentiator is stated once,
-  // in the place it does the most work. Every one of them used to be printed at
-  // least twice — the cover letter took the first three, the Executive Summary
-  // took ALL of them, and Section D took the rest — so the delivered proposal
-  // repeated its three strongest claims word for word on consecutive pages,
-  // then repeated the remainder again nine pages later. Repetition is not
-  // emphasis to an evaluator; it reads as a document with less to say than its
-  // length implies.
+  // Each differentiator is stated once, in the place it does the most work.
+  // Every one of them used to be printed at least twice — the cover letter took
+  // the first three, the Executive Summary took ALL of them, and Section D took
+  // the rest — so the delivered proposal repeated its three strongest claims
+  // word for word on consecutive pages, then repeated the remainder again nine
+  // pages later. Repetition is not emphasis to an evaluator; it reads as a
+  // document with less to say than its length implies.
+  //
+  // The STRONGEST go to the Executive Summary, because that is the section an
+  // evaluator scores; a cover letter is courtesy and is rarely scored at all.
+  // Allocating the first three to the cover letter left the summary arguing
+  // from the weaker half — a real delivered proposal opened its "Why we are
+  // best placed" with property-assessment methodology and geotechnical rigs on
+  // a healthcare tender, while the healthcare-relevant claims sat in the
+  // covering note. Order of allocation is deliberately not order of appearance.
   if (params.differentiators.length > 0) {
     lines.push("Key differentiators that make us well-placed to serve this assignment:");
-    lines.push(...params.differentiators.slice(0, COVER_LETTER_DIFFERENTIATORS).map((d) => `- ${d}`));
+    lines.push(...params.differentiators
+      .slice(EXECUTIVE_SUMMARY_DIFFERENTIATORS, EXECUTIVE_SUMMARY_DIFFERENTIATORS + COVER_LETTER_DIFFERENTIATORS)
+      .map((d) => `- ${d}`));
   }
   lines.push(`We trust this proposal demonstrates our capacity, commitment, and technical depth.\n\nSincerely,\n${params.companyName}`);
 
@@ -732,10 +741,7 @@ function fallbackProposalMarkdown(params: {
     lines.push("## Our response maps directly to the evaluation criteria:");
     lines.push(...evalCriteria.slice(0, 5).map((c) => `- ${c}`));
   }
-  const summaryDifferentiators = params.differentiators.slice(
-    COVER_LETTER_DIFFERENTIATORS,
-    COVER_LETTER_DIFFERENTIATORS + EXECUTIVE_SUMMARY_DIFFERENTIATORS,
-  );
+  const summaryDifferentiators = params.differentiators.slice(0, EXECUTIVE_SUMMARY_DIFFERENTIATORS);
   if (summaryDifferentiators.length > 0) {
     lines.push("## Why we are best placed for this assignment:");
     lines.push(...summaryDifferentiators.map((d) => `- ${d}`));
@@ -864,7 +870,7 @@ function fallbackProposalMarkdown(params: {
   lines.push(`# ${sectionDLabel}`);
   lines.push(`${params.companyName} offers the following value-added capabilities and institutional advantages relevant to this assignment:`);
   const sectionDDifferentiators = params.differentiators.slice(
-    COVER_LETTER_DIFFERENTIATORS + EXECUTIVE_SUMMARY_DIFFERENTIATORS,
+    EXECUTIVE_SUMMARY_DIFFERENTIATORS + COVER_LETTER_DIFFERENTIATORS,
   );
   if (sectionDDifferentiators.length > 0) {
     lines.push(...sectionDDifferentiators.map((d) => `- ${d}`));
