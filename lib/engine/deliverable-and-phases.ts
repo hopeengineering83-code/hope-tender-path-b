@@ -1,3 +1,4 @@
+import { canonicalWorkPlan } from "./canonical-work-plan";
 /**
  * Deliverable Crosswalk + Phase Narrative + Branded Innovations
  * (PR N) — closes the final structural gaps to Claude AI benchmark.
@@ -167,139 +168,11 @@ export function buildDeliverableCrosswalk(opts: {
 
 // ─── Phase Narrative ────────────────────────────────────────────────────
 
-interface PhaseSpec {
-  title: string;
-  durationLabel: string; // "Days 1–3" or "Weeks 1–2"
-  picksKeyword: string[];
-  artefacts: string;
-  sectorVocab: (sector: string) => string;
-}
-
-function phaseSpecsForSector(sector: string, totalDays: number): PhaseSpec[] {
-  // Use day-based labels when totalDays is small (≤ 56 = 2 months);
-  // week-based labels for larger engagements.
-  const useDays = totalDays > 0 && totalDays <= 56;
-  const fmt = (start: number, end: number) => useDays
-    ? `Days ${start}-${end}`
-    : `Weeks ${Math.ceil(start / 7)}-${Math.ceil(end / 7)}`;
-
-  const split = (fraction: number) => Math.max(1, Math.round(totalDays * fraction));
-
-  const generic: PhaseSpec[] = [
-    {
-      title: "Phase 1: Inception, ToR Confirmation, and Mobilization",
-      durationLabel: fmt(1, split(0.10)),
-      picksKeyword: ["principal", "director", "manager"],
-      artefacts: "Signed inception report, confirmed ToR, document-control archive, kick-off meeting minutes, risk-register baseline, weekly cadence schedule",
-      sectorVocab: () => "team mobilization, stakeholder map, data-collection plan, communication protocol",
-    },
-    {
-      title: "Phase 2: Baseline Studies and Data Collection",
-      durationLabel: fmt(split(0.10) + 1, split(0.30)),
-      picksKeyword: ["lead", "senior", "specialist"],
-      artefacts: "Baseline data report, gap-analysis memo, technical-conditions log, data-completeness assessment",
-      sectorVocab: (s) => /health/.test(s.toLowerCase())
-        ? "site survey, clinical-flow observation, biomedical equipment audit, IPC compliance baseline"
-        : /water/.test(s.toLowerCase())
-          ? "borehole siting, geophysical survey, hydrogeological assessment, water-quality analysis"
-          : /road/.test(s.toLowerCase())
-            ? "topographic survey, geotechnical investigation, traffic count, drainage condition assessment"
-            : /urban/.test(s.toLowerCase())
-              ? "GIS land-use mapping, demographic data collection, infrastructure inventory, demand assessment"
-              : /energy|power.*plant|\bsolar\b|wind.*farm|substation|hydropower|electrification/i.test(s)
-                ? "load-forecast memo, P50/P90 yield modelling, site reconnaissance, grid-connection pre-application"
-                : /agri|irrigation|WUA|command.*area/i.test(s)
-                  ? "FAO Penman-Monteith crop-water requirement, 20-year flow record review, command-area mapping"
-                  : /mining|JORC|tailings|ore.*body|mine.*plan/i.test(s)
-                    ? "resource estimation, block-model development, geotechnical investigation scoping"
-                    : /port|berth|quay|maritime|dredging|harbour/i.test(s)
-                      ? "met-ocean analysis, bathymetric survey, geotechnical investigation, nautical simulation brief"
-                      : /HAZOP|P&ID|pipeline.*design|oil.*facilit|gas.*facilit/i.test(s)
-                        ? "design basis memorandum, P&ID development, HAZOP study, LOPA analysis"
-                        : /KYC|AML|core.*banking|microfinance|IFRS|Basel/i.test(s)
-                          ? "regulatory gap analysis, target operating model design, data-quality assessment"
-                          : /spectrum|broadband|LTE|5G|base.*station|backhaul/i.test(s)
-                            ? "traffic demand modelling, RF coverage simulation, spectrum licensing roadmap"
-                            : "baseline data collection, technical-condition logging, gap mapping",
-    },
-    {
-      title: "Phase 3: Concept and Schematic Design / Scenario Development",
-      durationLabel: fmt(split(0.30) + 1, split(0.50)),
-      picksKeyword: ["architect", "engineer", "planner", "lead"],
-      artefacts: "Concept design report, schematic drawings, preliminary cost estimate, design rationale memo, 30% gate sign-off pack",
-      sectorVocab: (s) => /health/.test(s.toLowerCase())
-        ? "clinical zoning matrix, IPC flow diagram, conceptual MEP layout, equipment provisional schedule"
-        : /water/.test(s.toLowerCase())
-          ? "demand-projection memo, hydraulic-network sketch, source-yield interpretation, treatment-process selection"
-          : /road/.test(s.toLowerCase())
-            ? "alignment options, pavement-design alternatives, drainage strategy, road-safety framework"
-            : /energy|power.*plant|\bsolar\b|wind.*farm|substation|hydropower|electrification/i.test(s)
-              ? "single-line diagram, technology-selection report, SKM/ETAP load-flow model, protection relay coordination study"
-              : /agri|irrigation|WUA|command.*area/i.test(s)
-                ? "irrigation network layout options, diversion/weir structure concept, WUA governance draft framework"
-                : /mining|JORC|tailings|ore.*body|mine.*plan/i.test(s)
-                  ? "pit or underground design options, slope-stability analysis (three methods), TSF concept design"
-                  : /port|berth|quay|maritime|dredging|harbour/i.test(s)
-                    ? "berth layout options, fast-time nautical simulation brief, dredge volume estimate, ISPS compliance outline"
-                    : /HAZOP|P&ID|pipeline.*design|oil.*facilit|gas.*facilit/i.test(s)
-                      ? "P&ID development, HAZOP study with action register, LOPA for high-severity nodes"
-                      : /KYC|AML|core.*banking|microfinance|IFRS|Basel/i.test(s)
-                        ? "system architecture document, integration plan, RBAC/encryption design, UAT protocol"
-                        : /spectrum|broadband|LTE|5G|base.*station|backhaul/i.test(s)
-                          ? "base-station siting plan, backhaul design with path availability calculations, site acquisition list"
-                          : "concept layouts, scenario evaluation matrix, preferred-option memo, stakeholder consultation log",
-    },
-    {
-      title: "Phase 4: Detailed Design / Methodology Execution",
-      durationLabel: fmt(split(0.50) + 1, split(0.80)),
-      picksKeyword: ["lead", "senior", "engineer", "specialist"],
-      // "BOQ" is a priced term. In a tender that separates the technical and
-      // financial envelopes the price guard drops any line carrying one, which
-      // deleted this phase's whole body and left the narrative reading
-      // "Phases 1, 2, 3, 5, 6" under its own claim of six phases. The
-      // deliverable itself is a quantity schedule; the rest of the app already
-      // calls it that.
-      artefacts: "Detailed design drawings (architectural / structural / MEP / civil as applicable), specifications, quantity schedules, design report, 60% gate sign-off pack",
-      sectorVocab: (s) => /health/.test(s.toLowerCase())
-        ? "fully coordinated MEP + medical-gas drawings, structural sizing, IPC-compliant detail design, clinical-equipment integration"
-        : /water/.test(s.toLowerCase())
-          ? "EPANET-verified network, pump-station detail design, treatment-plant process drawings, structural calculations"
-          : /road/.test(s.toLowerCase())
-            ? "AASHTO/ERA pavement design, drainage detail design, structural design (culverts/bridges), tender BOQ"
-            : /energy|power.*plant|\bsolar\b|wind.*farm|substation|hydropower|electrification/i.test(s)
-              ? "full engineering design package (civil/structural, electrical, SCADA), grid-code compliance dossier, procurement BOQ"
-              : /agri|irrigation|WUA|command.*area/i.test(s)
-                ? "irrigation network detail design, diversion/weir structural calculations, WUA governance framework, tender BOQ"
-                : /mining|JORC|tailings|ore.*body|mine.*plan/i.test(s)
-                  ? "mine plan, TSF detailed design, regulatory submission package, procurement BOQ"
-                  : /port|berth|quay|maritime|dredging|harbour/i.test(s)
-                    ? "berth structural design, dredge disposal plan, shore-power layout, ISPS compliance documentation, BOQ"
-                    : /HAZOP|P&ID|pipeline.*design|oil.*facilit|gas.*facilit/i.test(s)
-                      ? "pipeline stress analysis, cathodic-protection design, civil/structural drawings, vendor data requirements matrix"
-                      : /KYC|AML|core.*banking|microfinance|IFRS|Basel/i.test(s)
-                        ? "UAT execution, data migration with reconciliation, legal counsel regulatory compliance confirmation"
-                        : /spectrum|broadband|LTE|5G|base.*station|backhaul/i.test(s)
-                          ? "network design package, EMR compliance dossier, installation supervision procedures, drive-test protocol"
-                          : "detailed scenario, implementation roadmap, regulatory-alignment memo, capacity-building plan",
-    },
-    {
-      title: "Phase 5: Internal QA, Independent Peer Review, and Client Comments",
-      durationLabel: fmt(split(0.80) + 1, split(0.92)),
-      picksKeyword: ["quality", "review", "director"],
-      artefacts: "100% peer-review pack, independent-reviewer memo, client-comments resolution log, revised deliverable",
-      sectorVocab: () => "comment-resolution register, design-integrity audit, regulatory pre-check, sign-off matrix",
-    },
-    {
-      title: "Phase 6: Final Issuance and Handover",
-      durationLabel: fmt(split(0.92) + 1, totalDays),
-      picksKeyword: ["principal", "director", "manager"],
-      artefacts: "Final deliverable issuance, as-issued drawings register, handover memo, lessons-learned summary, defects-liability tracker",
-      sectorVocab: () => "handover pack, client-archive transfer, post-handover advisory window, archive copy",
-    },
-  ];
-
-  return generic;
-}
+// The six-phase design-process list that used to live here is gone. It was the
+// second work-plan authority in the codebase, and the reason one delivered
+// proposal claimed five phases in its phasing table and six in its narrative.
+// canonical-work-plan.ts now owns the single spine; its per-sector entries were
+// already the more specific of the two at every phase.
 
 function pickName(experts: ExpertRecord[], keywords: string[], used: Set<string>): string {
   for (const k of keywords) {
@@ -327,24 +200,36 @@ export function buildPhaseNarrative(opts: {
   totalDays?: number;
 }): string {
   const totalDays = opts.totalDays && opts.totalDays > 0 ? opts.totalDays : 90;
-  const phases = phaseSpecsForSector(opts.primarySector, totalDays);
+  // Renders THE canonical work plan. This function used to own a second,
+  // six-phase design-process list of its own, which is how one delivered
+  // proposal said "delivered in 5 phases" in the phasing table and "delivered
+  // across 6 phases" in this narrative. There is now one plan; the table, this
+  // narrative and the phase leads are three views of it, so they cannot
+  // disagree about how many phases the engagement has, what each is called,
+  // how long it runs, or who is accountable for it.
+  const phases = canonicalWorkPlan({ sector: opts.primarySector, totalDays });
   const used = new Set<string>();
 
   const blocks: string[] = [];
   blocks.push(MARKER_PHASES);
   blocks.push("## Phase-by-Phase Methodology Narrative");
   blocks.push("");
-  blocks.push(`The methodology is delivered across ${phases.length} phases over an indicative ${totalDays}-day engagement window. Each phase below names the responsible expert, the artefacts produced, and the sector-specific activities executed.`);
+  blocks.push(`The methodology is delivered across ${phases.length} phases over an indicative ${totalDays}-day engagement window. Each phase below names the responsible expert, the artefacts produced, and the quality gate that closes it.`);
   blocks.push("");
 
   for (const phase of phases) {
-    const lead = pickName(opts.experts, phase.picksKeyword, used);
-    const sectorActivity = phase.sectorVocab(opts.primarySector);
+    const lead = pickName(opts.experts, [...phase.leadKeywords], used);
+    // The artefacts come from the canonical plan rather than from a second
+    // hand-written list: the canonical entries are the sector-specific ones
+    // (IPC hold-points for healthcare, subgrade hold-points for roads,
+    // pressure-test hold-points for water), so nothing is lost by dropping the
+    // generic scaffolding that used to sit here.
+    const artefacts = phase.deliverables.replace(/\s*;\s*/g, ", ").replace(/\s+$/, "").replace(/[.,]$/, "");
     blocks.push(`### ${phase.title} — ${phase.durationLabel}`);
     blocks.push("");
-    blocks.push(`**Phase lead:** ${lead}.`);
+    blocks.push(`**Phase lead:** ${lead}. **Accountable role:** ${phase.responsibleRole}.`);
     blocks.push("");
-    blocks.push(`This phase covers ${sectorActivity}. The output artefacts are: ${phase.artefacts}. Phase exit gate: client sign-off on the Phase deliverable before the next phase begins.`);
+    blocks.push(`This phase produces: ${artefacts}. Quality is gated inside the phase — the deliverable is peer-reviewed against the applicable standards and the tender's own requirements before it is issued. Phase exit gate: client sign-off on the phase deliverable before the next phase begins.`);
     blocks.push("");
   }
 
