@@ -91,8 +91,37 @@ for x in em:
     print(f"  selected={str(x.get('isSelected')):5} score={x.get('score')} "
           f"trust={e.get('trustLevel')} | {e.get('fullName')} | sectors={e.get('sectors')}")
 
+print("\n########## FULL RECORDS + RATIONALES FOR THE CONTESTED PROJECTS ##########")
+# The three healthcare records and every project match that scored above 0.4,
+# with NOTHING truncated. The previous pass cut rationales at 300 characters,
+# which hid the capability-family list that decides the strict-family gate.
+contested = [x for x in pm if (x.get("score") or 0) > 0.4]
+for x in contested:
+    p_ = x.get("project", {}) or {}
+    print(f"\n--- {p_.get('name')} ---")
+    print(f"  id={p_.get('id')} selected={x.get('isSelected')} score={x.get('score')}")
+    print(f"  FULL RATIONALE: {x.get('rationale')}")
+    detail = get(f"/api/company/projects/{p_.get('id')}")
+    d = detail.get("project", detail) if isinstance(detail, dict) else {}
+    for k in ("name", "clientName", "country", "sector", "serviceAreas", "summary",
+              "contractValue", "currency", "startDate", "endDate", "trustLevel",
+              "sourceDocumentId", "reviewedBy", "reviewedAt"):
+        v = d.get(k) if isinstance(d, dict) else None
+        if k == "summary" and isinstance(v, str):
+            print(f"  {k}: len={len(v)} :: {v[:600]}")
+        else:
+            print(f"  {k}: {v}")
+
 print("\n########## MATCHING QUALITY ##########")
 print(json.dumps(get(f"/api/tenders/{TENDER}/matching-quality"), indent=2)[:4000])
 
 print("\n########## PROVIDER DIAGNOSTICS (durable snapshot, no quota) ##########")
-print(json.dumps(get("/api/ai-providers/diagnostics"), indent=2)[:8000])
+print(json.dumps(get("/api/ai-providers/diagnostics"), indent=2)[:6000])
+
+# ONE live capability pass, explicitly authorized. This runs the real
+# structured-extraction test through the same adapter and model the workload
+# uses, inside runAsDiagnostic() so it imposes no cooldown on real work. It is
+# the only way to classify a provider as AVAILABLE rather than merely
+# configured — the durable snapshot above reports configuration, not capability.
+print("\n########## PROVIDER CAPABILITY — ONE LIVE PASS ##########")
+print(json.dumps(get("/api/ai-providers/diagnostics?live=1"), indent=2)[:14000])
