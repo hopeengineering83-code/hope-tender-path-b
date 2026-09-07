@@ -123,6 +123,65 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-07 UTC — Claude Code (CORRECTION: "re-run extraction" would not have worked)
+
+The entry below recommended re-running vault extraction to populate `sector`,
+`serviceAreas`, `contractValue` and dates on the project records. **That action
+was wrong and would have produced the same nulls.** Tracing the ingestion path
+end to end shows why, and shows that every layer is fail-closed by deliberate
+design rather than by defect.
+
+**1. The extractor refuses to infer, on purpose.** `lib/company-knowledge-ai.ts`
+requests `"sector": "explicit sector or null"` and
+`"serviceAreas": ["explicit services only"]`. The source documents behind these
+records are reference letters and completion certificates. They say "Dessie
+Specialized Hospital"; they do not say "Sector: Healthcare". The model returns
+null because it was told to. Re-running extraction returns null again.
+
+**2. The ingestion mapping is correct** — `projectCandidate()` in
+`lib/company-vault-ingestion.ts` maps `draft.sector`, `draft.serviceAreas`,
+`draft.contractValue` and `draft.currency` straight through. There is no bug
+here. Note, though, that `startDate` and `endDate` are **absent from
+`AIProjectDraft` and from `projectCandidate()` entirely**, so the `recency`
+bonus (+0.07) can never be earned through this path at all.
+
+**3. Hand-editing the field makes matters worse, by design.** `PUT
+/api/company/projects/[id]` compares `projectReviewFields(existing)` against the
+new values; changing `sector` on a SOURCE_VERIFIED record invalidates provenance
+and drops `trustLevel` to `AI_DRAFT`, logging `PROJECT_TRUST_INVALIDATED`. An
+AI_DRAFT record scores 0 in matching — strictly worse than the current 0.7496.
+
+**4. The review path cannot rescue an owner-supplied value either.** `PATCH`
+with `action: "approve"` requires provenance against the owned source document.
+Where the field is not in the source text, it falls to
+`buildPartialSourceVerificationProvenance`, which re-verifies the identity field
+and records everything else in `unverifiedFields` — and
+`canUseVaultRecordField()` returns false for those. An owner-typed sector is
+therefore stored but never usable as a matching signal.
+
+**So the ceiling is structural, not a defect, and not something the owner can
+type their way out of.** The chain is consistent: a fact not stated in the
+verified source document does not become a usable matching signal at any layer.
+That is the provenance model working as intended.
+
+**One narrow thing does look like a genuine extraction miss**, and it is the
+only code-controlled item left: Dessie's own summary contains
+"Construction Cost: 125,000,000.00 ETB" and G+6's contains "550,074,678.02 ETB"
+— explicit, stated contract values — yet `contractValue` is null on both. Unlike
+sector, that value IS explicit in the source, so the extractor should have taken
+it. Confirming and fixing that requires re-running extraction against the real
+source documents, which rewrites source-verified records and is outside the
+preservation lock without an explicit owner decision. It is worth +0.03 to the
+score, so it would not by itself move Dessie over the bar.
+
+**Revised owner action.** Not "add more projects", and not "re-run extraction".
+The only thing that lifts dimensions 5, 6 and 7 is **source material that states
+these facts explicitly** — a portfolio sheet or project-list document that names
+each project's sector, scale and dates — so the extractor is permitted to take
+them. The existing 114 records stay exactly as they are.
+
+**Merge status:** not reviewed. Do not merge. Do not promote Production.
+
 ### 2026-09-07 UTC — Claude Code (model-backed artifact rescored: 80/100, still FAIL)
 
 **Head:** `d2ac44a6`. **Run 34116601631.** Baseline artifact `bc52d33141eeabab`
