@@ -999,7 +999,15 @@ export function buildExecutiveSummaryOpener(opts: {
   topExpertTitle?: string | null;
 }): string {
   const top = opts.projects.slice(0, 2);
-  const expertClause = opts.reviewedExpertCount > 0 ? ` The evidence inventory includes ${opts.reviewedExpertCount} reviewed specialist record(s).` : "";
+  // The opener used to end on "The evidence inventory includes 3 reviewed
+  // specialist record(s)." An evaluator is not told how many rows the bidder's
+  // database holds; that is the app's own bookkeeping, and printing it in the
+  // first paragraph of the Executive Summary is what made the summary read as
+  // an inventory rather than as an argument. The sentence that follows this
+  // opener already names the lead expert and their recorded years of practice,
+  // which is what the count was standing in for and is something an evaluator
+  // can actually score.
+  const expertClause = "";
 
   if (top.length === 0) {
     const expertStr = opts.reviewedExpertCount > 0
