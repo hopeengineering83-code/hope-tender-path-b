@@ -123,6 +123,124 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-07 UTC — Claude Code (project-selection truth: the vault was never the problem)
+
+**Read from the database, not from the PDF.** Read-only inspection runs
+34115877011 and 34116103159 against the live Preview, tender
+`fed8756d-4210-4ad8-808b-b6f63742f656`.
+
+**CORRECTION TO THE PREVIOUS TWO ENTRIES.** They said the tender's vault holds
+one reviewed project and asked the owner to add more. Both claims were wrong.
+The number came from the delivered proposal's own "1 Reviewed Project Reference"
+line — a statement about what selection chose, not about what the vault holds —
+and I never queried the vault before repeating it.
+
+| | Total | SOURCE_VERIFIED | Healthcare-relevant |
+|---|---|---|---|
+| Projects | **114** | **114** | 3 |
+| Experts | **28** | **28** | 25 |
+
+`matching-quality` agrees independently: `vaultReviewedProjects: 114`,
+`vaultReviewedExperts: 28`. **The 114-project authority is intact. Nothing was
+lost or un-imported.** No owner upload is required, and none should have been
+asked for.
+
+**The selection pipeline, traced.** All 114 are provenance-eligible; every match
+carries "✓ Source-verified against uploaded document". Selection is not blocked
+by provenance, and the selection cap is not binding (`selectedLimit` permits
+8-10 projects).
+
+| Project | sourceVerified | Score | Selected | Why |
+|---|---|---|---|---|
+| G+6 General Hospital – Dr Abdul Seid | true | 0.8207 | **yes** | >= 0.75; family coverage 4/5 |
+| Dessie Specialized Hospital | true | **0.7496** | no | below 0.75 **by 0.00035**; coverage 3/5 |
+| Hospital Project (Abuja) | true | 0.5481 | no | below 0.75; coverage 3/5 |
+| Moyale Abattoir, PPA office, Defense blocks, ... | true | 0.40-0.51 | no | below 0.75 |
+| Tenta City, Haik Town, Museum, Eco-Park, Hotel, Fence | true | 0 | no | "No strict-domain overlap; hard-excluded" |
+
+Ruled out as defects, each checked rather than assumed:
+- **Family tagging is correct.** `capabilityFamilies()` returns
+  HEALTHCARE_FACILITIES for all three hospital records. No misclassification.
+- **`sectorBoost` does not penalise an empty sector** — it returns 0, not a
+  negative, so the empty field costs a bonus but adds no penalty.
+- **The strict-family gate behaves as documented**, and the hard-excluded
+  records (museum, hotel, fence, eco-park) are correctly excluded.
+
+**THE ACTUAL CAUSE — every project record has empty structured fields.** All 114
+carry `sector: null`, `serviceAreas: []`, `contractValue: null`, `startDate:
+null`, `endDate: null`. Extraction populated `name`, `clientName`, `summary` and
+`sourceDocumentId` and left the rest empty. Both hospitals prove it: Dessie's
+own summary states "Construction Cost: 125,000,000.00 ETB" and "2013 E.C.", and
+G+6's states "550,074,678.02 ETB" — yet `contractValue` and `endDate` are null
+on both.
+
+Three scoring channels are therefore dead **vault-wide**:
+
+| Channel | Worth | Actual |
+|---|---|---|
+| `sectorBoost` (record sector vs tender sector) | +0.15 | 0 |
+| `recency` (endDate < 5y) | +0.07 | 0 |
+| contract value > 100,000 | +0.03 | 0 |
+
+With `sector` populated as Healthcare, `sectorBoost` alone adds +0.15 outside the
+bonus cap — Dessie would score about 0.90 and be selected on merit, with no
+threshold change whatsoever.
+
+**Classification: C — a real evidence limit, but NOT the one previously
+reported.** The ceiling is not "only one relevant project exists"; the vault
+holds three source-verified hospital records. The ceiling is that the records
+carry no structured sector, value or date, so the second genuinely relevant
+hospital lands 0.00035 below the auto-select bar.
+
+**Why the selection code is being left unchanged.** Two reasons, both from the
+code itself:
+1. `optimizePortfolioSelection` already carries a comment recording that a
+   below-threshold fallback existed and **was deliberately removed** because it
+   "violated fail-closed evidence rules and could select irrelevant candidates
+   in strict sectors". Re-adding one would undo a deliberate prior decision —
+   the exact ping-pong this repository's guide warns about.
+2. Deriving a sector from unstructured OCR summary text and feeding it into
+   `sectorBoost` would let an **unverified inference** carry the weight of a
+   provenance-hashed field. `projectReviewFields()` hashes `sector`,
+   `serviceAreas`, `contractValue` and `currency` precisely so those claims are
+   verified rather than guessed.
+
+Lowering the 0.75 threshold to admit a 0.7496 record was considered and
+rejected: it is threshold-lowering to raise a score, it would apply to every
+future tender, and the next borderline record would sit just under the new bar.
+
+**The owner action is therefore NOT "add more projects".** It is: **populate the
+structured fields on the project records that already exist** — at minimum
+`sector` on the three hospital records — by re-running vault extraction so the
+fields are filled from each record's own verified source document. Note that
+`sector`, `serviceAreas` and `contractValue` are provenance-hashed, so they
+cannot be hand-edited on a source-verified record without breaking its
+verification; they have to come from extraction and be re-verified.
+
+**PROVIDER STATE — one live capability pass, no quota burned on repeats.**
+Locked order preserved. `/api/ai-providers/diagnostics?live=1`, which runs the
+real structured-extraction test through the same adapter and model the workload
+uses, inside `runAsDiagnostic()`.
+
+| # | Provider | State | AI Analyze | Generation |
+|---|---|---|---|---|
+| 1 | Gemini | **GENERATION_VERIFIED** | **yes** | **yes** |
+| 2 | Groq | **GENERATION_VERIFIED** | **yes** | **yes** |
+| 3 | Mistral | RATE_LIMITED | no | no |
+| 4 | Z.ai GLM | ANALYSIS_VERIFIED | yes | no (HTTP 429, service overloaded) |
+| 5 | Cerebras | CONFIGURED | no | no (HTTP 402 payment_required) |
+| 6 | OpenRouter | CONFIGURED | no | no (HTTP 402, insufficient credits) |
+
+**This also corrects the previous entry's provider claim.** It reported that
+every provider failed and that dimensions 3, 4 and 15 were blocked on owner
+credit. Gemini and Groq — the first two in the chain — are both fully capable
+right now. The earlier runs hit transient rate limits, not an absent
+entitlement. **No owner payment action is required to get a model-backed
+proposal.**
+
+**Merge status:** not reviewed. Do not merge. Do not promote Production.
+Temporary acceptance and inspection tooling stays in place.
+
 ### 2026-09-06 UTC — Claude Code (D.3 confirmed on the artifact; two display defects it exposed)
 
 **Branch / PR:** `release/consolidated-recovery-20260717` (PR #1175, draft, base
