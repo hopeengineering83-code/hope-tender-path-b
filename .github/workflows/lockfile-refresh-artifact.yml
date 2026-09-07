@@ -32,8 +32,13 @@ on:
         description: >-
           TEMPORARY, paired with confirm=accept. The Preview tender ID
           (already uploaded, canonical files and vault already in place).
+          Leave blank with confirm=inspect and the read-only inspection
+          discovers the tender from /api/tenders — the ID is created by the
+          owner's own upload, so it cannot be known before that upload, and a
+          default carried over from a previous database would inspect a tender
+          that no longer exists.
         required: false
-        default: "fed8756d-4210-4ad8-808b-b6f63742f656"
+        default: ""
 
 permissions:
   contents: read
@@ -494,8 +499,7 @@ jobs:
             exit 1
           fi
           if [ -z "$TENDER_ID" ]; then
-            echo "::error::tender_id input is required."
-            exit 1
+            echo "tender_id not supplied — the inspection will discover the tender from /api/tenders."
           fi
 
       - name: Sign in through the real /api/auth/login endpoint

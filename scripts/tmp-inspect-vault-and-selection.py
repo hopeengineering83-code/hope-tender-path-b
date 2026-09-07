@@ -2,7 +2,7 @@ import json, os, subprocess, sys, urllib.parse
 
 BASE = os.environ["BASE_URL"]
 COOKIE = os.environ["SESSION_COOKIE"]
-TENDER = os.environ["TENDER_ID"]
+TENDER = (os.environ.get("TENDER_ID") or "").strip()
 
 def get(path):
     out = subprocess.run(
@@ -13,6 +13,31 @@ def get(path):
         return json.loads(out.stdout)
     except Exception:
         return {"_unparsed": out.stdout[:400], "_stderr": out.stderr[:200]}
+
+def show(label, path, limit=6000):
+    print(f"\n----- {label}  [{path}] -----")
+    print(json.dumps(get(path), indent=2)[:limit])
+
+
+# The tender ID is not knowable ahead of time on a freshly rebuilt database:
+# the owner uploads through the real UI, so the ID is whatever that upload
+# created. Discover it rather than carrying a stale default from the previous
+# database, which would silently inspect nothing.
+def discover_tenders():
+    data = get("/api/tenders?limit=50")
+    rows = None
+    if isinstance(data, dict):
+        for key in ("tenders", "items", "data", "results"):
+            if isinstance(data.get(key), list):
+                rows = data[key]
+                break
+    elif isinstance(data, list):
+        rows = data
+    if rows is None:
+        print(f"  !! could not read /api/tenders; payload keys={list(data)[:10] if isinstance(data, dict) else type(data)}")
+        return []
+    return rows
+
 
 HEALTH_RX = ("hospital", "health", "medical", "clinic", "healthcare", "specialty",
              "specialised", "specialized", "maternity", "pharma", "laboratory",
@@ -67,7 +92,22 @@ def tally(items, label, name_keys):
               f"| client={it.get('clientName')} | hits={','.join(hits)}")
     return by_trust, rel
 
-print("########## LIVE VAULT TRUTH ##########")
+print("########## TENDERS ON THIS DATABASE ##########")
+_tenders = discover_tenders()
+print(f"tenders: {len(_tenders)}")
+for _t in _tenders:
+    print(f"  id={_t.get('id')} | status={_t.get('status')} | stage={_t.get('stage') or _t.get('lifecycleStage')} "
+          f"| title={_t.get('title')} | client={_t.get('clientName')} | created={_t.get('createdAt')}")
+if not TENDER:
+    if not _tenders:
+        print("!! No tender on this database and no TENDER_ID supplied — nothing to trace.")
+        sys.exit(1)
+    TENDER = _tenders[0].get("id")
+    print(f"\nUsing most recent tender: {TENDER}")
+else:
+    print(f"\nUsing supplied TENDER_ID: {TENDER}")
+
+print("\n########## LIVE VAULT TRUTH ##########")
 projects = page_all("/api/company/projects")
 tally(projects, "PROJECTS", ["name", "clientName", "sector", "serviceAreas", "country"])
 
@@ -118,10 +158,22 @@ print(json.dumps(get(f"/api/tenders/{TENDER}/matching-quality"), indent=2)[:4000
 print("\n########## PROVIDER DIAGNOSTICS (durable snapshot, no quota) ##########")
 print(json.dumps(get("/api/ai-providers/diagnostics"), indent=2)[:6000])
 
-# ONE live capability pass, explicitly authorized. This runs the real
-# structured-extraction test through the same adapter and model the workload
-# uses, inside runAsDiagnostic() so it imposes no cooldown on real work. It is
-# the only way to classify a provider as AVAILABLE rather than merely
-# configured — the durable snapshot above reports configuration, not capability.
-print("\n########## PROVIDER CAPABILITY — ONE LIVE PASS ##########")
-print(json.dumps(get("/api/ai-providers/diagnostics?live=1"), indent=2)[:14000])
+# NOT re-running the live ?live=1 capability probe here. One live pass was
+# already taken this cycle, provider configuration has not changed since, and
+# the AI Analyze / Run Engine the owner just performed is itself a real
+# workload observation — a stronger signal than a synthetic probe, and it costs
+# no additional quota.
+
+print("\n########## PIPELINE STATE AFTER AI ANALYZE + RUN ENGINE ##########")
+show("TENDER RECORD", f"/api/tenders/{TENDER}", 8000)
+show("WORKFLOW STATUS", f"/api/tenders/{TENDER}/workflow-status", 8000)
+show("AI JOBS", f"/api/ai-jobs?tenderId={urllib.parse.quote(TENDER)}&limit=50", 12000)
+show("EXTRACTION QUALITY", f"/api/tenders/{TENDER}/extraction-quality", 8000)
+show("ANALYSIS QUALITY", f"/api/tenders/{TENDER}/analysis-quality", 6000)
+show("ENGINE READINESS", f"/api/tenders/{TENDER}/engine-readiness", 6000)
+show("SUBMISSION PLAN", f"/api/tenders/{TENDER}/submission-plan", 8000)
+show("GENERATION READINESS", f"/api/tenders/{TENDER}/generation-readiness", 6000)
+show("PROPOSAL EVIDENCE READINESS", f"/api/tenders/{TENDER}/proposal-evidence-readiness", 6000)
+show("EXPORT READINESS", f"/api/tenders/{TENDER}/export-readiness", 8000)
+show("FINAL PACKAGE READINESS", f"/api/tenders/{TENDER}/final-package-readiness", 8000)
+show("READINESS SCORE", f"/api/tenders/{TENDER}/readiness-score", 4000)
