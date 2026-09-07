@@ -408,24 +408,60 @@ const SECTOR_CONFLICT_GROUPS: RegExp[] = [
   /\b(KYC|AML|core.*banking|microfinance.*platform|credit.*risk.*model|prudential.*regul|capital.*adequacy|Basel.*compliance)\b/,
 ];
 
-function sectorBoost(tenderSector: string | null | undefined, items: string[]): number {
+/**
+ * @param items      The record's EXPLICIT classification — its sector and
+ *                   service areas. These alone can trigger the cross-sector
+ *                   conflict penalty, because a penalty must rest on a
+ *                   deliberate classification, never on a passing mention.
+ * @param sourceText The record's own source-grounded description, used ONLY to
+ *                   earn a positive boost when the explicit fields are empty.
+ *
+ *                   A real vault of 114 source-verified projects carried
+ *                   sector: null and serviceAreas: [] on every single one — the
+ *                   uploaded company authority declares it outright
+ *                   ("projectSectorMissing: 114, projectServiceAreasEmpty: 114",
+ *                   "Structured fields are an index only. rawText is the
+ *                   factual source"). With both fields empty this function
+ *                   returned 0 at the guard below, so a hospital project scored
+ *                   exactly as much sector relevance for a hospital tender as a
+ *                   warehouse would: the channel was dead for the entire vault,
+ *                   in every sector, and the proposal went out citing one
+ *                   reference where the source text supported several.
+ *
+ *                   Reading the record's own summary is not an inference and
+ *                   not a lowered threshold. It is the same verified record's
+ *                   own words, which the authority file itself names as
+ *                   controlling.
+ */
+export function sectorBoost(
+  tenderSector: string | null | undefined,
+  items: string[],
+  sourceText?: string | null,
+): number {
   if (!tenderSector) return 0;
   const tender = tenderSector.toLowerCase();
-  const itemText = items.join(" ").toLowerCase();
+  const explicitText = items.join(" ").toLowerCase();
+  // The penalty reads the explicit classification only.
+  if (explicitText) {
+    const tGroup = SECTOR_CONFLICT_GROUPS.findIndex((g) => g.test(tender));
+    const iGroup = SECTOR_CONFLICT_GROUPS.findIndex((g) => g.test(explicitText));
+    if (tGroup >= 0 && iGroup >= 0 && tGroup !== iGroup) return -0.30;
+  }
+  // The boost may fall back to the record's own source text.
+  const boostItems = explicitText ? items : [(sourceText ?? "").slice(0, 4_000)].filter(Boolean);
+  const itemText = boostItems.join(" ").toLowerCase();
   if (!itemText) return 0;
 
-  // Sector conflict penalty: confirmed cross-sector match → penalise harder
-  // (raised from -0.20 to -0.30 so a single high cosine score can no longer
-  // rescue a confirmed cross-sector item above the 0.75 selection threshold)
+  // The cross-sector conflict penalty was applied above, against the explicit
+  // classification only. A passing mention in a project description must not
+  // condemn a record the firm never classified as belonging to another sector.
   const tenderGroup = SECTOR_CONFLICT_GROUPS.findIndex((g) => g.test(tender));
-  const itemGroup = SECTOR_CONFLICT_GROUPS.findIndex((g) => g.test(itemText));
-  if (tenderGroup >= 0 && itemGroup >= 0 && tenderGroup !== itemGroup) return -0.30;
 
   // Positive boost: word-boundary match (avoids substring false-positives like
   // "healthcare supply warehouse" getting +0.15 for a healthcare tender).
   const tenderWords = tender.split(/[\s/,;:&()+]+/).filter((w) => w.length >= 5);
   if (tenderWords.length > 0 && tenderWords.some((w) => new RegExp(`\\b${w}\\b`).test(itemText))) return 0.15;
-  if (items.some((item) => {
+  if (boostItems.some((item) => {
     const iWords = item.toLowerCase().split(/[\s/,;:&()+]+/).filter((w) => w.length >= 5);
     return iWords.some((w) => new RegExp(`\\b${w}\\b`).test(tender));
   })) return 0.15;
@@ -996,7 +1032,11 @@ export function buildMatches(
         ? capability
         : requiredFamiliesWeighted.filter((family) => recordFamilies.includes(family)).length / requiredFamiliesWeighted.length;
       const effectiveCap = Math.max(capability, weightedCapability);
-      const sector = sectorBoost(tenderSector, [project.sector ?? "", ...parseArr(project.serviceAreas)]);
+      const sector = sectorBoost(
+        tenderSector,
+        [project.sector ?? "", ...parseArr(project.serviceAreas)].filter(Boolean),
+        project.summary,
+      );
       const trust = ELIGIBLE_TRUST_ADJUSTMENT;
       let recency = 0;
       if (project.endDate) {
