@@ -49,7 +49,7 @@ import { buildRisksMitigationsTable } from "./risks-mitigations";
 import { buildWhyUsSummary } from "./why-us-summary";
 import { buildWorkPlanTable } from "./work-plan-timeline";
 import { tenderTotalDays } from "./canonical-work-plan";
-import { repairPortfolioCards } from "./portfolio-card-repair";
+import { reconcilePortfolioReadingGuide, repairPortfolioCards } from "./portfolio-card-repair";
 import { buildBidComplianceMapping } from "./bid-compliance-mapping";
 import { buildComplianceMatrixSection, hasComplianceMatrixHeading } from "./compliance-matrix-builder";
 import { buildEvaluatorMirrorSection, hasEvaluatorMirrorHeading } from "./evaluator-mirror-builder";
@@ -3714,6 +3714,12 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       `[generate-elite] Portfolio card repair: filled ${cardRepair.filled.length} cell(s) from the record (${[...new Set(cardRepair.filled)].join(", ")}); removed ${cardRepair.removed.length} row(s) the record does not state (${[...new Set(cardRepair.removed)].join(", ")}).`,
     );
     workingMarkdown = cardRepair.markdown;
+  }
+
+  const guideReconciled = reconcilePortfolioReadingGuide(workingMarkdown);
+  if (guideReconciled.promiseRemoved) {
+    logger.info("[generate-elite] Portfolio reading guide promised a per-card Relevance statement that no card carries; the promise was removed.");
+    workingMarkdown = guideReconciled.markdown;
   }
 
   const proseHygiene = repairClientTextHygiene(workingMarkdown);

@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   isLocationNotAClient,
   recordFactsFor,
+  reconcilePortfolioReadingGuide,
   repairPortfolioCards,
 } from "../lib/engine/portfolio-card-repair";
 
@@ -203,4 +204,32 @@ test("stored service areas win over derived ones", () => {
     serviceAreas: JSON.stringify(["Master planning", "Urban design"]),
   });
   assert.equal(facts.services, "Master planning, Urban design");
+});
+
+test("the reading guide does not promise a card element the cards lack", () => {
+  // Exactly what B.2.0 says, against cards that carry no such row.
+  const withoutRelevance = [
+    "## B.2.0 Portfolio Reading Guide",
+    "",
+    "- Transferable competency references: Woldia–Dessie Road Upgrading.",
+    "",
+    "Each card includes a **Relevance to This Assignment** statement mapping the specific competency to a tender requirement.",
+    "",
+    "| Field | Detail |",
+    "|---|---|",
+    "| Client | Ethiopian Roads Authority |",
+  ].join("\n");
+
+  const dropped = reconcilePortfolioReadingGuide(withoutRelevance);
+  assert.equal(dropped.promiseRemoved, true);
+  assert.ok(!dropped.markdown.includes("Relevance to This Assignment"));
+  // Nothing else in the guide is disturbed.
+  assert.ok(dropped.markdown.includes("Transferable competency references"));
+  assert.ok(dropped.markdown.includes("| Client | Ethiopian Roads Authority |"));
+
+  // When the cards DO carry it, the promise stands.
+  const withRelevance = `${withoutRelevance}\n| Relevance to This Assignment | Comparable trunk-road upgrading under the same client. |`;
+  const kept = reconcilePortfolioReadingGuide(withRelevance);
+  assert.equal(kept.promiseRemoved, false);
+  assert.equal(kept.markdown, withRelevance);
 });

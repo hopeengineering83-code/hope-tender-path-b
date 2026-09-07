@@ -339,3 +339,31 @@ export function repairPortfolioCards(
 
   return { markdown: out.join("\n"), filled, removed };
 }
+
+
+/**
+ * The reading guide must not promise what the cards do not carry.
+ *
+ * B.2.0 ends with "Each card includes a **Relevance to This Assignment**
+ * statement mapping the specific competency to a tender requirement." The
+ * delivered cards carried no such row, so the document told the evaluator to
+ * look for something that is not there — which reads either as a missing
+ * section or as a claim the bidder did not honour.
+ *
+ * The guide is built before the cards exist, so it cannot check them itself.
+ * This runs after the cards are final and removes the sentence when no card
+ * carries the row. The promise is dropped rather than satisfied on purpose:
+ * the only material available to synthesise a relevance statement here is the
+ * record's raw source text, and pasting three hundred characters of that under
+ * "Relevance to This Assignment" would be worse than saying nothing.
+ */
+const RELEVANCE_PROMISE =
+  /^Each card includes an?\s+\*{0,2}Relevance to This Assignment\*{0,2}\s+statement[^\n]*\n?/gim;
+
+export function reconcilePortfolioReadingGuide(markdown: string): { markdown: string; promiseRemoved: boolean } {
+  const cardsCarryRelevance = /^\|\s*Relevance to This Assignment\s*\|\s*\S/im.test(markdown);
+  if (cardsCarryRelevance) return { markdown, promiseRemoved: false };
+
+  const next = markdown.replace(RELEVANCE_PROMISE, "");
+  return { markdown: next, promiseRemoved: next !== markdown };
+}
