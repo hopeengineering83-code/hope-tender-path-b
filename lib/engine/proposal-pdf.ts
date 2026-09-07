@@ -154,9 +154,9 @@ function wrapText(text: string, fonts: PdfFontSet, style: PdfFontStyle, fontSize
 // italic survive into the PDF (the DOCX preserves them, the PDF now does too).
 // Supports **bold**, *italic*, and ***bold-italic*** markers.
 // ───────────────────────────────────────────────────────────────────────────
-type InlineRun = { text: string; bold: boolean; italic: boolean };
+export type InlineRun = { text: string; bold: boolean; italic: boolean };
 
-function parseInlineRuns(input: string): InlineRun[] {
+export function parseInlineRuns(input: string): InlineRun[] {
   const runs: InlineRun[] = [];
   // Regex captures ***...*** first, then **...**, then *...*
   const re = /(\*\*\*[^*]+\*\*\*|\*\*[^*]+\*\*|\*[^*]+\*)/g;
@@ -182,6 +182,43 @@ function parseInlineRuns(input: string): InlineRun[] {
   return runs.length ? runs : [{ text: input, bold: false, italic: false }];
 }
 
+/** One drawable word, plus whether the source put a space after it. */
+export type LaidOutWord = { text: string; bold: boolean; italic: boolean; space: boolean };
+
+/**
+ * Split styled runs into drawable words, recording for each whether the source
+ * actually had whitespace after it.
+ *
+ * The separator used to be unconditional — every word but the last advanced the
+ * cursor by a full space — so two source-adjacent tokens were drawn apart. The
+ * visible cases were a bold run ending immediately before punctuation, which
+ * the delivered PDF rendered as "Ahmed Kebede Tekaw , General Manager" from
+ * markdown that reads "**Ahmed Kebede Tekaw**, General Manager".
+ *
+ * Trailing whitespace is recorded rather than kept in the text, so a word's
+ * measured width is the width of the word.
+ */
+export function layoutWords(
+  runs: readonly InlineRun[],
+  defaultBold = false,
+  defaultItalic = false,
+): LaidOutWord[] {
+  const words: LaidOutWord[] = [];
+  for (const run of runs) {
+    const bold = run.bold || defaultBold;
+    const italic = run.italic || defaultItalic;
+    for (const piece of run.text.split(/(\s+)/)) {
+      if (piece === "") continue;
+      if (/^\s+$/.test(piece)) {
+        if (words.length > 0) words[words.length - 1].space = true;
+      } else {
+        words.push({ text: piece, bold, italic, space: false });
+      }
+    }
+  }
+  return words;
+}
+
 function drawInlineParagraph(
   ctx: RenderContext,
   text: string,
@@ -198,28 +235,14 @@ function drawInlineParagraph(
   // for each word. This is a simplification (a word cannot span two runs),
   // but it produces correct visual output for the markdown the DOCX extractor
   // emits.
-  type Word = { text: string; bold: boolean; italic: boolean };
-  const words: Word[] = [];
-  for (const run of runs) {
-    const bold = run.bold || defaultBold;
-    const italic = run.italic || defaultItalic;
-    for (const piece of run.text.split(/(\s+)/)) {
-      if (piece === "") continue;
-      if (/^\s+$/.test(piece)) {
-        // whitespace — attach to the previous word as trailing space
-        if (words.length > 0) words[words.length - 1].text += piece;
-      } else {
-        words.push({ text: piece, bold, italic });
-      }
-    }
-  }
+  const words: LaidOutWord[] = layoutWords(runs, defaultBold, defaultItalic);
 
   // Body text reaches the font one word at a time, so it is sanitised here
   // rather than at each draw call. A control character anywhere in a paragraph
   // is the same hard export failure as one in the cover.
   for (const word of words) word.text = sanitizePdfText(word.text);
 
-  const styleFor = (w: Word): PdfFontStyle => {
+  const styleFor = (w: LaidOutWord): PdfFontStyle => {
     if (w.bold) return "bold";
     if (w.italic) return "italic";
     return "regular";
@@ -233,7 +256,12 @@ function drawInlineParagraph(
     const style = styleFor(w);
     const font = ctx.fonts.fontFor(w.text, style);
     const wordWidth = ctx.fonts.widthOf(w.text, opts.size, style);
-    const spaceWidth = i < words.length - 1 ? ctx.fonts.widthOf(" ", opts.size) : 0;
+    // A space is drawn only where the source had one. This used to add one
+    // after every word except the last, so a bold run abutting punctuation
+    // rendered as "Ahmed Kebede Tekaw , General Manager" and "Project Manager
+    // (single-point-of-accountability) : Ahmed" in the delivered PDF — the
+    // markdown has no space in either place.
+    const spaceWidth = w.space ? ctx.fonts.widthOf(" ", opts.size) : 0;
     if (x + wordWidth > PAGE_MARGIN + indent + maxW && x > PAGE_MARGIN + indent) {
       // wrap
       ctx.y -= opts.lineHeight;
