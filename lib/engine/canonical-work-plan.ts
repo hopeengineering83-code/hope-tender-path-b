@@ -268,17 +268,26 @@ export interface CanonicalWorkPlanPhase {
 }
 
 /**
- * Split a role label into the keywords used to find a matching expert. The
- * role itself is the strongest signal ("Resident Engineer" -> "resident",
- * "engineer"), with a generic senior fallback so a phase always names someone
- * when the vault holds anyone at all.
+ * Split a role label into the keywords used to find a matching expert.
+ *
+ * ONLY the role's own words. This used to append a generic seniority tail —
+ * "principal", "director", "lead", "senior", "engineer", "specialist" — so a
+ * phase always named somebody. On a vault holding no architect, the Conceptual
+ * Design phase fell through to "senior" and the delivered proposal read:
+ *
+ *   Phase lead: Daniel Getachew Tadesse (Senior Electrical Engineer).
+ *   Accountable role: Architect.
+ *
+ * Naming a real, verified person as accountable for a discipline they do not
+ * hold is a factual misstatement about a named individual, and an evaluator
+ * checking the CV finds it immediately. A phase with no matching expert names
+ * no lead instead.
  */
 function leadKeywordsFor(role: string): readonly string[] {
-  const fromRole = role
+  return role
     .toLowerCase()
     .split(/[^a-z]+/)
     .filter((word) => word.length > 3 && word !== "team");
-  return [...fromRole, "principal", "director", "lead", "senior", "engineer", "specialist"];
 }
 
 /**

@@ -185,13 +185,11 @@ function pickName(experts: ExpertRecord[], keywords: string[], used: Set<string>
       return `${match.fullName}${match.title ? ` (${match.title})` : ""}`;
     }
   }
-  // Fallback: first unused
-  const unused = experts.find((e) => !used.has(e.fullName));
-  if (unused) {
-    used.add(unused.fullName);
-    return `${unused.fullName}${unused.title ? ` (${unused.title})` : ""}`;
-  }
-  return "Bid-Team Action: confirm phase lead";
+  // No fallback to "the first unused expert". That is how a Senior Electrical
+  // Engineer came to be named as the phase's Architect: the keywords no longer
+  // carry a generic seniority tail, and a body with nobody matching the role
+  // must say so rather than substitute somebody who does not hold it.
+  return "";
 }
 
 export function buildPhaseNarrative(opts: {
@@ -199,7 +197,14 @@ export function buildPhaseNarrative(opts: {
   primarySector: string;
   totalDays?: number;
 }): string {
-  const totalDays = opts.totalDays && opts.totalDays > 0 ? opts.totalDays : 90;
+  // No default. This used to fall back to 90 days, so a proposal for a tender
+  // that states no programme asserted "over an indicative 90-day engagement
+  // window" — an unsourced number in front of an evaluator — and then rescaled
+  // every phase to day numbers, which is how the SAME phase came to read
+  // "Weeks 1-2" in the work-plan table and "Days 1-13" in this narrative eight
+  // pages later. When the tender states a total, both speak days; when it does
+  // not, both speak the spine's own labels.
+  const totalDays = opts.totalDays && opts.totalDays > 0 ? opts.totalDays : undefined;
   // Renders THE canonical work plan. This function used to own a second,
   // six-phase design-process list of its own, which is how one delivered
   // proposal said "delivered in 5 phases" in the phasing table and "delivered
@@ -214,11 +219,18 @@ export function buildPhaseNarrative(opts: {
   blocks.push(MARKER_PHASES);
   blocks.push("## Phase-by-Phase Methodology Narrative");
   blocks.push("");
-  blocks.push(`The methodology is delivered across ${phases.length} phases over an indicative ${totalDays}-day engagement window. Each phase below names the responsible expert, the artefacts produced, and the quality gate that closes it.`);
+  const window = totalDays ? ` over ${totalDays} calendar days` : "";
+  // The intro used to promise that every phase names its expert. It does so
+  // only where the team actually holds that role; promising it unconditionally
+  // made the phases that honestly defer the assignment read as omissions.
+  blocks.push(`The methodology is delivered across ${phases.length} phases${window}. Each phase below names the accountable role, the artefacts produced, and the quality gate that closes it.`);
   blocks.push("");
 
   for (const phase of phases) {
     const lead = pickName(opts.experts, [...phase.leadKeywords], used);
+    const leadLine = lead
+      ? `**Phase lead:** ${lead}. **Accountable role:** ${phase.responsibleRole}.`
+      : `**Accountable role:** ${phase.responsibleRole} — the named assignee is confirmed at inception.`;
     // The artefacts come from the canonical plan rather than from a second
     // hand-written list: the canonical entries are the sector-specific ones
     // (IPC hold-points for healthcare, subgrade hold-points for roads,
@@ -227,7 +239,7 @@ export function buildPhaseNarrative(opts: {
     const artefacts = phase.deliverables.replace(/\s*;\s*/g, ", ").replace(/\s+$/, "").replace(/[.,]$/, "");
     blocks.push(`### ${phase.title} — ${phase.durationLabel}`);
     blocks.push("");
-    blocks.push(`**Phase lead:** ${lead}. **Accountable role:** ${phase.responsibleRole}.`);
+    blocks.push(leadLine);
     blocks.push("");
     blocks.push(`This phase produces: ${artefacts}. Quality is gated inside the phase — the deliverable is peer-reviewed against the applicable standards and the tender's own requirements before it is issued. Phase exit gate: client sign-off on the phase deliverable before the next phase begins.`);
     blocks.push("");

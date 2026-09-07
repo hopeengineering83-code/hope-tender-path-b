@@ -2828,6 +2828,11 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     experts: experts as unknown as Parameters<typeof injectDeliverableAndPhases>[1]["experts"],
     primarySector: intelligence.primarySector,
     companyName: company.name,
+    // The narrative accepted a total day count and was never given one, so it
+    // fell back to an invented 90-day window and rescaled every phase to day
+    // numbers the tender never stated — the same phase read "Weeks 1-2" in the
+    // work-plan table and "Days 1-13" here, eight pages apart.
+    totalDays: tenderTotalDays(intelligence.tenderText),
   });
   const dpInjected = Object.entries(deliverablePhases.injected).filter(([, v]) => v).map(([k]) => k);
   if (dpInjected.length > 0) {
