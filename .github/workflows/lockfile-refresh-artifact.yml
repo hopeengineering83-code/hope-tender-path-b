@@ -462,6 +462,43 @@ jobs:
           # findings in this workstream.
           node scripts/tmp-inspect-pdf-typography-and-assets.mjs "/tmp/zip-extract/Technical Proposal.pdf" 2>&1 | tee /tmp/pdf-asset-audit.txt
 
+          # The audit above says whether the bytes ARRIVED. This says what the
+          # store holds, so a zero above can be attributed rather than guessed:
+          # an asset the applier skips because it has no inline bytes looks
+          # identical, in the delivered PDF, to one blocked by tender policy.
+          curl -sS --connect-timeout 15 --max-time 60 --retry 2 \
+            -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/company/assets" > /tmp/company-assets.json || true
+          python3 - <<'PYEOF' | tee -a /tmp/pdf-asset-audit.txt
+          import json
+          try:
+              data = json.load(open("/tmp/company-assets.json", encoding="utf-8"))
+          except Exception as exc:
+              print(f"ASSET STORE: unreadable ({exc})")
+              raise SystemExit(0)
+          rows = None
+          if isinstance(data, dict):
+              for key in ("assets", "items", "data", "results"):
+                  if isinstance(data.get(key), list):
+                      rows = data[key]
+                      break
+          elif isinstance(data, list):
+              rows = data
+          if rows is None:
+              print(f"ASSET STORE: unexpected payload; keys={list(data)[:10] if isinstance(data, dict) else type(data)}")
+              raise SystemExit(0)
+          print(f"\nASSET STORE: {len(rows)} row(s)")
+          for a in rows:
+              inline = a.get("fileContentLength")
+              print(
+                  f"  type={a.get('assetType')} active={a.get('isActive')} "
+                  f"mime={a.get('mimeType')} size={a.get('size')} "
+                  f"inlineBytes={inline if inline is not None else 'NOT RETURNED BY API'} "
+                  f"storagePath={'yes' if a.get('storagePath') else 'no'} "
+                  f"integrity={a.get('integrityStatus')}"
+              )
+          PYEOF
+
       - name: Dump the final PDF's visible text for claim-by-claim review
         run: |
           # The 17-dimension assessment and the factual/compliance review have
@@ -487,6 +524,7 @@ jobs:
             /tmp/preview-final.zip
             /tmp/pdf-page-report.txt
             /tmp/pdf-asset-audit.txt
+            /tmp/company-assets.json
             /tmp/final-pdf-text.txt
             /tmp/pdf-pages/
           if-no-files-found: warn
