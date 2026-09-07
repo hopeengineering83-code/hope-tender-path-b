@@ -409,6 +409,30 @@ const SECTOR_CONFLICT_GROUPS: RegExp[] = [
 ];
 
 /**
+ * Whole-word containment, with the needle treated as text rather than as a
+ * pattern.
+ *
+ * These words come from a tender title and, since the sector fallback landed,
+ * from a project's own source text. Interpolating either into `new RegExp()`
+ * raw throws the moment one carries a regex metacharacter, and a throw here
+ * fails the whole engine run. A real vault record — "Entoto Eco-Park Master
+ * Planning & Feasibility", whose source text contains "[integrated" — did
+ * exactly that: /\b[integrated\b/ is an unterminated character class, and
+ * ENGINE_RUN failed 5.1 seconds in with RETRY_BUDGET_EXHAUSTED_OR_UNKNOWN_
+ * FAILURE. One project out of 114 took the entire pipeline down.
+ */
+function wordIsPresent(word: string, haystack: string): boolean {
+  const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (!escaped) return false;
+  try {
+    return new RegExp(`\\b${escaped}\\b`).test(haystack);
+  } catch {
+    // A word that cannot form a pattern even escaped simply does not match.
+    return false;
+  }
+}
+
+/**
  * @param items      The record's EXPLICIT classification — its sector and
  *                   service areas. These alone can trigger the cross-sector
  *                   conflict penalty, because a penalty must rest on a
@@ -460,10 +484,10 @@ export function sectorBoost(
   // Positive boost: word-boundary match (avoids substring false-positives like
   // "healthcare supply warehouse" getting +0.15 for a healthcare tender).
   const tenderWords = tender.split(/[\s/,;:&()+]+/).filter((w) => w.length >= 5);
-  if (tenderWords.length > 0 && tenderWords.some((w) => new RegExp(`\\b${w}\\b`).test(itemText))) return 0.15;
+  if (tenderWords.length > 0 && tenderWords.some((w) => wordIsPresent(w, itemText))) return 0.15;
   if (boostItems.some((item) => {
     const iWords = item.toLowerCase().split(/[\s/,;:&()+]+/).filter((w) => w.length >= 5);
-    return iWords.some((w) => new RegExp(`\\b${w}\\b`).test(tender));
+    return iWords.some((w) => wordIsPresent(w, tender));
   })) return 0.15;
 
   // Generic fallback boost only when the tender is not in a specific

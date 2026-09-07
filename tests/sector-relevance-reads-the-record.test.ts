@@ -70,3 +70,50 @@ test("an unrelated description earns nothing — the threshold is not lowered", 
   const summary = "Supply of office furniture and stationery to a regional bureau.";
   assert.equal(sectorBoost("Healthcare facility design", [], summary), 0);
 });
+
+/**
+ * The fallback feeds raw source text into a word-boundary test that used to
+ * interpolate the word straight into `new RegExp()`. One real vault record —
+ * "Entoto Eco-Park Master Planning & Feasibility", whose source text contains
+ * "[integrated" — made that throw:
+ *
+ *   Invalid regular expression: /\b[integrated\b/: Unterminated character class
+ *
+ * and ENGINE_RUN failed 5.1 seconds in with
+ * RETRY_BUDGET_EXHAUSTED_OR_UNKNOWN_FAILURE. One project out of 114 took the
+ * whole pipeline down, and the hosted acceptance refused to report a green
+ * walkthrough against a document an earlier run had produced.
+ *
+ * The tender side had the same latent hole: a tender title carrying a bracket
+ * would have thrown just as readily.
+ */
+test("source text carrying regex metacharacters cannot fail the engine run", () => {
+  const hostile = [
+    "Master planning [integrated urban design] and feasibility",
+    "Design of (a+b) drainage structures",
+    "Works package * phase ? review",
+    "Cost estimate ^ baseline $ variance",
+    "Alternatives: option-A | option-B \\\\ option-C",
+    "Schedule {phase} deliverables",
+  ];
+  for (const summary of hostile) {
+    assert.doesNotThrow(() => sectorBoost("Urban master planning", [], summary), summary);
+    assert.doesNotThrow(() => sectorBoost("Healthcare facility design", [], summary), summary);
+  }
+});
+
+test("a tender title carrying metacharacters is equally safe", () => {
+  for (const title of ["Design [phase 2] consultancy", "Roads (lot 3) supervision", "Water + sanitation works"]) {
+    assert.doesNotThrow(() => sectorBoost(title, ["Roads and highways"]), title);
+    assert.doesNotThrow(() => sectorBoost(title, [], "Trunk road rehabilitation and pavement design."), title);
+  }
+});
+
+test("escaping does not break ordinary matching", () => {
+  // The metacharacter fix must not turn a real match into a miss.
+  assert.equal(sectorBoost("Healthcare facility design", ["Healthcare", "Hospital design"]), 0.15);
+  assert.equal(
+    sectorBoost("Urban master planning", [], "Master planning [integrated urban design] and feasibility"),
+    0.15,
+  );
+});
