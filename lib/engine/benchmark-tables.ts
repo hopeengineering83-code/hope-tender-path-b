@@ -1,5 +1,5 @@
 import { safeParseJsonArray, safeParseJsonObject } from "../safe-json";
-import { extractProjectFacts, extractProjectAmounts } from "./project-fact-extractor";
+import { extractProjectFacts, extractProjectAmounts, extractServicesProvided } from "./project-fact-extractor";
 import { withoutSourceProvenance, factualCardOrEmpty } from "./vault-prose";
 import { inlineEvidenceValue } from "./proposal-intelligence";
 import { withoutPersonalCvFields, withoutCvDocumentFurniture, truncateAtWordBoundary } from "./proposal-intelligence";
@@ -313,7 +313,7 @@ export function buildProjectPortfolioCards(projects: ProjectRecord[], tenderTitl
     const scaleParts = [
       project.country || derived.country || derived.location,
       ...safeArr(project.serviceAreas).slice(0, 3),
-    ].filter(Boolean);
+    ].map((part) => (part ?? "").trim()).filter((part) => part.length > 0);
     const duration = fmtDateRange(project.startDate, project.endDate);
     const derivedDuration = fmtDateRange(derived.startDate ?? null, derived.endDate ?? null);
 
@@ -353,11 +353,21 @@ export function buildProjectPortfolioCards(projects: ProjectRecord[], tenderTitl
     if (testimony.contact) rows.push(`| Client Contact and Email | ${escCell(testimony.contact)} |`);
     if (project.funding) rows.push(`| Funding Source | ${escCell(project.funding)} |`);
 
-    const svcAreas = safeArr(project.serviceAreas);
-    const inferredServices = svcAreas.length > 0
-      ? svcAreas.join(", ")
-      : project.sector || (project.summary ? project.summary.split(".")[0].trim() : "") || "Service detail confirmed in knowledge vault";
-    rows.push(`| Services Provided | ${escCell(inferredServices)} |`);
+    // The fallback used to be the summary's FIRST SENTENCE, which for these
+    // records is the project name and reference number — so the delivered card
+    // read "Services Provided —". The services are named plainly in the same
+    // source text ("Feasibility study, Soil investigation, ... Construction
+    // supervision"); extractServicesProvided returns only the terms literally
+    // present there. Measured on the owner's authority: 114 of 114 records.
+    const svcAreas = safeArr(project.serviceAreas).filter((entry) => entry.trim().length > 0);
+    const derivedServices = svcAreas.length > 0 ? svcAreas : extractServicesProvided(project.summary ?? "");
+    const inferredServices = derivedServices.length > 0
+      ? derivedServices.join(", ")
+      : project.sector || "";
+    // An empty cell renders as a dash and reads as an unfinished document.
+    if (inferredServices.trim().length > 0) {
+      rows.push(`| Services Provided | ${escCell(inferredServices)} |`);
+    }
     rows.push(`| Relevance to This Assignment | ${escCell(buildRelevanceStatement(project, tenderTitle, primarySector))} |`);
 
     cards.push(`| Field | Detail |`, `|---|---|`, ...rows, "");

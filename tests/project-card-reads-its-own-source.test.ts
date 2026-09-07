@@ -104,3 +104,54 @@ test("the portfolio card presents the fee and the works value separately", async
   // And the largest-amount heuristic must not feed the value row.
   assert.match(source, /derived\.contractValue is deliberately NOT used/);
 });
+
+/**
+ * The delivered card read "Services Provided —" because the structured
+ * serviceAreas column is empty on all 114 records of the owner's vault and the
+ * fallback took the summary's FIRST SENTENCE, which for these records is the
+ * project name and its reference number. The services are named plainly in the
+ * same text.
+ */
+test("services are read from the record's own words, in every sector", async () => {
+  const { extractServicesProvided } = await import("../lib/engine/project-fact-extractor");
+
+  const building = extractServicesProvided(
+    "Complete New Design & Supervision: Feasibility study, Soil investigation, Laboratory testing, "
+    + "New Architectural design, New Structural design, Complete MEP Design (Electrical, Sanitary, "
+    + "Mechanical), Material specification, Bill of Quantity preparation, Tender document preparation, "
+    + "Construction supervision.",
+  );
+  assert.ok(building.includes("Feasibility study"));
+  assert.ok(building.includes("Geotechnical investigation"));
+  assert.ok(building.includes("Architectural design"));
+  assert.ok(building.includes("Construction supervision"));
+
+  const road = extractServicesProvided("Topographic survey, pavement design, drainage design, tender documentation, site supervision.");
+  assert.deepEqual(road, ["Topographic survey", "Pavement design", "Drainage design", "Tender documentation", "Construction supervision"]);
+
+  const water = extractServicesProvided("Borehole yield testing, hydraulic design of the reticulation network, commissioning.");
+  assert.ok(water.includes("Yield testing"));
+  assert.ok(water.includes("Hydraulic design"));
+  assert.ok(water.includes("Commissioning"));
+
+  const planning = extractServicesProvided("Master planning, urban design and environmental and social impact assessment.");
+  assert.ok(planning.includes("Master planning"));
+  assert.ok(planning.includes("Urban design"));
+  assert.ok(planning.includes("Environmental and social assessment"));
+});
+
+test("nothing is invented — a service not named is not listed", () => {
+  return import("../lib/engine/project-fact-extractor").then(({ extractServicesProvided }) => {
+    const found = extractServicesProvided("Architectural design of a regional office building.");
+    assert.deepEqual(found, ["Architectural design"]);
+    assert.deepEqual(extractServicesProvided(""), []);
+    assert.deepEqual(extractServicesProvided("Ref: 8087/2013, Date: 07/01/2013 E.C."), []);
+  });
+});
+
+test("an empty cell is omitted rather than rendered as a dash", async () => {
+  const { readFileSync } = await import("node:fs");
+  const source = readFileSync("lib/engine/benchmark-tables.ts", "utf8");
+  assert.match(source, /if \(inferredServices\.trim\(\)\.length > 0\) \{/);
+  assert.match(source, /\.filter\(\(part\) => part\.length > 0\)/);
+});

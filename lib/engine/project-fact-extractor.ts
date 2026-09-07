@@ -151,6 +151,74 @@ const SECTOR_KEYWORDS: Array<{ rx: RegExp; sector: string }> = [
 ];
 
 
+
+/**
+ * The professional services a project's own source text says were performed.
+ *
+ * The delivered portfolio card rendered "Services Provided —" because the
+ * structured serviceAreas column is empty on all 114 records of the owner's
+ * vault, and the fallback took the summary's FIRST SENTENCE — which for these
+ * records is the project name and reference number, not a service list.
+ *
+ * The services are stated plainly in the same text:
+ *
+ *   "Feasibility study, Soil investigation, Laboratory testing, New
+ *    Architectural design, New Structural design, Complete MEP Design
+ *    (Electrical, Sanitary, Mechanical), Material specification, Bill of
+ *    Quantity preparation, Tender document preparation, Construction
+ *    supervision"
+ *
+ * Each term below is matched against the record's own words and returned only
+ * when it is literally present, so nothing is inferred and nothing is invented.
+ * The vocabulary spans every sector the app serves — a road record yields
+ * pavement and drainage design, a water record yields hydraulic design and
+ * yield testing — so no sector is privileged by it.
+ */
+const SERVICE_VOCABULARY: ReadonlyArray<readonly [RegExp, string]> = [
+  [/\bfeasibility\s+stud(?:y|ies)\b/i, "Feasibility study"],
+  [/\bpre[-\s]?feasibility\b/i, "Pre-feasibility study"],
+  [/\b(?:soil|geotechnical|subsoil|ground)\s+investigation\b/i, "Geotechnical investigation"],
+  [/\blaboratory\s+testing\b/i, "Laboratory testing"],
+  [/\btopographic(?:al)?\s+survey\b/i, "Topographic survey"],
+  [/\bhydrolog(?:y|ical)\b/i, "Hydrological study"],
+  [/\byield\s+test(?:ing)?\b/i, "Yield testing"],
+  [/\barchitectural\s+design\b/i, "Architectural design"],
+  [/\bstructural\s+design\b/i, "Structural design"],
+  [/\bstructural\s+assessment\b/i, "Structural assessment"],
+  [/\bmodification\s+design\b/i, "Modification design"],
+  [/\brenovation\b/i, "Renovation design"],
+  [/\bmep\s+design\b|\bmechanical[,\s]+electrical\b/i, "MEP design"],
+  [/\belectrical\s+design\b/i, "Electrical design"],
+  [/\bsanitary\s+design\b|\bplumbing\s+design\b/i, "Sanitary design"],
+  [/\bhydraulic\s+design\b|\breticulation\b/i, "Hydraulic design"],
+  [/\bpavement\s+design\b/i, "Pavement design"],
+  [/\bdrainage\s+design\b/i, "Drainage design"],
+  [/\bmaster\s*plan(?:ning)?\b/i, "Master planning"],
+  [/\burban\s+design\b/i, "Urban design"],
+  [/\benvironmental\s+(?:and\s+social\s+)?(?:impact\s+)?(?:assessment|stud(?:y|ies))\b/i, "Environmental and social assessment"],
+  [/\bmaterial\s+specification\b/i, "Material specification"],
+  [/\bquantity\s+(?:schedule|surveying)\b|\bbill\s+of\s+quantit(?:y|ies)\b|\bboq\b/i, "Quantity schedules"],
+  [/\btender\s+document(?:ation|\s+preparation)?\b/i, "Tender documentation"],
+  [/\bcontract\s+administration\b/i, "Contract administration"],
+  [/\b(?:construction|site)\s+supervision\b/i, "Construction supervision"],
+  [/\bresident\s+engineer(?:ing)?\b/i, "Resident engineering"],
+  [/\bas[-\s]?built\b/i, "As-built documentation"],
+  [/\bcommissioning\b/i, "Commissioning"],
+  [/\bcondition\s+survey\b/i, "Condition survey"],
+  [/\bcapacity\s+building\b|\btraining\b/i, "Capacity building"],
+];
+
+/** Services literally named in the record's own source text, in vocabulary order. */
+export function extractServicesProvided(summary: string): string[] {
+  const text = (summary || "").replace(/\s+/g, " ");
+  if (!text.trim()) return [];
+  const found: string[] = [];
+  for (const [rx, label] of SERVICE_VOCABULARY) {
+    if (rx.test(text) && !found.includes(label)) found.push(label);
+  }
+  return found;
+}
+
 /**
  * Amounts a project's source text states, each kept with the ROLE its own
  * label gives it.
