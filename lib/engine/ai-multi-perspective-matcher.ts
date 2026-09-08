@@ -1,6 +1,10 @@
 import { logger } from "../observability";
 import { generateWithFallback } from "../ai";
 import { REMATCH_TIMEOUT_MS } from "../timeout-config";
+import { estimateInputTokens } from "../ai-preflight";
+import { resolveActiveModelProfile } from "../ai-model-profiles";
+import type { AiProviderName } from "../ai-provider-registry";
+import { CANONICAL_AI_PROVIDER_ORDER } from "../ai-provider-catalog.cjs";
 import {
   capabilityOverlapScore,
   classifyUniversalTender,
@@ -33,6 +37,110 @@ export function adaptiveBatchSize(provider: string | null | undefined, requireme
   if (provider === "groq") return Math.min(10, max);
   return max;
 }
+
+/**
+ * The largest batch whose prompt every provider in the chain can accept.
+ *
+ * WHY THIS IS MEASURED RATHER THAN CONFIGURED
+ * -------------------------------------------
+ * assessBatches used to slice by MAX_CANDIDATES_PER_MATCHER_BATCH (20) and
+ * nothing else. Measured against the owner's real vault that produces:
+ *
+ *   PROJECT prompt  fixed 2,069 tok + 283 tok/candidate -> batch 20 = 8,416
+ *   EXPERT  prompt  fixed 2,567 tok + 481 tok/candidate -> batch 20 = 10,665
+ *
+ * and Groq's configured budget is 7,088 input tokens — its gpt-oss free tier
+ * allows 8,000 TPM, less the 512-token minimum useful response and the 5%
+ * margin lib/ai-preflight.ts reserves. So EVERY matcher batch was rejected by
+ * preflight before it was sent, on every tender, for a reason entirely inside
+ * this repository. The live log records it as
+ * "Prompt exceeds the configured provider throughput budget (7358 input
+ * tokens)" and "(9097 input tokens)".
+ *
+ * adaptiveBatchSize() above was written for exactly this and returns 10 for
+ * Groq, which measurement confirms fits. It has never been called: its only
+ * importer is lib/liveness.ts, which reports `adaptiveBatchSizeAvailable: true`
+ * — a probe asserting the function exists while the code path it was written
+ * for ignored it. Its 100KB/200KB thresholds could not have helped either;
+ * they never fire on a ~30KB payload.
+ *
+ * Sizing to the TIGHTEST budget in the chain, rather than to the first
+ * provider's, is the point of having a chain: a batch must never fail merely
+ * because provider N has a smaller window than provider 1. Providers with
+ * larger budgets are unaffected — they simply receive a smaller prompt.
+ *
+ * Nothing here reorders the chain, changes a model identifier, alters what a
+ * candidate contributes, or drops a candidate. The same candidates are
+ * assessed with the same fields; only how many share one request changes.
+ */
+export function batchSizeForBudget(opts: {
+  /** Tokens the prompt costs with zero candidates. */
+  fixedTokens: number;
+  /** Additional tokens one candidate costs. */
+  perCandidateTokens: number;
+  /** Smallest safe input budget across the configured chain. */
+  budgetTokens: number;
+  /** Upper bound, so a generous budget cannot produce an unbounded batch. */
+  maxBatch?: number;
+}): number {
+  const max = opts.maxBatch ?? MAX_CANDIDATES_PER_MATCHER_BATCH;
+  if (opts.perCandidateTokens <= 0) return max;
+  const room = opts.budgetTokens - opts.fixedTokens;
+  // A single candidate that cannot fit is still attempted alone: the chain's
+  // larger-budget providers may serve it, and refusing to try would drop the
+  // candidate from matching entirely.
+  if (room <= 0) return 1;
+  return Math.max(1, Math.min(max, Math.floor(room / opts.perCandidateTokens)));
+}
+
+/**
+ * Smallest safe input budget across the configured provider chain.
+ *
+ * Read from the same model profiles preflight uses, so the batch size tracks a
+ * model or TPM override instead of a constant written here.
+ */
+export function tightestChainInputBudget(env: NodeJS.ProcessEnv = process.env): number {
+  let tightest = Number.POSITIVE_INFINITY;
+  for (const provider of CANONICAL_AI_PROVIDER_ORDER as AiProviderName[]) {
+    let profile;
+    try {
+      profile = resolveActiveModelProfile(provider, "proposal", env);
+    } catch {
+      continue;
+    }
+    const ceiling = profile.freeTierTpmLimit ?? profile.contextTokens;
+    if (!Number.isFinite(ceiling) || ceiling <= 0) continue;
+    // Mirror lib/ai-preflight.ts: a useful response and a 5% margin must fit
+    // beside the input, or preflight rejects the request. Then keep operating
+    // headroom below that, so an estimation error does not become a rejection.
+    const usable = Math.floor(
+      (ceiling - MIN_USEFUL_OUTPUT_TOKENS_FOR_BATCHING - Math.max(128, Math.ceil(ceiling * 0.05)))
+      * (1 - BATCH_HEADROOM_FRACTION),
+    );
+    if (usable > 0) tightest = Math.min(tightest, usable);
+  }
+  return Number.isFinite(tightest) ? tightest : DEFAULT_BATCH_INPUT_BUDGET_TOKENS;
+}
+
+/** Mirrors MIN_USEFUL_OUTPUT_TOKENS in lib/ai-preflight.ts. */
+const MIN_USEFUL_OUTPUT_TOKENS_FOR_BATCHING = 512;
+
+/**
+ * Operating headroom below the provider's hard budget.
+ *
+ * Filling the budget exactly is not the objective — surviving it is. Token
+ * estimation here is the same 4-chars-per-token heuristic preflight uses, which
+ * under-counts dense text (tables, IDs, non-Latin script: this vault's project
+ * records carry Amharic archive codes), and a provider's own tokenizer is the
+ * one that decides. Fitting to the last token turns a small estimation error
+ * into a rejected request.
+ *
+ * Measured without it, the worst project batch landed 4 tokens under a 7,270
+ * budget. At 12% the same batches carry roughly 850 tokens of slack.
+ */
+const BATCH_HEADROOM_FRACTION = 0.12;
+/** Used only when no provider profile resolves at all. */
+const DEFAULT_BATCH_INPUT_BUDGET_TOKENS = 7_000;
 const MAX_REQUIREMENT_CHARS = 8_000;
 const MAX_METHODOLOGY_CHARS = 2_000;
 const MAX_PROFILE_CHARS = 800;
@@ -391,6 +499,37 @@ function calibrate(
   return { ...assessment, perspectives, overallScore, concern, recommendSelection };
 }
 
+/**
+ * The longest prefix of `candidates` whose built prompt fits `budgetTokens`.
+ *
+ * Seeded from the caller's per-candidate estimate, then measured and shrunk,
+ * because candidates are not uniform: one project summary can cost several
+ * times another, and extrapolating from the first alone produced an
+ * 18-candidate batch measuring 7,747 tokens against a 7,270 budget.
+ *
+ * Always returns at least one candidate. A single candidate too large for the
+ * tightest provider is still attempted: the chain's larger-budget providers may
+ * serve it, and refusing would drop it from matching altogether.
+ */
+export function largestFittingBatch<T>(
+  candidates: readonly T[],
+  buildPrompt: (batch: T[]) => string,
+  budgetTokens: number,
+  estimate: { fixedTokens: number; perCandidateTokens: number },
+): T[] {
+  if (candidates.length === 0) return [];
+  let size = batchSizeForBudget({
+    fixedTokens: estimate.fixedTokens,
+    perCandidateTokens: estimate.perCandidateTokens,
+    budgetTokens,
+    maxBatch: Math.min(MAX_CANDIDATES_PER_MATCHER_BATCH, candidates.length),
+  });
+  while (size > 1 && estimateInputTokens(buildPrompt(candidates.slice(0, size) as T[])) > budgetTokens) {
+    size -= 1;
+  }
+  return candidates.slice(0, Math.max(1, size)) as T[];
+}
+
 async function assessBatches<T>(
   category: "EXPERT" | "PROJECT",
   candidates: T[],
@@ -401,8 +540,32 @@ async function assessBatches<T>(
   const startedAt = Date.now();
   const assessments: CandidateAssessment[] = [];
 
-  for (let index = 0; index < candidates.length; index += MAX_CANDIDATES_PER_MATCHER_BATCH) {
-    const batch = candidates.slice(index, index + MAX_CANDIDATES_PER_MATCHER_BATCH);
+  // Size the batch from the prompt this category actually produces, against the
+  // tightest budget in the chain. Measured here rather than assumed: the same
+  // builder that will send the request is used to price a zero-candidate and a
+  // one-candidate prompt, so a change to any field a candidate contributes is
+  // reflected without touching this code.
+  const budgetTokens = tightestChainInputBudget();
+  const fixedTokens = estimateInputTokens(buildPrompt([]));
+  const perCandidateTokens = Math.max(1, estimateInputTokens(buildPrompt(candidates.slice(0, 1))) - fixedTokens);
+  logger.info(
+    `[ai-multi-perspective-matcher] ${category} batching: budget ${budgetTokens} tok, fixed ${fixedTokens} tok, `
+    + `~${perCandidateTokens} tok/candidate, ${candidates.length} candidate(s).`,
+  );
+
+  let batchCount = 0;
+  for (let index = 0; index < candidates.length; ) {
+    // Candidates are not uniform — one project summary can cost several times
+    // another — so the estimate only seeds the guess and the built prompt is
+    // then measured and shrunk until it genuinely fits. Extrapolating from the
+    // first candidate alone produced an 18-candidate project batch measuring
+    // 7,747 tokens against a 7,270 budget.
+    const batch = largestFittingBatch(candidates.slice(index), buildPrompt, budgetTokens, {
+      fixedTokens,
+      perCandidateTokens,
+    });
+    index += batch.length;
+    batchCount += 1;
     try {
       const raw = await generateMatcherWithExpandedFallback(buildPrompt(batch));
       const parsed = parseAssessmentArray(raw);
