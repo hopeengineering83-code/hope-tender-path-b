@@ -223,7 +223,15 @@ export function buildPhaseNarrative(opts: {
   // The intro used to promise that every phase names its expert. It does so
   // only where the team actually holds that role; promising it unconditionally
   // made the phases that honestly defer the assignment read as omissions.
-  blocks.push(`The methodology is delivered across ${phases.length} phases${window}. Each phase below names the accountable role, the artefacts produced, and the quality gate that closes it.`);
+  // A rule that applies to every phase is stated once, here. It used to be
+  // repeated verbatim inside all five: the delivered proposal carried
+  // "Quality is gated inside the phase — the deliverable is peer-reviewed
+  // against the applicable standards and the tender's own requirements before
+  // it is issued. Phase exit gate: client sign-off on the phase deliverable
+  // before the next phase begins." five times over two pages. Ten identical
+  // sentences read as padding, and they crowd out the only part of each phase
+  // an evaluator is actually scoring: what it produces and who is accountable.
+  blocks.push(`The methodology is delivered across ${phases.length} phases${window}. Each phase below names the accountable role and the artefacts it produces. Every phase deliverable is peer-reviewed against the applicable standards and the tender's own requirements before issue, and each phase closes on written client sign-off before the next begins.`);
   blocks.push("");
 
   for (const phase of phases) {
@@ -241,7 +249,7 @@ export function buildPhaseNarrative(opts: {
     blocks.push("");
     blocks.push(leadLine);
     blocks.push("");
-    blocks.push(`This phase produces: ${artefacts}. Quality is gated inside the phase — the deliverable is peer-reviewed against the applicable standards and the tender's own requirements before it is issued. Phase exit gate: client sign-off on the phase deliverable before the next phase begins.`);
+    blocks.push(`This phase produces: ${artefacts}.`);
     blocks.push("");
   }
 

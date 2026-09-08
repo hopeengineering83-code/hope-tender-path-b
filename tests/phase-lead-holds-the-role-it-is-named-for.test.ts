@@ -97,3 +97,43 @@ test("no engagement window is asserted that the tender never stated", () => {
     assert.ok(stated.includes(phase.durationLabel), `narrative disagrees with the rescaled plan on "${phase.title}"`);
   }
 });
+
+test("a rule that applies to every phase is stated once, not five times", () => {
+  // The delivered proposal repeated these two sentences verbatim in all five
+  // phases, over two pages:
+  //
+  //   "Quality is gated inside the phase — the deliverable is peer-reviewed
+  //    against the applicable standards and the tender's own requirements
+  //    before it is issued. Phase exit gate: client sign-off on the phase
+  //    deliverable before the next phase begins."
+  //
+  // Ten identical sentences read as padding and crowd out the only part of a
+  // phase an evaluator scores: what it produces and who is accountable.
+  for (const sector of ["Healthcare", "Roads and Bridges", "Water Supply"]) {
+    const narrative = buildPhaseNarrative({ experts: TEAM_WITHOUT_AN_ARCHITECT, primarySector: sector });
+
+    const sentences = narrative
+      .split(/(?<=\.)\s+/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 45);
+    const counts = new Map<string, number>();
+    for (const sentence of sentences) counts.set(sentence, (counts.get(sentence) ?? 0) + 1);
+    const repeated = [...counts.entries()].filter(([, n]) => n > 1);
+    assert.deepEqual(repeated, [], `${sector}: a sentence is repeated across phases`);
+
+    // The rule is still stated — once, in the preamble, before any phase.
+    const preamble = narrative.split("### ")[0];
+    assert.match(preamble, /peer-reviewed against the applicable standards/);
+    assert.match(preamble, /written client sign-off before the next begins/);
+
+    // Every phase still says what it produces.
+    for (const phase of canonicalWorkPlan({ sector })) {
+      assert.ok(narrative.includes(phase.title), `${sector}: lost "${phase.title}"`);
+    }
+    assert.equal(
+      (narrative.match(/This phase produces:/g) ?? []).length,
+      canonicalWorkPlan({ sector }).length,
+      `${sector}: not every phase states its artefacts`,
+    );
+  }
+});
