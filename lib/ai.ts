@@ -4782,6 +4782,40 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
 }
 
 /**
+ * Which provider actually wrote the proposal.
+ *
+ * This used to be an if-chain over four names — claude, gemini, openai,
+ * deepseek — while the canonical chain has ten. A proposal written entirely by
+ * Groq, Mistral, Z.ai, Cerebras, OpenRouter or Together matched none of those
+ * branches and did not clear the variable either, so the record kept whatever
+ * `lastProposalProvider` happened to hold from an earlier call and the document
+ * was labelled with a provider that had not written a word of it.
+ *
+ * Counting the sections cannot go stale and needs no edit when the chain
+ * changes: the provider that wrote the most sections is the author, and the
+ * canonical order breaks a tie. Returns null when every section fell through to
+ * the deterministic writer — which is a real answer about authorship, not a
+ * failure, and per the owner's decision is not by itself an export gate.
+ */
+export function resolveDominantAuthor(
+  sections: ReadonlyArray<{ source: string }>,
+): AIProvider {
+  const counts = new Map<string, number>();
+  for (const section of sections) {
+    if (section.source === "fallback") continue;
+    counts.set(section.source, (counts.get(section.source) ?? 0) + 1);
+  }
+  if (counts.size === 0) return null;
+  const chainRank = (name: string) => {
+    const index = (CANONICAL_AI_PROVIDER_ORDER as readonly string[])
+      .indexOf(name === "claude" ? "anthropic" : name);
+    return index === -1 ? Number.MAX_SAFE_INTEGER : index;
+  };
+  return [...counts.entries()]
+    .sort((a, b) => (b[1] - a[1]) || (chainRank(a[0]) - chainRank(b[0])))[0][0] as AIProvider;
+}
+
+/**
  * Section-parallel replacement for generateBenchmarkProposalWithAI.
  *
  * Runs 4 small Claude calls concurrently (one per logical section
@@ -4906,22 +4940,8 @@ export async function generateProposalSectionsParallel(input: AIBidWriterInput, 
   // provider). If all successful sections used Gemini, label as Gemini.
   // If every section fell back, set null so callers can see total AI
   // failure.
-  const usedClaude = sections.some((s) => s.source === "claude");
-  const usedGemini = sections.some((s) => s.source === "gemini");
-  const usedOpenAI = sections.some((s) => s.source === "openai");
-  const usedDeepSeek = sections.some((s) => s.source === "deepseek");
-  const allFell = sections.every((s) => s.source === "fallback");
-  if (allFell) {
-    lastProposalProvider = null;
-  } else if (usedClaude) {
-    lastProposalProvider = "claude";
-  } else if (usedGemini && !usedOpenAI && !usedDeepSeek) {
-    lastProposalProvider = "gemini";
-  } else if (usedOpenAI && !usedDeepSeek) {
-    lastProposalProvider = "openai";
-  } else if (usedDeepSeek) {
-    lastProposalProvider = "deepseek";
-  }
+  const allFell = sections.every((section) => section.source === "fallback");
+  lastProposalProvider = resolveDominantAuthor(sections);
 
   // Diagnostic summary line — surfaces in Vercel runtime logs so
   // operators can see which sections completed via Claude vs Gemini vs
