@@ -528,20 +528,26 @@ function buildTable(opts: BuildOpts): string {
     return `| ${i + 1} | ${r.pain} | ${r.strength} | ${r.discriminator} | ${evidence} |`;
   });
 
-  // Optional differentiator footer — when the company has explicit
-  // differentiators, surface them as a short bullet list under the
-  // table. This isn't required by the scorer but improves readability.
+  // NO differentiator footer.
+  //
+  // This used to print `differentiators.slice(0, 5)` under "Further strengths
+  // we bring to this assignment:", and every one of those bullets was already
+  // in the document. The three other consumers partition the whole list:
+  //
+  //   Executive Summary  slice(0, 3)
+  //   Cover Letter       slice(3, 5)
+  //   Section D          slice(5)        — everything remaining
+  //
+  // so a footer taking the first five can only repeat what the summary and the
+  // cover letter just said, and nothing it could print is unreachable from
+  // Section D. The delivered proposal carried the block twice within a few
+  // pages, verbatim, under two headings — "Why we are best placed for this
+  // assignment" and then "Further strengths we bring to this assignment".
+  //
+  // Section G's content is its table. The footer was redundant by construction,
+  // not by accident of this vault's data, so it is removed rather than
+  // re-sliced: giving it the tail would simply duplicate Section D instead.
   const diffBullets: string[] = [];
-  if ((opts.differentiators ?? []).length > 0) {
-    diffBullets.push("", "**Further strengths we bring to this assignment:**");
-    for (const d of (opts.differentiators ?? []).slice(0, 5)) {
-      // Cut at a word boundary — this shipped "… and applicable aut" and
-      // "… for due-diligence spe" to the client.
-      const trimmed = truncateAtWordBoundary(String(d).trim(), 220);
-      if (!trimmed) continue;
-      diffBullets.push(`- ${trimmed}`);
-    }
-  }
 
   return [
     MARKER,
