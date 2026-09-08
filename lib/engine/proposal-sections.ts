@@ -405,7 +405,6 @@ ${structuredEvidenceOnly(input.experts).slice(0, 3_500)}
 ${selectTenderContext(input.tenderText, {
     budgetChars: COVER_TENDER_BUDGET_CHARS,
     focusTerms: [...TENDER_FOCUS_EVALUATION, ...TENDER_FOCUS_METHODOLOGY],
-    alreadyProvided: [input.evaluationMethodology, input.analysisSummary],
   }).text}
 
 ## YOUR OUTPUT
@@ -647,7 +646,6 @@ function buildTechnicalApproachPrompt(input: AIBidWriterInput): string {
   const tenderContext = selectTenderContext(input.tenderText, {
     budgetChars: TECHNICAL_APPROACH_TENDER_BUDGET_CHARS,
     focusTerms: [...TENDER_FOCUS_METHODOLOGY, ...TENDER_FOCUS_EVALUATION],
-    alreadyProvided: [input.requirements, input.evaluationMethodology, input.analysisSummary],
   });
   const tenderHeading = tenderContext.complete
     ? "## TENDER TEXT (full scope — your methodology must match this exactly)"
@@ -1018,7 +1016,6 @@ CLIENT: ${input.clientName}
 ${selectTenderContext(input.tenderText, {
     budgetChars: TECHNICAL_APPROACH_TENDER_BUDGET_CHARS,
     focusTerms: [...TENDER_FOCUS_METHODOLOGY, ...TENDER_FOCUS_EVALUATION],
-    alreadyProvided: [input.requirements, input.evaluationMethodology],
   }).text}
 
 ## EVALUATION CRITERIA (your methodology must score against these)

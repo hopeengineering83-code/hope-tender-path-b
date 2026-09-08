@@ -95,6 +95,14 @@ export function splitTenderPassages(tenderText: string): string[] {
 /**
  * Score one passage for a writer.
  *
+ * There is deliberately no discount for material that also appears in the
+ * prompt's structured blocks. The consolidated requirements are EXTRACTED FROM
+ * the tender, so every scope passage resembles them — and discounting on that
+ * resemblance pushed a scope passage out of the selection on exactly the
+ * tenders where extraction had worked best. Section C is told to echo verbatim
+ * tender quotes and cite deliverable codes, which needs the source passage with
+ * its clause numbers, not only the paraphrase built from it.
+ *
  * Focus-term density decides relevance. The length divisor keeps a long
  * passage from outranking a dense one on volume, and the numeral bonus favours
  * passages carrying the quantities, standards and clause numbers that make a
@@ -106,7 +114,7 @@ function isFocusTerm(term: string, focus: ReadonlySet<string>): boolean {
   return term.endsWith("s") && focus.has(term.slice(0, -1));
 }
 
-function scorePassage(passage: string, focus: ReadonlySet<string>, alreadyProvided: ReadonlySet<string>): number {
+function scorePassage(passage: string, focus: ReadonlySet<string>): number {
   const terms = passage.toLowerCase().split(/[^a-z0-9]+/).filter((term) => term.length >= 4);
   if (terms.length === 0) return 0;
   let hits = 0;
@@ -117,14 +125,7 @@ function scorePassage(passage: string, focus: ReadonlySet<string>, alreadyProvid
   for (const term of terms) if (isFocusTerm(term, focus)) hits += 1;
   const density = hits / Math.sqrt(terms.length);
   const numerals = /\b\d/.test(passage) ? 1.1 : 1;
-  // A passage whose vocabulary is already covered by the structured blocks in
-  // the same prompt earns its place only if it is strongly on-focus: repeating
-  // the requirements list back as raw text buys the writer nothing.
-  const distinct = new Set(terms);
-  let covered = 0;
-  for (const term of distinct) if (alreadyProvided.has(term)) covered += 1;
-  const redundancy = distinct.size === 0 ? 0 : covered / distinct.size;
-  return density * numerals * (1 - 0.5 * redundancy);
+  return density * numerals;
 }
 
 export type TenderContextSelection = {
@@ -146,8 +147,6 @@ export function selectTenderContext(
   opts: {
     budgetChars: number;
     focusTerms: readonly string[];
-    /** Blocks already present in the same prompt; their vocabulary is discounted. */
-    alreadyProvided?: readonly string[];
   },
 ): TenderContextSelection {
   const text = (tenderText ?? "").trim();
@@ -157,7 +156,6 @@ export function selectTenderContext(
   }
 
   const focus = normaliseTerms(opts.focusTerms.join(" "));
-  const alreadyProvided = normaliseTerms((opts.alreadyProvided ?? []).join(" "));
 
   const kept = new Set<number>();
   let used = 0;
@@ -171,7 +169,7 @@ export function selectTenderContext(
   }
 
   const ranked = passages
-    .map((passage, index) => ({ index, score: scorePassage(passage, focus, alreadyProvided) }))
+    .map((passage, index) => ({ index, score: scorePassage(passage, focus) }))
     .filter((row) => !kept.has(row.index))
     .sort((a, b) => (b.score - a.score) || (a.index - b.index));
 

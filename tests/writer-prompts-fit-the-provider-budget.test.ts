@@ -199,7 +199,6 @@ test("selection carries the scope the head-slice cut away", () => {
   const selected = selectTenderContext(tender, {
     budgetChars: 5_000,
     focusTerms: [...TENDER_FOCUS_METHODOLOGY, ...TENDER_FOCUS_EVALUATION],
-    alreadyProvided: [],
   });
 
   const present = (haystack: string) =>
@@ -292,4 +291,21 @@ test("Section B still receives the full evidence prose Section C drops", () => {
   const proseMarker = input.experts.split("| ")[1].slice(0, 40);
   assert.ok((sectionB.userPrompt ?? "").includes(proseMarker), "Section B lost the expert prose");
   assert.ok(!(sectionC.userPrompt ?? "").includes(proseMarker), "Section C still carries the expert prose");
+});
+
+/**
+ * The consolidated requirements are EXTRACTED FROM the tender, so every scope
+ * passage looks redundant against them. If the redundancy discount could push a
+ * scope passage below the floor, the prompt would lose the scope precisely on
+ * the tenders where extraction worked best.
+ */
+test("selection does not penalise a passage for resembling its own extracted requirements", () => {
+  const tender = tenderDocument(HOSPITAL_SCOPE);
+  const focusTerms = [...TENDER_FOCUS_METHODOLOGY, ...TENDER_FOCUS_EVALUATION];
+  const selected = selectTenderContext(tender, { budgetChars: 5_000, focusTerms });
+
+  const present = (haystack: string) =>
+    HOSPITAL_SCOPE.filter((passage) => haystack.includes(passage.split("\n\n")[1].slice(0, 60))).length;
+
+  assert.equal(present(selected.text), HOSPITAL_SCOPE.length, "a scope passage was dropped");
 });
