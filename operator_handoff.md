@@ -205,6 +205,41 @@ output allowance that small may be consumed by reasoning tokens before any
 content is emitted. If so the fix is in the output-budget clamp, not the input
 payload. Measure before changing anything.
 
+**Groq classified as an external tier-capacity constraint — by measured token
+accounting, as required, not by assumption.** Groq's `gpt-oss-120b` free tier is
+8,000 tokens *per minute* covering input AND output together (`contextTokens` is
+131,072, so this is throughput, not context). Measured through
+`preflightProvider("groq", …)` on a realistic RFP:
+
+| Section | Input | Spec requires | Preflight allows | ≈ words |
+| --- | --- | --- | --- | --- |
+| cover-and-summary | 5,070 | 2,300 | 2,712 | ~1,937 |
+| company-and-experience | 5,927 | 2,400 | 1,855 | ~1,325 |
+| technical-approach | 6,116 | 4,500 | **1,666** | **~1,190** |
+| additional-and-declaration | 3,831 | 2,000 | 3,951 | ~2,822 |
+
+Section C's prompt requires a minimum of 1,800 words (~2,571 output tokens), so a
+compliant Section C needs 6,116 + 2,571 + 400 margin = **9,087 tokens against an
+8,000 ceiling**. It cannot fit. That is also why Groq returned *empty content*
+rather than an error: `gpt-oss-120b` is a reasoning model and 1,666 tokens are
+consumed by reasoning before any content is emitted.
+
+Chunking does not rescue this. The limit is per MINUTE, not per request, so
+splitting Section C across two calls in the same minute sums to the same total.
+
+The whole pass is the decisive figure: four sections need ≈20,944 input +
+11,200 output ≈ **32,144 tokens against 8,000 per minute** — roughly 4× over.
+Making Section C alone fit would require cutting ~1,090 further input tokens,
+which at this point means removing evidence or tender context. That is forbidden
+and would be a smaller prompt masquerading as success.
+
+**Conclusion: all ten providers are now external.** Billing/credit — Cerebras,
+OpenRouter, DeepSeek, Anthropic. Credential — Together. Subscription tier —
+Mistral. Rate/capacity — OpenAI, Z.ai, Gemini. Free-tier throughput ceiling —
+Groq, proven above. The cheapest route to a scoreable benchmark is topping up
+ONE provider that is not rate-limited (Cerebras, DeepSeek or Anthropic) rather
+than Groq, whose ceiling is structural rather than a balance.
+
 **Commits this session**: `f225f796` (sector-guidance selection, semantic tender
 selection, per-section evidence compaction), `e130c9fb` (authorship counted off
 the sections, not a four-name if-chain), `f27b04b3` (log), `d947c1dc` (removed a
