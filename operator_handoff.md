@@ -143,6 +143,64 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-08T19:40Z — Claude Code (Opus 5)
+
+- **Branch / PR**: `release/consolidated-recovery-20260717` / PR #1175 (draft, base `integration/controlled-recovery`). **Not merged. Production untouched. Preview `DATABASE_URL` unchanged (fingerprint `5f9645fb34f5`).**
+- **Head at end of session**: `e130c9fb` (from `e0b47d9b`).
+- **Scope**: the owner-mandated generic prompt-payload audit — measure, do not guess — and the authorship-provenance half of the owner's fallback-export decision.
+
+**Root cause established by measurement, not inspection.** No section writer could
+reach the first provider in the canonical chain. Section C measured 8,932 input
+tokens against a Groq budget of 7,088 (gpt-oss free tier 8,000 TPM, less the
+512-token minimum useful response and preflight's 5% margin). Three costs were
+paid on every tender regardless of what the tender said:
+
+| Waste | Measured before | After |
+| --- | --- | --- |
+| Section C system prompt carried all 25 sector-catalogue bullets | 2,778 tok (1,644 of it catalogue) | 1,165–1,355 tok |
+| Every writer took the tender by head-slice | 8,000 chars containing **0 of 6** scope passages on a realistic 60,000-char RFP | 4,148 chars containing **6 of 6** |
+| Section C and the cover letter received evidence prose as well as evidence facts | proof lines in full | structured head only — 41% of the bytes, **0 of 142** names lost across the real 114-project / 28-expert vault |
+
+**Section input totals now** (worst case, 6 experts + 6 projects, realistic RFP):
+
+| Section | Tokens | Headroom vs 7,088 |
+| --- | --- | --- |
+| cover-and-summary | 5,073 | 2,015 |
+| company-and-experience | 5,927 | 1,161 |
+| technical-approach | 5,948 | 1,140 |
+| additional-and-declaration | 3,831 | 3,257 |
+
+- `f225f796` — sector guidance selected by scoring each bullet's own vocabulary
+  against the tender; semantic tender-passage selection replacing every
+  head-slice (`lib/engine/tender-context-selection.ts`, new); per-section
+  evidence compaction. Selection is sector-neutral throughout: focus terms name
+  a document role ("scope", "deliverable", "evaluation"), never an industry.
+  Section B still receives evidence prose in full — only Section C and the cover
+  letter drop it, and both only *name* projects and experts.
+- `e130c9fb` — the recorded proposal author is now counted off the sections
+  themselves. The old summary was an if-chain over four provider names while the
+  chain has ten, and because the clearing branch only ran when *every* section
+  fell back, a Groq/Mistral/Z.ai/Cerebras/OpenRouter/Together-authored proposal
+  kept a stale `lastProposalProvider` from an earlier call. Per the owner's
+  decision, authorship is recorded but is **not** an export gate and no new
+  owner click was added.
+
+**Cross-sector regression coverage** (no permanent Pharo- or healthcare-specific
+filter): healthcare, road, water, geotechnical, urban planning, construction
+supervision, industrial and donor-funded EOI each retrieve their own guidance and
+assert they do **not** retrieve healthcare's. A tender the catalogue does not
+recognise still receives the whole catalogue.
+
+**Verification actually run and quoted**: `npx tsc --noEmit` clean; `npx next lint`
+"No ESLint warnings or errors"; `npm test` with `RUN_DB_INTEGRATION=true` —
+**11,637 pass, 0 fail** (3,137 suites); `npx next build` clean.
+
+**Still open**: the 17-dimension benchmark cannot be scored honestly until a
+provider actually authors the document. The code-controlled payload blocker is
+now eliminated and proven so by measurement; what remains is per-provider
+classification on a real Preview run — which must not be bundled under a single
+"provider credit" heading.
+
 ### 2026-09-07T23:45Z — Claude Code (Opus 5)
 
 - **Branch / PR**: `release/consolidated-recovery-20260717` / PR #1175 (draft, base `integration/controlled-recovery`). **Not merged. Production untouched. Preview `DATABASE_URL` unchanged (fingerprint `5f9645fb34f5`).**
