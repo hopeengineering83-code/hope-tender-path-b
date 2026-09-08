@@ -143,6 +143,88 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-08T21:00Z — Claude Code (Opus 5) — CORRECTS the 19:40Z entry below
+
+- **Branch / PR**: `release/consolidated-recovery-20260717` / PR #1175 (draft). **Not merged. Production untouched. Preview `DATABASE_URL` unchanged.**
+- **Head**: `da08b180`. Exact-head CI green. Preview READY on `da08b180` (`dpl_6uyjpaG3xPZuNyzJeZ9mKS5Kxpe4`).
+- **Hosted acceptance run 34277170468 on `da08b180`: SUCCESS, every step**, including "Prove this run actually regenerated the artifact" and "Require real final readiness with zero blockers".
+
+**Correction to the 19:40Z entry.** That entry reported the prompt-payload work as
+complete. For the section writers it was. For the matcher it was **not**: commit
+`e0b47d9b` fixed `assessBatches`, which the engine never calls. The engine calls
+`aiRematchExperts` and `aiRematchProjects`, and both still sliced by a fixed 20.
+The test suite was green because it exercised the driver nobody calls. Do not
+trust a green suite here as evidence that a provider path changed — check the
+runtime log.
+
+**Proven in production, by control test.** The same runtime-log query run against
+both deployments:
+
+| Query "throughput budget" | Result |
+| --- | --- |
+| `dpl_53xZ…` (head `d947c1dc`, before) | `groq: Prompt exceeds the configured provider throughput budget (7358 input tokens)` (PROJECT) and `(9097 input tokens)` (EXPERT) |
+| `dpl_6uyj…` (head `da08b180`, after) | **no logs found** |
+
+**Real model work now happens where it previously could not:**
+
+| Signal | `d947c1dc` | `da08b180` |
+| --- | --- | --- |
+| Semantic alignment | `aligner returned null — falling through to legacy lexical match only` | `19 alignment(s), 5 criterion coverage record(s)` |
+| Deep-reasoning telemetry | `3.6s of AI time (9.9s wall)` | `61.3s of AI time (125.9s wall)` — comprehension 18.0s, alignment 43.4s |
+| Deep comprehension | 5 criteria, **0** disqualifier(s) | 5 criteria, **1** disqualifier |
+| Proposal version | v18 | v19 |
+
+**Section writers still did not produce model-authored prose**, and every
+remaining cause is external. Classified individually, not bundled:
+
+| Provider | Observed on `da08b180` | External? |
+| --- | --- | --- |
+| Gemini | 503 high demand; then section timeouts at 30s / 32s; then API rate limit after retries | Yes |
+| Groq | 429 TPM, and one `returned empty content` | Yes now — the code-controlled overflow is gone |
+| Mistral | 403 `tier_not_allowed` | Yes — subscription tier |
+| Z.ai | 429 rate limit | Yes |
+| Cerebras | 402 payment required | Yes — billing |
+| OpenRouter | 402 — "requested up to 2000 tokens, can only afford 892" | Yes — credit |
+| OpenAI | 429 on `gpt-4o` | Yes |
+| Together | 401 invalid API key | Yes — credential |
+| DeepSeek | 402 insufficient balance | Yes — billing |
+| Anthropic | 400 credit balance too low | Yes — billing |
+
+**Not established:** the per-section `section-parallel generation … finished`
+line could not be retrieved for the `da08b180` run — the Vercel log search
+returns it for the earlier deployment but not this one, and the returned blob is
+capped. So this entry does **not** claim the sections were or were not
+model-authored; the surrounding evidence (Gemini timeout, Groq empty, all others
+refused) indicates they were not.
+
+**Worth investigating next, not yet a claim:** Groq returned *empty content*
+rather than an error, and OpenRouter now reports a 2,000-token output request
+where it previously reported 16,000. Preflight clamps `maxOutputTokens` to what
+fits the remaining TPM window; for a reasoning model like `gpt-oss-120b` an
+output allowance that small may be consumed by reasoning tokens before any
+content is emitted. If so the fix is in the output-budget clamp, not the input
+payload. Measure before changing anything.
+
+**Commits this session**: `f225f796` (sector-guidance selection, semantic tender
+selection, per-section evidence compaction), `e130c9fb` (authorship counted off
+the sections, not a four-name if-chain), `f27b04b3` (log), `d947c1dc` (removed a
+redundancy discount that cost a scope passage), `da08b180` (the matcher batching
+the engine actually calls, plus system-prompt accounting).
+
+**Verification**: `npx tsc --noEmit` clean; `npx next lint` clean; `npm test`
+with `RUN_DB_INTEGRATION=true` — **11,640 pass, 0 fail**; `npx next build` clean.
+
+**CI note, not acted on.** `.github/workflows/ci.yml` keys concurrency on
+`github.event.pull_request.number || github.ref`, which resolves to the PR
+number for the `pull_request` event and to the ref for `push`. The two runs
+therefore land in different groups and execute the identical job concurrently on
+one SHA. On `e0b47d9b` they disagreed — the `pull_request` run passed every step
+and the `push` run failed only the E2E, windows overlapping 19:08:57–19:10:45 —
+so a green commit reported red. Both available fixes trade something an owner
+should choose (unifying the group makes the loser report `cancelled`; narrowing
+the `push` trigger removes coverage from branch pushes with no open PR), so the
+config is left alone and the finding recorded.
+
 ### 2026-09-08T19:40Z — Claude Code (Opus 5)
 
 - **Branch / PR**: `release/consolidated-recovery-20260717` / PR #1175 (draft, base `integration/controlled-recovery`). **Not merged. Production untouched. Preview `DATABASE_URL` unchanged (fingerprint `5f9645fb34f5`).**
