@@ -203,3 +203,143 @@ test("batchSizeForBudget never returns zero and respects the ceiling", () => {
   assert.equal(batchSizeForBudget({ fixedTokens: 0, perCandidateTokens: 1, budgetTokens: 1_000_000 }), MAX_CANDIDATES_PER_MATCHER_BATCH);
   assert.equal(batchSizeForBudget({ fixedTokens: 1_000, perCandidateTokens: 500, budgetTokens: 6_000 }), 10);
 });
+
+/**
+ * The first fix here was verified against the wrong function.
+ *
+ * assessBatches was made budget-driven and tested, but the engine does not call
+ * it: it calls aiRematchExperts and aiRematchProjects, and both still sliced by
+ * a fixed 20. The exact head recorded the consequence in production —
+ *
+ *   [ai-multi-perspective-matcher] PROJECT batch failed: ... groq: Prompt
+ *   exceeds the configured provider throughput budget (7358 input tokens).
+ *   [ai-multi-perspective-matcher] EXPERT batch failed: ... (9097 input tokens).
+ *
+ * — against a 6,397-token budget, while the tests were green. The tests were
+ * green because they exercised the driver nobody calls.
+ *
+ * The sizing also omitted the system prompt, which travels with every matcher
+ * request and which preflight counts, so each batch was priced ~191 tokens
+ * light.
+ *
+ * These assertions are written against the builders the two shipped functions
+ * use, and price the request the way preflight does: user prompt PLUS system
+ * prompt.
+ */
+
+import { readFileSync } from "node:fs";
+import { estimateTotalInputTokens } from "../lib/ai-preflight";
+
+/** The composed system prompt, read from source so it cannot drift from it. */
+function matcherSystemPrompt(): string {
+  const source = readFileSync(new URL("../lib/engine/ai-multi-perspective-matcher.ts", import.meta.url), "utf8");
+  const literal = (name: string) => {
+    const match = source.match(new RegExp(`const ${name}\\s*=\\s*\`([\\s\\S]*?)\`;`));
+    assert.ok(match, `could not read ${name} from source`);
+    return match[1];
+  };
+  return literal("SYSTEM_PROMPT")
+    .replace("${PERSPECTIVE_SPEC}", literal("PERSPECTIVE_SPEC"))
+    .replace("${JSON_SHAPE}", literal("JSON_SHAPE"));
+}
+
+/** Groq's real input allowance, derived the way lib/ai-preflight.ts derives it. */
+const GROQ_TPM = 8_000;
+const GROQ_HARD_INPUT_LIMIT = GROQ_TPM - 512 - Math.max(128, Math.ceil(GROQ_TPM * 0.05));
+
+test("the batching the engine actually calls prices the system prompt too", () => {
+  const system = matcherSystemPrompt();
+  const budget = tightestChainInputBudget();
+  const reserved = budget - estimateInputTokens(system);
+  assert.ok(reserved > 0, "the system prompt alone must not exhaust the chain budget");
+
+  // Candidates shaped like the owner's vault: profiles and summaries are
+  // truncated by the builders, so size varies but is bounded.
+  const experts = Array.from({ length: 28 }, (_, i) => ({
+    id: `e${i}`,
+    fullName: `Expert ${i}`,
+    title: "Senior Engineer",
+    yearsExperience: 10 + (i % 15),
+    disciplines: ["Architecture", "Structural Engineering"],
+    sectors: ["Health"],
+    certifications: ["ECAE Grade 1"],
+    profile: "p".repeat(400 + ((i * 97) % 1_200)),
+    trustLevel: "SOURCE_VERIFIED" as const,
+  }));
+  const projects = Array.from({ length: 114 }, (_, i) => ({
+    id: `p${i}`,
+    name: `Project ${i}`,
+    clientName: `Client ${i}`,
+    country: "Ethiopia",
+    sector: "Health",
+    serviceAreas: [] as string[],
+    contractValue: null,
+    currency: null,
+    startDate: null,
+    endDate: null,
+    summary: "s".repeat(300 + ((i * 131) % 1_500)),
+    trustLevel: "SOURCE_VERIFIED" as const,
+  }));
+
+  const cases: ReadonlyArray<{ label: string; candidates: unknown[]; build: (batch: never[]) => string }> = [
+    {
+      label: "EXPERT",
+      candidates: experts,
+      build: ((batch: typeof experts) => buildExpertUserPrompt({
+        tenderTitle: "Architectural Consultancy Services for a Specialty Medical Center",
+        tenderRequirementsText: "R".repeat(12_000),
+        evaluationMethodology: "M".repeat(3_000),
+        candidates: batch,
+      })) as never,
+    },
+    {
+      label: "PROJECT",
+      candidates: projects,
+      build: ((batch: typeof projects) => buildProjectUserPrompt({
+        tenderTitle: "Architectural Consultancy Services for a Specialty Medical Center",
+        tenderRequirementsText: "R".repeat(12_000),
+        tenderCategory: "Healthcare",
+        candidates: batch,
+      })) as never,
+    },
+  ];
+
+  for (const { label, candidates, build } of cases) {
+    const buildPrompt = build as unknown as (batch: unknown[]) => string;
+    const fixedTokens = estimateInputTokens(buildPrompt([]));
+    const perCandidateTokens = Math.max(1, estimateInputTokens(buildPrompt(candidates.slice(0, 1))) - fixedTokens);
+
+    let index = 0;
+    let batches = 0;
+    let worst = 0;
+    while (index < candidates.length) {
+      const batch = largestFittingBatch(candidates.slice(index), buildPrompt, reserved, {
+        fixedTokens,
+        perCandidateTokens,
+      });
+      assert.ok(batch.length > 0, `${label} batching stalled`);
+      // Priced exactly as preflight prices it.
+      worst = Math.max(worst, estimateTotalInputTokens(buildPrompt(batch), system));
+      index += batch.length;
+      batches += 1;
+      assert.ok(batches < 500, `${label} batching did not terminate`);
+    }
+    assert.ok(
+      worst <= GROQ_HARD_INPUT_LIMIT,
+      `${label} worst batch is ${worst} tokens, over Groq's ${GROQ_HARD_INPUT_LIMIT}-token input limit`,
+    );
+  }
+});
+
+test("no matcher batch loop strides by a fixed candidate count", () => {
+  const source = readFileSync(new URL("../lib/engine/ai-multi-perspective-matcher.ts", import.meta.url), "utf8");
+  // The exact shape of the shipped defect: a loop advancing by the constant
+  // rather than by however many candidates actually fitted.
+  const stride = /\+=\s*MAX_CANDIDATES_PER_MATCHER_BATCH/g;
+  const found = source.match(stride) ?? [];
+  assert.equal(
+    found.length,
+    0,
+    `${found.length} batch loop(s) still advance by MAX_CANDIDATES_PER_MATCHER_BATCH instead of by what fitted`,
+  );
+});

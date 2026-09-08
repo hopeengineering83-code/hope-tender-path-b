@@ -530,6 +530,44 @@ export function largestFittingBatch<T>(
   return candidates.slice(0, Math.max(1, size)) as T[];
 }
 
+/**
+ * Price a matcher batch against the budget the request will actually be judged
+ * against.
+ *
+ * Two things were wrong before. The system prompt travels with every matcher
+ * call and preflight counts it, but the sizing measured only the user prompt,
+ * so every batch was priced ~191 tokens light. And only one of the three batch
+ * drivers consulted a budget at all — aiRematchExperts and aiRematchProjects,
+ * the two that the engine actually calls, sliced by a fixed 20 regardless of
+ * what that produced. The live log recorded the result on the exact head:
+ * "PROJECT batch failed ... groq: Prompt exceeds the configured provider
+ * throughput budget (7358 input tokens)" and the same for EXPERT at 9,097,
+ * against a 6,397-token budget.
+ *
+ * That is not only a lost re-rank. Groq's ceiling is a per-minute throughput
+ * budget, so the oversized matcher calls that Groq refuses still leave the
+ * section writers — which run seconds later in the same minute — colliding with
+ * the same 8,000 TPM window, and they were answered 429 after the payload work
+ * had already made them small enough to send.
+ */
+function matcherBatchSizing<T>(
+  buildPrompt: (batch: T[]) => string,
+  candidates: readonly T[],
+): { budgetTokens: number; fixedTokens: number; perCandidateTokens: number } {
+  // Everything below is measured in USER-prompt tokens, and the system prompt
+  // is reserved out of the budget rather than added to each measurement. The
+  // batch builder and the shrink loop both see the user prompt only, so keeping
+  // one unit throughout is what makes the comparison mean what it says.
+  const systemTokens = estimateInputTokens(SYSTEM_PROMPT);
+  const budgetTokens = Math.max(1, tightestChainInputBudget() - systemTokens);
+  const fixedTokens = estimateInputTokens(buildPrompt([]));
+  const perCandidateTokens = Math.max(
+    1,
+    estimateInputTokens(buildPrompt(candidates.slice(0, 1) as T[])) - fixedTokens,
+  );
+  return { budgetTokens, fixedTokens, perCandidateTokens };
+}
+
 async function assessBatches<T>(
   category: "EXPERT" | "PROJECT",
   candidates: T[],
@@ -545,9 +583,7 @@ async function assessBatches<T>(
   // builder that will send the request is used to price a zero-candidate and a
   // one-candidate prompt, so a change to any field a candidate contributes is
   // reflected without touching this code.
-  const budgetTokens = tightestChainInputBudget();
-  const fixedTokens = estimateInputTokens(buildPrompt([]));
-  const perCandidateTokens = Math.max(1, estimateInputTokens(buildPrompt(candidates.slice(0, 1))) - fixedTokens);
+  const { budgetTokens, fixedTokens, perCandidateTokens } = matcherBatchSizing(buildPrompt, candidates);
   logger.info(
     `[ai-multi-perspective-matcher] ${category} batching: budget ${budgetTokens} tok, fixed ${fixedTokens} tok, `
     + `~${perCandidateTokens} tok/candidate, ${candidates.length} candidate(s).`,
@@ -600,11 +636,19 @@ export async function aiRematchExperts(opts: {
   const startedAt = Date.now();
   const allAssessments: CandidateAssessment[] = [];
 
-  for (let i = 0; i < opts.candidates.length; i += MAX_CANDIDATES_PER_MATCHER_BATCH) {
-    const batch = opts.candidates.slice(i, i + MAX_CANDIDATES_PER_MATCHER_BATCH);
-    const batchOpts = { ...opts, candidates: batch };
+  const buildExpertPrompt = (batch: ExpertCandidateInput[]) => buildExpertUserPrompt({ ...opts, candidates: batch });
+  const expertSizing = matcherBatchSizing(buildExpertPrompt, opts.candidates);
+
+  for (let i = 0; i < opts.candidates.length; ) {
+    const batch = largestFittingBatch(
+      opts.candidates.slice(i),
+      buildExpertPrompt,
+      expertSizing.budgetTokens,
+      { fixedTokens: expertSizing.fixedTokens, perCandidateTokens: expertSizing.perCandidateTokens },
+    );
+    i += batch.length;
     try {
-      const raw = await generateWithFallback(buildExpertUserPrompt(batchOpts), { systemPrompt: SYSTEM_PROMPT });
+      const raw = await generateWithFallback(buildExpertPrompt(batch), { systemPrompt: SYSTEM_PROMPT });
       const parsed = parseAssessmentArray(raw);
       if (!parsed) continue;
       const byId = new Map(batch.map((c) => [c.id, c]));
@@ -637,11 +681,19 @@ export async function aiRematchProjects(opts: {
   const startedAt = Date.now();
   const allAssessments: CandidateAssessment[] = [];
 
-  for (let i = 0; i < opts.candidates.length; i += MAX_CANDIDATES_PER_MATCHER_BATCH) {
-    const batch = opts.candidates.slice(i, i + MAX_CANDIDATES_PER_MATCHER_BATCH);
-    const batchOpts = { ...opts, candidates: batch };
+  const buildProjectPrompt = (batch: ProjectCandidateInput[]) => buildProjectUserPrompt({ ...opts, candidates: batch });
+  const projectSizing = matcherBatchSizing(buildProjectPrompt, opts.candidates);
+
+  for (let i = 0; i < opts.candidates.length; ) {
+    const batch = largestFittingBatch(
+      opts.candidates.slice(i),
+      buildProjectPrompt,
+      projectSizing.budgetTokens,
+      { fixedTokens: projectSizing.fixedTokens, perCandidateTokens: projectSizing.perCandidateTokens },
+    );
+    i += batch.length;
     try {
-      const raw = await generateWithFallback(buildProjectUserPrompt(batchOpts), { systemPrompt: SYSTEM_PROMPT });
+      const raw = await generateWithFallback(buildProjectPrompt(batch), { systemPrompt: SYSTEM_PROMPT });
       const parsed = parseAssessmentArray(raw);
       if (!parsed) continue;
       const byId = new Map(batch.map((c) => [c.id, c]));

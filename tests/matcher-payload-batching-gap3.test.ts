@@ -26,23 +26,34 @@ describe("matcher payloads are bounded and batched (Gap 3)", () => {
     assert.match(matcher, /export const MAX_CANDIDATES_PER_MATCHER_BATCH = 20;/);
   });
 
-  it("aiRematchExperts slices candidates into batches of MAX_CANDIDATES_PER_MATCHER_BATCH", () => {
+  // This assertion used to require the literal source of a fixed-stride loop —
+  // `i += MAX_CANDIDATES_PER_MATCHER_BATCH` — which pinned the defect as if it
+  // were the requirement. A batch of 20 measured 9,097 input tokens against a
+  // 6,397-token budget, so Groq refused every EXPERT batch on the exact head
+  // while this test stayed green. The requirement is that payloads are BOUNDED
+  // and batched, which is what "Gap 3" means; the bound is the provider budget,
+  // not a candidate count.
+  it("aiRematchExperts sizes each batch to the provider budget", () => {
     const idx = matcher.indexOf("export async function aiRematchExperts(");
     assert.ok(idx > -1, "aiRematchExperts must exist");
     const region = matcher.slice(idx, idx + 2000);
-    assert.match(region, /for \(let i = 0; i < opts\.candidates\.length; i \+= MAX_CANDIDATES_PER_MATCHER_BATCH\)/);
-    assert.match(region, /opts\.candidates\.slice\(i, i \+ MAX_CANDIDATES_PER_MATCHER_BATCH\)/);
-    // Each batch is a separate generateWithFallback call.
-    assert.match(region, /generateWithFallback\(buildExpertUserPrompt\(batchOpts\)/);
+    assert.match(region, /matcherBatchSizing\(buildExpertPrompt, opts\.candidates\)/);
+    assert.match(region, /largestFittingBatch\(/);
+    assert.match(region, /i \+= batch\.length;/);
+    assert.doesNotMatch(region, /i \+= MAX_CANDIDATES_PER_MATCHER_BATCH/);
+    // Each batch is still a separate generateWithFallback call.
+    assert.match(region, /generateWithFallback\(buildExpertPrompt\(batch\)/);
   });
 
-  it("aiRematchProjects slices candidates into batches of MAX_CANDIDATES_PER_MATCHER_BATCH", () => {
+  it("aiRematchProjects sizes each batch to the provider budget", () => {
     const idx = matcher.indexOf("export async function aiRematchProjects(");
     assert.ok(idx > -1, "aiRematchProjects must exist");
     const region = matcher.slice(idx, idx + 2000);
-    assert.match(region, /for \(let i = 0; i < opts\.candidates\.length; i \+= MAX_CANDIDATES_PER_MATCHER_BATCH\)/);
-    assert.match(region, /opts\.candidates\.slice\(i, i \+ MAX_CANDIDATES_PER_MATCHER_BATCH\)/);
-    assert.match(region, /generateWithFallback\(buildProjectUserPrompt\(batchOpts\)/);
+    assert.match(region, /matcherBatchSizing\(buildProjectPrompt, opts\.candidates\)/);
+    assert.match(region, /largestFittingBatch\(/);
+    assert.match(region, /i \+= batch\.length;/);
+    assert.doesNotMatch(region, /i \+= MAX_CANDIDATES_PER_MATCHER_BATCH/);
+    assert.match(region, /generateWithFallback\(buildProjectPrompt\(batch\)/);
   });
 
   it("returns partial results if a later batch fails but an earlier batch succeeded", () => {
