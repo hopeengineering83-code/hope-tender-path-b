@@ -170,11 +170,37 @@ print(json.dumps(get(f"/api/tenders/{TENDER}/matching-quality"), indent=2)[:4000
 print("\n########## PROVIDER DIAGNOSTICS (durable snapshot, no quota) ##########")
 print(json.dumps(get("/api/ai-providers/diagnostics"), indent=2)[:6000])
 
-# NOT re-running the live ?live=1 capability probe here. One live pass was
-# already taken this cycle, provider configuration has not changed since, and
-# the AI Analyze / Run Engine the owner just performed is itself a real
-# workload observation — a stronger signal than a synthetic probe, and it costs
-# no additional quota.
+# ONE live generation capability probe.
+#
+# The note that used to stand here declined the live probe because provider
+# configuration had not changed. It has: Cerebras credit is now available on
+# the same account and API key already configured in this environment, and the
+# last real workload observation for Cerebras was HTTP 402 payment_required —
+# a durable snapshot can only keep reporting that stale refusal.
+#
+# Capability is what matters, not key presence: connectivity proves the route,
+# not that the provider can return usable structured generation. This asks the
+# generation capability specifically, in a single request across the chain, so
+# it is one probe rather than a per-provider poll.
+print("\n########## PROVIDER CAPABILITY — LIVE GENERATION PROBE (one pass) ##########")
+live = get("/api/ai-providers/diagnostics?live=1&capability=generation")
+print(json.dumps(live, indent=2)[:9000])
+
+# Flatten the per-provider verdicts so the decisive line is greppable in the
+# job log without downloading the artifact.
+print("\n----- CAPABILITY VERDICTS -----")
+for row in (live.get("reports") or live.get("perProvider") or []):
+    if not isinstance(row, dict):
+        continue
+    name = row.get("provider")
+    state = row.get("diagnosticState") or row.get("status")
+    tests = row.get("tests") or row.get("capabilities") or []
+    detail = ""
+    if isinstance(tests, list):
+        for t in tests:
+            if isinstance(t, dict) and t.get("capability") == "generation":
+                detail = f" outcome={t.get('outcome')} model={t.get('model')} msg={str(t.get('safeMessage'))[:160]}"
+    print(f"  {name}: state={state}{detail}")
 
 print("\n########## BRAND ASSETS — STORAGE vs APPLICATION ##########")
 # ACTIVE metadata is not proof the bytes reached the artifact. This reports
