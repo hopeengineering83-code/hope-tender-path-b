@@ -143,6 +143,53 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-09T19:35Z — Claude Code (Opus 5) — advisory fix VERIFIED live; remaining blocker is owner-only
+
+**Branch / PR:** `release/consolidated-recovery-20260717` / PR #1175 (open, draft, unmerged). Production untouched; Preview `DATABASE_URL` unchanged; provider order unchanged.
+
+**Head:** `c5fa85c5`. Acceptance run `34395126456` — conclusion **success**, all workflow gates green, artifact regenerated (proposal v26).
+
+**The advisory fix works. Proof, from the live log rather than from the test suite:**
+
+| Signal | Before (`34388287833`) | After (`34395126456`) |
+|---|---|---|
+| `Rate limit hit (attempt 1/3)` lines | 4–6 per run | **zero** |
+| deep-reasoning AI time | `2 call(s) totalling 10.7s` | `1 call(s) totalling 1.8s` |
+| Gemini attempts per advisory call | 3 | 1 |
+
+`c5fa85c5` was needed because `e3762ea9` wrapped call sites and missed `main-engine-ai-rematch.ts`, the path `run-tender-engine` actually takes. The wrapping now lives inside the exported functions, so a new caller inherits it.
+
+**Sections are STILL 100% fallback**, and the reason is now unambiguous:
+```
+[ai] section-parallel generation (deep) finished in 2.2s —
+  cover-and-summary=fallback(1.6s) company-and-experience=fallback(1.6s)
+  technical-approach=fallback(2.2s) additional-and-declaration=fallback(1.9s)
+```
+
+**Every provider in the chain, same run, all external:**
+
+| Provider | Live result | Class |
+|---|---|---|
+| gemini | free-tier per-minute limit, immediate | capacity |
+| groq | TPM limit 8000, **Used 7988** | capacity |
+| mistral | `403 tier_not_allowed` — model not in subscription | entitlement |
+| zai | `429` + 45,000 ms timeouts | capacity |
+| cerebras | `402 payment_required` `param:"quota"` | billing |
+| openrouter | `402` — "can only afford 892" of 16,000 tokens | billing |
+| openai | `429` on `gpt-4o` | capacity |
+| together | `401` invalid API key | credential |
+| deepseek | `402` Insufficient Balance | billing |
+| anthropic | `400` credit balance too low, all 4 models | billing |
+
+**Conclusion — this is the genuinely unavoidable owner-only blocker.** The app's own contribution to the starvation has been removed and verified removed. What remains is that this account has no spendable inference capacity on any of the ten providers. No further code change can manufacture it, and the 17-dimension assessment cannot be performed on a deterministic-fallback document.
+
+**Owner options** (any ONE unblocks the benchmark): add credit to any billing-blocked provider (Anthropic, DeepSeek, OpenRouter, Cerebras); replace the invalid `TOGETHER_API_KEY`; move Mistral to a model its tier allows (it currently rejects the configured model outright); or raise Gemini/Groq above free tier.
+
+**Do NOT** remove the temporary acceptance tooling — the ≥90 benchmark has still never run against a model-authored document.
+
+**Merge status: not reviewed.** Do not merge PR #1175.
+
+
 ### 2026-09-09T18:40Z — Claude Code (Opus 5) — the fallback proposal was OUR defect, not only provider billing
 
 **Branch / PR:** `release/consolidated-recovery-20260717` / PR #1175 (open, draft, unmerged, base `integration/controlled-recovery`). Production untouched; Preview `DATABASE_URL` unchanged; provider order unchanged.
