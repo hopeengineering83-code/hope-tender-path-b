@@ -186,22 +186,6 @@ print("\n########## PROVIDER CAPABILITY — LIVE GENERATION PROBE (one pass) ###
 live = get("/api/ai-providers/diagnostics?live=1&capability=generation")
 print(json.dumps(live, indent=2)[:9000])
 
-# Flatten the per-provider verdicts so the decisive line is greppable in the
-# job log without downloading the artifact.
-print("\n----- CAPABILITY VERDICTS -----")
-for row in (live.get("reports") or live.get("perProvider") or []):
-    if not isinstance(row, dict):
-        continue
-    name = row.get("provider")
-    state = row.get("diagnosticState") or row.get("status")
-    tests = row.get("tests") or row.get("capabilities") or []
-    detail = ""
-    if isinstance(tests, list):
-        for t in tests:
-            if isinstance(t, dict) and t.get("capability") == "generation":
-                detail = f" outcome={t.get('outcome')} model={t.get('model')} msg={str(t.get('safeMessage'))[:160]}"
-    print(f"  {name}: state={state}{detail}")
-
 print("\n########## BRAND ASSETS — STORAGE vs APPLICATION ##########")
 # ACTIVE metadata is not proof the bytes reached the artifact. This reports
 # what the asset store holds; whether those bytes are embedded in the delivered
@@ -242,3 +226,18 @@ show("PROPOSAL EVIDENCE READINESS", f"/api/tenders/{TENDER}/proposal-evidence-re
 show("EXPORT READINESS", f"/api/tenders/{TENDER}/export-readiness", 8000)
 show("FINAL PACKAGE READINESS", f"/api/tenders/{TENDER}/final-package-readiness", 8000)
 show("READINESS SCORE", f"/api/tenders/{TENDER}/readiness-score", 4000)
+
+print("\n########## CAPABILITY VERDICTS (printed last — this is the answer) ##########")
+for row in (live.get("reports") or live.get("perProvider") or []):
+    if not isinstance(row, dict):
+        continue
+    name = row.get("provider")
+    state = row.get("diagnosticState") or row.get("status")
+    tests = row.get("tests") or row.get("capabilities") or []
+    detail = ""
+    if isinstance(tests, list):
+        for t in tests:
+            if isinstance(t, dict) and t.get("capability") == "generation":
+                detail = (f" outcome={t.get('outcome')} model={t.get('model')}"
+                          f" msg={str(t.get('safeMessage'))[:200]}")
+    print(f"  {name}: state={state}{detail}")
