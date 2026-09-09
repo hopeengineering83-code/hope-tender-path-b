@@ -210,9 +210,19 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     requestFormat: "cerebras",
     defaults: {
       baseUrl: "https://api.cerebras.ai/v1",
-      proposalModel: "gpt-oss-120b",
-      analysisModel: "gpt-oss-120b",
-      fastModel: "gpt-oss-120b",
+      // gpt-oss-120b is VISIBLE to this account but has no quota: the live
+      // capability probe returned HTTP 402 payment_required with param="quota"
+      // on it, from two different keys created on the account where credit is
+      // present. Visibility in /models is not entitlement to call it.
+      //
+      // The account exposes exactly three models — qwen-3.8-27b, gemma-4-31b
+      // and gpt-oss-120b — so this is the alternative with the strongest
+      // instruction-following and structured-output behaviour of the two that
+      // remain. Changed on the owner's explicit instruction to switch to a
+      // working model; the provider ORDER is untouched.
+      proposalModel: "qwen-3.8-27b",
+      analysisModel: "qwen-3.8-27b",
+      fastModel: "qwen-3.8-27b",
     },
     outputCaps: HOBBY_SAFE_CAPS, // 8K proposal tokens — safe for Vercel Hobby 45s
     // FIX: 45s timeout — same rationale as Z.ai.

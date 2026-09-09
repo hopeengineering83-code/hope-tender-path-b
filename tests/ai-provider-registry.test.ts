@@ -141,7 +141,11 @@ describe("6. Z.ai general endpoint + configured model", () => {
 describe("7. Cerebras endpoint + max_completion_tokens", () => {
   it("uses the configured endpoint and the cerebras request format", () => {
     assert.equal(getProviderBaseUrl("cerebras"), "https://api.cerebras.ai/v1");
-    assert.equal(getProviderModel("cerebras", "proposal"), "gpt-oss-120b");
+    // gpt-oss-120b is visible to the account but has no quota: the live
+    // capability probe returned HTTP 402 payment_required with param="quota"
+    // from two separate keys. Switched to qwen-3.8-27b, one of the three
+    // models the account actually exposes, on the owner's instruction.
+    assert.equal(getProviderModel("cerebras", "proposal"), "qwen-3.8-27b");
     assert.equal(getProviderEntry("cerebras").requestFormat, "cerebras");
   });
   it("the adapter wires max_completion_tokens (never a generic 16K max_tokens)", () => {
