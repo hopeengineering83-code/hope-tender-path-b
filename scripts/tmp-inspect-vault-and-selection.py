@@ -183,7 +183,12 @@ print(json.dumps(get("/api/ai-providers/diagnostics"), indent=2)[:6000])
 # generation capability specifically, in a single request across the chain, so
 # it is one probe rather than a per-provider poll.
 print("\n########## PROVIDER CAPABILITY — LIVE GENERATION PROBE (one pass) ##########")
-live = get("/api/ai-providers/diagnostics?live=1&capability=generation")
+# Connectivity, not generation, for THIS pass. availableModels comes from
+# listAccountModels and is returned whatever capability is tested, but a
+# generation test costs a real completion per provider and the 60s route
+# deadline stopped the last run after four of ten — leaving Cerebras, the one
+# provider this run exists to inspect, untested. Connectivity reaches all ten.
+live = get("/api/ai-providers/diagnostics?live=1&capability=connectivity")
 print(json.dumps(live, indent=2)[:9000])
 
 print("\n########## BRAND ASSETS — STORAGE vs APPLICATION ##########")
