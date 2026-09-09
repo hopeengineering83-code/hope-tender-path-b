@@ -346,15 +346,30 @@ async function sleep(ms: number): Promise<void> {
 }
 
 async function withRateLimitRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
+  // Advisory work gets ONE attempt, never the full retry budget.
+  //
+  // On the 2026-09-09 acceptance the engine's OPTIONAL re-rank batches spent
+  // four of Gemini's scarce free-tier per-minute calls here — two batches x
+  // (1 attempt + 2 retries, minus the throw) — and then logged that losing the
+  // result cost nothing: "optional AI reranking failed or was skipped;
+  // authoritative deterministic selection remains valid". The MANDATORY
+  // proposal writer ran moments later against a chain with nothing left and
+  // authored all four sections from the deterministic fallback.
+  //
+  // Retrying is how a caller says "I need this answer". Work whose own caller
+  // treats the answer as disposable must not outbid the work that produces the
+  // deliverable for a shared, rate-limited budget. It still gets its one
+  // attempt, so a healthy provider still enriches the result.
+  const effectiveRetries = isAdvisoryContext() ? 1 : maxRetries;
   let lastError: unknown;
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
+  for (let attempt = 0; attempt < effectiveRetries; attempt++) {
     try {
       return await fn();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      if (isRateLimitError(msg) && attempt < maxRetries - 1) {
+      if (isRateLimitError(msg) && attempt < effectiveRetries - 1) {
         const delay = Math.pow(2, attempt) * 2000; // 2s, 4s, 8s
-        logger.warn(`[ai] Rate limit hit (attempt ${attempt + 1}/${maxRetries}), retrying after ${delay}ms...`);
+        logger.warn(`[ai] Rate limit hit (attempt ${attempt + 1}/${effectiveRetries}), retrying after ${delay}ms...`);
         await sleep(delay);
         lastError = err;
         continue;
@@ -614,6 +629,38 @@ function recordProviderFailure(provider: AiProviderName, error: unknown): string
     return capture.category;
   }
   return recordProviderFailureRaw(provider, error);
+}
+
+// ─── Advisory mode ───────────────────────────────────────────────────────────
+//
+// Sibling to diagnostic mode above, for a different kind of non-authoritative
+// work: OPTIONAL enrichment that runs on the real workload path and whose
+// caller already treats failure as harmless — the multi-perspective re-rank
+// ("authoritative deterministic selection remains valid") and the semantic
+// aligner ("falling through to legacy lexical match only").
+//
+// Unlike a diagnostic, advisory work SHOULD write health state: it is real
+// traffic, and if it discovers a provider is rate-limited that is true for
+// everyone. What it must not do is outbid mandatory work for a scarce shared
+// budget. Retrying is how a caller says "I need this answer"; a caller that
+// discards the answer has not earned three attempts at it.
+//
+// So advisory mode narrows exactly one thing — the retry budget — and leaves
+// routing, cooldowns and provider order untouched.
+const advisoryStore = new AsyncLocalStorage<true>();
+
+/** True when the current async context is optional, best-effort AI work. */
+export function isAdvisoryContext(): boolean {
+  return advisoryStore.getStore() === true;
+}
+
+/**
+ * Run `fn` as advisory work: one attempt per provider instead of the full
+ * retry budget. Async context rather than a parameter, so it applies to the
+ * whole call tree without threading a flag through every adapter signature.
+ */
+export function runAsAdvisory<T>(fn: () => Promise<T>): Promise<T> {
+  return advisoryStore.run(true, fn);
 }
 
 const providerDeadlineStore = new AsyncLocalStorage<number>();
