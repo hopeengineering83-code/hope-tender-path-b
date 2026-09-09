@@ -6,6 +6,7 @@ import {
   batchSizeForBudget,
   buildExpertUserPrompt,
   buildProjectUserPrompt,
+  expectedResponseTokens,
   largestFittingBatch,
   tightestChainInputBudget,
 } from "../lib/engine/ai-multi-perspective-matcher";
@@ -341,5 +342,123 @@ test("no matcher batch loop strides by a fixed candidate count", () => {
     found.length,
     0,
     `${found.length} batch loop(s) still advance by MAX_CANDIDATES_PER_MATCHER_BATCH instead of by what fitted`,
+  );
+});
+
+/**
+ * The budget covered the question but not the answer.
+ *
+ * Batch sizing reserved a flat 512 output tokens however many candidates it
+ * sent. The response carries one object PER candidate — candidateId, twelve
+ * perspective scores, strength, concern, recommendSelection — which measures
+ * ~161 tokens pretty-printed. A 13-candidate batch, exactly what input-only
+ * sizing produced, therefore needed ~2,100 response tokens against 512
+ * reserved, and input + response came to ~8,258 against Groq's 8,000 TPM.
+ *
+ * Production recorded the outcome as `[ai] Groq openai/gpt-oss-120b returned
+ * empty content`: a reasoning model given too small an allowance spends it on
+ * reasoning and emits nothing. That reads like a provider fault while being a
+ * budget we set ourselves, and it costs a full attempt in the chain.
+ */
+
+test("the response reserve scales with the batch, because the response does", () => {
+  const one = expectedResponseTokens(1);
+  const ten = expectedResponseTokens(10);
+  assert.ok(ten > one * 5, `a 10-candidate response (${ten}) must cost far more than one (${one})`);
+  // Linear in the candidate count, with a small fixed envelope.
+  const perCandidate = expectedResponseTokens(20) - expectedResponseTokens(19);
+  assert.equal(expectedResponseTokens(21) - expectedResponseTokens(20), perCandidate);
+  // Big enough to hold the object JSON_SHAPE actually demands.
+  assert.ok(perCandidate >= 145, `per-candidate reserve ${perCandidate} is below the measured 145-token object`);
+});
+
+test("a batch's prompt AND its response together fit the provider's window", () => {
+  const system = matcherSystemPrompt();
+  const budget = tightestChainInputBudget() - estimateInputTokens(system);
+  const margin = Math.max(128, Math.ceil(GROQ_TPM * 0.05));
+
+  const experts = Array.from({ length: 28 }, (_, i) => ({
+    id: `e${i}`,
+    fullName: `Expert ${i}`,
+    title: "Senior Engineer",
+    yearsExperience: 10 + (i % 15),
+    disciplines: ["Architecture", "Structural Engineering"],
+    sectors: ["Health"],
+    certifications: ["ECAE Grade 1"],
+    profile: "p".repeat(400 + ((i * 97) % 1_200)),
+    trustLevel: "SOURCE_VERIFIED" as const,
+  }));
+  const projects = Array.from({ length: 114 }, (_, i) => ({
+    id: `p${i}`,
+    name: `Project ${i}`,
+    clientName: `Client ${i}`,
+    country: "Ethiopia",
+    sector: "Health",
+    serviceAreas: [] as string[],
+    contractValue: null,
+    currency: null,
+    startDate: null,
+    endDate: null,
+    summary: "s".repeat(300 + ((i * 131) % 1_500)),
+    trustLevel: "SOURCE_VERIFIED" as const,
+  }));
+
+  const cases = [
+    {
+      label: "EXPERT",
+      candidates: experts as unknown[],
+      build: (batch: unknown[]) => buildExpertUserPrompt({
+        tenderTitle: "Architectural Consultancy Services for a Specialty Medical Center",
+        tenderRequirementsText: "R".repeat(12_000),
+        evaluationMethodology: "M".repeat(3_000),
+        candidates: batch as never,
+      }),
+    },
+    {
+      label: "PROJECT",
+      candidates: projects as unknown[],
+      build: (batch: unknown[]) => buildProjectUserPrompt({
+        tenderTitle: "Architectural Consultancy Services for a Specialty Medical Center",
+        tenderRequirementsText: "R".repeat(12_000),
+        tenderCategory: "Healthcare",
+        candidates: batch as never,
+      }),
+    },
+  ];
+
+  for (const { label, candidates, build } of cases) {
+    const fixedTokens = estimateInputTokens(build([]));
+    const perCandidateTokens = Math.max(1, estimateInputTokens(build(candidates.slice(0, 1))) - fixedTokens);
+    let index = 0;
+    let batches = 0;
+    let worst = 0;
+    while (index < candidates.length) {
+      const batch = largestFittingBatch(candidates.slice(index), build, budget, { fixedTokens, perCandidateTokens });
+      assert.ok(batch.length > 0, `${label} batching stalled`);
+      const total = estimateTotalInputTokens(build(batch), system) + expectedResponseTokens(batch.length);
+      worst = Math.max(worst, total);
+      index += batch.length;
+      batches += 1;
+      assert.ok(batches < 500, `${label} batching did not terminate`);
+    }
+    assert.ok(
+      worst + margin <= GROQ_TPM,
+      `${label}: worst batch needs ${worst} tokens of prompt+response, which with the ${margin}-token margin exceeds Groq's ${GROQ_TPM} TPM window`,
+    );
+  }
+});
+
+test("the chain budget does not also subtract a flat response reserve", () => {
+  // Reserving for the answer twice — once flat here, once per candidate in the
+  // batch sizing — would shrink batches for a cost already accounted for.
+  const source = readFileSync(new URL("../lib/engine/ai-multi-perspective-matcher.ts", import.meta.url), "utf8");
+  const budgetFn = source.slice(
+    source.indexOf("export function tightestChainInputBudget"),
+    source.indexOf("export function tightestChainInputBudget") + 1_400,
+  );
+  assert.doesNotMatch(
+    budgetFn,
+    /ceiling\s*-\s*MIN_USEFUL_OUTPUT_TOKENS_FOR_BATCHING/,
+    "the chain budget subtracts a flat output reserve again",
   );
 });

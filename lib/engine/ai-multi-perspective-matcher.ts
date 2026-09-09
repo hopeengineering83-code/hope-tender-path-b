@@ -113,9 +113,12 @@ export function tightestChainInputBudget(env: NodeJS.ProcessEnv = process.env): 
     // Mirror lib/ai-preflight.ts: a useful response and a 5% margin must fit
     // beside the input, or preflight rejects the request. Then keep operating
     // headroom below that, so an estimation error does not become a rejection.
+    // The response reserve is NOT subtracted here any more. It scales with
+    // batch size, so it is charged per candidate inside largestFittingBatch;
+    // subtracting a flat 512 as well would reserve for the answer twice and
+    // still be wrong for every batch larger than three candidates.
     const usable = Math.floor(
-      (ceiling - MIN_USEFUL_OUTPUT_TOKENS_FOR_BATCHING - Math.max(128, Math.ceil(ceiling * 0.05)))
-      * (1 - BATCH_HEADROOM_FRACTION),
+      (ceiling - Math.max(128, Math.ceil(ceiling * 0.05))) * (1 - BATCH_HEADROOM_FRACTION),
     );
     if (usable > 0) tightest = Math.min(tightest, usable);
   }
@@ -124,6 +127,31 @@ export function tightestChainInputBudget(env: NodeJS.ProcessEnv = process.env): 
 
 /** Mirrors MIN_USEFUL_OUTPUT_TOKENS in lib/ai-preflight.ts. */
 const MIN_USEFUL_OUTPUT_TOKENS_FOR_BATCHING = 512;
+
+/**
+ * Output tokens one candidate's assessment costs in the response.
+ *
+ * The batch budget used to reserve a flat 512 output tokens however many
+ * candidates it sent. But the response carries one object PER candidate, and
+ * JSON_SHAPE requires each to hold candidateId, twelve perspective scores,
+ * strength, concern and recommendSelection. Serialised, that object measures
+ * 145 tokens compact and 161 pretty-printed, so a 13-candidate batch — exactly
+ * what the input-only sizing produced — needs about 1,900 output tokens against
+ * the 512 reserved.
+ *
+ * The provider is then asked for a response that cannot fit. Groq recorded the
+ * outcome in production as `openai/gpt-oss-120b returned empty content`: a
+ * reasoning model spends the short allowance on reasoning and emits nothing,
+ * which costs a full attempt and reads like a provider fault rather than a
+ * budget we set ourselves.
+ *
+ * 176 is the pretty-printed measurement plus ~10% slack, because a model may
+ * indent more generously than JSON.stringify does.
+ */
+const RESPONSE_TOKENS_PER_CANDIDATE = 176;
+
+/** Fixed response overhead beyond the per-candidate objects (brackets, commas). */
+const RESPONSE_ENVELOPE_TOKENS = 16;
 
 /**
  * Operating headroom below the provider's hard budget.
@@ -511,6 +539,11 @@ function calibrate(
  * tightest provider is still attempted: the chain's larger-budget providers may
  * serve it, and refusing would drop it from matching altogether.
  */
+/** Output tokens a response covering `size` candidates needs. */
+export function expectedResponseTokens(size: number): number {
+  return RESPONSE_ENVELOPE_TOKENS + (RESPONSE_TOKENS_PER_CANDIDATE * Math.max(0, size));
+}
+
 export function largestFittingBatch<T>(
   candidates: readonly T[],
   buildPrompt: (batch: T[]) => string,
@@ -518,13 +551,24 @@ export function largestFittingBatch<T>(
   estimate: { fixedTokens: number; perCandidateTokens: number },
 ): T[] {
   if (candidates.length === 0) return [];
+  // The budget has to cover the answer as well as the question, and the answer
+  // grows with the batch: every extra candidate adds both prompt tokens and a
+  // response object. Charging both to each candidate keeps the seed honest, so
+  // the shrink loop below starts near the answer instead of walking down from a
+  // size that was never going to fit.
   let size = batchSizeForBudget({
-    fixedTokens: estimate.fixedTokens,
-    perCandidateTokens: estimate.perCandidateTokens,
+    fixedTokens: estimate.fixedTokens + RESPONSE_ENVELOPE_TOKENS,
+    perCandidateTokens: estimate.perCandidateTokens + RESPONSE_TOKENS_PER_CANDIDATE,
     budgetTokens,
     maxBatch: Math.min(MAX_CANDIDATES_PER_MATCHER_BATCH, candidates.length),
   });
-  while (size > 1 && estimateInputTokens(buildPrompt(candidates.slice(0, size) as T[])) > budgetTokens) {
+  // Candidates are not uniform, so the estimate only seeds the guess: the built
+  // prompt is measured and the batch shrunk until prompt AND response together
+  // fit the budget.
+  while (
+    size > 1
+    && estimateInputTokens(buildPrompt(candidates.slice(0, size) as T[])) + expectedResponseTokens(size) > budgetTokens
+  ) {
     size -= 1;
   }
   return candidates.slice(0, Math.max(1, size)) as T[];
