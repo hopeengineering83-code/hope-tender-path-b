@@ -143,6 +143,75 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-09T17:15Z — Claude Code (Opus 5) — Cerebras: the model is pinned by ENV, not code
+
+**Head `59244907`. PR #1175 draft, unmerged. Production untouched. Preview DB unchanged.**
+
+**The Cerebras block is a MODEL ENTITLEMENT problem, and the model is set in the
+Vercel Preview environment — not in this repository.**
+
+The live capability probe enumerated the account:
+
+```
+cerebras availableModels (3): qwen-3.8-27b, gemma-4-31b, gpt-oss-120b
+         resolvedModels proposal=gpt-oss-120b   modelVisible=true
+         [connectivity] status=failed  category=BILLING
+         HTTP 402 payment_required  param="quota"  on gpt-oss-120b
+```
+
+`gpt-oss-120b` is VISIBLE to the account but has no quota. Two different keys,
+both created on the account where credit is present, both 402. Visibility in
+`/models` is not entitlement to call it — which is why replacing the key changed
+nothing.
+
+`59244907` moved the code default to `qwen-3.8-27b`. The Preview redeployed on
+that exact commit (`dpl_Hm4hSez`, SHA verified) **and still called
+`gpt-oss-120b`**. That is only possible via the environment, because:
+
+- `getProviderModel()` returns `env[CEREBRAS_*_MODEL]` when set and only then
+  falls through to `entry.defaults` (lib/ai-provider-registry.ts ~596);
+- `resolveVerifiedModel()` always returns the CONFIGURED model and merely
+  annotates `confirmedByProvider` — it never substitutes one from the account
+  list, so diagnostics cannot be selecting it either.
+
+**OWNER ACTION — Vercel → Preview env, then redeploy** (Vercel bakes env vars in
+at build time, so a redeploy is required):
+
+| Variable | Set to |
+| --- | --- |
+| `CEREBRAS_PROPOSAL_MODEL` | `qwen-3.8-27b` (or delete) |
+| `CEREBRAS_ANALYSIS_MODEL` | `qwen-3.8-27b` (or delete) |
+| `CEREBRAS_FAST_MODEL` | `qwen-3.8-27b` (or delete) — the connectivity probe used this one and logged `gpt-oss-120b` |
+
+Deleting all three lets the new code default apply. `gemma-4-31b` is the only
+other model the account exposes if qwen also has no quota.
+
+**Three more providers are configured with models their accounts do not expose**
+(same class, all show `modelVisible=false`; NOT changed without instruction):
+
+| Provider | Configured | Account actually exposes |
+| --- | --- | --- |
+| zai | `glm-4.7-flash` | `glm-4.7`, `glm-5.3-flash`, `glm-5.3`, `glm-5` … |
+| mistral | `mistral-large-latest` | `mistral-medium-latest`, `ministral-14b-latest` … |
+| deepseek | `deepseek-chat` | `deepseek-v4-flash`, `deepseek-v4-pro` |
+
+**Gemini and Groq both PASS the generation capability test** — gemini
+`status=ok model=gemini-3.5-flash confirmedByProvider=true`; groq
+`GENERATION_VERIFIED, usableForGeneration=true`. Their workload failures are
+rate limits and 503s, not capability. The chain is closer to working than the
+all-fallback output suggests.
+
+**Benchmark: still unscoreable.** All four sections `fallback`; the 17 dimensions
+grade what a model wrote.
+
+**Verification on `59244907`**: tsc clean; lint clean; `npm test` with
+`RUN_DB_INTEGRATION=true` **11,643 pass, 0 fail**; build clean.
+
+**Note for future sessions:** the inspection script's verdict block once guessed
+field names (`tests` where the type says `results`) and printed NOTHING, which
+reads as a clean result. It now dumps the response keys when the shape does not
+match. Do not treat an empty diagnostics section as evidence of anything.
+
 ### 2026-09-09T16:05Z — Claude Code (Opus 5)
 
 - **Branch / PR**: `release/consolidated-recovery-20260717` / PR #1175 (draft). **Not merged. Production untouched. Preview `DATABASE_URL` unchanged.**
