@@ -143,6 +143,91 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-09T16:05Z — Claude Code (Opus 5)
+
+- **Branch / PR**: `release/consolidated-recovery-20260717` / PR #1175 (draft). **Not merged. Production untouched. Preview `DATABASE_URL` unchanged.**
+- **Head**: `e21a104e`. Exact-head CI green, Vercel deployment green, dependency audit green.
+- **Trigger**: owner reported Cerebras credit available on the same account/API key already configured in Preview.
+
+**Cerebras is still refusing. Three independent observations, two deployments:**
+
+| When | Path | Result |
+| --- | --- | --- |
+| 14:48:56 | live generation capability probe | `402 payment_required`, `param: quota` |
+| 14:53:16 | acceptance run 34366348058 | identical |
+| 15:58:59 | acceptance run 34373370679 (new head) | identical |
+
+`Cerebras error 402 on gpt-oss-120b: "Payment required to access this resource.
+Visit your billing tab."`
+
+**402, not 401** — the key authenticates and Cerebras recognises it; the account
+it belongs to reports no available quota for `gpt-oss-120b`. The credit is
+therefore somewhere this key cannot spend it: a different Cerebras account, or a
+plan that does not cover that model. Nothing here is fixable in code, and no key,
+model identifier, provider order or database setting was changed.
+
+**Two real defects were found and fixed while establishing that.**
+
+`3c7600c8` — **the matcher batch budget covered the question but not the answer.**
+The response carries one object PER candidate (candidateId, twelve perspective
+scores, strength, concern, recommendSelection = 145 tok compact / 161 pretty,
+measured), while the budget reserved a flat 512 tokens whatever the batch size.
+A 13-candidate batch needed ~2,100, so prompt+response came to ~8,258 against
+Groq's 8,000 TPM. Production recorded it as `Groq openai/gpt-oss-120b returned
+empty content` — a reasoning model given too small an allowance spends it on
+reasoning and emits nothing, which reads as a provider fault while being a budget
+we set. The reserve is now charged per candidate where it scales, and the flat
+subtraction removed so the answer is not reserved for twice.
+
+| | Before | After |
+| --- | --- | --- |
+| Reserve | flat 512 | 176/candidate |
+| Batch size | 12–13 | 8–9 |
+| Worst prompt+response | ~8,258 (over) | 6,836 (~760 clear) |
+
+**Confirmed in production**: on `e21a104e` Groq's `returned empty content` line is
+gone; it now reports a clean 429 rate limit instead.
+
+`e21a104e` — **the build was broken and it was not ours.** The Vercel deployment
+and the dependency check both failed on `3c7600c8` and `6cba3d50`; `6cba3d50`
+changed only a CI-runner script, so it was never the cause. New advisories landed
+after `a4425f69` passed:
+
+- `next` 15.5.22 — TWO criticals: unauthenticated RCE on windows-hosted servers
+  (GHSA-p293-qw3h-jr36) and unauthenticated RCE in the Image Optimization API via
+  AVIF (GHSA-2xp9-vwfh-vxw4)
+- `nodemailer` 9.0.1 — high: quadratic addressparser DoS (GHSA-2x7j-588g-ccc2)
+  plus three moderate allow-list/validation bypasses
+- `sharp` 0.35.3 — high: libheif (GHSA-rgj7-g3m4-5g8c)
+
+Fixed with minimal in-range patches: next → 15.5.25, nodemailer → 9.1.1, and the
+`overrides` pin for sharp 0.35.3 → 0.35.4 (that pin was what held it below the
+fix). Audit now passes; the only finding left is low-severity development-only,
+which the audit already treats as acceptable.
+
+**Benchmark status: still unscoreable.** All four sections `fallback` in both
+runs. The 17 dimensions measure what a model wrote and no model has written it,
+so the >=90 / no-dimension-<85 target cannot be assessed — this is not a quality
+shortfall that code can close.
+
+**Quality signals did improve** as providers got further before failing:
+
+| Signal | 14:53 run | 15:58 run |
+| --- | --- | --- |
+| Deep comprehension | 5 criteria, 0 disqualifiers | 5 criteria, **3 disqualifiers, 1 prohibition** |
+| AI time | 0.8s | 33.2s |
+| Section attempts | 1.6–2.2s (instant refusal) | 21.8–41.5s (real attempts, then timeout) |
+
+**Observed, deliberately NOT acted on:** `[semantic-match-aligner] AI returned
+malformed JSON — alignment skipped` on the 15:58 run. The same aligner returned
+`19 alignment(s)` two runs earlier, so this is provider variance rather than a
+verified code-controlled defect, and with no working provider a fix could not be
+validated. Left for a session that has one.
+
+**Verification**: `npx tsc --noEmit` clean; `npx next lint` clean; `npm test` with
+`RUN_DB_INTEGRATION=true` **11,643 pass, 0 fail**; `npx next build` clean on the
+upgraded Next.
+
 ### 2026-09-08T21:00Z — Claude Code (Opus 5) — CORRECTS the 19:40Z entry below
 
 - **Branch / PR**: `release/consolidated-recovery-20260717` / PR #1175 (draft). **Not merged. Production untouched. Preview `DATABASE_URL` unchanged.**
