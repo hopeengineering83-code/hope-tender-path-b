@@ -228,16 +228,37 @@ show("FINAL PACKAGE READINESS", f"/api/tenders/{TENDER}/final-package-readiness"
 show("READINESS SCORE", f"/api/tenders/{TENDER}/readiness-score", 4000)
 
 print("\n########## CAPABILITY VERDICTS (printed last — this is the answer) ##########")
-for row in (live.get("reports") or live.get("perProvider") or []):
-    if not isinstance(row, dict):
-        continue
-    name = row.get("provider")
-    state = row.get("diagnosticState") or row.get("status")
-    tests = row.get("tests") or row.get("capabilities") or []
-    detail = ""
-    if isinstance(tests, list):
-        for t in tests:
-            if isinstance(t, dict) and t.get("capability") == "generation":
-                detail = (f" outcome={t.get('outcome')} model={t.get('model')}"
-                          f" msg={str(t.get('safeMessage'))[:200]}")
-    print(f"  {name}: state={state}{detail}")
+# Field names come from ProviderCapabilityReport / CapabilityTestResult in
+# lib/ai-provider-capability-test.ts: results (not "tests"), diagnosticState,
+# availableModels. An earlier version of this block guessed "tests" and printed
+# nothing, which is worse than printing the wrong thing because it reads as a
+# clean result.
+rows = live.get("perProvider") if isinstance(live, dict) else None
+if not rows:
+    print("  NO perProvider ROWS. Raw response keys:",
+          list(live.keys()) if isinstance(live, dict) else type(live).__name__)
+    print("  Raw (first 1500):", json.dumps(live)[:1500])
+else:
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        name = row.get("provider")
+        print(f"\n  == {name} ==")
+        print(f"     diagnosticState = {row.get('diagnosticState')}")
+        print(f"     eligible={row.get('eligible')} keyPresent={row.get('keyPresent')}"
+              f" usableForGeneration={row.get('usableForGeneration')}"
+              f" usableForAiAnalyze={row.get('usableForAiAnalyze')}")
+        print(f"     resolvedModels  = {row.get('resolvedModels')}")
+        print(f"     modelVisible={row.get('modelVisible')}")
+        avail = row.get("availableModels")
+        if avail is None:
+            print("     availableModels = None (provider did not return a model list)")
+        else:
+            print(f"     availableModels ({len(avail)}): {avail}")
+        for r in (row.get("results") or []):
+            if isinstance(r, dict):
+                print(f"     [{r.get('capability')}] status={r.get('status')}"
+                      f" model={r.get('model')}"
+                      f" confirmedByProvider={r.get('modelConfirmedByProvider')}"
+                      f" category={r.get('category')}"
+                      f" msg={str(r.get('safeMessage'))[:220]}")
