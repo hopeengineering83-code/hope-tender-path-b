@@ -143,6 +143,37 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-09T18:40Z — Claude Code (Opus 5) — the fallback proposal was OUR defect, not only provider billing
+
+**Branch / PR:** `release/consolidated-recovery-20260717` / PR #1175 (open, draft, unmerged, base `integration/controlled-recovery`). Production untouched; Preview `DATABASE_URL` unchanged; provider order unchanged.
+
+**What changed my mind.** Earlier entries concluded the benchmark was unscoreable because every provider is externally blocked. That is still true of 8 of 10 (billing) — but it was not the whole story. Two hosted acceptances (`34386062480`, `34388287833`) show the app spending the one usable provider on work it then throws away.
+
+**Defect 1 — a busy provider was read as a broken one.** `f4887412`. Gemini answers a capacity shortage with HTTP 503 and the body "This model is currently experiencing high demand. Spikes in demand are usually temporary." That never says "overloaded", so it matched no entry in `OVERLOAD_PHRASES` and fell to the classifier's `status >= 500` catch-all: `PROVIDER_ERROR` (30s base, doubled by `backoffFactor` on the repeat) instead of `PROVIDER_OVERLOAD` (15s, "the shortest backoff of all"). The mandatory writer started while that cooldown was still running and logged `cover-and-summary=fallback(1.5s) ... technical-approach=fallback(1.8s)` — four fallback sections in under two seconds, never placing a provider call, on an account whose Gemini key was working.
+Files: `lib/ai-provider-classification.ts`, `tests/transient-capacity-is-not-a-provider-fault.test.ts`.
+
+**Defect 2 — optional work outbid the mandatory writer.** `e3762ea9`. On the re-run Gemini never 503'd; it hit its free-tier per-minute limit instead, because the OPTIONAL re-rank batches each took three attempts at it before the writer ran:
+```
+18:20:48 Rate limit hit (attempt 1/3)...(2/3)...  EXPERT re-rank  OPTIONAL
+18:20:58 Rate limit hit (attempt 1/3)...(2/3)...  PROJECT re-rank OPTIONAL
+18:22:35 section-parallel generation ... fallback x4   MANDATORY
+```
+The engine itself logs that losing this work is harmless ("authoritative deterministic selection remains valid"). Added `runAsAdvisory()` beside the existing `runAsDiagnostic()`: it narrows exactly one thing, `withRateLimitRetry`'s attempt count, to 1. Routing, cooldowns, provider order and model selection are deliberately untouched — advisory work is real traffic and should still record health. A test asserts that narrowness.
+Files: `lib/ai.ts`, `lib/engine/generate-elite.ts`, `tests/advisory-work-does-not-outbid-the-writer.test.ts`.
+
+**Tests actually run** (both commits, full gate on the real head): `npx tsc --noEmit` clean; `npx next lint` clean; `npm test` with `RUN_DB_INTEGRATION=true` **11,662 pass, 0 fail**; `npx next build` clean. Defect 1's test verified to FAIL without the fix (2 of 11) and pass with it.
+
+**Environment-failure warning for the next agent.** One `npm test` run reported 99 failures / 407 cancelled. That was NOT a regression: 249 failures read "Can't reach database server" and `service postgresql status` showed `down` mid-run. Restarting Postgres and re-running gave 11,662/0. Do not chase those failures as code defects — check the server first, exactly as the project guide says.
+
+**CI / deployment:** all checks green on `f4887412`; `e3762ea9` pushed and building at the time of writing.
+
+**Known risks and assumptions.** Neither fix creates model-backed authorship by itself, and I have not yet measured a run on `e3762ea9`. The `deep comprehension` stage is NOT wrapped as advisory — I had no evidence the engine treats it as disposable, and it consumed two more Gemini attempts ~9s before the writer, so it may still cool Gemini out. Whether comprehension should be advisory, or whether the writer should get a reserved first claim on scarce provider budget, is a genuine design decision with a real trade-off (advisory quality vs deliverable authorship) — it is an architectural change, so I did not make it unilaterally under the "no broad refactors" lock.
+
+**Next action:** run ONE acceptance on `e3762ea9` and read the `[ai] section-parallel generation` line. If sections are still `fallback`, the remaining lever is the comprehension/priority question above, which needs an owner decision.
+
+**Merge status: not reviewed.** Do not merge PR #1175.
+
+
 ### 2026-09-09T17:15Z — Claude Code (Opus 5) — Cerebras: the model is pinned by ENV, not code
 
 **Head `59244907`. PR #1175 draft, unmerged. Production untouched. Preview DB unchanged.**
