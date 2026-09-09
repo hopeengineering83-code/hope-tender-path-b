@@ -179,6 +179,22 @@ const RATE_LIMIT_PHRASES = [
 ];
 
 // Overload: the provider is up but has no capacity for anyone right now.
+//
+// The "high demand" phrasings are Google's. Gemini answers a capacity shortage
+// with HTTP 503 and the body "This model is currently experiencing high demand.
+// Spikes in demand are usually temporary. Please try again later." — it never
+// says "overloaded", so before these entries existed it matched nothing here
+// and fell through to rule 9's `status >= 500` catch-all as PROVIDER_ERROR.
+//
+// That misread cost a whole proposal. On the 2026-09-09 hosted acceptance the
+// engine's OPTIONAL matcher work drew that 503 twice, and PROVIDER_ERROR's 30s
+// base cooldown — doubled by backoffFactor on the second identical failure —
+// held the chain's FIRST and only generation-capable provider out past the
+// mandatory writer's start moments later. All four sections were authored by
+// the deterministic fallback in 1.5-2s without a single provider call, on an
+// account whose Gemini key was working. PROVIDER_OVERLOAD's 15s base is half
+// that at every backoff step, which is the correct reading: nothing was wrong
+// with the request, and the identical call succeeds shortly afterwards.
 const OVERLOAD_PHRASES = [
   "overloaded",
   "overloaded_error",
@@ -191,6 +207,8 @@ const OVERLOAD_PHRASES = [
   "temporarily unable to process",
   "please retry shortly",
   "no capacity",
+  "experiencing high demand",
+  "spikes in demand",
 ];
 
 // Model unavailable: the identifier we asked for is not something this account
