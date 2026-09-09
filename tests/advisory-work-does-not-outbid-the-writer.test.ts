@@ -96,13 +96,47 @@ describe("advisory AI work is bounded", () => {
     );
   });
 
-  it("both self-declared-optional call sites run as advisory", () => {
-    // These are the two the engine itself logs as discardable. If someone
-    // unwraps one, the writer starves again exactly as it did on both runs.
-    const src = read("lib/engine/generate-elite.ts");
-    assert.match(src, /runAsAdvisory\(\(\) => aiRematchExperts\(/, "expert re-rank must be advisory");
-    assert.match(src, /runAsAdvisory\(\(\) => aiRematchProjects\(/, "project re-rank must be advisory");
-    assert.match(src, /runAsAdvisory\(\(\) => alignMatchesToEvaluatorCriteria\(/, "semantic aligner must be advisory");
+  it("advisory work is wrapped at its ENTRY POINT, not at call sites", () => {
+    // This assertion exists because the first attempt at this fix wrapped call
+    // sites and missed one. generate-elite.ts was wrapped; the run-tender-engine
+    // path through main-engine-ai-rematch.ts was not, and acceptance run
+    // 34390... showed the unwrapped path still spending "attempt 1/3 ... 2/3" of
+    // Gemini's per-minute budget while the wrapped path made a single attempt.
+    //
+    // Wrapping the exported function means a NEW caller inherits the property
+    // instead of silently reintroducing the defect.
+    const cases: ReadonlyArray<[string, string]> = [
+      ["lib/engine/ai-multi-perspective-matcher.ts", "aiRematchExperts"],
+      ["lib/engine/ai-multi-perspective-matcher.ts", "aiRematchProjects"],
+      ["lib/engine/semantic-match-aligner.ts", "alignMatchesToEvaluatorCriteria"],
+      ["lib/engine/evaluation-criteria-extractor.ts", "extractDeepTenderComprehension"],
+    ];
+    for (const [file, fn] of cases) {
+      const src = read(file);
+      assert.match(
+        src,
+        new RegExp(`export async function ${fn}\\b[\\s\\S]{0,400}?runAsAdvisory\\(\\(\\) => ${fn}Impl\\(`),
+        `${fn} must delegate through runAsAdvisory in ${file}`,
+      );
+      // The implementation must not also be exported, or a caller can bypass.
+      assert.doesNotMatch(
+        src,
+        new RegExp(`export\\s+async\\s+function\\s+${fn}Impl\\b`),
+        `${fn}Impl must stay private so no caller can skip advisory mode`,
+      );
+    }
+  });
+
+  it("every caller of the optional re-rank reaches it through the wrapper", () => {
+    // The specific miss: this file called the matcher directly and was the
+    // path the engine actually takes.
+    const src = read("lib/engine/main-engine-ai-rematch.ts");
+    assert.match(src, /aiRematchExperts\(/, "expected the run-tender-engine caller to still exist");
+    assert.doesNotMatch(
+      src,
+      /aiRematchExpertsImpl\(|aiRematchProjectsImpl\(/,
+      "the run-tender-engine path must not reach past the advisory wrapper",
+    );
   });
 
   it("the mandatory section writer is NOT advisory", () => {

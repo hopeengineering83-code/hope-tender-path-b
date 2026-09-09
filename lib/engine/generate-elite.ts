@@ -5,7 +5,7 @@ import { withTransactionalGenerationGate } from "./transactional-generation-gate
 import { AlignmentType, BorderStyle, Document, Footer, Header, HeadingLevel, ImageRun, Packer, PageNumber, Paragraph, Table, TableBorders, TableCell, TableOfContents, TableRow, TextRun, WidthType } from "docx";
 import { prisma } from "../prisma";
 import { getStorageAdapter } from "../storage";
-import { generateBenchmarkProposalWithAI, generateProposalSectionsParallel, getLastProposalProvider, isAIEnabled, refineProposalWithAI, runAsAdvisory } from "../ai";
+import { generateBenchmarkProposalWithAI, generateProposalSectionsParallel, getLastProposalProvider, isAIEnabled, refineProposalWithAI } from "../ai";
 import { PROPOSAL_AI_TIMEOUT_MS } from "../timeout-config";
 import { detectAnalysisSource } from "./analysis-source";
 import { isDeepReasoningEnabled, isToolUseGenerationEnabled, shouldUseDeepReasoning } from "./feature-flags";
@@ -1602,28 +1602,27 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       // finished — losing the faster result if the budget guard fired first.
       const batchHolder = { expert: null as Awaited<ReturnType<typeof aiRematchExperts>>, project: null as Awaited<ReturnType<typeof aiRematchProjects>> };
 
-      // runAsAdvisory: this re-rank is optional — the budget guard below already
-      // discards it on timeout, and the engine keeps the deterministic ordering
-      // when it yields nothing. Advisory mode gives it one attempt per provider
-      // instead of the full retry budget, so it cannot spend a rate-limited
-      // provider's scarce per-minute calls on a result we are willing to throw
-      // away and leave the mandatory section writer with nothing to call.
+      // This re-rank is optional — the budget guard below discards it on
+      // timeout and the engine keeps the deterministic ordering when it yields
+      // nothing. aiRematchExperts/aiRematchProjects carry runAsAdvisory
+      // internally, so this and the run-tender-engine caller both get one
+      // attempt per provider rather than the full retry budget.
       const expertRematch = expertCandidates.length > 0
-        ? runAsAdvisory(() => aiRematchExperts({
+        ? aiRematchExperts({
             tenderTitle: cleanedTenderTitle,
             tenderRequirementsText,
             evaluationMethodology: intelligence.evaluationCriteriaWriterNotes.join("; ") || "—",
             candidates: expertCandidates,
-          })).then((r) => { batchHolder.expert = r; return r; })
+          }).then((r) => { batchHolder.expert = r; return r; })
         : Promise.resolve(null);
 
       const projectRematch = projectCandidates.length > 0
-        ? runAsAdvisory(() => aiRematchProjects({
+        ? aiRematchProjects({
             tenderTitle: cleanedTenderTitle,
             tenderRequirementsText,
             tenderCategory: tender.category ?? null,
             candidates: projectCandidates,
-          })).then((r) => { batchHolder.project = r; return r; })
+          }).then((r) => { batchHolder.project = r; return r; })
         : Promise.resolve(null);
 
       const budgetGuard = new Promise<null>((resolve) =>
@@ -1881,16 +1880,16 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
               currency: p.currency ?? null,
             },
           }));
-          // Advisory for the same reason as the re-rank above: when this yields
-          // null the engine logs "falling through to legacy lexical match only"
-          // and carries on. One attempt, not the full retry budget.
-          alignmentReport = await deepTelemetry.track("alignment", () => runAsAdvisory(() => alignMatchesToEvaluatorCriteria({
+          // Advisory (inside alignMatchesToEvaluatorCriteria) for the same
+          // reason: when this yields null the engine logs "falling through to
+          // legacy lexical match only" and carries on.
+          alignmentReport = await deepTelemetry.track("alignment", () => alignMatchesToEvaluatorCriteria({
             tenderTitle: cleanedTenderTitle,
             clientName: intelligence.clientName,
             comprehension: deepComprehension,
             experts: expertCandidates,
             projects: projectCandidates,
-          })));
+          }));
           if (alignmentReport) {
             logger.info(`[generate-elite] Semantic alignment: ${alignmentReport.alignments.length} alignment(s), ${alignmentReport.coverageByCriterion.length} criterion coverage record(s).`);
           } else {

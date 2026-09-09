@@ -1,5 +1,5 @@
 import { logger } from "../observability";
-import { generateWithFallback } from "../ai";
+import { generateWithFallback, runAsAdvisory } from "../ai";
 import { REMATCH_TIMEOUT_MS } from "../timeout-config";
 import { estimateInputTokens } from "../ai-preflight";
 import { resolveActiveModelProfile } from "../ai-model-profiles";
@@ -669,7 +669,7 @@ async function assessBatches<T>(
     : null;
 }
 
-export async function aiRematchExperts(opts: {
+async function aiRematchExpertsImpl(opts: {
   tenderTitle: string;
   tenderRequirementsText: string;
   evaluationMethodology: string;
@@ -714,7 +714,7 @@ export async function aiRematchExperts(opts: {
     : null;
 }
 
-export async function aiRematchProjects(opts: {
+async function aiRematchProjectsImpl(opts: {
   tenderTitle: string;
   tenderRequirementsText: string;
   tenderCategory?: string | null;
@@ -780,4 +780,30 @@ export function formatAssessmentRationale(assessment: CandidateAssessment): stri
   if (assessment.concern) parts.push(`Concern: ${assessment.concern}`);
   if (assessment.recommendSelection) parts.push("Selected by bounded best-available portfolio evaluation.");
   return parts.join(" ");
+}
+
+// ─── Advisory entry points ───────────────────────────────────────────────────
+//
+// The wrapping lives HERE, not at the call sites, because chasing call sites is
+// how this was missed the first time: generate-elite.ts was wrapped while
+// main-engine-ai-rematch.ts (the run-tender-engine path) was not, and the
+// production log showed the unwrapped path still spending "attempt 1/3 ...
+// 2/3" of a rate-limited provider's per-minute budget while the wrapped path
+// made a single attempt. Both callers already treat a null result as normal —
+// "deterministic main-engine matching was kept", "Lexical order kept" — so the
+// advisory property belongs to these functions, not to whoever calls them.
+// A new caller now inherits it automatically.
+
+/** Optional expert re-rank. One attempt per provider; null is a normal result. */
+export async function aiRematchExperts(
+  opts: Parameters<typeof aiRematchExpertsImpl>[0],
+): Promise<MatchAssessmentBatch | null> {
+  return runAsAdvisory(() => aiRematchExpertsImpl(opts));
+}
+
+/** Optional project re-rank. One attempt per provider; null is a normal result. */
+export async function aiRematchProjects(
+  opts: Parameters<typeof aiRematchProjectsImpl>[0],
+): Promise<MatchAssessmentBatch | null> {
+  return runAsAdvisory(() => aiRematchProjectsImpl(opts));
 }

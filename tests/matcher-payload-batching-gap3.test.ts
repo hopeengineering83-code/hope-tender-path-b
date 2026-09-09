@@ -34,8 +34,8 @@ describe("matcher payloads are bounded and batched (Gap 3)", () => {
   // and batched, which is what "Gap 3" means; the bound is the provider budget,
   // not a candidate count.
   it("aiRematchExperts sizes each batch to the provider budget", () => {
-    const idx = matcher.indexOf("export async function aiRematchExperts(");
-    assert.ok(idx > -1, "aiRematchExperts must exist");
+    const idx = matcher.indexOf("async function aiRematchExpertsImpl(");
+    assert.ok(idx > -1, "aiRematchExpertsImpl must exist (the exported name is a thin runAsAdvisory wrapper; the batching lives in the impl)");
     const region = matcher.slice(idx, idx + 2000);
     assert.match(region, /matcherBatchSizing\(buildExpertPrompt, opts\.candidates\)/);
     assert.match(region, /largestFittingBatch\(/);
@@ -46,8 +46,8 @@ describe("matcher payloads are bounded and batched (Gap 3)", () => {
   });
 
   it("aiRematchProjects sizes each batch to the provider budget", () => {
-    const idx = matcher.indexOf("export async function aiRematchProjects(");
-    assert.ok(idx > -1, "aiRematchProjects must exist");
+    const idx = matcher.indexOf("async function aiRematchProjectsImpl(");
+    assert.ok(idx > -1, "aiRematchProjectsImpl must exist (the exported name is a thin runAsAdvisory wrapper; the batching lives in the impl)");
     const region = matcher.slice(idx, idx + 2000);
     assert.match(region, /matcherBatchSizing\(buildProjectPrompt, opts\.candidates\)/);
     assert.match(region, /largestFittingBatch\(/);
@@ -57,7 +57,7 @@ describe("matcher payloads are bounded and batched (Gap 3)", () => {
   });
 
   it("returns partial results if a later batch fails but an earlier batch succeeded", () => {
-    const idx = matcher.indexOf("export async function aiRematchExperts(");
+    const idx = matcher.indexOf("async function aiRematchExpertsImpl(");
     const region = matcher.slice(idx, idx + 2000);
     assert.match(region, /if \(allAssessments\.length > 0\) break;/);
   });
