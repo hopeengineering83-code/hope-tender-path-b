@@ -519,11 +519,18 @@ if not _lh:
 else:
     for _a in _lh:
         _mime = str(_a.get("mimeType") or "")
-        _inline = _a.get("fileContentLength") or _a.get("fileContent") or 0
+        # A MISSING KEY IS NOT AN EMPTY COLUMN. The previous version printed
+        # `fileContentLength or 0` and rendered 0 for an asset the same payload
+        # reports as 126,100 bytes, because the endpoint does not return that
+        # key at all. Report which keys exist rather than a number that reads
+        # like a measurement.
+        _byte_keys = {k: _a.get(k) for k in ("fileContentLength", "size", "byteSize", "contentByteLength")
+                      if k in _a}
         _mime_ok = bool(_re.search(r"wordprocessingml\.document|msword|octet-stream", _mime, _re.I))
-        print(f"  guard 3 inline fileContent   = {_inline!r}"
-              f"   storagePath={'yes' if _a.get('storagePath') else 'no'}"
-              "   (storage-only bytes read as absent -> returns 0)")
+        print(f"  guard 3 byte fields present  = {_byte_keys or 'NONE EXPOSED BY THIS ENDPOINT'}"
+              f"   storagePath={'yes' if _a.get('storagePath') else 'no'}")
+        print("          (inline-vs-storage cannot be settled from this endpoint;"
+              " it does not return fileContent. Not evidence either way.)")
         print(f"  guard 4 mimeType accepted    = {_mime_ok}   mimeType={_mime!r}")
         print(f"          originalFileName     = {_a.get('originalFileName') or _a.get('fileName')!r}")
         print("  guard 5 looksLikeDocx(PK..)  = not observable from the API; "
@@ -531,9 +538,17 @@ else:
 
 # guard 6: per-document storagePath skip
 _au = get(f"/api/admin/generated-proposals/audit?tenderId={urllib.parse.quote(TENDER)}")
-_arows = _au.get("rows") if isinstance(_au, dict) else None
+# The audit route returns `documents` (route.ts:520), not `rows`. Reading the
+# wrong key printed "unreadable" for a payload that was perfectly readable.
+_arows = None
+if isinstance(_au, dict):
+    for _k in ("documents", "rows", "items", "results"):
+        if isinstance(_au.get(_k), list):
+            _arows = _au[_k]
+            break
 if not isinstance(_arows, list):
-    print(f"  guard 6 audit rows unreadable: {str(_au)[:300]}")
+    print(f"  guard 6 audit rows unreadable; keys="
+          f"{list(_au)[:12] if isinstance(_au, dict) else type(_au)}")
 else:
     _live = [r for r in _arows if r.get("generationStatus") != "SUPERSEDED"]
     _skipped = [r for r in _live if r.get("hasStoragePath")]
@@ -586,3 +601,8 @@ for _k in ("tenderLevelBlockers", "blockers", "failures", "finalExportReady", "o
            "readinessScore", "exportReadyDocuments", "requiredDocuments"):
     if isinstance(_fpr, dict) and _k in _fpr:
         print(f"  {_k} = {json.dumps(_fpr[_k])[:1500]}")
+
+
+print("\n--- audit summary (stale-output accumulation) ---")
+_sm = _au.get("summary") if isinstance(_au, dict) else None
+print(f"  {json.dumps(_sm, indent=2)[:1200]}" if _sm else "  (no summary in payload)")

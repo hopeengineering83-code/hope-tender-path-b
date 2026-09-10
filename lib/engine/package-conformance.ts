@@ -425,13 +425,23 @@ function checkFileFormat(
   // document that shares its envelope. See formatRuleScope() above.
   const resolved = formatRuleScope(requirement, inEnvelope);
   const inScope = resolved.docs;
-  const scopeLabel = resolved.label ?? (scope === "ALL" ? "submission" : `${scope.toLowerCase()} envelope`);
+  // Two different sentence shapes, because the two scopes are different kinds
+  // of thing. An envelope is a place documents sit in ("in the technical
+  // envelope"); a named file is the document itself, and reading "every
+  // document in the Technical Proposal.pdf" invites the owner to think the
+  // rule covers a container when it covers one file. The narrowing is also
+  // stated out loud: an owner who sees a rule pass is entitled to know it was
+  // judged against one file and why the others were not in scope.
+  const namedScope = resolved.label;
+  const scopeLabel = namedScope ?? (scope === "ALL" ? "submission" : `${scope.toLowerCase()} envelope`);
 
   if (inScope.length === 0) {
     return verdict(
       "FILE_FORMAT",
       "PENDING_PACKAGE",
-      `No current export-candidate document exists in the ${scopeLabel} yet, so the ${format} format rule cannot be observed. It is satisfied by the produced package and needs no owner-supplied evidence.`,
+      namedScope
+        ? `The rule names ${namedScope}, and no current export-candidate document by that name exists yet, so the ${format} format rule cannot be observed. It is satisfied by the produced package and needs no owner-supplied evidence.`
+        : `No current export-candidate document exists in the ${scopeLabel} yet, so the ${format} format rule cannot be observed. It is satisfied by the produced package and needs no owner-supplied evidence.`,
       observed,
     );
   }
@@ -440,14 +450,18 @@ function checkFileFormat(
     return verdict(
       "FILE_FORMAT",
       "VIOLATED",
-      `The tender requires ${format} for the ${scopeLabel}, but ${wrong.length} current document(s) are not ${format}: ${wrong.map((doc) => `${docLabel(doc)} (${docFormat(doc) || "unknown"})`).join(", ")}.`,
+      namedScope
+        ? `The tender requires ${format} for ${namedScope}, but ${wrong.length} current document(s) are not ${format}: ${wrong.map((doc) => `${docLabel(doc)} (${docFormat(doc) || "unknown"})`).join(", ")}.`
+        : `The tender requires ${format} for the ${scopeLabel}, but ${wrong.length} current document(s) are not ${format}: ${wrong.map((doc) => `${docLabel(doc)} (${docFormat(doc) || "unknown"})`).join(", ")}.`,
       observed,
     );
   }
   return verdict(
     "FILE_FORMAT",
     "SATISFIED",
-    `Every current export-candidate document in the ${scopeLabel} is ${format}, so the format rule is obeyed by construction.`,
+    namedScope
+      ? `${namedScope} is ${format}, as the rule requires. The rule names that file and no other, so no other document in the ${scope === "ALL" ? "submission" : `${scope.toLowerCase()} envelope`} is in its scope.`
+      : `Every current export-candidate document in the ${scopeLabel} is ${format}, so the format rule is obeyed by construction.`,
     observed,
   );
 }

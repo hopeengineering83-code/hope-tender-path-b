@@ -175,6 +175,48 @@ describe("a format clause governs the documents it names", () => {
     }
   });
 
+  it("says which file it judged, without calling that file a container", () => {
+    // Live verdict on tender 08e250af after the scope fix landed:
+    //
+    //   "Every current export-candidate document in the Technical Proposal.pdf
+    //    is PDF, so the format rule is obeyed by construction."
+    //
+    // The verdict was right and the sentence was wrong. Reusing the envelope
+    // phrasing for a named file tells the owner a document sits "in" another
+    // document, which reads as though the rule covers a container. These
+    // messages are what an owner sees when a release is held or cleared, so
+    // the shape of the sentence is part of the deliverable.
+    const v = verdictFor(NAMED_ONE, PACKAGE);
+    assert.equal(v.status, "SATISFIED");
+    assert.doesNotMatch(
+      v.reason,
+      /in the Technical Proposal\.pdf/,
+      `a named file is not a place documents sit in: ${v.reason}`,
+    );
+    assert.match(v.reason, /Technical Proposal\.pdf/, "the judged file must still be named");
+    assert.match(v.reason, /no other/i, "narrowed scope must be stated, not left implicit");
+
+    // The envelope reading keeps its own phrasing.
+    const envelope = verdictFor(
+      { ...NAMED_ONE, description: "All technical documents must be submitted in PDF format.", sourceExactQuote: null },
+      [doc("Technical Proposal.pdf", "TECHNICAL_PROPOSAL", "PDF")],
+    );
+    assert.equal(envelope.status, "SATISFIED");
+    assert.match(envelope.reason, /technical envelope/);
+  });
+
+  it("a violation names the file the rule governs, not the envelope", () => {
+    const v = verdictFor(NAMED_ONE, [
+      doc("Technical Proposal.docx", "TECHNICAL_PROPOSAL", "DOCX"),
+    ]);
+    assert.equal(v.status, "VIOLATED");
+    assert.doesNotMatch(
+      v.reason,
+      /for the technical envelope/,
+      `a rule narrowed to one file must not report itself as an envelope rule: ${v.reason}`,
+    );
+  });
+
   // Cross-sector: the mechanism is about clause shape, not subject matter.
   const CROSS_SECTOR: ReadonlyArray<[string, string, Doc[]]> = [
     ["road rehabilitation", "Required Documents: Bid Submission Form.pdf",
