@@ -507,6 +507,13 @@ export function mapRequirementsToEvidence(
             description: requirement.description ?? null,
             restrictions: requirement.restrictions ?? null,
             requirementType: requirement.requirementType ?? null,
+            // The tender's own words. A format clause routinely names its
+            // deliverable only in the quote — this tender's reads "Required
+            // Documents: Technical Proposal.pdf" while the description says
+            // just "in PDF format" — so dropping it here left
+            // formatRuleScope() with no file name to scope to and the rule
+            // was applied to the whole envelope.
+            sourceExactQuote: requirement.sourceExactQuote ?? null,
           },
           packageFacts,
         )

@@ -34,6 +34,7 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
+import { readFileSync } from "node:fs";
 
 import { evaluatePackageConformance, classifyPackageRule } from "../lib/engine/package-conformance";
 
@@ -138,6 +139,40 @@ describe("a format clause governs the documents it names", () => {
       PACKAGE,
     );
     assert.notEqual(v.status, "SATISFIED", "an unmatched named file must fall back, not vacuously pass");
+  });
+
+  it("every caller actually passes the tender's exact quote", () => {
+    // This test exists because the fix shipped INERT without it.
+    //
+    // formatRuleScope() reads file names from the requirement, and on this
+    // tender the file name appears ONLY in sourceExactQuote ("Required
+    // Documents: Technical Proposal.pdf") — the description says merely "in
+    // PDF format". The unit tests above passed because they construct the
+    // requirement themselves and supply the field. Production callers built
+    // a literal object without it, so namedFilesIn() found nothing, the
+    // envelope scope was kept, and the live verdict stayed VIOLATED:
+    //
+    //   "packageRule": { "family": "FILE_FORMAT", "status": "VIOLATED",
+    //     "reason": "...not PDF: Company Profile.docx (DOCX)." }
+    //
+    // A function fixed but not fed is not a fix. Assert the wiring.
+    const callers = [
+      "lib/engine/final-package-readiness-model.ts",
+      "app/api/tenders/[id]/requirement-coverage/route.ts",
+      "lib/engine/automatic-requirement-coverage.ts",
+    ];
+    for (const file of callers) {
+      const src = readFileSync(file, "utf8");
+      const at = src.indexOf("evaluatePackageConformance(");
+      assert.ok(at > -1, `${file} no longer calls evaluatePackageConformance`);
+      const call = src.slice(at, at + 900);
+      // Either the whole requirement is forwarded, or the quote is named.
+      const forwardsWholeRequirement = /evaluatePackageConformance\(\s*requirement\s*,/.test(call);
+      assert.ok(
+        forwardsWholeRequirement || /sourceExactQuote/.test(call),
+        `${file} builds a requirement for evaluatePackageConformance without sourceExactQuote`,
+      );
+    }
   });
 
   // Cross-sector: the mechanism is about clause shape, not subject matter.

@@ -357,6 +357,9 @@ export async function GET(
           title: requirement.title,
           description: requirement.description,
           requirementType: requirement.requirementType,
+          // See final-package-readiness-model.ts: a format clause often names
+          // its deliverable only in the tender's exact quote.
+          sourceExactQuote: requirement.sourceExactQuote ?? null,
         },
         packageFacts,
       );
