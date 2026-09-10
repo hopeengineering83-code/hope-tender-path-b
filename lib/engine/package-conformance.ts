@@ -120,6 +120,10 @@ export type PackageRuleRequirement = {
   restrictions?: string | null;
   requirementType?: string | null;
   exactFileName?: string | null;
+  /** The tender's own words, when the extractor captured them. Optional: a
+   *  caller that does not have it simply supplies less evidence for
+   *  formatRuleScope() to read, never different evidence. */
+  sourceExactQuote?: string | null;
 };
 
 function normalise(value: string | null | undefined): string {
@@ -322,6 +326,82 @@ function checkSingleFileConsolidation(
   );
 }
 
+// ─── Which documents a format clause actually governs ────────────────────────
+//
+// scopedEnvelope() reads the word "technical" and returns the whole TECHNICAL
+// envelope. For a clause that speaks about the envelope that is right. For a
+// clause that names ONE deliverable it is not, and the difference blocked a
+// real package.
+//
+// Live requirement on tender 08e250af, priority MANDATORY, type FORMAT:
+//
+//   description      "Submit one single consolidated Technical Proposal in PDF
+//                     format. This must be the main deliverable for the
+//                     technical bid submission."
+//   sourceExactQuote "Required Documents: Technical Proposal.pdf"
+//
+// That governs the Technical Proposal. It says nothing about a Company
+// Profile. Read envelope-wide it produced:
+//
+//   FILE_FORMAT VIOLATED — "The tender requires PDF for the technical
+//   envelope, but 1 current document(s) are not PDF: Company Profile.docx"
+//
+// and held the release, for a file the tender never asked to be a PDF. The
+// alternative "fix" — converting Company Profile to PDF — would have shipped
+// the procuring entity a format they did not request, which is worse than the
+// blocker.
+//
+// A universal quantifier keeps the envelope reading: "ALL technical documents
+// must be PDF" names a document and still means all of them.
+
+const UNIVERSAL_SCOPE_PHRASES: RegExp[] = [
+  /\b(?:all|every|each|any)\s+(?:\w+\s+){0,3}(?:documents?|files?|attachments?|deliverables?|volumes?)\b/,
+  /\b(?:entire|whole)\s+(?:submission|package|envelope)\b/,
+  /\bwithout\s+exception\b/,
+];
+
+/** Concrete file names a requirement names, e.g. "Technical Proposal.pdf". */
+function namedFilesIn(requirement: PackageRuleRequirement): string[] {
+  const raw = [
+    requirement.title,
+    requirement.description,
+    requirement.restrictions,
+    requirement.sourceExactQuote,
+    requirement.exactFileName,
+  ].filter(Boolean).join(" ");
+  const found: string[] = [];
+  for (const match of raw.matchAll(/([A-Za-z0-9][A-Za-z0-9 _'&()-]{2,80}?\.(?:pdf|docx?|xlsx?))\b/gi)) {
+    const name = match[1].trim();
+    if (name && !found.some((n) => n.toLowerCase() === name.toLowerCase())) found.push(name);
+  }
+  return found;
+}
+
+/**
+ * The documents a format clause governs.
+ *
+ * Named files win over the envelope, unless the clause is universally
+ * quantified. When a named file is not in the package at all, the envelope
+ * reading is kept rather than silently governing nothing — a rule that
+ * matches no document must not read as SATISFIED.
+ */
+function formatRuleScope(
+  requirement: PackageRuleRequirement,
+  inEnvelope: ConformanceDocument[],
+): { docs: ConformanceDocument[]; label: string | null } {
+  const text = requirementText(requirement);
+  if (UNIVERSAL_SCOPE_PHRASES.some((rx) => rx.test(text))) return { docs: inEnvelope, label: null };
+
+  const named = namedFilesIn(requirement);
+  if (named.length === 0) return { docs: inEnvelope, label: null };
+
+  const base = (value: string) => value.toLowerCase().replace(/\.[a-z0-9]+$/i, "").trim();
+  const matched = inEnvelope.filter((doc) => named.some((name) => base(name) === base(docLabel(doc))));
+  if (matched.length === 0) return { docs: inEnvelope, label: null };
+
+  return { docs: matched, label: named.length === 1 ? named[0] : named.join(", ") };
+}
+
 function checkFileFormat(
   requirement: PackageRuleRequirement,
   current: ConformanceDocument[],
@@ -338,10 +418,14 @@ function checkFileFormat(
     );
   }
   const scope = scopedEnvelope(text);
-  const inScope = scope === "ALL"
+  const inEnvelope = scope === "ALL"
     ? current
     : current.filter((doc) => envelopeOf(doc) === scope);
-  const scopeLabel = scope === "ALL" ? "submission" : `${scope.toLowerCase()} envelope`;
+  // A clause naming a specific deliverable governs that deliverable, not every
+  // document that shares its envelope. See formatRuleScope() above.
+  const resolved = formatRuleScope(requirement, inEnvelope);
+  const inScope = resolved.docs;
+  const scopeLabel = resolved.label ?? (scope === "ALL" ? "submission" : `${scope.toLowerCase()} envelope`);
 
   if (inScope.length === 0) {
     return verdict(
