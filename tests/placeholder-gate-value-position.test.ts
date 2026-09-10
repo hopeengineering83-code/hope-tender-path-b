@@ -36,6 +36,7 @@ import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 
 import { assessGeneratedDocumentQuality } from "../lib/engine/document-quality-gate";
+import { validateDocumentQuality } from "../lib/engine/document-quality-validator";
 import { valuePositionPlaceholderMatches } from "../lib/engine/detection-patterns";
 import { looksLikeMetadataPlaceholder } from "../lib/engine/tender-metadata-completeness";
 
@@ -128,6 +129,72 @@ describe("placeholder gate: value position, not vocabulary alone", () => {
         `metadata field-value detection regressed for ${value!}`,
       );
     }
+  });
+
+  it("EVERY document-prose consumer agrees, not just the gate", () => {
+    // Fixing document-quality-gate.ts alone was not enough, and the live run
+    // proved it. document-quality-validator.ts scanned prose with
+    // PLACEHOLDER_PATTERNS, whose list ended with
+    // `...METADATA_PLACEHOLDER_PATTERNS`, so it still blocked Company
+    // Profile.docx on the tender's own sentence — surfacing as
+    // qualityBlocked -> PLANNED_DOCUMENT_BLOCKED -> FINAL_ZIP_FILE_NOT_READY
+    // with the message "failed the canonical narrative-quality rubric", while
+    // the gate scored the same bytes 100/PASSED.
+    //
+    // The ambiguous vocabulary is now reachable only through
+    // documentPlaceholderMatches(), so no consumer can reintroduce this by
+    // importing a raw list.
+    const body = [
+      "Company Profile",
+      "Tender requirements addressed",
+      "Email Submission Only - Proposals shall be submitted through email to the "
+        + "designated contacts only. Hard copy submissions or portal uploads are not available.",
+    ].join("\n");
+    const bytes = Buffer.from("PKfake-docx-bytes").toString("base64");
+
+    const clean = validateDocumentQuality({
+      name: "Company Profile.docx", documentType: "COMPANY_PROFILE",
+      fileContent: bytes, storagePath: null, visibleText: body,
+    });
+    assert.equal(clean.status, "GOOD", `the second validator still blocks the tender's own sentence: ${JSON.stringify(clean.placeholders)}`);
+    assert.deepEqual(clean.placeholders, []);
+
+    const dirty = validateDocumentQuality({
+      name: "Company Profile.docx", documentType: "COMPANY_PROFILE",
+      fileContent: bytes, storagePath: null,
+      visibleText: `${body}\nClient: not available\nContact person: unknown`,
+    });
+    assert.equal(dirty.status, "BLOCKED", "a genuine unfilled field must still block");
+    assert.ok(dirty.placeholders.includes("not available"), "must name the matched phrase");
+    assert.ok(dirty.placeholders.includes("unknown"));
+  });
+
+  it("no consumer scans document prose with a raw pattern list", () => {
+    // Structural: the failure mode is a new consumer importing the list and
+    // silently reinstating the false positive in a fourth place.
+    for (const file of [
+      "lib/engine/document-quality-validator.ts",
+      "lib/engine/proposal-evaluator-loop.ts",
+      "lib/engine/authority-review.ts",
+    ]) {
+      const source = readFileSync(file, "utf8");
+      assert.match(source, /documentPlaceholderMatches/, `${file} must use the shared authority`);
+      assert.doesNotMatch(
+        source,
+        /(?<!\/\/[^\n]{0,200})\b(?:PLACEHOLDER_PATTERNS|DOCUMENT_PLACEHOLDER_PATTERNS)\.(?:some|filter|map)\b/,
+        `${file} still scans prose with a raw placeholder list`,
+      );
+    }
+  });
+
+  it("the ambiguous vocabulary is not spread into the document list", () => {
+    const source = readFileSync("lib/engine/detection-patterns.ts", "utf8");
+    const list = source.slice(
+      source.indexOf("export const DOCUMENT_PLACEHOLDER_PATTERNS"),
+      source.indexOf("// The ambiguous half deliberately does NOT live in the list above."),
+    );
+    assert.ok(list.length > 0, "DOCUMENT_PLACEHOLDER_PATTERNS not found");
+    assert.doesNotMatch(list, /\.\.\.METADATA_PLACEHOLDER_PATTERNS/, "the field-value list must not be spread into document prose patterns");
   });
 
   it("no second copy of the placeholder rule scans whole prose", () => {

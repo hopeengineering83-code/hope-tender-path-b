@@ -5,7 +5,7 @@
  * Derived from DocumentValidatorPanel to ensure consistency between UI and server.
  */
 import { looksLikeEncodedBytes } from "./encoded-content";
-import { PLACEHOLDER_PATTERNS, AI_TRACE_PATTERNS, GENERIC_BOILERPLATE_PATTERNS } from "./detection-patterns";
+import { documentPlaceholderMatches, AI_TRACE_PATTERNS, GENERIC_BOILERPLATE_PATTERNS } from "./detection-patterns";
 import { containsPricingLeakage } from "./pricing-hygiene";
 
 export interface DocumentValidationResult {
@@ -72,8 +72,13 @@ export function validateDocumentQuality(doc: {
   // content, AI traces, pricing leakage, or wrong envelope files.
   const text = doc.visibleText ?? (isBase64Like ? "" : (doc.fileContent ?? ""));
 
+  // documentPlaceholderMatches, not the raw pattern list: this validator
+  // blocked Company Profile.docx on the tender's own sentence "…portal uploads
+  // are not available" while the quality gate scored the same bytes 100/PASSED.
+  // It also now reports the matched PHRASE rather than a mangled regex source,
+  // which is what a reader can act on.
   const placeholders = hasContent && text
-    ? PLACEHOLDER_PATTERNS.filter((re) => re.test(text)).map((re) => re.source.replace(/[\\^$.*+?()[\]{}|]/g, "").slice(0, 40))
+    ? documentPlaceholderMatches(text)
     : [];
 
   const aiTrace = hasContent && text

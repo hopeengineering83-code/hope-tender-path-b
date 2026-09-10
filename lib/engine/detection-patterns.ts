@@ -106,6 +106,17 @@ export function valuePositionPlaceholderMatches(text: string): string[] {
   return found;
 }
 
+/** Sources already spelled out in the document list, so the unambiguous
+ *  metadata patterns spread in below cannot duplicate one. */
+const DOCUMENT_PLACEHOLDER_PATTERN_SOURCES = new Set<string>([
+  /\[insert [^\]]+\]/i.source,
+  /\[TBD\]/i.source,
+  /\[NAME\]/i.source,
+  /\[DATE\]/i.source,
+  /\bplaceholder\b/i.source,
+  /\bTBD\b/i.source,
+]);
+
 /** Document-level placeholder patterns — superset of metadata patterns plus
  *  bracket/template markers common in generated proposal text.
  *  Commonly used in components/document-validator-panel.tsx. */
@@ -140,10 +151,102 @@ export const DOCUMENT_PLACEHOLDER_PATTERNS: RegExp[] = [
   /\bXXX\b/,
   /\bTODO\b/i,
   /\bFIXME\b/i,
-  /to\s+be\s+(?:added|filled|completed|provided|confirmed|determined)\b/i,
   /n\/a\s+\(pending\)/i,
-  ...METADATA_PLACEHOLDER_PATTERNS,
+  // The UNAMBIGUOUS half of the metadata vocabulary belongs here — "TBC",
+  // "TBA", "Bid-Team to confirm" and friends have no innocent reading in a
+  // proposal, so they match anywhere in prose exactly as before. Only the
+  // ambiguous half (ordinary English like "not available") is withheld, and
+  // it is reachable through documentPlaceholderMatches() below. De-duplicated
+  // by source because a few entries appear in both lists and a repeated
+  // pattern would double-count occurrences.
+  ...ALWAYS_PLACEHOLDER_PATTERNS.filter(
+    (rx) => !DOCUMENT_PLACEHOLDER_PATTERN_SOURCES.has(rx.source),
+  ),
 ];
+
+// The ambiguous half deliberately does NOT live in the list above.
+//
+// DOCUMENT_PLACEHOLDER_PATTERNS used to end with
+// `...METADATA_PLACEHOLDER_PATTERNS` plus a bare
+// /to\s+be\s+(?:added|filled|completed|provided|confirmed|determined)\b/,
+// so every consumer scanning a document's PROSE with this list inherited the
+// field-value vocabulary and matched it anywhere. That is the same false
+// positive that blocked Company Profile.docx on "…portal uploads are not
+// available", and fixing only document-quality-gate.ts left it live in
+// document-quality-validator.ts, which then blocked the very same document
+// through a different path (qualityBlocked -> PLANNED_DOCUMENT_BLOCKED) while
+// the gate scored it 100/PASSED. Two authorities, one sentence, opposite
+// verdicts.
+//
+// So there is now ONE function every document-prose consumer calls, and the
+// ambiguous vocabulary is reachable only through it.
+
+/** The ambiguous half, as document-level prose sees it: value position only. */
+const DOCUMENT_VALUE_POSITION_EXTRA_SOURCES: string[] = [
+  "to\\s+be\\s+(?:added|filled|completed|provided|confirmed|determined)",
+];
+
+/**
+ * Every placeholder a DOCUMENT's prose should be blocked for.
+ *
+ * Unambiguous markers match anywhere; ordinary English only where it is the
+ * value of a field or cell. Returns the matched phrases so a caller can name
+ * them — a fail-closed gate that cannot say what it matched is not actionable.
+ */
+export function documentPlaceholderMatches(text: string): string[] {
+  if (!text) return [];
+  const found: string[] = [];
+  for (const rx of DOCUMENT_PLACEHOLDER_PATTERNS) {
+    const global = new RegExp(rx.source, rx.flags.includes("g") ? rx.flags : `${rx.flags}g`);
+    for (const match of text.matchAll(global)) {
+      const phrase = match[0].trim();
+      if (phrase && !found.includes(phrase)) found.push(phrase);
+    }
+  }
+  for (const phrase of valuePositionPlaceholderMatches(text)) {
+    if (!found.includes(phrase)) found.push(phrase);
+  }
+  for (const source of DOCUMENT_VALUE_POSITION_EXTRA_SOURCES) {
+    for (const anchor of [
+      new RegExp(`^[^\\n:]{1,60}:[ \\t]*(${source})[ \\t]*\\.?[ \\t]*$`, "gim"),
+      new RegExp(`^[ \\t]*(${source})[ \\t]*\\.?[ \\t]*$`, "gim"),
+      new RegExp(`[\\[\\(<]{1,2}[ \\t]*(${source})[ \\t]*[\\]\\)>]{1,2}`, "gi"),
+    ]) {
+      for (const match of text.matchAll(anchor)) {
+        const phrase = (match[1] ?? match[0]).trim();
+        if (phrase && !found.includes(phrase)) found.push(phrase);
+      }
+    }
+  }
+  return found;
+}
+
+/**
+ * How MANY placeholder occurrences a document's prose contains.
+ *
+ * Same rules as documentPlaceholderMatches, but counting every hit rather
+ * than distinct phrases: callers that report "N placeholder reference(s)"
+ * mean occurrences, and collapsing two "Bid-Team to confirm" into one
+ * understates the problem.
+ */
+export function documentPlaceholderOccurrences(text: string): number {
+  if (!text) return 0;
+  let count = 0;
+  for (const rx of DOCUMENT_PLACEHOLDER_PATTERNS) {
+    const global = new RegExp(rx.source, rx.flags.includes("g") ? rx.flags : `${rx.flags}g`);
+    count += [...text.matchAll(global)].length;
+  }
+  for (const source of [...VALUE_POSITION_PLACEHOLDER_SOURCES, ...DOCUMENT_VALUE_POSITION_EXTRA_SOURCES]) {
+    for (const anchor of [
+      new RegExp(`^[^\\n:]{1,60}:[ \\t]*(${source})[ \\t]*\\.?[ \\t]*$`, "gim"),
+      new RegExp(`^[ \\t]*(${source})[ \\t]*\\.?[ \\t]*$`, "gim"),
+      new RegExp(`[\\[\\(<]{1,2}[ \\t]*(${source})[ \\t]*[\\]\\)>]{1,2}`, "gi"),
+    ]) {
+      count += [...text.matchAll(anchor)].length;
+    }
+  }
+  return count;
+}
 
 /** Alias for backward compatibility with older modules. */
 export const PLACEHOLDER_PATTERNS = DOCUMENT_PLACEHOLDER_PATTERNS;

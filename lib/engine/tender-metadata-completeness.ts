@@ -35,6 +35,8 @@
 
 import {
   DOCUMENT_PLACEHOLDER_PATTERNS as _DOCUMENT_PLACEHOLDER_PATTERNS,
+  documentPlaceholderMatches,
+  documentPlaceholderOccurrences,
   METADATA_PLACEHOLDER_PATTERNS,
 } from "./detection-patterns";
 // Re-export so existing callers that import METADATA_PLACEHOLDER_PATTERNS from
@@ -256,12 +258,8 @@ export const DOCUMENT_PLACEHOLDER_PATTERNS: RegExp[] = _DOCUMENT_PLACEHOLDER_PAT
  */
 export function detectDocumentPlaceholders(content?: string | null): number {
   if (!content || typeof content !== "string") return 0;
-  let count = 0;
-  for (const rx of DOCUMENT_PLACEHOLDER_PATTERNS) {
-    const matches = content.match(new RegExp(rx.source, rx.flags + (rx.flags.includes("g") ? "" : "g")));
-    if (matches) count += matches.length;
-  }
-  return count;
+  // One authority for document prose — see documentPlaceholderMatches().
+  return documentPlaceholderOccurrences(content);
 }
 
 /**

@@ -39,7 +39,7 @@
  */
 
 import { containsPricingLeakage } from "./pricing-hygiene";
-import { AI_TRACE_PATTERNS, PLACEHOLDER_PATTERNS } from "./detection-patterns";
+import { AI_TRACE_PATTERNS, documentPlaceholderMatches } from "./detection-patterns";
 
 export type AuthorityBlockerCode =
   | "AI_TRACE"
@@ -214,14 +214,16 @@ function analyseDocument(
     });
   }
 
-  // Placeholder — uses shared PLACEHOLDER_PATTERNS for comprehensive coverage
-  if (PLACEHOLDER_PATTERNS.some((re) => re.test(text))) {
+  // Placeholder — one shared authority for document prose, so this cannot
+  // disagree with the quality gate about the same bytes.
+  const placeholderPhrases = documentPlaceholderMatches(text);
+  if (placeholderPhrases.length > 0) {
     blockers.push({
       code: "PLACEHOLDER",
       severity: "CRITICAL",
       documentId: doc.id,
       documentName: doc.name,
-      detail: `Unfilled placeholder detected: "${firstPatternMatch(PLACEHOLDER_PATTERNS, text)}"`,
+      detail: `Unfilled placeholder detected: "${placeholderPhrases[0]}"`,
       recoveryAction: "Replace all placeholder tokens with actual content before export.",
     });
   }
