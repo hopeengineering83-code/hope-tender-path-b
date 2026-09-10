@@ -422,3 +422,41 @@ else:
               f"  active={_a.get('isActive')}  status={_a.get('status')}"
               f"  bytes={_a.get('fileContentLength') or _a.get('size')}"
               f"  storagePath={'yes' if _a.get('storagePath') else 'no'}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FILE-FORMAT AUTHORITY — does the tender name a format per file, or envelope-wide?
+#
+# The remaining blocker is FILE_FORMAT VIOLATED: "The tender requires PDF for
+# the technical envelope, but 1 current document(s) are not PDF: Company
+# Profile.docx (DOCX)."
+#
+# Two opposite fixes depend on ONE fact:
+#   * if exactFileNaming itself names "Company Profile.docx", the tender wants
+#     that file as DOCX and the envelope-wide reading of the format clause is
+#     what is wrong;
+#   * if it does not, the package really should have produced a PDF.
+#
+# Converting a file the tender asked for as DOCX would ship the wrong format
+# to the procuring entity, so this is not a guess worth making.
+# ─────────────────────────────────────────────────────────────────────────────
+print("\n########## FILE-FORMAT AUTHORITY ##########")
+_t = get(f"/api/tenders/{TENDER}")
+_rec = _t.get("tender") if isinstance(_t, dict) and isinstance(_t.get("tender"), dict) else _t
+if not isinstance(_rec, dict):
+    print(f"  !! unexpected tender shape: {str(_t)[:300]}")
+else:
+    for _k in ("exactFileNaming", "exactFileOrder"):
+        print(f"  {_k} = {json.dumps(_rec.get(_k))[:900]}")
+
+print("\n--- the FILE_FORMAT requirement's own source text ---")
+_rq = get(f"/api/tenders/{TENDER}/requirements")
+_rows = _rq.get("requirements") if isinstance(_rq, dict) else (_rq if isinstance(_rq, list) else [])
+for _r in (_rows or []):
+    _title = (_r.get("title") or "")
+    if not re.search(r"technical proposal document|format|pdf", f"{_title} {_r.get('description') or ''}", re.I):
+        continue
+    print(f"  * {_title}")
+    print(f"      priority={_r.get('priority')} type={_r.get('requirementType')}")
+    print(f"      description={str(_r.get('description'))[:700]}")
+    print(f"      sourceExactQuote={str(_r.get('sourceExactQuote'))[:700]}")
