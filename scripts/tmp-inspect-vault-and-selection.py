@@ -460,3 +460,129 @@ for _r in (_rows or []):
     print(f"      priority={_r.get('priority')} type={_r.get('requirementType')}")
     print(f"      description={str(_r.get('description'))[:700]}")
     print(f"      sourceExactQuote={str(_r.get('sourceExactQuote'))[:700]}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LETTERHEAD FORENSICS — why letterheadAppliedCount is 0
+#
+# applyActiveUploadedLetterheadToTenderDocuments() returns 0 through SIX
+# indistinguishable early exits. "0" therefore carries no diagnosis, and
+# guessing which one fired would be inventing a cause. Each guard is evaluated
+# here from live data instead, so the answer names the guard.
+#
+# Signature/stamp rules are deliberately NOT merged into this: a tender that
+# demands a signed and stamped form is a different instruction from one that
+# permits company branding, and an asset existing is not an instruction to
+# apply it.
+# ─────────────────────────────────────────────────────────────────────────────
+print("\n########## LETTERHEAD FORENSICS — which guard returns 0 ##########")
+
+# guard 1: forbidsBranding(tender.requirements) — lib/engine/scope-policy.ts:103
+_BRANDING_PROHIBITION = _re.compile(
+    r"no\s+(company\s+)?(logo|letterhead|branding|stamp|seal)"
+    r"|without\s+(company\s+)?(logo|letterhead|branding|stamp|seal)"
+    r"|plain\s+template"
+    r"|do\s+not\s+(use|include)\s+(company\s+)?(logo|letterhead|branding|stamp|seal)",
+    _re.I)
+
+_rq = get(f"/api/tenders/{TENDER}/requirements")
+_rrows = _rq.get("requirements") if isinstance(_rq, dict) else (_rq if isinstance(_rq, list) else [])
+_alltext = " ".join(
+    " ".join(str(r.get(f) or "") for f in
+             ("title", "description", "restrictions", "sourceExactQuote", "category", "requirementType"))
+    for r in (_rrows or []))
+_hit = _BRANDING_PROHIBITION.search(_alltext)
+print(f"  guard 1 forbidsBranding      = {bool(_hit)}"
+      + (f"   matched {_hit.group(0)!r}" if _hit else "   (no prohibition in tender text)"))
+
+# guard 1b: the separate signature/stamp instruction — reported, never acted on
+_SIG = _re.compile(r"signature|signed|stamp|seal|company seal", _re.I)
+_sig = _SIG.search(_alltext)
+print(f"  (separate) requiresSignatureOrStamp = {bool(_sig)}"
+      + (f"   matched {_sig.group(0)!r}" if _sig else ""))
+
+# guard 2: AppSettings.allowBrandingDefault === false
+_st = get("/api/settings")
+_stv = _st.get("settings") if isinstance(_st, dict) and isinstance(_st.get("settings"), dict) else _st
+_allow = _stv.get("allowBrandingDefault") if isinstance(_stv, dict) else "?"
+print(f"  guard 2 allowBrandingDefault = {json.dumps(_allow)}   (false blocks; absent/true allows)")
+if isinstance(_stv, dict):
+    for _k in ("allowSignatureDefault", "allowStampDefault"):
+        print(f"          {_k} = {json.dumps(_stv.get(_k))}")
+
+# guards 3-5: the active LETTERHEAD asset itself
+_ba = get("/api/company/assets")
+_alist = _ba.get("assets") if isinstance(_ba, dict) else (_ba if isinstance(_ba, list) else [])
+_lh = [a for a in (_alist or []) if (a.get("assetType") or a.get("type")) == "LETTERHEAD" and a.get("isActive")]
+if not _lh:
+    print("  guard 3 active LETTERHEAD    = NONE  -> returns 0 here")
+else:
+    for _a in _lh:
+        _mime = str(_a.get("mimeType") or "")
+        _inline = _a.get("fileContentLength") or _a.get("fileContent") or 0
+        _mime_ok = bool(_re.search(r"wordprocessingml\.document|msword|octet-stream", _mime, _re.I))
+        print(f"  guard 3 inline fileContent   = {_inline!r}"
+              f"   storagePath={'yes' if _a.get('storagePath') else 'no'}"
+              "   (storage-only bytes read as absent -> returns 0)")
+        print(f"  guard 4 mimeType accepted    = {_mime_ok}   mimeType={_mime!r}")
+        print(f"          originalFileName     = {_a.get('originalFileName') or _a.get('fileName')!r}")
+        print("  guard 5 looksLikeDocx(PK..)  = not observable from the API; "
+              "a non-DOCX letterhead (PDF/PNG/JPG) fails here even when guard 4 passes")
+
+# guard 6: per-document storagePath skip
+_au = get(f"/api/admin/generated-proposals/audit?tenderId={urllib.parse.quote(TENDER)}")
+_arows = _au.get("rows") if isinstance(_au, dict) else None
+if not isinstance(_arows, list):
+    print(f"  guard 6 audit rows unreadable: {str(_au)[:300]}")
+else:
+    _live = [r for r in _arows if r.get("generationStatus") != "SUPERSEDED"]
+    _skipped = [r for r in _live if r.get("hasStoragePath")]
+    print(f"  guard 6 storage-backed docs  = {len(_skipped)}/{len(_live)} live documents"
+          "   (each one is skipped by design: branding storage-backed bytes could"
+          " replace authoritative content)")
+    for _r in _live:
+        print(f"          {_r.get('exactFileName') or _r.get('documentName')}"
+              f"  format={_r.get('format')}  storagePath={_r.get('hasStoragePath')}"
+              f"  inline={_r.get('hasFileContent')}")
+    print("          note: only DOCX bytes are letterheadable; a PDF-only package"
+          " reaches guard 5 per document and is skipped there.")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PHARO RE-VERIFICATION — did the FILE_FORMAT fix actually land in production?
+#
+# The previous attempt (01015c69) shipped INERT: the scope resolver was fixed
+# but two callers never passed sourceExactQuote, so it read no file names. The
+# full readiness dump above is truncated at 9000 chars and the verdict can hide
+# inside it, so pull every package-rule verdict out by name. A fix is not
+# verified until the live verdict says so.
+# ─────────────────────────────────────────────────────────────────────────────
+print("\n########## PACKAGE-RULE VERDICTS (verbatim, untruncated) ##########")
+_fpr = get(f"/api/tenders/{TENDER}/final-package-readiness")
+
+def _walk_rules(node, out):
+    if isinstance(node, dict):
+        if "family" in node and "status" in node:
+            out.append(node)
+        for v in node.values():
+            _walk_rules(v, out)
+    elif isinstance(node, list):
+        for v in node:
+            _walk_rules(v, out)
+
+_rules = []
+_walk_rules(_fpr, _rules)
+if not _rules:
+    print(f"  !! no package-rule verdicts found; payload keys="
+          f"{list(_fpr)[:12] if isinstance(_fpr, dict) else type(_fpr)}")
+for _r in _rules:
+    print(f"  {_r.get('family')}: {_r.get('status')}")
+    print(f"      reason: {_r.get('reason')}")
+    if _r.get("scope") or _r.get("scopeLabel"):
+        print(f"      scope: {_r.get('scopeLabel') or _r.get('scope')}")
+
+print("\n--- tender-level blockers + export readiness flags ---")
+for _k in ("tenderLevelBlockers", "blockers", "failures", "finalExportReady", "ok",
+           "readinessScore", "exportReadyDocuments", "requiredDocuments"):
+    if isinstance(_fpr, dict) and _k in _fpr:
+        print(f"  {_k} = {json.dumps(_fpr[_k])[:1500]}")
