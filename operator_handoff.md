@@ -143,6 +143,81 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-10T18:40Z — Claude Code (Opus 5) — the FILE_FORMAT fix had shipped INERT; fed and re-verified
+
+**Branch / PR:** `release/consolidated-recovery-20260717` — PR #1175. Not merged. Production untouched.
+
+**What was wrong with the previous entry's claim.** `01015c69` was reported as
+the fix for the last package blocker. It was not, and I said so as soon as the
+confirming read-only inspect (run 34513494851) came back with the verdict
+unchanged:
+
+```
+"packageRule": { "family": "FILE_FORMAT", "status": "VIOLATED",
+  "reason": "The tender requires PDF for the technical envelope, but 1 current
+             document(s) are not PDF: Company Profile.docx (DOCX)." }
+```
+
+`formatRuleScope()` reads file names off the requirement. On this tender the
+file name exists ONLY in `sourceExactQuote` ("Required Documents: Technical
+Proposal.pdf") — the description says merely "in PDF format". The unit tests
+passed because they construct the requirement themselves and supply the field.
+The two production callers build a literal object and never copied it, so
+`namedFilesIn()` found nothing and the envelope scope was kept. **A function
+fixed but not fed is not a fix.** Same class as the earlier `select` omission
+and the advisory wrapper applied to the wrong call path — three times now, the
+failure has been wiring, not logic.
+
+**Files changed (`c233b1b0`)**
+- `lib/engine/final-package-readiness-model.ts` — pass `sourceExactQuote`
+- `app/api/tenders/[id]/requirement-coverage/route.ts` — same
+- `lib/engine/automatic-requirement-coverage.ts` — no change needed; forwards the
+  whole requirement and already selects the column
+- `tests/format-rule-governs-what-it-names.test.ts` — new caller-wiring case that
+  reads each production call site and asserts it forwards the requirement whole
+  or names the field. This is the test whose absence let the fix ship inert.
+
+**Files changed (`70c55e36`, inspection tooling only)**
+- `scripts/tmp-inspect-vault-and-selection.py` — letterhead forensics that
+  evaluate each of the six early-exit guards from live data, and a package-rule
+  verdict extractor. The full readiness dump truncates at 9000 chars, which is
+  part of how an inert fix looked landed.
+
+**Tests actually run, locally, quoting real output**
+- `npx tsc --noEmit` — clean
+- `npx next lint` — `✔ No ESLint warnings or errors`
+- `RUN_DB_INTEGRATION=true npm test` — `# tests 11704 / # pass 11704 / # fail 0 / # cancelled 0`
+- `tests/format-rule-governs-what-it-names.test.ts` — 10/10
+- `npx next build` — **NOT run locally.** It was declined earlier in this session
+  and I did not re-issue it. CI covers it. Do not read any statement here as
+  local build verification.
+
+**Deployment:** Vercel Preview `dpl_7GDMEqb4oP8dTvzVu9tTJZWGaJ72` READY on
+`c233b1b0`. Read-only inspect 34515490681 dispatched against it.
+
+**Risks / assumptions**
+- Pharo re-verification of the live FILE_FORMAT verdict was still in flight when
+  this entry was written. Until that verdict is read, treat the fix as landed but
+  UNVERIFIED — exactly the mistake the previous attempt made.
+- `exactFileNaming` and `exactFileOrder` are both null on this tender, and AI
+  Analyze re-extraction makes them unstable between runs. Any conclusion about
+  naming or ordering is confounded until that is addressed.
+
+**Letterhead (§5) — still not classified as a defect.** `letterheadAppliedCount=0`
+with an active LETTERHEAD asset. `applyActiveUploadedLetterheadToTenderDocuments`
+returns 0 through six indistinguishable exits, so the number carries no
+diagnosis. The applier IS on the live path (`PROPOSAL_GENERATION` in
+`lib/ai-job-handlers-legacy.ts:440` calls it), so "never called" is ruled out.
+The remaining candidate worth flagging against the owner's stated goal — upload
+company documents in ANY format — is guard 4/5: the applier accepts only a DOCX
+template (`wordprocessingml.document|msword|octet-stream` plus a `PK` signature).
+A letterhead uploaded as PDF, PNG or JPG would be silently ignored. **Not yet
+established.** The inspect run above is what decides it.
+
+**Next action:** read run 34515490681, name the guard, and only then decide
+whether anything is broken.
+
+
 ### 2026-09-10T17:45Z — Claude Code (Opus 5) — Company Profile + FILE_ORDER cleared on a real run; one blocker left
 
 **Branch / PR:** `release/consolidated-recovery-20260717` / PR #1175 (open, draft, unmerged). Production untouched; Preview `DATABASE_URL` unchanged; provider order unchanged.
