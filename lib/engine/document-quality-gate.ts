@@ -586,17 +586,34 @@ export function assessGeneratedDocumentQuality(input: DocumentQualityInput): Doc
   }
 
   // ── Bid-Team to confirm and other metadata placeholders. ─────────────────
+  //
+  // The message names the phrases it actually matched. It used to report only
+  // a count — 'contains 3 internal placeholder reference(s) (e.g. "Bid-Team to
+  // confirm")' — which blocks the export without telling anyone WHICH words in
+  // a 30-page document to fix, and misleads by quoting an example that may not
+  // be what matched at all. This gate is fail-closed, so an unactionable
+  // message is an unactionable block. Same trigger, same severity, same score
+  // impact; only the diagnosis improves.
   if (text) {
     let placeholderHits = 0;
+    const matchedPhrases: string[] = [];
     for (const rx of METADATA_PLACEHOLDER_PATTERNS) {
       const matches = text.match(new RegExp(rx.source, rx.flags.includes("g") ? rx.flags : `${rx.flags}g`));
-      if (matches) placeholderHits += matches.length;
+      if (matches) {
+        placeholderHits += matches.length;
+        for (const match of matches) {
+          const phrase = match.trim();
+          if (phrase && !matchedPhrases.includes(phrase)) matchedPhrases.push(phrase);
+        }
+      }
     }
     if (placeholderHits > 0) {
+      const shown = matchedPhrases.slice(0, 8).map((p) => `"${p}"`).join(", ");
+      const more = matchedPhrases.length > 8 ? ` (+${matchedPhrases.length - 8} more distinct)` : "";
       issues.push({
         code: "BID_TEAM_TO_CONFIRM",
         severity: "HIGH",
-        message: `Document contains ${placeholderHits} internal placeholder reference(s) (e.g. "Bid-Team to confirm"). These must never appear in submitted proposals.`,
+        message: `Document contains ${placeholderHits} internal placeholder reference(s): ${shown}${more}. These must never appear in submitted proposals.`,
       });
     }
   }

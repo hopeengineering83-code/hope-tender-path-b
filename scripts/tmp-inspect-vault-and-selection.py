@@ -267,3 +267,156 @@ else:
                       f" confirmedByProvider={r.get('modelConfirmedByProvider')}"
                       f" category={r.get('category')}"
                       f" msg={str(r.get('safeMessage'))[:220]}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BLOCKER FORENSICS — Company Profile BID_TEAM_TO_CONFIRM and FILE_ORDER
+#
+# Read-only. Runs no generation and spends no provider quota, which is why the
+# evidence for both blockers is gathered here rather than by re-running the
+# hosted acceptance.
+# ─────────────────────────────────────────────────────────────────────────────
+print("\n########## BLOCKER FORENSICS ##########")
+
+import re as _re
+
+# The exact patterns the gate uses. Kept in sync deliberately by eye — this is
+# throwaway acceptance tooling, and duplicating them here lets the report show
+# WHICH pattern fires on WHICH text without another deploy.
+_PLACEHOLDER_RX = [
+    (r"\bbid[\s-]?team\s+to\s+confirm\b", "bid-team-to-confirm"),
+    (r"\bto\s+be\s+(?:confirmed|determined|provided|completed|inserted)\b", "to-be-X"),
+    (r"\b(?:tbd|tbc|tba)\b", "tbd/tbc/tba"),
+    (r"\b(?:not\s+provided|not\s+available|not\s+specified|unknown|pending)\b", "not-provided/unknown/pending"),
+    (r"\bn\/?a\b", "n/a"),
+    (r"\bplaceholder\b", "placeholder"),
+    (r"\b(?:insert|add|fill)\b.{0,40}\b(?:here|later|manually)\b", "insert-here"),
+    (r"\b\[?fill[\s_-]?in\]?", "fill-in"),
+    (r"\bexact\s+site\s+to\s+be\s+determined\b", "exact-site-tbd"),
+    (r"\bwith\s+consultant'?s\s+assistance\b", "consultant-assistance"),
+]
+
+def _scan(label, text):
+    """Report every placeholder pattern that fires, with surrounding context."""
+    if not text:
+        print(f"  {label}: (no text)")
+        return 0
+    total = 0
+    for src, name in _PLACEHOLDER_RX:
+        for m in _re.finditer(src, text, _re.I):
+            total += 1
+            a, b = max(0, m.start() - 90), min(len(text), m.end() + 90)
+            ctx = _re.sub(r"\s+", " ", text[a:b])
+            print(f"  {label}: [{name}] matched {m.group(0)!r}")
+            print(f"      …{ctx}…")
+            if total >= 25:
+                print(f"  {label}: (truncated at 25 matches)")
+                return total
+    if total == 0:
+        print(f"  {label}: no placeholder pattern fires")
+    return total
+
+# ── 1. Requirements, verbatim. narrativeDraftContent() echoes requirement
+#       title + description straight into the client-facing planned-row DOCX,
+#       so a requirement carrying "TBD"/"to be confirmed"/"N/A" becomes a
+#       placeholder hit inside a shipped document.
+print("\n--- TENDER REQUIREMENTS (echoed verbatim into planned-row documents) ---")
+_reqs = get(f"/api/tenders/{TENDER}/requirements")
+_rows = _reqs.get("requirements") if isinstance(_reqs, dict) else (_reqs if isinstance(_reqs, list) else None)
+if not _rows:
+    print(f"  !! could not read requirements; payload={str(_reqs)[:400]}")
+else:
+    print(f"  {len(_rows)} requirement(s)")
+    _flagged = 0
+    for _r in _rows:
+        _t = f"{_r.get('title') or ''} — {_r.get('description') or ''}"
+        _hits = _scan(f"REQ {str(_r.get('id'))[:8]}", _t)
+        if _hits:
+            _flagged += 1
+    print(f"  => {_flagged} requirement(s) carry placeholder wording that would be copied into a shipped document")
+
+# ── 2. Every generated document's quality verdict, with the gate's own
+#       (now phrase-naming) message.
+print("\n--- GENERATED DOCUMENT QUALITY (the gate's own message) ---")
+_audit = get("/api/admin/generated-proposals/audit")
+_docs = None
+if isinstance(_audit, dict):
+    for _k in ("documents", "rows", "results", "items"):
+        if isinstance(_audit.get(_k), list):
+            _docs = _audit[_k]
+            break
+if _docs is None:
+    print(f"  !! unexpected audit shape; keys={list(_audit)[:15] if isinstance(_audit, dict) else type(_audit).__name__}")
+    print(f"  raw: {json.dumps(_audit)[:2500]}")
+else:
+    for _d in _docs:
+        if str(_d.get("tenderId") or "") not in ("", TENDER):
+            continue
+        _nm = _d.get("exactFileName") or _d.get("name")
+        print(f"\n  * {_nm}")
+        print(f"      type={_d.get('documentType')} format={_d.get('format')}")
+        print(f"      qualityScore={_d.get('qualityScore')} recommended={_d.get('qualityRecommendedStatus')}")
+        print(f"      generationStatus={_d.get('generationStatus')} validationStatus={_d.get('validationStatus')}")
+        print(f"      readyForExport={_d.get('readyForExport')} zipEligible={_d.get('zipEligible')}")
+        print(f"      bidTeamToConfirmIssue={_d.get('bidTeamToConfirmIssue')}")
+        for _i in (_d.get("qualityIssues") or _d.get("issues") or []):
+            print(f"      ISSUE {_i.get('code')} [{_i.get('severity')}] {str(_i.get('message'))[:600]}")
+        _vt = _d.get("visibleText") or _d.get("textExcerpt") or _d.get("excerpt")
+        if _vt:
+            _scan(f"      TEXT[{_nm}]", _vt)
+        else:
+            print("      (audit response carries no text excerpt for this document)")
+
+# ── 3. FILE_ORDER — the confirmed plan's order vs what was generated.
+print("\n--- FILE_ORDER: PLAN ORDER vs GENERATED ORDER vs MANIFEST ---")
+_plan = get(f"/api/tenders/{TENDER}/submission-plan")
+_items = None
+if isinstance(_plan, dict):
+    for _k in ("items", "files", "plan", "rows", "planItems"):
+        _v = _plan.get(_k)
+        if isinstance(_v, list):
+            _items = _v
+            break
+        if isinstance(_v, dict) and isinstance(_v.get("items"), list):
+            _items = _v["items"]
+            break
+if _items is None:
+    print(f"  !! unexpected plan shape; keys={list(_plan)[:15] if isinstance(_plan, dict) else type(_plan).__name__}")
+    print(f"  raw: {json.dumps(_plan)[:2500]}")
+else:
+    print(f"  CONFIRMED PLAN ORDER ({len(_items)} row(s)):")
+    for _n, _it in enumerate(_items, 1):
+        print(f"    {_n:>2}. {_it.get('fileName') or _it.get('exactFileName') or _it.get('name')!r}"
+              f"  order={_it.get('order') or _it.get('sortOrder') or _it.get('position')}"
+              f"  format={_it.get('format')}  status={_it.get('status')}"
+              f"  superseded={_it.get('supersededAt') or _it.get('superseded')}")
+
+if _docs:
+    print(f"\n  GENERATED DOCUMENT ORDER:")
+    for _n, _d in enumerate(
+        sorted([d for d in _docs if str(d.get('tenderId') or '') in ('', TENDER)],
+               key=lambda d: (d.get('order') if d.get('order') is not None else 9999,
+                              str(d.get('exactFileName') or d.get('name') or ''))), 1):
+        print(f"    {_n:>2}. {(_d.get('exactFileName') or _d.get('name'))!r}"
+              f"  order={_d.get('order')}  state={_d.get('state')}"
+              f"  active={_d.get('isActive')}  superseded={_d.get('supersededAt')}")
+
+print("\n--- EXPORT-READINESS BLOCKERS, FULL DETAIL ---")
+_er = get(f"/api/tenders/{TENDER}/export-readiness")
+print(json.dumps(_er, indent=2)[:9000])
+
+print("\n--- FINAL PACKAGE READINESS, FULL DETAIL ---")
+print(json.dumps(get(f"/api/tenders/{TENDER}/final-package-readiness"), indent=2)[:9000])
+
+# ── 4. Brand assets — letterheadAppliedCount=0 question.
+print("\n--- BRAND ASSETS (letterhead vs signature/stamp are separate rules) ---")
+_ba = get("/api/company/assets")
+_alist = _ba.get("assets") if isinstance(_ba, dict) else (_ba if isinstance(_ba, list) else None)
+if _alist is None:
+    print(f"  !! unexpected assets shape: {str(_ba)[:400]}")
+else:
+    for _a in _alist:
+        print(f"  {_a.get('assetType') or _a.get('type')}: {_a.get('fileName') or _a.get('name')}"
+              f"  active={_a.get('isActive')}  status={_a.get('status')}"
+              f"  bytes={_a.get('fileContentLength') or _a.get('size')}"
+              f"  storagePath={'yes' if _a.get('storagePath') else 'no'}")
