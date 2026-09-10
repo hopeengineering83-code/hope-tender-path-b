@@ -924,8 +924,12 @@ async function runPdfFinalization(
   // Load all non-superseded generated documents.
   const docs = await prisma.generatedDocument.findMany({
     where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
+    // exactOrder is selected because the finalized PDF inherits its position
+    // from these rows. Omitting it here is what let a finalized PDF be written
+    // with no position at all — see the comment on inheritedExactOrder below.
     select: {
-      id: true, name: true, exactFileName: true, documentType: true,
+      id: true, name: true, exactFileName: true, exactOrder: true,
+      documentType: true,
       format: true, generationStatus: true, validationStatus: true,
       reviewStatus: true, fileContent: true, storagePath: true,
       contentSha256: true, contentByteLength: true, integrityStatus: true,
@@ -1056,6 +1060,33 @@ async function runPdfFinalization(
             && !d.fileContent
             && !d.storagePath,
         );
+        // The finalized PDF must inherit its position in the package.
+        //
+        // exactOrder is not cosmetic: final-zip-scope.ts and the export route
+        // both build the shipped package with
+        // `sort((a, b) => (a.exactOrder ?? MAX_SAFE_INTEGER) - (b.exactOrder ?? …))`,
+        // and export-readiness compares that order against the tender's
+        // exactFileOrder. This object used to omit the field entirely, so on
+        // the create path below a brand-new PDF row was written with no
+        // position at all — null, which sorts LAST — even though the DOCX it
+        // was rendered from carried one.
+        //
+        // Live on tender 08e250af: the Technical Proposal DOCX rows hold
+        // exactOrder=1, the finalized Technical Proposal.pdf held none, so
+        // Company Profile.docx took position 1 and export-readiness raised
+        // "Generated file order does not match tender order near: Technical
+        // Proposal.pdf". That is not only a readiness complaint — the ZIP the
+        // evaluator receives really was ordered that way.
+        //
+        // Order of preference is authority order: the row already holding the
+        // confirmed plan's position for this exact file name, then the DOCX
+        // source (the same deliverable in another format), then whatever the
+        // row being updated already had. All three come from the tender's own
+        // plan; nothing is invented. When none of them has a position, the
+        // field is omitted rather than written as null, so this can only ever
+        // add ordering information, never erase it.
+        const inheritedExactOrder =
+          plannedRow?.exactOrder ?? sourceDoc.exactOrder ?? existingPdf?.exactOrder ?? null;
         const finalizedPdfData = {
             tenderId,
             name: requiredName,
@@ -1067,6 +1098,7 @@ async function runPdfFinalization(
             validationStatus: "PENDING",
             reviewStatus: "PENDING",
             reviewNotes: "machine:auto-finalize-pdf — rendered from validated DOCX source. Awaiting canonical validation.",
+            ...(inheritedExactOrder != null ? { exactOrder: inheritedExactOrder } : {}),
             ...pdfIntegrity,
         } as const;
         const targetRow = existingPdf ?? plannedRow;
