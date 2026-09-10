@@ -143,6 +143,55 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-10T17:45Z — Claude Code (Opus 5) — Company Profile + FILE_ORDER cleared on a real run; one blocker left
+
+**Branch / PR:** `release/consolidated-recovery-20260717` / PR #1175 (open, draft, unmerged). Production untouched; Preview `DATABASE_URL` unchanged; provider order unchanged.
+
+**Head:** `2ea6c5cd`. Verified by hosted acceptance `34509528594`, artifact genuinely regenerated (`4b8cf48b` → `a0065105`).
+
+**Live blocker counts on that run — every document/package blocker is now zero:**
+```
+FILE_ORDER                        0
+GENERATED_DOCUMENT_QUALITY_FAILED 0
+PLANNED_DOCUMENT_BLOCKED          0
+FINAL_ZIP_FILE_NOT_READY          0
+exportReadyDocuments 2 / requiredDocuments 2
+MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE  ← the only one left
+```
+
+**Three fixes, each root-caused from live evidence rather than inference:**
+
+1. **`0213a50d` — a placeholder word in the tender's own sentence is not a placeholder.** The single match was `"not available"` inside requirement 3fcaffcf's text: *"Hard copy submissions or portal uploads are not available."* `narrativeDraftContent()` quotes requirement text into the document, so the gate flagged the procuring entity's own words. Detector false positive, not a producer leak — the producer was left alone. Vocabulary split: unambiguous markers anywhere, ordinary English only in value position.
+
+2. **`c517e987` — the finalized PDF must keep its place in the package.** `finalizedPdfData` omitted `exactOrder`, so a finalized PDF was written with no position while its DOCX source held `exactOrder=1`. `final-zip-scope.ts:184` and `export/route.ts:340` both ship the package ordered by `exactOrder ?? MAX_SAFE_INTEGER`, so the evaluator really did receive Company Profile first. Not a phantom check.
+
+3. **`2ea6c5cd` — one placeholder authority for document prose, not four.** Fix 1 was incomplete and the acceptance proved it: `validateDocumentQuality` still scanned prose with a list ending `...METADATA_PLACEHOLDER_PATTERNS`, blocking the same document via `qualityBlocked → PLANNED_DOCUMENT_BLOCKED` while the gate scored it 100/PASSED. All four consumers now share one function.
+
+**Mistakes worth recording so the next agent does not repeat them:**
+- I twice read a guessed field name and got a confident-looking `None`. The audit route selects `exactOrder` and never returned it; my inspect script read `order`. A missing key is not a null column. `exactOrder` is now in the audit response.
+- The first `exactOrder` fix compiled against a `select` that omitted the column — a silent no-op. The typechecker caught it; a test now pins both document-set selects.
+- Fixing one copy of a rule that exists in four places is not fixing it.
+
+**Tests:** `npx tsc --noEmit` clean; `npx next lint` clean; `npm test` with `RUN_DB_INTEGRATION=true` **11,694 pass, 0 fail**. `npx next build` was NOT run locally this session — the command was declined — so build verification came from CI.
+
+**Environment-failure warning, again:** two separate `npm test` runs reported ~99 failures / ~407 cancelled. Both times Postgres was `down` after a container reset (`service postgresql status`), not a code regression. Restarting gave a clean run. Check the server before chasing those.
+
+**The one remaining blocker, and why it is not one problem but two:**
+```
+Email Submission Only          evidence only PARTIAL
+Required Email Subject Line    evidence only PARTIAL
+Technical Proposal Document    tender requires PDF for the technical envelope,
+                               but Company Profile.docx (DOCX) is in it
+```
+The third is code-controlled: auto-finalize converts only the names in `requiredPdfNames`, while the envelope rule demands every technical-envelope document be PDF. Those two scopes disagree.
+
+The first two are a genuine design question I deliberately did NOT decide alone. "Email Submission Only" is a submission RULE — no vault evidence can ever make it FULLY_MET, and this model already says as much elsewhere ("the next action is to correct the PACKAGE, never to upload evidence that cannot exist"). Counting such requirements in an evidence-coverage denominator may be a category error. But `MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE` is a fail-closed release gate, and changing what counts toward it is exactly the kind of change that could weaken a safety gate to make a benchmark pass. It needs Hope's decision, not an agent's.
+
+**Next action:** the PDF-envelope scope mismatch (#3), which is concrete and code-controlled.
+
+**Merge status: not reviewed.** Do not merge PR #1175.
+
+
 ### 2026-09-09T19:35Z — Claude Code (Opus 5) — advisory fix VERIFIED live; remaining blocker is owner-only
 
 **Branch / PR:** `release/consolidated-recovery-20260717` / PR #1175 (open, draft, unmerged). Production untouched; Preview `DATABASE_URL` unchanged; provider order unchanged.
