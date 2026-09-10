@@ -33,6 +33,7 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
+import { readFileSync } from "node:fs";
 
 import { assessGeneratedDocumentQuality } from "../lib/engine/document-quality-gate";
 import { valuePositionPlaceholderMatches } from "../lib/engine/detection-patterns";
@@ -127,6 +128,32 @@ describe("placeholder gate: value position, not vocabulary alone", () => {
         `metadata field-value detection regressed for ${value!}`,
       );
     }
+  });
+
+  it("no second copy of the placeholder rule scans whole prose", () => {
+    // The audit route derived its bidTeamToConfirmIssue flag from its own
+    // scan of the full METADATA_PLACEHOLDER_PATTERNS list, matching anywhere.
+    // After the gate learned value position, the two disagreed about the same
+    // bytes on live Preview: Company Profile.docx came back qualityScore=100
+    // recommended=PASSED with no BID_TEAM_TO_CONFIRM issue, and
+    // bidTeamToConfirmIssue=true printed right beside it. An audit whose job
+    // is catching surfaces that contradict each other must not be one.
+    const src = readFileSync("app/api/admin/generated-proposals/audit/route.ts", "utf8");
+    const flag = src.slice(
+      src.indexOf("const bidTeamToConfirmIssue"),
+      src.indexOf("const genericContentIssue"),
+    );
+    assert.ok(flag.length > 0, "bidTeamToConfirmIssue assignment not found");
+    assert.doesNotMatch(
+      flag,
+      /METADATA_PLACEHOLDER_PATTERNS/,
+      "the audit must not re-scan prose with the whole field-value pattern list",
+    );
+    assert.match(
+      flag,
+      /issueCodes\.has\("BID_TEAM_TO_CONFIRM"\)/,
+      "the audit must derive from the gate's verdict",
+    );
   });
 
   it("a document mixing both gets flagged for the real one only", () => {

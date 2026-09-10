@@ -358,7 +358,7 @@ else:
         print(f"      qualityScore={_d.get('qualityScore')} recommended={_d.get('qualityRecommendedStatus')}")
         print(f"      generationStatus={_d.get('generationStatus')} validationStatus={_d.get('validationStatus')}")
         print(f"      readyForExport={_d.get('readyForExport')} zipEligible={_d.get('zipEligible')}")
-        print(f"      bidTeamToConfirmIssue={_d.get('bidTeamToConfirmIssue')}")
+        print(f"      exactOrder={_d.get('exactOrder')}  bidTeamToConfirmIssue={_d.get('bidTeamToConfirmIssue')}")
         for _i in (_d.get("qualityIssues") or _d.get("issues") or []):
             print(f"      ISSUE {_i.get('code')} [{_i.get('severity')}] {str(_i.get('message'))[:600]}")
         _vt = _d.get("visibleText") or _d.get("textExcerpt") or _d.get("excerpt")
@@ -395,11 +395,13 @@ if _docs:
     print(f"\n  GENERATED DOCUMENT ORDER:")
     for _n, _d in enumerate(
         sorted([d for d in _docs if str(d.get('tenderId') or '') in ('', TENDER)],
-               key=lambda d: (d.get('order') if d.get('order') is not None else 9999,
+               key=lambda d: (d.get('exactOrder') if d.get('exactOrder') is not None else 9999,
                               str(d.get('exactFileName') or d.get('name') or ''))), 1):
         print(f"    {_n:>2}. {(_d.get('exactFileName') or _d.get('name'))!r}"
-              f"  order={_d.get('order')}  state={_d.get('state')}"
-              f"  active={_d.get('isActive')}  superseded={_d.get('supersededAt')}")
+              f"  exactOrder={_d.get('exactOrder')}"
+              f"  generationStatus={_d.get('generationStatus')}"
+              f"  finalExportCandidate={_d.get('finalExportCandidate')}"
+              f"  zipEligible={_d.get('zipEligible')}")
 
 print("\n--- EXPORT-READINESS BLOCKERS, FULL DETAIL ---")
 _er = get(f"/api/tenders/{TENDER}/export-readiness")

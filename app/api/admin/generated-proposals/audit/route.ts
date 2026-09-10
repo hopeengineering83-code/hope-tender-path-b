@@ -31,7 +31,7 @@ import { validateFileSignature } from "../../../../../lib/engine/export-format-p
 import { containsPricingLeakage } from "../../../../../lib/engine/pricing-hygiene";
 import { inferEnvelope } from "../../../../../lib/engine/submission-plan";
 import { assessGeneratedDocumentQuality } from "../../../../../lib/engine/document-quality-gate";
-import { METADATA_PLACEHOLDER_PATTERNS } from "../../../../../lib/engine/tender-metadata-completeness";
+import { ALWAYS_PLACEHOLDER_PATTERNS, valuePositionPlaceholderMatches } from "../../../../../lib/engine/detection-patterns";
 import { extractRequestId } from "../../../../../lib/request-id";
 
 export const dynamic = "force-dynamic";
@@ -352,8 +352,21 @@ export async function GET(req: Request) {
       const qualityScore = quality?.score ?? 0;
       const qualityRecommendedStatus = quality?.recommendedStatus ?? (visibleText ? "PASSED" : "DRAFT_ONLY");
       const issueCodes = new Set(quality?.issues.map((issue) => issue.code) ?? []);
+      // Derived from the gate's own verdict, plus the SAME split vocabulary the
+      // gate uses when no quality report could be produced. This second
+      // disjunct used to re-scan with the whole METADATA_PLACEHOLDER_PATTERNS
+      // list, matching anywhere — so after the gate learned that ordinary
+      // English is only a placeholder in value position, the audit's flag went
+      // on contradicting the gate about the same bytes. Live proof: Company
+      // Profile.docx reported qualityScore=100 recommended=PASSED with no
+      // BID_TEAM_TO_CONFIRM issue, and bidTeamToConfirmIssue=true beside it.
+      // Two surfaces disagreeing about one document is the exact defect this
+      // audit exists to catch, so it must not be the one committing it.
       const bidTeamToConfirmIssue = issueCodes.has("BID_TEAM_TO_CONFIRM")
-        || (visibleText ? METADATA_PLACEHOLDER_PATTERNS.some((pattern) => pattern.test(visibleText)) : false);
+        || (!quality && visibleText
+          ? ALWAYS_PLACEHOLDER_PATTERNS.some((pattern) => pattern.test(visibleText))
+            || valuePositionPlaceholderMatches(visibleText).length > 0
+          : false);
       const genericContentIssue = issueCodes.has("GENERIC_FILLER");
       const unsupportedClaimRisk = issueCodes.has("UNSUPPORTED_CLAIM_RISK");
       const internalTraceabilityIssue = issueCodes.has("INTERNAL_TRACEABILITY");
