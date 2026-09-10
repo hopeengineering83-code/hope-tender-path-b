@@ -606,3 +606,59 @@ for _k in ("tenderLevelBlockers", "blockers", "failures", "finalExportReady", "o
 print("\n--- audit summary (stale-output accumulation) ---")
 _sm = _au.get("summary") if isinstance(_au, dict) else None
 print(f"  {json.dumps(_sm, indent=2)[:1200]}" if _sm else "  (no summary in payload)")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WHEN was letterhead attempted, and what did the documents look like then?
+#
+# The applier only brands DOCX bytes (looksLikeDocx). PROPOSAL_GENERATION calls
+# it immediately after generation, while documents are still DOCX; AUTO_FINALIZE
+# converts them to PDF afterwards. So a letterheadAppliedCount of 0 means one
+# thing if it was recorded before finalization and something completely
+# different if it was recorded after — after, zero is CORRECT BEHAVIOUR, not a
+# defect, because there is no DOCX left to brand.
+#
+# Reading the count without its timestamp is how a working guard gets
+# "fixed". Find every job that reported one and print it with its type and time.
+# ─────────────────────────────────────────────────────────────────────────────
+print("\n########## LETTERHEAD: WHICH JOB REPORTED THE COUNT, AND WHEN ##########")
+_jobs = get(f"/api/ai-jobs?tenderId={urllib.parse.quote(TENDER)}&take=50")
+_jrows = None
+if isinstance(_jobs, dict):
+    for _k in ("jobs", "items", "data", "results"):
+        if isinstance(_jobs.get(_k), list):
+            _jrows = _jobs[_k]
+            break
+elif isinstance(_jobs, list):
+    _jrows = _jobs
+
+if not isinstance(_jrows, list):
+    print(f"  !! could not read ai-jobs; keys="
+          f"{list(_jobs)[:12] if isinstance(_jobs, dict) else type(_jobs)}")
+else:
+    print(f"  {len(_jrows)} job row(s)")
+    _seen = 0
+    for _j in _jrows:
+        _blob = json.dumps(_j)
+        if "etterhead" not in _blob:
+            continue
+        _seen += 1
+        _out = _j.get("output") if isinstance(_j.get("output"), dict) else {}
+        print(f"  * {_j.get('jobType')}  status={_j.get('status')}"
+              f"  finished={_j.get('finishedAt') or _j.get('completedAt') or _j.get('updatedAt')}")
+        if "letterheadAppliedCount" in _out:
+            print(f"      letterheadAppliedCount = {_out['letterheadAppliedCount']!r}")
+        for _m in _re.finditer(r"letterhead[^\"]{0,80}", _blob, _re.I):
+            print(f"      ...{_m.group(0)}")
+    if _seen == 0:
+        print("  no job row mentions letterhead at all — the count did not come"
+              " from a job output on this tender.")
+
+print("\n--- document formats now (letterhead only ever brands DOCX) ---")
+if isinstance(_arows, list):
+    for _r in _arows:
+        if _r.get("generationStatus") == "SUPERSEDED":
+            continue
+        print(f"  {_r.get('exactFileName') or _r.get('documentName')}"
+              f"  format={_r.get('format')}"
+              f"  storagePath={_r.get('hasStoragePath')}  inline={_r.get('hasFileContent')}")
