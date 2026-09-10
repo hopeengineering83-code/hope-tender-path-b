@@ -454,7 +454,7 @@ _rq = get(f"/api/tenders/{TENDER}/requirements")
 _rows = _rq.get("requirements") if isinstance(_rq, dict) else (_rq if isinstance(_rq, list) else [])
 for _r in (_rows or []):
     _title = (_r.get("title") or "")
-    if not re.search(r"technical proposal document|format|pdf", f"{_title} {_r.get('description') or ''}", re.I):
+    if not _re.search(r"technical proposal document|format|pdf", f"{_title} {_r.get('description') or ''}", re.I):
         continue
     print(f"  * {_title}")
     print(f"      priority={_r.get('priority')} type={_r.get('requirementType')}")
