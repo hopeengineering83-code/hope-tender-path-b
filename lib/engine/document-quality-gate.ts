@@ -31,6 +31,7 @@
 
 import { documentHygieneIssues } from "./export-readiness";
 import { looksLikeMetadataPlaceholder, METADATA_PLACEHOLDER_PATTERNS } from "./tender-metadata-completeness";
+import { ALWAYS_PLACEHOLDER_PATTERNS, valuePositionPlaceholderMatches } from "./detection-patterns";
 
 // ── Document-type gating ─────────────────────────────────────────────────────
 
@@ -597,7 +598,9 @@ export function assessGeneratedDocumentQuality(input: DocumentQualityInput): Doc
   if (text) {
     let placeholderHits = 0;
     const matchedPhrases: string[] = [];
-    for (const rx of METADATA_PLACEHOLDER_PATTERNS) {
+    // Unambiguous markers: match anywhere. No sentence in a proposal has an
+    // innocent reason to say "Bid-Team to confirm" or "TBD".
+    for (const rx of ALWAYS_PLACEHOLDER_PATTERNS) {
       const matches = text.match(new RegExp(rx.source, rx.flags.includes("g") ? rx.flags : `${rx.flags}g`));
       if (matches) {
         placeholderHits += matches.length;
@@ -606,6 +609,14 @@ export function assessGeneratedDocumentQuality(input: DocumentQualityInput): Doc
           if (phrase && !matchedPhrases.includes(phrase)) matchedPhrases.push(phrase);
         }
       }
+    }
+    // Ordinary English ("not available", "pending", "N/A", "to be confirmed"):
+    // an unfilled slot only when it IS the value of a field or cell. Quoting a
+    // tender clause that happens to contain the words is not a placeholder —
+    // that false positive blocked a real export. See detection-patterns.ts.
+    for (const phrase of valuePositionPlaceholderMatches(text)) {
+      placeholderHits += 1;
+      if (!matchedPhrases.includes(phrase)) matchedPhrases.push(phrase);
     }
     if (placeholderHits > 0) {
       const shown = matchedPhrases.slice(0, 8).map((p) => `"${p}"`).join(", ");

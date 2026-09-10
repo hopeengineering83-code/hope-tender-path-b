@@ -45,6 +45,7 @@ type AuditRow = {
   documentId: string;
   documentName: string;
   exactFileName: string | null;
+  exactOrder: number | null;
   documentType: string | null;
   envelope: string;
   format: string | null;
@@ -399,6 +400,13 @@ export async function GET(req: Request) {
         documentId: document.id,
         documentName: document.name,
         exactFileName: document.exactFileName,
+        // exactOrder decides real package order: final-zip-scope.ts and the
+        // export route both sort by `exactOrder ?? MAX_SAFE_INTEGER`, and
+        // export-readiness raises FILE_ORDER by comparing that order against
+        // the tender's required order. It was selected from the database here
+        // but never returned, so the one audit that exists to explain a
+        // blocker could not explain that one.
+        exactOrder: document.exactOrder ?? null,
         documentType: document.documentType,
         envelope,
         format: document.format,

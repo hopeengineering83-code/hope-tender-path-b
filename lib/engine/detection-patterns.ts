@@ -19,6 +19,93 @@ export const METADATA_PLACEHOLDER_PATTERNS: RegExp[] = [
   /\bwith\s+consultant'?s\s+assistance\b/i,
 ];
 
+// ─── Placeholder vocabulary: value-position vs anywhere ──────────────────────
+//
+// METADATA_PLACEHOLDER_PATTERNS above is correct for what it was written for:
+// checking a single extracted FIELD VALUE. If a tender's "client name" field
+// reads "not available", that is a placeholder, full stop.
+//
+// Scanning a whole DOCUMENT's prose is a different problem, and reusing the
+// same list there produced a false block. Live evidence, tender
+// 08e250af / Company Profile.docx, quality 75 / QUALITY_FAILED:
+//
+//   BID_TEAM_TO_CONFIRM: Document contains 1 internal placeholder
+//   reference(s): "not available".
+//
+//   …through email to the designated contacts only. Hard copy submissions or
+//   portal uploads are not available.
+//
+// That is the TENDER'S OWN sentence, quoted into the document because
+// narrativeDraftContent() lists the requirements a file addresses. "Not
+// available" there is a fact about submission channels, not an unfilled slot.
+// One ordinary English phrase blocked the entire export.
+//
+// So the vocabulary splits by how much the phrase alone tells you:
+//
+//   ALWAYS  — no innocent reading in a proposal. "Bid-Team to confirm",
+//             "placeholder", "fill in", "TBD". These match anywhere.
+//   VALUE   — ordinary English that only signals an unfilled slot when it IS
+//             the value: "Client: not available" is a placeholder,
+//             "portal uploads are not available" is a sentence.
+//
+// This narrows WHERE the ambiguous half applies, never WHETHER it applies.
+// A genuine "Contact person: unknown" still fails.
+
+/** Placeholder markers with no innocent reading — match anywhere in prose. */
+export const ALWAYS_PLACEHOLDER_PATTERNS: RegExp[] = [
+  /\bbid[\s-]?team\s+to\s+confirm\b/i,
+  /\b(?:tbd|tbc|tba)\b/i,
+  /\bplaceholder\b/i,
+  /\b(?:insert|add|fill)\b.{0,40}\b(?:here|later|manually)\b/i,
+  /\b\[?fill[\s_-]?in\]?/i,
+  /\bexact\s+site\s+to\s+be\s+determined\b/i,
+  /\bwith\s+consultant'?s\s+assistance\b/i,
+];
+
+/**
+ * Ordinary English that indicates an unfilled slot only in value position.
+ * Source fragments (not anchored) so the position anchors can be composed
+ * around them below.
+ */
+const VALUE_POSITION_PLACEHOLDER_SOURCES: string[] = [
+  "not\\s+provided",
+  "not\\s+available",
+  "not\\s+specified",
+  "unknown",
+  "pending",
+  "n\\/?a",
+  "to\\s+be\\s+(?:confirmed|determined|provided|completed|inserted)",
+];
+
+/**
+ * Value position, as it survives DOCX/PDF text extraction:
+ *   "Client: not available"      → a labelled field whose value is the phrase
+ *   "not available"              → a table cell, extracted as its own line
+ *   "[not available]"            → an explicit bracketed slot
+ * A phrase inside a running sentence is deliberately NOT value position.
+ */
+export function valuePositionPlaceholderMatches(text: string): string[] {
+  if (!text) return [];
+  const found: string[] = [];
+  for (const source of VALUE_POSITION_PLACEHOLDER_SOURCES) {
+    const anchors = [
+      // "Label: <phrase>" ending the line (a label, not a whole sentence).
+      new RegExp(`^[^\\n:]{1,60}:[ \\t]*(${source})[ \\t]*\\.?[ \\t]*$`, "gim"),
+      // The phrase alone on its own line — how a table cell extracts.
+      new RegExp(`^[ \\t]*(${source})[ \\t]*\\.?[ \\t]*$`, "gim"),
+      // An explicit bracketed slot.
+      new RegExp(`[\\[\\(<]{1,2}[ \\t]*(${source})[ \\t]*[\\]\\)>]{1,2}`, "gi"),
+    ];
+    for (const anchor of anchors) {
+      for (const match of text.matchAll(anchor)) {
+        const phrase = (match[1] ?? match[0]).trim();
+        if (phrase && !found.includes(phrase)) found.push(phrase);
+      }
+    }
+  }
+  return found;
+}
+
 /** Document-level placeholder patterns — superset of metadata patterns plus
  *  bracket/template markers common in generated proposal text.
  *  Commonly used in components/document-validator-panel.tsx. */
