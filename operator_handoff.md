@@ -143,6 +143,61 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-11 UTC — CORRECTION: the unwinnable requirement is my regression (5cb8d694)
+
+The previous entry said it was "not yet established" whether my changes caused
+the permanently-blocking mandatory requirement, and pointed at `226e9afb`.
+Wrong on both counts. Traced it properly:
+
+`SUBMISSION_RULE_AWAITING_PACKAGE` is emitted by `buildRequirementBlockers`
+(`final-package-readiness-model.ts:873`), which blocks on
+`mandatory && displayStatus !== "FULLY_MET"`. And `displayStatus` is what I
+rewrote in `5cb8d694`:
+
+```ts
+const displayStatus = conformance?.applicable
+  ? conformance.status === "SATISFIED"   ? "FULLY_MET"
+  : conformance.status === "VIOLATED"    ? "NOT_MET"
+  : "PARTIALLY_MET"          // <- PENDING_PACKAGE *and* NOT_MACHINE_DECIDABLE
+  : evidenceDisplayStatus;
+```
+
+`PackageConformanceStatus` has four members. I handled two and swept the other
+two into `PARTIALLY_MET`. `NOT_MACHINE_DECIDABLE` therefore can never reach
+`FULLY_MET` — by construction, for ever — so any MANDATORY requirement that
+classifies as an undecidable package rule blocks export permanently, and the
+coverage denominator can never reach 100%.
+
+Before `5cb8d694` the status came from evidence, so such a rule could read
+FULLY_MET. That was the defect I was fixing (a package rule claiming coverage
+from unrelated evidence) and the fix was right in direction. I replaced it with
+the opposite error.
+
+`226e9afb` is NOT implicated: it changes evidence KINDS and the vault-document
+match, and `classifyPackageRule` gates on `isPackagingOrFormatRequirement`,
+which it does not touch.
+
+**Also found while tracing, unrelated and latent.** `PACKAGING_PHRASES`
+contains `/\bformat\s*:\s*(?:pdf|docx?|word|excel)\b/`, but `normalise()`
+strips every character outside `[a-z0-9%.\- ]` — the colon included. "Submission
+Format: PDF" becomes "submission format pdf", so that phrase can never match
+anything. Not this bug; worth fixing separately.
+
+**The decision is the owner's, and it is a fail-closed gate.** Three options:
+
+* (a) treat NOT_MACHINE_DECIDABLE as FULLY_MET — rejected, it would claim
+  compliance the app has not verified;
+* (b) keep it out of the mandatory-COVERAGE denominator and surface it as an
+  explicit human-judgement review item — it is not evidence-deficient, and the
+  gate's remedy ("add source-backed evidence") is one the app itself says
+  cannot work;
+* (c) leave it blocking — the current state, in which no owner action exists.
+
+Recommendation is (b). Not doing it unasked: it changes a fail-closed export
+gate, the owner reserved exactly this class of judgement, and an earlier change
+of mine in this same area (`8f2eed4b`) had to be reverted.
+
+
 ### 2026-09-11 UTC — A mandatory requirement nothing can ever satisfy
 
 Regeneration 34625093741 on `3e41c502` (letterhead fix live). The chain ran
