@@ -58,7 +58,8 @@ if assets:
         # good 126KB asset.
         print(f"    - {a.get('assetType')}  {a.get('originalFileName')}  "
               f"bytes={a.get('contentByteLength') or a.get('size')}  "
-              f"active={a.get('isActive')}  integrity={a.get('integrityStatus')}")
+              f"active={a.get('isActive')}  integrity={a.get('integrityStatus')}  "
+              f"inline={a.get('hasInlineFileContent')}  storage={a.get('hasPrivateStorage')}")
 
 # Extraction is the part that takes time after the bytes land. A vault document
 # whose text has not been extracted yet cannot be matched as evidence, so a run

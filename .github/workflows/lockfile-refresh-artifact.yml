@@ -600,12 +600,17 @@ jobs:
               raise SystemExit(0)
           print(f"\nASSET STORE: {len(rows)} row(s)")
           for a in rows:
-              inline = a.get("fileContentLength")
+              # hasInlineFileContent / hasPrivateStorage are what the route
+              # returns. It strips storagePath and never sends
+              # fileContentLength, so asking for those printed "no" and "NOT
+              # RETURNED BY API" for assets that may well have bytes — and the
+              # letterhead question turns on exactly this.
+              inline = a.get("hasInlineFileContent")
               print(
                   f"  type={a.get('assetType')} active={a.get('isActive')} "
                   f"mime={a.get('mimeType')} size={a.get('size')} "
                   f"inlineBytes={inline if inline is not None else 'NOT RETURNED BY API'} "
-                  f"storagePath={'yes' if a.get('storagePath') else 'no'} "
+                  f"privateStorage={a.get('hasPrivateStorage')} "
                   f"integrity={a.get('integrityStatus')}"
               )
           PYEOF
