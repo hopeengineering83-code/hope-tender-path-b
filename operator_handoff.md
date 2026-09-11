@@ -143,6 +143,59 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-11 UTC — Third Neon switch: provisioned clean, vault empty
+
+The Neon project behind Preview was replaced again after the previous one hit
+its rate limit. The owner had already updated the migration secret to the new
+unpooled string, updated Vercel's Preview `DATABASE_URL`, and redeployed.
+
+**This one was NOT the 2026-09-07 signature, and that mattered.** `/api/health`
+reported 0/8 tables — a genuinely empty database, not a bootstrap-built one.
+No `P3005`, no 430-statement drift, nothing to rebuild around. The migrations
+simply had not been run against it: updating the secret is not running them.
+
+So the easy branch of the procedure applied, and it applied only because the
+timing happened to fall that way. `lib/prisma.ts`'s bootstrap still fires on
+`NODE_ENV != "production"`, so whichever reaches a new database first — a
+Preview request or the migrations — decides which branch you get. **That is
+luck, not design, and it is now the third switch.**
+
+**Result** (run 34619508606, then verified by 34619936750):
+
+| | |
+|---|---|
+| `/api/health` | `ok:true`, `healthy`, tables 8/8, `schemaMatchesDeployedCode:true` |
+| Migration host | `ep-icy-sun-ae891nv7.c-2.us-east-2.aws.neon.tech` |
+| Fingerprint (direct) | `707a60408726` — what `provision` needs |
+| Fingerprint (pooled) | `e5f16d1ce4bf` — what `/api/health` prints |
+| Migrations | 52 applied, "Database schema is up to date!" |
+| Role rows | 4 canonical |
+| Owner | `ddd07e4b-ab03-4c00-b402-3089355ed725`, ADMIN |
+| Company | `b2a08049-ff0c-4571-9056-eb826f857cfc` |
+| Vault baseline | users 1, projects 0, experts 0, tenders 0 |
+
+**The company id changed.** It was `2fdc7b7a-8214-4660-8ef8-a0b62f4cd812`.
+Every note in this file referencing that tenant, and tender
+`08e250af-117c-4257-ab5e-24e7b1ef6658` with its 33 documents, describes the
+PREVIOUS database. Those records still exist there; it was not touched.
+
+**New tooling: `confirm=health`.** Run it first after any swap. It answers the
+only two questions that decide what follows — did a Preview process build the
+schema first, and which fingerprint does the rebuild expect — and it writes
+nothing. It prints both fingerprints with the right one labelled, because the
+2026-09-07 rebuild refused on exactly that mismatch while this file's own
+advice and the workflow input's description disagreed with each other. The
+input description now matches the lesson.
+
+**Still open, and now three times over.** The 2026-09-07 entry says disabling
+the runtime bootstrap "would prevent a third". It did not happen and the third
+came. Not done here either: it changes application startup behaviour and the
+owner has not asked for it. Raised with the owner rather than done silently.
+
+**What the owner must do now:** re-upload Company Vault documents and Brand
+Assets, then the tender files. Nothing else is blocked.
+
+
 ### 2026-09-11 — Fixed at both producers: a CV can no longer prove how the bid is sent
 
 `lib/engine/packaging-requirement-rule.ts` already documented this defect, with
