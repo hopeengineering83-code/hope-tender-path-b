@@ -143,6 +143,88 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-11 UTC — First full run on the rebuilt database: green, with one real finding
+
+The owner re-uploaded the vault, brand assets and tender onto the new Neon
+database and asked for the rest of the workflow to be driven for them. Two
+owner gates were exercised on their behalf with that explicit authorisation.
+
+**Tender** `50940b8b-f2ba-4558-a630-898763d82f98` — Pharo Health Ethiopia.
+Vault: 6 documents (7,539 / 4,017 / 4,272 / 5,081 / 111,261 / 178,996 chars,
+all EXTRACTED), 100 projects, 28 experts, 3 brand assets.
+
+**Run 34622308766 (accept), then 34622946021 (export) — both green:**
+
+```
+AI Analyze                                        success   60s
+Run Engine                                        success
+ENGINE_RUN -> PROPOSAL_GENERATION -> AUTO_FINALIZE success  2m48s
+export-readiness: ok=True status=READY blockers=0
+ZIP HTTP:200 SIZE:240971, unzip -t clean
+ZIP contains 3 file(s) — all 3 match their persisted identity
+  Technical Proposal.pdf                                226,948 B
+  Renovation Planning and Implementation Oversight.docx   9,850 B
+  Project Close-Out and Operational Readiness.docx        9,922 B
+pages: 37 — 37 page images rendered
+pages carrying a correct "Page N of M" label: 37/37
+layout: no clipping, overflow, footer collision or pagination problem on any page
+```
+
+**ZERO blockers.** The `MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE` gate that sat
+at 2/6 then 4/6 on the previous database is satisfied here. Do not read that as
+the 226e9afb submission-rule fix being proven live — this is different data and
+the two are not comparable. It is not evidence against it either. The fix
+remains verified by tests and unverified in production.
+
+**The finding, and it reproduces on a completely clean slate:**
+
+```
+=== DELIVERED PDF ASSET AUDIT (37 pages, 226948 bytes) ===
+EMBEDDED IMAGE XOBJECTS: 0
+  RESULT: the client's copy contains NO images at all.
+  Letterhead, logo, signature and stamp are each absent from the
+  delivered artifact regardless of what the asset store reports.
+
+ASSET STORE: 3 row(s)
+  STAMP      active=True  image/jpeg  103,155 B  integrity=VERIFIED
+  SIGNATURE  active=True  image/jpeg    3,246 B  integrity=VERIFIED
+  LETTERHEAD active=True  .docx       126,100 B  integrity=VERIFIED
+```
+
+Three active, integrity-verified assets; zero images delivered. The previous
+database showed the same thing, so this is not inherited corruption — it
+reproduces against freshly uploaded bytes on a database that is hours old.
+
+**Do not "fix" the signature and stamp.** The delivered PDF ends with
+
+```
+Signed for and on behalf of Hope Urban Planning Architectural and Engineering Consultancy PLC
+Signatory: General Manager
+Signature: _ _ _ _ _ _ _ Stamp: _ _ _ _ _ _ Date: _ _ _ _ _ _ _
+```
+
+A hand-signed line is ordinary tender practice and the owner's instruction is
+explicit: do not force signature or stamp unless the tender permits or requires
+them. The open question is the LETTERHEAD alone, and the owner's instruction
+covers the likely answer too — if the uploaded DOCX carries its branding in the
+document body rather than the header/footer, it cannot repeat per page, and
+that is an OWNER ASSET FORMAT issue to be reported, not a renderer to be
+distorted. Note the contact footer DOES reach every page as text
+("+251 911 169 930 ... | hopearchitectural.com Page 37 of 37"), so what is
+missing is specifically the image, not the identity.
+
+Next: read the letterhead applier's emitted reason from the PROPOSAL_GENERATION
+job output (export mode skips generation, so it is not in run 34622946021).
+
+**Harness fix along the way (`40dbe742`).** The accept run failed at the last
+step on `if names != ['Technical Proposal.pdf']` — a hardcoded one-file
+expectation from the tender the harness was first written against. A correct
+three-document package was refused on an assumption about a different tender.
+The replacement verifies every entry against its persisted contentSha256, so
+this package is checked three times over instead of refused once. No product
+gate touched.
+
+
 ### 2026-09-11 UTC — Third Neon switch: provisioned clean, vault empty
 
 The Neon project behind Preview was replaced again after the previous one hit
