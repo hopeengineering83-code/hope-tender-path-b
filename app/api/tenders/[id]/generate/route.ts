@@ -1231,8 +1231,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const supportDocumentCount = await time("generate.fill_support_docs", () => fillPlannedSupportDocuments(id, userId, plannedFileKeys), { tenderId: id });
     if (supportDocumentCount > 0) warnings.push(explicitSubmissionScope ? `${supportDocumentCount} planned package document(s) were generated or marked for original replacement.` : `${supportDocumentCount} remaining package document(s) were generated or marked for original replacement.`);
     advanceJob(job.id, "LETTERHEAD");
-    const letterheadAppliedCount = await applyActiveUploadedLetterheadToTenderDocuments(id, userId);
+    const letterhead = await applyActiveUploadedLetterheadToTenderDocuments(id, userId);
+    const letterheadAppliedCount = letterhead.applied;
     if (letterheadAppliedCount > 0) warnings.push(`Uploaded Word letterhead applied to ${letterheadAppliedCount} generated DOCX file(s).`);
+    // A zero used to be silent. An owner who uploaded a letterhead and never
+    // saw it on their documents had nothing to act on.
+    else if (letterhead.reason) warnings.push(`Letterhead not applied. ${letterhead.reason}`);
     // Auto-apply company signature and stamp images (user uploads all company
     // documents — the App uses them automatically, no human approval needed).
     const { signatureApplied, stampApplied } = await applyActiveSignatureAndStampToTenderDocuments(id, userId);

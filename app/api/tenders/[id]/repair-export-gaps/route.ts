@@ -279,7 +279,9 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     }
   });
 
-  const letterheadAppliedCount = await applyActiveUploadedLetterheadToTenderDocuments(tenderId, actor.id);
+  const letterheadOutcome = await applyActiveUploadedLetterheadToTenderDocuments(tenderId, actor.id);
+  const letterheadAppliedCount = letterheadOutcome.applied;
+  const letterheadSkipReason = letterheadOutcome.reason;
 
   // Metadata-only re-fetch after repair — fileContent is not needed for readiness checks.
   const repairedDocs = await prisma.generatedDocument.findMany({
@@ -295,7 +297,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     entityType: "Tender",
     entityId: tenderId,
     description: `${actor.email} safely repaired ${repaired.length} export package document(s) for "${tender.title}"; ${manualRequired.length} original/manual row(s) skipped.`,
-    metadata: { tenderId, repairedCount: repaired.length, skippedCount: skipped.length, manualRequiredCount: manualRequired.length, blockedByHygieneCount: blockedByHygiene.length, letterheadAppliedCount, finalExportReady: readiness.ok, remainingDocumentBlockers: readiness.failures.length, remainingTenderLevelBlockers: readiness.tenderLevelBlockers?.length ?? 0 },
+    metadata: { tenderId, repairedCount: repaired.length, skippedCount: skipped.length, manualRequiredCount: manualRequired.length, blockedByHygieneCount: blockedByHygiene.length, letterheadAppliedCount, letterheadSkipReason, finalExportReady: readiness.ok, remainingDocumentBlockers: readiness.failures.length, remainingTenderLevelBlockers: readiness.tenderLevelBlockers?.length ?? 0 },
   });
 
   // Gap 4: re-query the canonical final-export authority after the mutation.
@@ -308,6 +310,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     blockedByHygiene: blockedByHygiene.length,
     plannedCreated: 0,
     letterheadAppliedCount,
+    letterheadSkipReason,
     finalExportReady: readiness.ok,
     remaining: {
       documentBlockers: readiness.failures.length,

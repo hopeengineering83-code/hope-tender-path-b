@@ -470,7 +470,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     processed += 1;
   }
 
-  await applyActiveUploadedLetterheadToTenderDocuments(tenderId, actor.id);
+  // Outcome was discarded here. Keep it named so the reason is available
+  // rather than thrown away at the one call site that never reported it.
+  const letterheadOutcome = await applyActiveUploadedLetterheadToTenderDocuments(tenderId, actor.id);
+  void letterheadOutcome;
   // Auto-apply company signature and stamp images after letterhead
   await applyActiveSignatureAndStampToTenderDocuments(tenderId, actor.id);
   // The readiness check verifies actual bytes and persisted integrity

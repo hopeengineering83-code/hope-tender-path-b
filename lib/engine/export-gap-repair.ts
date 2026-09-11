@@ -343,6 +343,8 @@ export type ExportGapRepairResult = {
   manualRequired: number;
   blockedByHygiene: number;
   letterheadAppliedCount: number;
+  /** Why letterhead reached nothing. Null when it was applied. */
+  letterheadSkipReason: string | null;
   finalExportReady: boolean;
   remainingDocumentBlockers: number;
   remainingTenderLevelBlockers: number;
@@ -367,7 +369,7 @@ export async function runExportGapRepair(
   if (!tender) {
     return {
       repaired: 0, skipped: 0, manualRequired: 0, blockedByHygiene: 0,
-      letterheadAppliedCount: 0, finalExportReady: false,
+      letterheadAppliedCount: 0, letterheadSkipReason: null, finalExportReady: false,
       remainingDocumentBlockers: 0, remainingTenderLevelBlockers: 0,
     };
   }
@@ -496,7 +498,9 @@ export async function runExportGapRepair(
     }
   });
 
-  const letterheadAppliedCount = await applyActiveUploadedLetterheadToTenderDocuments(tenderId, userId);
+  const letterheadOutcome = await applyActiveUploadedLetterheadToTenderDocuments(tenderId, userId);
+  const letterheadAppliedCount = letterheadOutcome.applied;
+  const letterheadSkipReason = letterheadOutcome.reason;
 
   const repairedDocs = await prisma.generatedDocument.findMany({
     where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
@@ -515,6 +519,7 @@ export async function runExportGapRepair(
     // generated document content while diagnosing an automatic repair failure.
     blockedByHygieneDetails: blockedByHygiene,
     letterheadAppliedCount,
+    letterheadSkipReason,
     finalExportReady: readiness.ok,
   });
 
@@ -524,6 +529,7 @@ export async function runExportGapRepair(
     manualRequired: manualRequired.length,
     blockedByHygiene: blockedByHygiene.length,
     letterheadAppliedCount,
+    letterheadSkipReason,
     finalExportReady: readiness.ok,
     remainingDocumentBlockers: readiness.failures.length,
     remainingTenderLevelBlockers: readiness.tenderLevelBlockers?.length ?? 0,

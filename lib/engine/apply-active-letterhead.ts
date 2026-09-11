@@ -1,6 +1,6 @@
 import { prisma } from "../prisma";
 import { forbidsBranding } from "./scope-policy";
-import { applyUploadedDocxLetterheadTemplate } from "./docx-letterhead-template";
+import { applyUploadedDocxLetterheadTemplateWithReason } from "./docx-letterhead-template";
 import { inspectActualFileBytes } from "./persisted-byte-integrity";
 
 const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
@@ -16,7 +16,27 @@ function looksLikeDocx(buffer: Buffer): boolean {
  * Do not rely only on filenames ending in .docx. Some tender-required filenames
  * have no extension even though the generated fileContent is a DOCX buffer.
  */
-export async function applyActiveUploadedLetterheadToTenderDocuments(tenderId: string, userId: string): Promise<number> {
+/**
+ * Why letterhead reached the documents it reached.
+ *
+ * `applied` is the count the callers already reported. `reason` explains a
+ * zero. Reproduced defect: this function returns 0 through SEVEN distinct
+ * exits and every surface showed only the number, so an owner whose branding
+ * silently never appeared had nothing to act on — and diagnosing one real case
+ * took a full session of hosted runs to rule the exits out one at a time.
+ * No behaviour changes here: the same documents are branded or skipped as
+ * before.
+ */
+export type LetterheadApplicationResult = {
+  applied: number;
+  /** Null when letterhead was applied to at least one document. */
+  reason: string | null;
+};
+
+export async function applyActiveUploadedLetterheadToTenderDocuments(
+  tenderId: string,
+  userId: string,
+): Promise<LetterheadApplicationResult> {
   const tender = await prisma.tender.findFirst({
     where: { id: tenderId, userId },
     include: {
@@ -29,7 +49,9 @@ export async function applyActiveUploadedLetterheadToTenderDocuments(tenderId: s
   });
 
   if (!tender) throw new Error("Tender not found");
-  if (forbidsBranding(tender.requirements)) return 0;
+  if (forbidsBranding(tender.requirements)) {
+    return { applied: 0, reason: "The tender prohibits company branding, so letterhead was deliberately not applied." };
+  }
 
   const company = await prisma.company.findUnique({
     where: { userId },
@@ -47,27 +69,43 @@ export async function applyActiveUploadedLetterheadToTenderDocuments(tenderId: s
   // implementation only checked tender-level prohibitions, so a user who had
   // turned branding off in settings still got letterhead applied. The default
   // when no AppSettings row exists is `true`, preserving prior behaviour.
-  if (company?.settings && company.settings.allowBrandingDefault === false) return 0;
+  if (company?.settings && company.settings.allowBrandingDefault === false) {
+    return { applied: 0, reason: "Company branding is turned off in Settings (allowBrandingDefault), so letterhead was deliberately not applied." };
+  }
 
   const letterhead = company?.assets?.[0];
-  if (!letterhead?.fileContent) return 0;
-  if (!/wordprocessingml\.document|msword|octet-stream/i.test(letterhead.mimeType)) return 0;
+  if (!letterhead?.fileContent) {
+    return { applied: 0, reason: "No active LETTERHEAD asset with stored bytes was found in the Company Vault." };
+  }
+  if (!/wordprocessingml\.document|msword|octet-stream/i.test(letterhead.mimeType)) {
+    return { applied: 0, reason: `The active letterhead is a ${letterhead.mimeType} file. Letterhead is applied by copying Word header/footer parts, so it must be uploaded as a .docx — a PDF or image letterhead cannot be used this way.` };
+  }
 
   const templateBuffer = Buffer.from(letterhead.fileContent, "base64");
-  if (!looksLikeDocx(templateBuffer)) return 0;
+  if (!looksLikeDocx(templateBuffer)) {
+    return { applied: 0, reason: `The active letterhead "${letterhead.originalFileName}" is declared as a Word document but its bytes are not a .docx package. Re-save it from Word and upload it again.` };
+  }
 
   let updated = 0;
+  // Per-document skips, kept so a zero can name the documents it skipped and
+  // why, instead of collapsing every cause into the same silent 0.
+  const skipped: string[] = [];
   for (const doc of tender.generatedDocuments) {
-    if (!doc.fileContent) continue;
+    const label = doc.exactFileName ?? doc.name ?? doc.id;
+    if (!doc.fileContent) { skipped.push(`${label}: no stored bytes`); continue; }
     // Storage-backed rows: readers serve the storage object first, so the
     // inline copy may be stale. Branding it and making it canonical could
     // replace authoritative bytes — skip instead of guessing.
-    if (doc.storagePath) continue;
+    if (doc.storagePath) { skipped.push(`${label}: stored in object storage, which this step will not overwrite`); continue; }
     const generatedBuffer = Buffer.from(doc.fileContent, "base64");
-    if (!looksLikeDocx(generatedBuffer)) continue;
+    if (!looksLikeDocx(generatedBuffer)) { skipped.push(`${label}: not a DOCX, so there is no header/footer to brand`); continue; }
 
-    const applied = await applyUploadedDocxLetterheadTemplate(generatedBuffer, templateBuffer);
-    if (applied.equals(generatedBuffer)) continue;
+    const outcome = await applyUploadedDocxLetterheadTemplateWithReason(generatedBuffer, templateBuffer);
+    const applied = outcome.buffer;
+    if (!outcome.applied || applied.equals(generatedBuffer)) {
+      skipped.push(`${label}: ${outcome.reason ?? "the letterhead produced no change"}`);
+      continue;
+    }
 
     // Re-pin persisted integrity from the LETTERHEADED bytes. Overwriting
     // fileContent while the stored digests still describe the pre-letterhead
@@ -79,7 +117,7 @@ export async function applyActiveUploadedLetterheadToTenderDocuments(tenderId: s
       filename: doc.exactFileName ?? `${doc.name}.docx`,
       claimedMimeType: DOCX_MIME,
     });
-    if (integrity.integrityStatus !== "VERIFIED") continue;
+    if (integrity.integrityStatus !== "VERIFIED") { skipped.push(`${label}: the branded bytes failed integrity verification, so the original was kept`); continue; }
 
     const summary = doc.contentSummary ?? "Generated document";
     await prisma.generatedDocument.update({
@@ -97,5 +135,9 @@ export async function applyActiveUploadedLetterheadToTenderDocuments(tenderId: s
     updated += 1;
   }
 
-  return updated;
+  if (updated > 0) return { applied: updated, reason: null };
+  if (tender.generatedDocuments.length === 0) {
+    return { applied: 0, reason: "This tender has no generated documents to brand yet." };
+  }
+  return { applied: 0, reason: `Letterhead reached none of the ${tender.generatedDocuments.length} generated document(s). ${skipped.join("; ")}.` };
 }

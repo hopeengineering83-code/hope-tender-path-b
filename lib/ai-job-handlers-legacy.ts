@@ -437,7 +437,8 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
     }
 
     await recordStep(ctx.jobId, { stepName: "proposal.letterhead", message: "Applying active Company Vault letterhead branding", status: "RUNNING" });
-    const letterheadAppliedCount = await applyActiveUploadedLetterheadToTenderDocuments(ctx.tenderId, ctx.userId);
+    const letterheadOutcome = await applyActiveUploadedLetterheadToTenderDocuments(ctx.tenderId, ctx.userId);
+    const letterheadAppliedCount = letterheadOutcome.applied;
 
     await prisma.tender.update({ where: { id: ctx.tenderId }, data: { stage: "GENERATION" } }).catch(() => {});
 
@@ -449,13 +450,17 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
 
     await recordStep(ctx.jobId, {
       stepName: "proposal.complete",
-      message: `Generated ${generated.length} document(s) (${generated.map((d) => d.documentType).join(", ") || "none"}); letterhead applied to ${letterheadAppliedCount} file(s)`,
+      // The reason rides along with the count: "letterhead applied to 0
+      // file(s)" on its own is what made this undiagnosable.
+      message: `Generated ${generated.length} document(s) (${generated.map((d) => d.documentType).join(", ") || "none"}); letterhead applied to ${letterheadAppliedCount} file(s)`
+        + (letterheadOutcome.reason ? ` — ${letterheadOutcome.reason}` : ""),
       status: "SUCCEEDED",
     });
     return {
       generatedDocumentIds: generated.map((d) => d.id),
       documentTypes: generated.map((d) => d.documentType),
       letterheadAppliedCount,
+      letterheadSkipReason: letterheadOutcome.reason,
     };
   },
 
