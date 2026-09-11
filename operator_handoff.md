@@ -243,6 +243,24 @@ Guarded to fail loudly on an empty package rather than "verify" nothing.
 **Next action:** the owner's Run Engine + generation must actually produce
 jobs. Until then nothing downstream is executable.
 
+#### Practical lesson for the next session — do not fight your own deployments
+
+Every push to this branch triggers a Vercel Preview rebuild, and the branch
+alias the inspect targets flips to the new deployment as each one finishes. A
+`confirm=inspect` dispatched while builds are churning can have its HTTP calls
+hang against an alias that is being swapped underneath it: run 34604412559
+sat in "Read the live vault" for 35+ minutes and produced no artifact, after a
+sequence of six pushes in the preceding hour. Let the Preview settle before
+dispatching an inspect, and batch script edits instead of pushing each one.
+
+Separately, GitHub's Actions read endpoints served **stale** job/run state at
+least four times today — reporting `in_progress` for jobs that had already
+finished, and an empty artifact list for artifacts that existed. The reliable
+signals are the completed-status run filter and, for a job believed finished,
+retrying `get_job_logs` rather than trusting the step list. Do not diagnose a
+"hung" or "timed out" run from those endpoints alone; one such misreading in
+this session produced a wrong root cause that had to be corrected.
+
 ### 2026-09-11T10:45Z — Claude Code (Opus 5) — FILE_FORMAT verified live; letterhead traced to a by-design skip; the package has since emptied
 
 **Branch / PR:** `release/consolidated-recovery-20260717` — PR #1175. Not merged. Production untouched.
