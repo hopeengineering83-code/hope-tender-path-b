@@ -138,3 +138,74 @@ export function isPackagingOrFormatRequirement(requirement: PackagingRequirement
 
   return explicitType || PACKAGING_PHRASES.some((rx) => rx.test(text));
 }
+
+/**
+ * Phrases that make a requirement about HOW THE BID IS DELIVERED — the
+ * channel, the address, the subject line — rather than about the content of
+ * any document.
+ *
+ * The module above solved this for the SHAPE of the submission. It did not
+ * solve it for the ADDRESSING of the submission, and the live tender shows the
+ * same failure in the half that was left:
+ *
+ *   Email Submission Only        evidence: Expert CVS.pdf.txt
+ *   Required Email Subject Line  evidence: Expert CVS.pdf.txt
+ *
+ * The same file named in this module's own PROBLEM note, attached to two more
+ * requirements it cannot possibly prove. "Submission Method: Email submission
+ * only" matches no PACKAGING_PHRASE — it is not about single files, formats,
+ * naming, envelopes or page limits — so it still falls through to GENERAL, and
+ * GENERAL admits everything. Every CV contains an email address, so a CV wins.
+ *
+ * Generic: any tender that names a submission channel, against any vault
+ * holding a document with ordinary words in it.
+ */
+const SUBMISSION_INSTRUCTION_PHRASES: RegExp[] = [
+  /\bemail\s+submissions?\s+only\b/,
+  /\bsubmissions?\s+(?:by|via|through)\s+email\b/,
+  /\b(?:submit|send|deliver)(?:ted|ed)?\s+(?:only\s+)?(?:by|via|to|through)\s+e-?mail\b/,
+  /\bsubmission\s+method\b/,
+  /\bsubmission\s+(?:e-?mail|address|portal|link|channel)\b/,
+  /\b(?:required\s+)?e-?mail\s+subject(?:\s+line)?\b/,
+  /\bsubject\s+line\s+(?:must|shall|should)\b/,
+  /\bupload(?:ed)?\s+(?:to|via|through)\s+(?:the\s+)?(?:portal|platform|e-?procurement)\b/,
+  /\bhand\s+deliver(?:y|ed)\b/,
+  /\b(?:courier|registered\s+post|postal\s+submission)\b/,
+  /\bsubmitted?\s+to\s+the\s+(?:following\s+)?address\b/,
+];
+
+/**
+ * True when the requirement states HOW the bid must reach the client.
+ *
+ * Satisfying such a rule is a property of the submission plan and the produced
+ * package — the artifact says where it goes and under what subject. No company
+ * vault record can ever prove it, however well its text scores.
+ *
+ * Deliberately NOT folded into `isPackagingOrFormatRequirement`: that predicate
+ * resolves to the PACKAGE_FORMAT evidence family alone, and a submission
+ * instruction must remain provable by the generated artifact's own validated
+ * text. `tests/generated-artifact-content-coverage.test.ts` pins exactly that,
+ * and an earlier attempt of mine to route these rules away from artifact
+ * evidence was reverted in 8f2eed4b for breaking it. The fix is to stop these
+ * requirements reaching the GENERAL wildcard — not to narrow them past the
+ * evidence that genuinely answers them.
+ */
+export function isSubmissionInstructionRequirement(requirement: PackagingRequirementInput): boolean {
+  const type = normalise(requirement.requirementType).replace(/ /g, "_").toUpperCase();
+  const text = normalise(
+    [requirement.title, requirement.description, requirement.restrictions].filter(Boolean).join(" "),
+  );
+  if (!text) return false;
+
+  // Same conservatism as above: a requirement that also asks for substantive
+  // evidence keeps its real evidence link. "Email the audited accounts" is an
+  // accounts requirement with a delivery note attached.
+  if (SUBSTANTIVE_EVIDENCE_SIGNALS.some((rx) => rx.test(text))) return false;
+
+  const explicitType = type === "SUBMISSION_RULE" || type === "SUBMISSION";
+  return SUBMISSION_INSTRUCTION_PHRASES.some((rx) => rx.test(text))
+    // An explicitly typed submission rule is about the submission by
+    // definition; requiring it to also match a phrase would leave the same
+    // hole for the next wording a procuring entity invents.
+    || explicitType;
+}

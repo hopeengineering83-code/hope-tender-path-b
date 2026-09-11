@@ -16,7 +16,7 @@ import {
   type ReviewRecordState,
 } from "../vault-review-provenance";
 import { isValidationPassed } from "./document-output-state";
-import { isPackagingOrFormatRequirement } from "./packaging-requirement-rule";
+import { isPackagingOrFormatRequirement, isSubmissionInstructionRequirement } from "./packaging-requirement-rule";
 import {
   evaluatePackageConformance,
   type PackageConformanceFacts,
@@ -353,6 +353,25 @@ export function inferAutomaticEvidenceKinds(
   // source or vault record.
   if (isPackagingOrFormatRequirement(requirement)) {
     return ["PACKAGE_FORMAT"];
+  }
+
+  // The same hole, in the half the packaging fix did not cover: how the bid is
+  // DELIVERED. "Submission Method: Email submission only" and "Required Email
+  // Subject: ..." are about the channel, not the shape, so they match no
+  // PACKAGING_PHRASE, fall through to GENERAL, and GENERAL admits everything.
+  // Live on tender 08e250af both were evidenced by `Expert CVS.pdf.txt` —
+  // the same file this module's sibling already named — because every CV
+  // contains an email address.
+  //
+  // These return the artifact families rather than PACKAGE_FORMAT alone. A
+  // delivery instruction IS answerable by the produced artifact's own
+  // validated text, which states where the bid goes and under what subject;
+  // `tests/generated-artifact-content-coverage.test.ts` pins that, and
+  // narrowing these to PACKAGE_FORMAT would break it — as an earlier attempt
+  // of mine did, reverted in 8f2eed4b. The defect is GENERAL admitting vault
+  // records, not artifact evidence being allowed.
+  if (isSubmissionInstructionRequirement(requirement)) {
+    return ["OUTPUT_ARTIFACT", "PACKAGE_FORMAT"];
   }
 
   if (kinds.size === 0) kinds.add("GENERAL");

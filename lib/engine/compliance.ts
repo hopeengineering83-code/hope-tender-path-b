@@ -1,4 +1,5 @@
 import type { CompanyKnowledgeSnapshot, ComplianceResult, MatchingResult, RequirementDraft } from "./types";
+import { isPackagingOrFormatRequirement, isSubmissionInstructionRequirement } from "./packaging-requirement-rule";
 
 function clamp01(value: number): number { return Math.max(0, Math.min(1, value)); }
 
@@ -61,6 +62,32 @@ const REQUIREMENT_MATCH_STOP_WORDS = new Set([
 ]);
 
 export function findRequirementSupportDocument(knowledge: CompanyKnowledgeSnapshot, requirement: RequirementDraft) {
+  // A vault document cannot prove a rule about the submission itself.
+  //
+  // This function matches on bare token overlap: up to 8 terms of 4+
+  // characters from the requirement, against the category, filename and FULL
+  // extracted text of each vault document, first one with any 2 hits wins.
+  // No scoring, no ranking, no relevance floor, and until now no notion of
+  // whether the KIND of document could answer the KIND of requirement.
+  //
+  // Live on tender 08e250af that produced, for two mandatory requirements:
+  //
+  //   Email Submission Only        -> Expert CVS.pdf.txt
+  //   Required Email Subject Line  -> Expert CVS.pdf.txt
+  //
+  // Every CV carries an email address, so "email" plus one more ordinary word
+  // is enough. The owner is then shown a CV as the evidence for "the bid must
+  // be emailed", which is false traceability, and it is this function that
+  // wrote it. Generic to any tender naming a submission channel.
+  //
+  // Skipping these requirements changes no gate: the caller's strength is
+  // `draftingEvidenceExists ? 0.75 : 0.4`, a boolean that also reads selected
+  // expert/project evidence, so removing a bogus document match does not by
+  // itself move coverage either way. It removes a false claim, nothing more.
+  if (isPackagingOrFormatRequirement(requirement) || isSubmissionInstructionRequirement(requirement)) {
+    return undefined;
+  }
+
   const terms = `${requirement.title} ${requirement.description}`
     .toLowerCase()
     .match(/[a-z0-9]{4,}/g)

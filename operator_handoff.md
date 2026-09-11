@@ -143,6 +143,46 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-11 — Fixed at both producers: a CV can no longer prove how the bid is sent
+
+`lib/engine/packaging-requirement-rule.ts` already documented this defect, with
+this same file, for "Submission in a Single PDF Technical File" — a rule about
+the SHAPE of the submission. That half was fixed. The ADDRESSING half was not,
+and it is what the live tender is stuck on.
+
+New `isSubmissionInstructionRequirement()` beside the existing packaging
+predicate, deliberately NOT folded into it, wired into both producers:
+
+* `inferAutomaticEvidenceKinds` returns `["OUTPUT_ARTIFACT", "PACKAGE_FORMAT"]`
+  instead of falling through to `GENERAL` — the wildcard the selector admits
+  every candidate for.
+* `findRequirementSupportDocument` returns undefined for these requirements
+  rather than the first vault document sharing two tokens.
+
+**Why not PACKAGE_FORMAT alone.** A delivery instruction IS answerable by the
+produced artifact's own validated text, which states where the bid goes and
+under what subject. `tests/generated-artifact-content-coverage.test.ts` pins
+that, and it is exactly what my earlier attempt broke and why `8f2eed4b` was
+reverted. The defect is `GENERAL` admitting vault records — not artifact
+evidence being allowed. That test is green on this change; I ran it alone as
+well as in the suite.
+
+**What this does and does not do.** It removes a false claim. It does not move
+the gate: the caller's strength is `draftingEvidenceExists ? 0.75 : 0.4`, a
+boolean that also reads selected expert/project evidence, so dropping a bogus
+document match does not by itself change coverage either way. **The
+MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE gate at 4/6 is expected to still
+block**, and that is the honest outcome — I have not verified otherwise and
+must not claim it.
+
+Gate: `tsc` clean, `next lint` clean, `RUN_DB_INTEGRATION=true npm test`
+11743 pass / 0 fail / 0 cancelled (11731 before; +12 from the new test).
+
+Next: one read-only inspect to confirm the two rows no longer cite
+`Expert CVS.pdf.txt`, and to see what they cite instead. Whether coverage then
+reaches FULL/SUBSTANTIAL is a separate question and must not be assumed.
+
+
 ### 2026-09-11 — Why those two requirements are PARTIAL: a CV is the evidence
 
 Inspect 34612881290 (`60922b3a`), read-only. Exactly two mandatory rows sit
