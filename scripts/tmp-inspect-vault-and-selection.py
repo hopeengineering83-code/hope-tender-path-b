@@ -797,3 +797,43 @@ if isinstance(_fpr2, dict):
 print("\n--- export readiness, full ---")
 _er2 = get(f"/api/tenders/{TENDER}/export-readiness")
 print(json.dumps(_er2, indent=2)[:7000])
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# WHY DID THE OWNER'S CLICKS PRODUCE NO JOB?
+#
+# enqueueEngineJob only reuses a job in QUEUED / RUNNING / PARTIAL_SUCCESS
+# (enqueue-engine-job.ts:134). A SUCCEEDED ENGINE_RUN does NOT suppress a new
+# one, so a click that reached the enqueue would have created a row. Zero new
+# rows therefore means the request was refused BEFORE enqueue — and a
+# pre-enqueue refusal writes no AiJob, so it leaves no trace the job list can
+# show. These endpoints are where that refusal is visible.
+# ═════════════════════════════════════════════════════════════════════════════
+print("\n" + "=" * 78)
+print("PRE-ENQUEUE GATE STATE — what a Run Engine click would hit right now")
+print("=" * 78)
+
+for _label, _path in (
+    ("engine-readiness", f"/api/tenders/{TENDER}/engine-readiness"),
+    ("generation-readiness", f"/api/tenders/{TENDER}/generation-readiness"),
+    ("workflow-status", f"/api/tenders/{TENDER}/workflow-status"),
+):
+    print(f"\n----- {_label} -----")
+    print(json.dumps(get(_path), indent=2)[:4500])
+
+print("\n----- workflow-center: the canonical next action the owner is shown -----")
+_wc = get(f"/api/tenders/{TENDER}/workflow-center")
+if isinstance(_wc, dict):
+    # Print the decision fields first; the full payload is large and the
+    # question here is only "what does the app tell the owner to do next".
+    for _k in ("nextRequiredAction", "nextRequiredActionReason", "nextAction",
+               "blockerCodes", "blockerDetails", "stage", "status",
+               "canonicalStage", "readinessScore", "ok"):
+        if _k in _wc:
+            print(f"  {_k} = {json.dumps(_wc[_k])[:900]}")
+    _dec = _wc.get("decision") if isinstance(_wc.get("decision"), dict) else None
+    if _dec:
+        print("  decision:")
+        for _k, _v in list(_dec.items())[:20]:
+            print(f"    {_k} = {json.dumps(_v)[:700]}")
+print(json.dumps(_wc, indent=2)[:5000])
