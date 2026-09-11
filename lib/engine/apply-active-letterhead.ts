@@ -1,4 +1,5 @@
 import { prisma } from "../prisma";
+import { getStorageAdapter } from "../storage";
 import { forbidsBranding } from "./scope-policy";
 import { applyUploadedDocxLetterheadTemplateWithReason } from "./docx-letterhead-template";
 import { inspectActualFileBytes } from "./persisted-byte-integrity";
@@ -59,7 +60,11 @@ export async function applyActiveUploadedLetterheadToTenderDocuments(
       settings: { select: { allowBrandingDefault: true } },
       assets: {
         where: { assetType: "LETTERHEAD", isActive: true },
-        select: { fileContent: true, originalFileName: true, mimeType: true },
+        // storagePath belongs here. Brand assets are not always inline: the
+        // upload path can persist the bytes to private storage and leave
+        // fileContent null, and selecting only fileContent made a
+        // storage-backed letterhead indistinguishable from no letterhead.
+        select: { fileContent: true, storagePath: true, originalFileName: true, mimeType: true },
         take: 1,
       },
     },
@@ -74,14 +79,59 @@ export async function applyActiveUploadedLetterheadToTenderDocuments(
   }
 
   const letterhead = company?.assets?.[0];
-  if (!letterhead?.fileContent) {
+  if (!letterhead) {
+    return { applied: 0, reason: "No active LETTERHEAD asset was found in the Company Vault." };
+  }
+
+  // Reproduced defect (live Preview, tender 50940b8b, 2026-09-11). The
+  // delivered 37-page PDF contained ZERO embedded images, and the generation
+  // job explained itself:
+  //
+  //   letterhead applied to 0 file(s) — No active LETTERHEAD asset with
+  //   stored bytes was found in the Company Vault.
+  //
+  // The Company Vault held it all along:
+  //
+  //   LETTERHEAD LetterHead_repaired.docx 126,100 B active VERIFIED
+  //              inline=False storage=True
+  //
+  // All three brand assets were storage-backed, none inline. This function
+  // read `fileContent` and nothing else, so "no stored bytes" was reported
+  // about an asset whose bytes were stored — just not inline. The owner is
+  // then told their vault is missing something it is not missing, which sends
+  // them to re-upload a file that was never the problem.
+  //
+  // Storage-backed content is normal here and the codebase already has one way
+  // to read it: getStorageAdapter().getFile(), as checkDocxHygieneReadiness
+  // does for generated documents. This uses that same path rather than
+  // inventing a second one.
+  let letterheadBase64 = letterhead.fileContent ?? null;
+  if (!letterheadBase64 && letterhead.storagePath) {
+    try {
+      const bytes = await getStorageAdapter().getFile({
+        storagePath: letterhead.storagePath,
+        fileContent: null,
+        fileName: letterhead.originalFileName ?? "letterhead.docx",
+      });
+      letterheadBase64 = bytes.toString("base64");
+    } catch (error) {
+      // Naming the failure beats reporting it as an absent asset: one is a
+      // storage problem to investigate, the other sends the owner to re-upload.
+      const detail = error instanceof Error ? error.message : String(error);
+      return {
+        applied: 0,
+        reason: `The active letterhead "${letterhead.originalFileName}" is stored but its bytes could not be read back from storage (${detail}).`,
+      };
+    }
+  }
+  if (!letterheadBase64) {
     return { applied: 0, reason: "No active LETTERHEAD asset with stored bytes was found in the Company Vault." };
   }
   if (!/wordprocessingml\.document|msword|octet-stream/i.test(letterhead.mimeType)) {
     return { applied: 0, reason: `The active letterhead is a ${letterhead.mimeType} file. Letterhead is applied by copying Word header/footer parts, so it must be uploaded as a .docx — a PDF or image letterhead cannot be used this way.` };
   }
 
-  const templateBuffer = Buffer.from(letterhead.fileContent, "base64");
+  const templateBuffer = Buffer.from(letterheadBase64, "base64");
   if (!looksLikeDocx(templateBuffer)) {
     return { applied: 0, reason: `The active letterhead "${letterhead.originalFileName}" is declared as a Word document but its bytes are not a .docx package. Re-save it from Word and upload it again.` };
   }
