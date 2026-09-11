@@ -835,19 +835,52 @@ jobs:
 
       - name: Sign in through the real /api/auth/login endpoint
         run: |
-          code=$(curl -sS -o /tmp/login.json -w '%{http_code}' -D /tmp/login.headers \
-            --connect-timeout 15 --max-time 60 \
-            -H 'Content-Type: application/json' \
-            -d "{\"email\":\"$OWNER_EMAIL\",\"password\":\"$OWNER_PASSWORD\"}" \
-            "$BASE_URL/api/auth/login" || echo 000)
-          echo "login HTTP $code"
-          cookie=$(grep -i '^set-cookie: hope_session=' /tmp/login.headers | head -1 | sed 's/.*hope_session=//; s/;.*//')
+          # Byte-for-byte the step the inspection job uses. My first attempt
+          # wrote a fresh one that omitted the Origin and Referer headers and
+          # got a flat HTTP 403: the login route enforces strict CSRF and wants
+          # the headers a same-origin browser form would send. Credentials go
+          # through a --data-binary file rather than argv so they never reach
+          # the process table.
+          umask 077
+          printf '{"email":%s,"password":%s}' \
+            "$(printf '%s' "$OWNER_EMAIL" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" \
+            "$(printf '%s' "$OWNER_PASSWORD" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" \
+            > /tmp/login-body.json
+          status=$(curl -sS --connect-timeout 15 --max-time 45 \
+            -o /tmp/login-body-response.json -D /tmp/login-headers.txt \
+            -w "%{http_code}" \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json" \
+            -H "Origin: $BASE_URL" \
+            -H "Referer: $BASE_URL/login" \
+            --data-binary @/tmp/login-body.json \
+            "$BASE_URL/api/auth/login")
+          rm -f /tmp/login-body.json
+          echo "login status: $status"
+          if [ "$status" != "200" ]; then
+            # Say what was observed, not what it might mean. A 403 is CSRF or
+            # deployment protection; a 401 is credentials; a 5xx is the app. The
+            # first version of this message asserted "the owner account is
+            # missing" for all of them, which was an inference with nothing
+            # behind it and would have sent the next reader to rebuild a
+            # database that was perfectly fine.
+            echo "::error::Login against the Preview app failed (HTTP $status). 401 means the credentials are wrong; 403 means CSRF/deployment protection rejected the request shape; 5xx means the app or its database is unwell — run confirm=health."
+            rm -f /tmp/login-headers.txt /tmp/login-body-response.json
+            exit 1
+          fi
+          cookie=$(grep -i '^set-cookie:' /tmp/login-headers.txt \
+            | grep -o 'hope_session=[^;]*' \
+            | head -1 \
+            | cut -d= -f2-)
+          rm -f /tmp/login-headers.txt /tmp/login-body-response.json
           if [ -z "$cookie" ]; then
-            echo "::error::Could not sign in. On a freshly provisioned database this means the owner account is missing; run confirm=provision."
+            echo "::error::Login succeeded but no hope_session cookie was returned."
             exit 1
           fi
           echo "::add-mask::$cookie"
           echo "SESSION_COOKIE=$cookie" >> "$GITHUB_ENV"
+          echo "Signed in; session captured and masked."
 
       - name: Report what has been uploaded so far
         run: python3 scripts/tmp-upload-readiness.py
