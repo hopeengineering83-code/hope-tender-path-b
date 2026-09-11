@@ -16,8 +16,12 @@ on:
           Preview deployment. Type "inspect" to run the READ-ONLY vault and
           selection inspection instead (no generation, no writes). Type
           "provision" to migrate a freshly created Preview database and create
-          the owner account on it. Any other value (including blank) runs only
-          the ordinary lockfile-refresh job.
+          the owner account on it. Type "export" to verify a package the OWNER
+          has already generated: it runs the same export, ZIP download and
+          artifact inspection as "accept" but SKIPS AI Analyze and Run Engine,
+          so it neither supersedes the owner's package nor spends provider
+          quota. Any other value (including blank) runs only the ordinary
+          lockfile-refresh job.
         required: false
         default: ""
       expected_fingerprint:
@@ -101,8 +105,15 @@ jobs:
   # inspection; makes no other write beyond the normal application actions a
   # signed-in owner clicking through the UI would make. Remove this job, the
   # confirm=accept branch, and the tender_id input once acceptance is done.
+  # Two modes share this job because the verification after generation is
+  # identical and duplicating ~200 lines of it would let the two drift.
+  # "accept" clicks the owner's two manual gates itself; "export" starts from a
+  # package the owner already generated, so only the gate-clicking steps below
+  # are conditional. Everything from the export snapshot onwards runs in both.
   temporary-preview-hosted-acceptance:
-    if: github.event_name == 'workflow_dispatch' && inputs.confirm == 'accept'
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      && (inputs.confirm == 'accept' || inputs.confirm == 'export')
     runs-on: ubuntu-latest
     timeout-minutes: 55
     permissions:
@@ -196,6 +207,7 @@ jobs:
           echo "Session verified against tender $TENDER_ID."
 
       - name: Trigger AI Analyze (manual, owner-authorized)
+        if: inputs.confirm == 'accept'
         run: |
           resp=$(curl -sS --connect-timeout 15 --max-time 60 -X POST -w "\n---STATUS:%{http_code}---" \
             -H "Cookie: hope_session=$SESSION_COOKIE" -H "Origin: $BASE_URL" \
@@ -208,14 +220,17 @@ jobs:
           fi
 
       - name: Wait for AI Analyze to reach a terminal state
+        if: inputs.confirm == 'accept'
         run: bash scripts/tmp-await-tender-jobs.sh 40
 
       - name: Snapshot readiness after AI Analyze
+        if: inputs.confirm == 'accept'
         run: |
           curl -sS --connect-timeout 15 --max-time 30 -H "Cookie: hope_session=$SESSION_COOKIE" \
             "$BASE_URL/api/tenders/$TENDER_ID/workflow-center" | tee /tmp/workflow-center-after-analyze.json
 
       - name: Record the artifact this run starts from
+        if: inputs.confirm == 'accept'
         run: |
           # Run 33996268451 passed every gate below while regenerating nothing:
           # it delivered a ZIP whose contentSha256, byte size and defect counts
@@ -240,6 +255,7 @@ jobs:
           PYEOF
 
       - name: Trigger Run Engine (manual, owner-authorized)
+        if: inputs.confirm == 'accept'
         run: |
           resp=$(curl -sS --connect-timeout 15 --max-time 60 -X POST -w "\n---STATUS:%{http_code}---" \
             -H "Cookie: hope_session=$SESSION_COOKIE" -H "Origin: $BASE_URL" -H "Content-Type: application/json" \
@@ -258,9 +274,11 @@ jobs:
           echo "$resp" | grep -oE '"(jobId|reusedActiveJob|sourceRevision)":[^,}]*' || true
 
       - name: Wait for ENGINE_RUN -> PROPOSAL_GENERATION -> AUTO_FINALIZE to settle
+        if: inputs.confirm == 'accept'
         run: bash scripts/tmp-await-tender-jobs.sh 120
 
       - name: Fail if any job in this run's chain failed
+        if: inputs.confirm == 'accept'
         run: |
           # The settle loop exits when nothing is QUEUED or RUNNING. A FAILED
           # job is terminal, so it satisfies that condition perfectly — and the
@@ -303,7 +321,13 @@ jobs:
           curl -sS --connect-timeout 15 --max-time 90 -H "Cookie: hope_session=$SESSION_COOKIE" \
             "$BASE_URL/api/admin/generated-proposals/audit?tenderId=$TENDER_ID&includeReady=true" | tee /tmp/generated-proposal-audit.json
 
+      # accept-only: it compares against a baseline hash that only the
+      # accept path records. In export mode this run deliberately regenerates
+      # NOTHING — it verifies a package the owner already produced — so
+      # demanding a changed hash would fail by design. The export-mode
+      # equivalent is the step after it.
       - name: Prove this run actually regenerated the artifact
+        if: inputs.confirm == 'accept'
         run: |
           # Guards the trap described in "Record the artifact this run starts
           # from". If the hash has not moved, the pipeline handed back the
@@ -329,6 +353,39 @@ jobs:
                   'commit. Change the source revision (or the analysis) before re-running.'
               )
           print('regeneration confirmed: the delivered artifact is new')
+          PYEOF
+
+      - name: Require a real package to verify (export mode)
+        if: inputs.confirm == 'export'
+        run: |
+          # Export mode must not silently "verify" an empty package. On
+          # 2026-09-11T10:29Z this tender had currentOutputs 0 and every rule
+          # read PENDING_PACKAGE — a state in which the export gate is
+          # correctly closed and there is nothing to inspect. Fail loudly here
+          # rather than produce an inspection report about nothing.
+          python3 - <<'PYEOF'
+          import json
+          audit = json.load(open('/tmp/generated-proposal-audit.json', encoding='utf-8'))
+          rows = [r for r in audit.get('documents', []) if r.get('finalExportCandidate')]
+          summary = audit.get('summary') or {}
+          print(f"currentOutputs={summary.get('currentOutputs')} "
+                f"finalExportCandidates={summary.get('finalExportCandidates')} "
+                f"readyForExport={summary.get('readyForExport')} "
+                f"staleOutputs={summary.get('staleOutputs')}")
+          if not rows:
+              raise SystemExit(
+                  'No final-export candidate documents exist. There is no package to verify — '
+                  'the owner gates (Run Engine, then generation) have not produced current '
+                  'outputs for this tender.'
+              )
+          for r in rows:
+              print(f"  {r.get('exactFileName') or r.get('documentName')} "
+                    f"sha256={(r.get('contentSha256') or '(none)')[:16]} "
+                    f"updatedAt={r.get('updatedAt')} "
+                    f"quality={r.get('qualityScore')}/{r.get('qualityRecommendedStatus')}")
+              if not (r.get('contentSha256') or '').strip():
+                  raise SystemExit(f"{r.get('exactFileName')} has no contentSha256 — its bytes are not verifiable")
+          print(f"package present: {len(rows)} final-export candidate document(s)")
           PYEOF
 
       - name: Require real final readiness with zero blockers
