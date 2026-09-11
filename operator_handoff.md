@@ -143,6 +143,132 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-11T10:45Z — Claude Code (Opus 5) — FILE_FORMAT verified live; letterhead traced to a by-design skip; the package has since emptied
+
+**Branch / PR:** `release/consolidated-recovery-20260717` — PR #1175. Not merged. Production untouched.
+
+#### 1. FILE_FORMAT — VERIFIED LIVE, then its wording fixed
+
+Read-only inspect 34515490681 (Preview on `c233b1b0`, 2 current documents):
+
+```
+FILE_FORMAT: SATISFIED
+FINANCIAL_SEPARATION: SATISFIED
+ok = true
+```
+
+The `sourceExactQuote` plumbing (`c233b1b0`) is what made `01015c69` stop being
+inert. A caller-wiring test now reads each production call site, and the query
+behind it uses `include` with no `select`, so the column is genuinely populated
+rather than merely typed.
+
+The verdict was right and its sentence was wrong — "Every current
+export-candidate document **in the** Technical Proposal.pdf is PDF" reused
+envelope phrasing for a named file. Fixed in `d9332192` and re-verified live on
+inspect 34517013652:
+
+```
+FILE_FORMAT: SATISFIED
+reason: Technical Proposal.pdf is PDF, as the rule requires. The rule names that
+        file and no other, so no other document in the technical envelope is in
+        its scope.
+```
+
+#### 2. Letterhead (§5) — the applier runs every time and brands nothing
+
+Six `PROPOSAL_GENERATION` jobs across 2026-09-09 and 2026-09-10, read per job
+from `/api/ai-jobs/<id>`:
+
+```
+step proposal.letterhead [RUNNING]: Applying active Company Vault letterhead branding
+step proposal.complete  [SUCCEEDED]: Generated 3 document(s)
+   (TECHNICAL_PROPOSAL, PDF, COMPANY_PROFILE); letterhead applied to 0 file(s)
+```
+
+Ruled OUT by live data:
+- **"never called"** — the step is recorded on every run (`ai-job-handlers-legacy.ts:440`).
+- **guard 1** `forbidsBranding` — False, no prohibition in the tender text.
+- **guard 2** `allowBrandingDefault` — null, which permits.
+- **guard 4** mimeType — accepted; the asset is a real Word template,
+  `LetterHead_repaired.docx`. **My "uploaded in an unsupported format"
+  hypothesis was WRONG** and is recorded here rather than quietly dropped.
+- **my timing hypothesis** — also WRONG. The applier runs inside
+  `PROPOSAL_GENERATION`, before PDF finalization, and on runs that produced a
+  DOCX `COMPANY_PROFILE`. "Everything was already PDF" does not explain it.
+- `AUTO_FINALIZE` never reports the key, consistent with
+  `lib/ai-jobs/auto-finalize-continuation-service.ts` having no letterhead call.
+
+**Remaining candidate:** `apply-active-letterhead.ts:65` skips every document
+carrying a `storagePath`, deliberately — its comment says branding
+storage-backed bytes could replace authoritative content. If storage-backed is
+the whole population in this deployment, letterhead can never apply. **That
+would be a product gap for the owner to rule on, not a broken guard, and it is
+still NOT classified as a defect.** The storage totals that settle it are in the
+inspect at `b9e94f93`.
+
+#### 3. NEW AND UNEXPLAINED — the package emptied between runs
+
+| | 2026-09-10 18:55 | 2026-09-11 10:23 |
+|---|---|---|
+| currentOutputs | 2 | **0** |
+| staleOutputs | 31 | **33** |
+| FILE_FORMAT | SATISFIED | PENDING_PACKAGE |
+
+No new `PROPOSAL_GENERATION` since `2026-09-10T18:16`, and
+`isFinalExportCandidateDocument` depends only on each document row's own fields
+(`document-output-state.ts:151`) — so those two rows were superseded by
+something between those times. **Cause unknown. Do not assume it was this
+branch's changes, and do not assume it was not.** Today's `PENDING_PACKAGE` is
+the correct fail-closed reading of an empty package, so it does not retract the
+SATISFIED observation, which was made on a package that had 2 current documents.
+
+Re-verifying on a fresh package requires **AI Analyze and Run Engine — both
+owner gates.** An agent must not click them.
+
+#### 4. Four corrections to my own work, all caught before they became claims
+
+1. `01015c69` shipped INERT; reported as such rather than as a landed fix.
+2. `guard 3 inline fileContent = 0` — `fileContentLength` is not returned by
+   that endpoint; the asset is 126,100 bytes.
+3. `guard 6 = 0/0 live documents` — the audit route's `includeReady` defaults to
+   FALSE, so a clean package returns nothing.
+4. `no job row mentions letterhead` — `listUserJobs` selects six columns and
+   neither `output` nor `steps`. I nearly concluded the durable path never calls
+   the applier, from a SELECT list.
+
+All four are the same error: **a missing key is not an empty column.** Also
+withdrawn: a commit that claimed the inspect does "no writes"
+(`/api/ai-jobs/<id>` calls `recoverIfStuck`), and a commit that blamed a
+20-minute timeout for a run that had actually succeeded in 1m46s — GitHub's
+Actions read endpoints served stale snapshots repeatedly; the reliable signals
+are the completed-status filter and the artifact listing.
+
+#### Tests actually run, locally, on the pushed head
+
+```
+npx tsc --noEmit                    clean
+npx next lint                       ✔ No ESLint warnings or errors
+RUN_DB_INTEGRATION=true npm test    # tests 11706 / # pass 11706 / # fail 0
+tests/format-rule-governs-what-it-names.test.ts   12/12
+```
+
+`npx next build` — **NOT run locally.** Declined earlier in the session and not
+re-issued. CI covers it. Do not read anything here as local build verification.
+
+#### Owner decisions, not an agent's
+
+- Whether submission-rule requirements ("Email Submission Only", "Required Email
+  Subject Line") belong in the `MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE`
+  denominator. No vault evidence can satisfy a submission rule, but that
+  denominator is a fail-closed release gate and loosening it to raise a score is
+  exactly the move the contract forbids.
+- Whether letterhead should apply to storage-backed documents.
+- 33 generated documents on one tender, 30 flagged `duplicatedSectionsIssues`.
+
+**Next action:** read the storage totals from the `b9e94f93` inspect, then
+establish what superseded the package before doing anything else to it.
+
+
 ### 2026-09-10T18:40Z — Claude Code (Opus 5) — the FILE_FORMAT fix had shipped INERT; fed and re-verified
 
 **Branch / PR:** `release/consolidated-recovery-20260717` — PR #1175. Not merged. Production untouched.
