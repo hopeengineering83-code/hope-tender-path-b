@@ -24,6 +24,11 @@ export type AuditAction =
   | "TENDER_ENGINE_RUN_STARTED"
   | "TENDER_ENGINE_RUN_COMPLETED"
   | "TENDER_ENGINE_RUN_FAILED"
+  // A manual Run Engine the server REFUSED before any job was enqueued.
+  // Distinct from _FAILED, which means a run started and then failed: a
+  // refusal produces no AiJob at all, so without this row the owner clicks
+  // the gate, sees nothing happen, and no surface can say why.
+  | "TENDER_ENGINE_RUN_REFUSED"
   | "TENDER_ENGINE_DOCUMENTS_SUPERSEDED"
   | "TENDER_BID_DECISION_APPLIED"
   | "TENDER_COPILOT_QUESTION"
