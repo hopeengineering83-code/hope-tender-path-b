@@ -888,3 +888,42 @@ for _t in (discover_tenders() or [])[:15]:
     _mark = "  <== inspected" if _t.get("id") == TENDER else ""
     print(f"  {str(_t.get('id'))[:8]}  stage={_t.get('stage')}  status={_t.get('status')}"
           f"  updated={_t.get('updatedAt')}  {str(_t.get('title'))[:60]}{_mark}")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# WAS A RUN ENGINE REFUSED? The durable answer.
+#
+# Until f3e17913 every pre-enqueue refusal in the engine route returned JSON
+# and wrote nothing, so "I clicked and nothing happened" could not be told
+# apart from "the click never reached the server". Refusals are now persisted
+# as TENDER_ENGINE_RUN_REFUSED audit rows carrying the code, HTTP status,
+# nextAction and the diagnosticId the owner saw.
+#
+# IMPORTANT: this only sees refusals that happened AFTER that deployment went
+# live. A refusal before it leaves no row, and an empty list must not be read
+# as "no refusal ever happened" in that window.
+# ═════════════════════════════════════════════════════════════════════════════
+print("\n" + "=" * 78)
+print("RUN ENGINE REFUSALS — persisted, with the code that caused them")
+print("=" * 78)
+_ref = get(f"/api/admin/engine-refusals?tenderId={urllib.parse.quote(TENDER)}&limit=25")
+if not isinstance(_ref, dict) or "refusals" not in _ref:
+    print(f"  !! unreadable; keys={list(_ref)[:12] if isinstance(_ref, dict) else type(_ref)}")
+    print(f"  raw: {str(_ref)[:400]}")
+else:
+    print(f"  count = {_ref.get('count')}")
+    print(f"  {_ref.get('meaning')}")
+    for _r in _ref.get("refusals") or []:
+        print(f"    {_r.get('createdAt')}  code={_r.get('code')}  http={_r.get('httpStatus')}")
+        print(f"        nextAction={_r.get('nextAction')}")
+        print(f"        error={str(_r.get('error'))[:220]}")
+        print(f"        diagnosticId={_r.get('diagnosticId')}")
+
+print("\n--- account-wide refusals (any tender), in case the click went elsewhere ---")
+_refall = get("/api/admin/engine-refusals?limit=25")
+if isinstance(_refall, dict) and isinstance(_refall.get("refusals"), list):
+    print(f"  count = {_refall.get('count')}")
+    for _r in _refall["refusals"][:10]:
+        print(f"    {_r.get('createdAt')}  tender={str(_r.get('tenderId'))[:8]}  code={_r.get('code')}")
+else:
+    print(f"  !! unreadable: {str(_refall)[:250]}")

@@ -90,6 +90,43 @@ describe("a refused Run Engine leaves a durable record", () => {
     }
   });
 
+
+  it("the record is readable, not just written", () => {
+    // Writing a row nobody can read is still a silent failure. The
+    // owner-facing /api/audit feed deliberately scrubs descriptions to canned
+    // text and drops metadata (lib/audit-log-presentation.ts), and relabels
+    // any action missing from its map as the generic "AUDIT_EVENT" — so on
+    // the only existing read path the refusal code was invisible and the
+    // event did not even name itself. Both halves are fixed:
+    const presentation = readFileSync("lib/audit-log-presentation.ts", "utf8");
+    assert.match(
+      presentation,
+      /TENDER_ENGINE_RUN_REFUSED: "/,
+      "the owner's activity feed must name a refusal instead of showing AUDIT_EVENT",
+    );
+
+    const diag = readFileSync("app/api/admin/engine-refusals/route.ts", "utf8");
+    assert.match(diag, /requireRole\("ADMIN"\)/, "the detailed read must stay admin-only");
+    assert.match(diag, /action: "TENDER_ENGINE_RUN_REFUSED"/);
+    for (const field of ["code", "httpStatus", "nextAction", "diagnosticId"]) {
+      assert.match(diag, new RegExp(`${field}:`), `the diagnostic must surface ${field}`);
+    }
+    // It is a read path and must never become a write path.
+    for (const write of ["prisma.auditLog.create", "prisma.auditLog.update", "prisma.auditLog.delete",
+                         "prisma.tender.update", "prisma.aiJob.create"]) {
+      assert.doesNotMatch(diag, new RegExp(write.replace(/\./g, "\\.")), `${write} must not appear in a diagnostic read`);
+    }
+  });
+
+  it("an empty refusal list is reported as an answer, not as silence", () => {
+    // "No rows" means something specific — either no click reached the server,
+    // or every click that did was accepted. Returning a bare [] would leave
+    // the next reader to guess, which is the whole failure mode being fixed.
+    const diag = readFileSync("app/api/admin/engine-refusals/route.ts", "utf8");
+    assert.match(diag, /meaning:/);
+    assert.match(diag, /No Run Engine refusal has been recorded/);
+  });
+
   it("an audit failure cannot turn a refusal into a server error", () => {
     // logAction swallows its own failures; the helper must not add a throw
     // path of its own around it.
