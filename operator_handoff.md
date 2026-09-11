@@ -143,6 +143,84 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-11 UTC — A mandatory requirement nothing can ever satisfy
+
+Regeneration 34625093741 on `3e41c502` (letterhead fix live). The chain ran
+clean again — AI Analyze, Run Engine, ENGINE_RUN -> PROPOSAL_GENERATION ->
+AUTO_FINALIZE all SUCCEEDED, regeneration proven — and then final readiness
+FAILED where the 16:29 run had passed.
+
+**First, the thing nobody should skip past: AI Analyze is not deterministic.**
+Same tender document, same vault, two runs 30 minutes apart:
+
+```
+16:29  requirements total 10, mandatory 6, coverage 6/6, 0 blockers, no SUBMISSION_RULE
+16:59  requirements total  7, mandatory 3, coverage 2/3, 1 blocker, SUBMISSION_RULE present
+```
+
+That is not a regression from any commit — `226e9afb` was deployed before both
+runs and `3e41c502` only touches how brand-asset bytes are read. It is the
+extraction producing a different requirement set from identical input. Any
+conclusion drawn by comparing coverage numbers across runs is worthless, and
+this entry is the reason not to draw one.
+
+**The defect the second run exposed.** A mandatory requirement now exists that
+nothing can ever satisfy:
+
+```
+requirementId df34820b-9efb-4b55-ae43-f22cbd7f6171
+title         "Technical Proposal Email Submission"
+mandatory     true    selectedEvidenceCount 1
+strongestEvidenceLevel PARTIAL    displayStatus PARTIALLY_MET
+code          SUBMISSION_RULE_AWAITING_PACKAGE
+reason        "This packaging rule (page limits, fonts, hard-copy counts,
+               binding or envelope marking) cannot be decided from the stored
+               package bytes. It is never reported as met, and no
+               owner-supplied evidence can prove it either."
+nextAction    "No owner action: Technical Proposal Email Submission is
+               verified automatically once the package is produced."
+```
+
+It is counted in the mandatory-coverage denominator, so coverage is 2/3 and the
+export gate says:
+
+```
+MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE
+"Strengthen partial evidence or add eligible source-backed evidence where none
+ is adequate; no confirmation click can bypass this gate."
+nextAction: "Source evidence required"
+```
+
+**Three surfaces contradict each other, and the owner is caught between them:**
+
+1. the gate tells the owner to add source-backed evidence;
+2. the row says no owner-supplied evidence can prove it;
+3. the row's own nextAction says no owner action is needed and it verifies
+   automatically once the package is produced — while the reason says it is
+   *never* reported as met.
+
+The package HAS been produced. So this is an unwinnable state: a mandatory
+requirement that is never met by construction, counted in a denominator that
+must reach 100% before export, with instructions that cancel each other out.
+
+**Do not fix this by dropping it from the denominator.** That is the shortcut
+the owner has already warned against ("Do not simply remove them to make
+readiness pass"), and it would also be wrong: the rule is real and the package
+either honours it or does not. The question to answer first, from code, is
+whether a submission-CHANNEL rule should reach `classifyPackageRule` at all —
+its NOT_MACHINE_DECIDABLE branch is written for page limits, fonts, hard-copy
+counts and binding, and an email address is none of those. "Email the proposal
+to X with subject Y" is decidable from the submission plan.
+
+**Not yet established, and it matters:** whether `226e9afb` contributes to this
+requirement reaching the packaging classifier. That change routes
+submission-instruction requirements to OUTPUT_ARTIFACT + PACKAGE_FORMAT for
+EVIDENCE KINDS only; `classifyPackageRule` gates on
+`isPackagingOrFormatRequirement`, which was not touched. But the two now
+overlap in subject matter and the interaction has not been read end to end.
+Read it before changing anything.
+
+
 ### 2026-09-11 UTC — First full run on the rebuilt database: green, with one real finding
 
 The owner re-uploaded the vault, brand assets and tender onto the new Neon
