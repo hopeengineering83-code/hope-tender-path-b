@@ -143,6 +143,59 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-11 UTC — Letterhead reaches the DOCX; the PDF cannot be read at all
+
+Two hosted runs, both on the owner's re-uploaded Pharo data
+(tender `50940b8b-f2ba-4558-a630-898763d82f98`).
+
+**Run 34626239671 (accept, `fe333665`) — the letterhead fix is proven live.**
+The new pre-gate step reads PROPOSAL_GENERATION's own output:
+
+```
+proposal.complete: Generated 2 document(s) (PDF, TECHNICAL_PROPOSAL);
+                   letterhead applied to 1 file(s)
+letterheadAppliedCount=1
+letterheadSkipReason=None
+```
+
+Before `3e41c502` the same line read "applied to 0 file(s) — No active
+LETTERHEAD asset with stored bytes was found in the Company Vault", about an
+asset that was in the vault all along, storage-backed rather than inline.
+Reading storage through `getStorageAdapter().getFile()` fixed it. This is the
+first live confirmation; every previous attempt died behind the export gate,
+which is exactly why the step was placed before it.
+
+**Run 34627029199 (accept, `76752f9a`) — the PDF is unreadable, by design.**
+Branding in the DOCX does not imply branding in the client's PDF: letterhead is
+applied after `generateTenderDocuments` returns, the PDF is finalized on its own
+path. So the next step downloaded the finalized PDF directly. It cannot:
+
+```
+PDF HTTP:409 SIZE:610
+{"code":"MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE",
+ "error":"PDF export blocked: Automatic matching found release-qualified
+ FULL/SUBSTANTIAL coverage for 2/3 mandatory requirements."}
+```
+
+`proposalPdf()` runs `assertTenderReadyForGenerationAndExport` with purpose
+`final-zip` — the same gate as the ZIP. **There is no route to the delivered
+PDF bytes that skips it.** `EMBEDDED IMAGE XOBJECTS` therefore stays unmeasured
+until the blocker is resolved, and no bypass was added. `37dff99f` makes that
+step record `BRANDING IN THE DELIVERED PDF: NOT MEASURED` and continue, so the
+canonical readiness step remains the one that fails the run, and an absent
+branding result can never be misread as a passing one.
+
+**Consequence for the pending decision.** The `NOT_MACHINE_DECIDABLE`
+regression from `5cb8d694` is no longer only an export-gate question: while it
+stands, the delivered document cannot be inspected at all, so no further
+verification of generation or branding is possible on this tender. The three
+options and the recommendation are in the entry below. Still not fixed here —
+it changes a fail-closed gate, which the owner reserved, and an earlier change
+of mine in this area (`8f2eed4b`) had to be reverted.
+
+**Still unverified:** whether the letterhead that reached the DOCX reaches the
+client's PDF.
+
 ### 2026-09-11 UTC — CORRECTION: the unwinnable requirement is my regression (5cb8d694)
 
 The previous entry said it was "not yet established" whether my changes caused
