@@ -143,6 +143,68 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-11 — The automatic chain works. One evidence gate stands.
+
+Acceptance run 34611862046 on `3e5a6694`, branch-alias Preview. Two owner
+clicks only; nothing else was pressed.
+
+```
+Trigger AI Analyze            success  14:44:03 -> terminal 14:44:35
+Trigger Run Engine            success  14:44:48 -> 14:44:59
+ENGINE_RUN -> PROPOSAL_GENERATION -> AUTO_FINALIZE   settled, no failures
+regeneration confirmed: the delivered artifact is new   sha256 c2f3158e278baf85
+```
+
+So Run Engine is not broken, and the contract holds: no third click was
+needed anywhere between Run Engine and a finished package.
+
+The package itself is complete:
+
+```
+export.ready = true   zipReady = true   exportCandidateCount = 2
+Technical Proposal.pdf   PDF   306260 B  exportReady=true  blockerReason=null
+Company Profile.docx     DOCX   12668 B  exportReady=true  blockerReason=null
+missingRequiredFiles = []   extraFilesExcluded = []
+```
+
+Company Profile.docx now carries no blocker, which verifies the FILE_FORMAT
+scope fix against live data rather than against a unit test.
+
+One blocker remains, and it is a real fail-closed gate, not a defect:
+
+```
+MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE   4/6  (was 2/6 before this run)
+  Email Submission Only        PARTIAL   MANDATORY_REQUIREMENT_EVIDENCE_NOT_TRUSTED
+  Required Email Subject Line  PARTIAL   MANDATORY_REQUIREMENT_EVIDENCE_NOT_TRUSTED
+evidence: rows 14, selected 14, strong 4, substantial 2, weak 4, missing 0
+summary: status "export_ready", score 76, blockerCount 2
+warning: DEADLINE_PASSED — 2026-08-25, 18 days ago
+```
+
+Both blocked requirements have `hasSourceTrace=true` and `hasTrustedTrace=true`.
+They are traced; they are rated PARTIAL.
+
+**Open question, not yet a finding.** Both are submission-instruction
+requirements — how the bid must be sent, and what the subject line must say.
+What satisfies such a requirement is the submission plan and the package
+conforming to it, not a company credential, so "add trusted traced evidence"
+may be asking for a kind of evidence that cannot exist for this class of
+requirement. That would be fully generic: every tender naming a submission
+channel would hit it.
+
+Do NOT act on that yet. Earlier this session I made a `SUBMISSION_CHANNEL`
+change on exactly this reasoning and reverted it (`8f2eed4b`), because
+`tests/generated-artifact-content-coverage.test.ts` showed the architecture
+already lets a produced artifact's validated text prove a submission
+instruction — and that test was right. The mechanism exists. The real
+question is therefore narrower and must be answered from data before any
+code changes: **why did that mechanism rate these two PARTIAL rather than
+FULL/SUBSTANTIAL, when the generated Technical Proposal presumably states
+both?** If the evidence genuinely is insufficient, the gate stays as it is
+and that gets reported, per the owner's instruction not to remove gates to
+make readiness pass.
+
+
 ### 2026-09-11 — The owner's single Run Engine retry: what the database actually says
 
 Read-only inspect 34610227620 against branch-alias Preview on `bdc420a9`.
