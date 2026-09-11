@@ -253,7 +253,15 @@ tests/format-rule-governs-what-it-names.test.ts   12/12
 ```
 
 `npx next build` — **NOT run locally.** Declined earlier in the session and not
-re-issued. CI covers it. Do not read anything here as local build verification.
+re-issued. Do not read anything here as local build verification.
+
+**Now covered by a real build, though:** Vercel Preview deployment
+`dpl_DNZBacVQVoMkR3VAKLxsBy3TUavk` reached READY on
+`4b6cc5751960eb219654dad316daebcb6419c3b6` — the letterhead production change
+itself. A Vercel Preview build runs `next build` on that exact head, so the
+build gap disclosed in every commit message since the decline is closed for
+this head. Later commits on this branch are inspection tooling and this
+document; each still gets its own Preview build.
 
 #### Owner decisions, not an agent's
 
