@@ -52,17 +52,32 @@ print(f"  experts            = {len(experts)}")
 if assets:
     print("\n  brand assets present:")
     for a in assets[:12]:
-        print(f"    - {a.get('assetType')}  {a.get('originalFileName') or a.get('fileName')}  "
-              f"bytes={a.get('fileContentLength') or a.get('sizeBytes')}")
+        # contentByteLength / size are what /api/company/assets actually selects.
+        # An earlier version asked for fileContentLength and sizeBytes, neither
+        # of which the route returns, and printed bytes=None for a perfectly
+        # good 126KB asset.
+        print(f"    - {a.get('assetType')}  {a.get('originalFileName')}  "
+              f"bytes={a.get('contentByteLength') or a.get('size')}  "
+              f"active={a.get('isActive')}  integrity={a.get('integrityStatus')}")
 
 # Extraction is the part that takes time after the bytes land. A vault document
 # whose text has not been extracted yet cannot be matched as evidence, so a run
 # started now would under-evidence every requirement through no fault of the app.
-pending = [d for d in docs if not (d.get("extractedText") or d.get("extractionStatus") in ("COMPLETED", "SUCCEEDED", "EXTRACTED"))]
-print(f"\n  vault documents still awaiting extraction = {len(pending)} of {len(docs)}")
-for d in pending[:10]:
-    print(f"    - {d.get('originalFileName') or d.get('fileName')}  status={d.get('extractionStatus')}")
+#
+# Read the field the route actually returns. /api/company/documents deliberately
+# does NOT send extractedText — it would be megabytes — and has no
+# "extractionStatus" at all; it sends extractedTextLength and
+# aiExtractionStatus instead. The first version of this check asked for the two
+# absent fields, so every document looked pending no matter what was true, and
+# it would have blocked the run for ever on a vault that was completely ready.
+# Absent field read as evidence of absence: the same mistake, again.
+pending = [d for d in docs if not (d.get("extractedTextLength") or 0) > 0]
+print(f"\n  vault documents with extracted text = {len(docs) - len(pending)} of {len(docs)}")
+for d in docs:
+    print(f"    - {d.get('originalFileName')}  chars={d.get('extractedTextLength')}  "
+          f"ai={d.get('aiExtractionStatus')}  inline={d.get('hasInlineFileContent')}")
 
+tender_files_pending = []
 print("\n  --- tenders ---")
 for t in tenders:
     tid = t.get("id")
@@ -74,9 +89,16 @@ for t in tenders:
             or (detail.get("files") if isinstance(detail, dict) else []) or []
     print(f"      tender files = {len(files)}")
     for f in files[:12]:
-        print(f"        - {f.get('originalFileName') or f.get('fileName')}  "
-              f"pages={f.get('totalPages')} extracted={f.get('extractedPages')} "
+        # extractedTextLength / isScannedPlaceholder / hasInlineFileContent are
+        # added by withDashboardFileMetrics; the page counts are only populated
+        # once extraction has run, so None there means "not yet", not "broken".
+        print(f"        - {f.get('originalFileName')}  chars={f.get('extractedTextLength')}  "
+              f"scanned-placeholder={f.get('isScannedPlaceholder')}  "
+              f"inline={f.get('hasInlineFileContent')}")
+        print(f"          pages={f.get('totalPages')} extracted={f.get('extractedPages')} "
               f"score={f.get('extractionScore')} method={f.get('extractionMethod')}")
+        if not (f.get("extractedTextLength") or 0) > 0:
+            tender_files_pending.append(f.get("originalFileName"))
 
 print("\n" + "=" * 78)
 print("VERDICT")
@@ -85,7 +107,8 @@ reasons = []
 if not tenders:            reasons.append("no tender uploaded yet")
 if not docs:               reasons.append("no Company Vault documents yet")
 if not assets:             reasons.append("no Brand Assets yet")
-if pending:                reasons.append(f"{len(pending)} vault document(s) still extracting")
+if pending:                reasons.append(f"{len(pending)} vault document(s) have no extracted text yet")
+if tender_files_pending:   reasons.append(f"tender file(s) with no extracted text yet: {', '.join(str(x) for x in tender_files_pending)}")
 if tenders and not projects and not experts:
     reasons.append("vault has no projects or experts — evidence matching would find nothing")
 
