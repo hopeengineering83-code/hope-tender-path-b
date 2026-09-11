@@ -971,3 +971,58 @@ if isinstance(_er, dict) and "canRunEngine" in _er:
         print("     the reason the owner needs to be shown.")
 else:
     print(f"  !! engine-readiness unreadable: {str(_er)[:300]}")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# WHY IS A MANDATORY REQUIREMENT ONLY PARTIAL?
+#
+# Acceptance 34611862046 got the whole chain through to a complete package and
+# stopped on one gate: MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE at 4/6, with
+# "Email Submission Only" and "Required Email Subject Line" both traced,
+# both selectedEvidenceCount=1, both strongestEvidenceLevel=PARTIAL.
+#
+# Knowing they are PARTIAL is not knowing why. supportForCandidate() reaches
+# PARTIAL by several different routes, and they call for opposite responses:
+#
+#   * a BUILD_PLAN_ITEM without artifactBytesVerified  -> ordering problem
+#   * a GENERATED_DOCUMENT with visibleTextInspected=false -> the artifact's
+#     text was never read, so the +40 "text addresses the requirement" boost
+#     could not apply
+#   * visibleTextInspected=true but fewer than 2 matching tokens -> the
+#     artifact genuinely does not say what the requirement asks
+#   * a vault record scoring 84 or less -> evidence really is thin
+#
+# Only the last is "the gate is right and the owner must supply evidence".
+# Printing the record type, support level and facets of the actual selected
+# row is what separates them. Guessing between them is how the reverted
+# SUBMISSION_CHANNEL change happened.
+# ═════════════════════════════════════════════════════════════════════════════
+print("\n" + "=" * 78)
+print("WHY PARTIAL — the selected evidence behind every sub-FULL mandatory row")
+print("=" * 78)
+
+_cov = get(f"/api/tenders/{TENDER}/requirement-coverage")
+if not isinstance(_cov, dict) or not isinstance(_cov.get("rows"), list):
+    print(f"  !! unreadable: {str(_cov)[:300]}")
+else:
+    print(f"  totalMandatory={_cov.get('totalMandatory')} fullyCovered={_cov.get('fullyCovered')} "
+          f"partiallyCovered={_cov.get('partiallyCovered')} coverageRatio={_cov.get('coverageRatio')}")
+    for _row in _cov["rows"]:
+        _level = str(_row.get("strongestEvidenceLevel") or _row.get("supportLevel") or "")
+        if _level in ("FULL", "SUBSTANTIAL"):
+            continue
+        print(f"\n  --- {_row.get('title')}  [{str(_row.get('requirementId') or _row.get('id'))[:8]}]")
+        print(f"      type={_row.get('requirementType')}  priority={_row.get('priority')}  level={_level or '(none)'}")
+        print(f"      displayStatus={_row.get('displayStatus')}  blockerReason={_row.get('blockerReason')}")
+        print(f"      sourceExactQuote={str(_row.get('sourceExactQuote'))[:160]}")
+        _ev = _row.get("evidence") or _row.get("selectedEvidence") or _row.get("automaticEvidence") or []
+        if not isinstance(_ev, list) or not _ev:
+            print(f"      (no evidence array on this row; keys = {list(_row)[:18]})")
+            continue
+        for _e in _ev[:6]:
+            if not isinstance(_e, dict):
+                print(f"      evidence: {str(_e)[:200]}"); continue
+            print(f"      evidence: recordType={_e.get('recordType')} supportLevel={_e.get('supportLevel')} "
+                  f"label={str(_e.get('label'))[:60]}")
+            print(f"                score={_e.get('score')} facets={json.dumps(_e.get('facets'))[:220]}")
+            print(f"                reasons={json.dumps(_e.get('reasons'))[:260]}")
