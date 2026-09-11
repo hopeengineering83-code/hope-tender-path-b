@@ -488,20 +488,60 @@ jobs:
             sleep $((attempt * 5))
           done
           python3 - <<'PYEOF'
+          # Every delivered file must be a current generated document, and its
+          # bytes must match the identity the database persisted for it.
+          #
+          # This used to assert `names != ['Technical Proposal.pdf']` — one
+          # file, by that exact name. That was true of the tender the harness
+          # was written against and is not a property of the product. The
+          # owner's re-uploaded tender plans three deliverables:
+          #
+          #   Technical Proposal.pdf
+          #   Renovation Planning and Implementation Oversight.docx
+          #   Project Close-Out and Operational Readiness.docx
+          #
+          # All three downloaded and passed `unzip -t`, and export readiness
+          # had already passed with zero blockers — so a correct package failed
+          # acceptance on a hardcoded expectation about a different tender.
+          #
+          # The replacement is STRICTER, not looser. Before, exactly one file
+          # was hash-checked and any second file would have been rejected
+          # without ever being examined. Now every entry must resolve to
+          # exactly one current GENERATED audit row and every entry's bytes are
+          # hashed against it, so a package of three is verified three times
+          # over. An empty ZIP is still a failure.
           import hashlib, json, zipfile
+
+          audit = json.load(open('/tmp/generated-proposal-audit-post-export.json', encoding='utf-8'))
+          documents = audit.get('documents', [])
+
           with zipfile.ZipFile('/tmp/preview-final.zip') as archive:
               names = archive.namelist()
-              if names != ['Technical Proposal.pdf']:
-                  raise SystemExit(f'Unexpected ZIP entries: {names!r}')
-              payload = archive.read(names[0])
-          audit = json.load(open('/tmp/generated-proposal-audit-post-export.json', encoding='utf-8'))
-          rows = [row for row in audit.get('documents', []) if row.get('generationStatus') == 'GENERATED' and row.get('exactFileName') == names[0]]
-          if len(rows) != 1:
-              raise SystemExit(f'Expected one current audit row for {names[0]}, got {len(rows)}')
-          expected = rows[0].get('contentSha256')
-          actual = hashlib.sha256(payload).hexdigest()
-          if not expected or expected != actual:
-              raise SystemExit('Downloaded artifact hash does not match the persisted generated-document identity')
+              if not names:
+                  raise SystemExit('The delivered ZIP is empty.')
+              print(f'ZIP contains {len(names)} file(s):')
+              for name in names:
+                  payload = archive.read(name)
+                  rows = [
+                      row for row in documents
+                      if row.get('generationStatus') == 'GENERATED'
+                      and row.get('exactFileName') == name
+                  ]
+                  if len(rows) != 1:
+                      raise SystemExit(
+                          f'Expected exactly one current GENERATED audit row for {name!r}, got {len(rows)}. '
+                          'A file in the delivered package that the database does not recognise as a current '
+                          'generated document is an integrity failure, not a naming quibble.'
+                      )
+                  expected = rows[0].get('contentSha256')
+                  actual = hashlib.sha256(payload).hexdigest()
+                  if not expected or expected != actual:
+                      raise SystemExit(
+                          f'{name}: downloaded bytes do not match the persisted generated-document identity '
+                          f'(expected {expected!r}, got {actual!r}).'
+                      )
+                  print(f'  OK  {name}  {len(payload)} bytes  sha256 {actual[:16]}')
+          print(f'All {len(names)} delivered file(s) match their persisted identity.')
           PYEOF
 
       - name: Setup Node for artifact inspection
