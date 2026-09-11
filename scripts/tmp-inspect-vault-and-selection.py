@@ -713,3 +713,87 @@ if isinstance(_arows, list):
           " by design. If storage-backed is the whole population, letterhead"
           " can never apply in this deployment — that is a product gap, not a"
           " broken guard, and it is the owner's call what to do about it.")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# FRESHNESS PROOF — did the owner's Run Engine + generation actually produce a
+# NEW package, or are we looking at the same rows as before?
+#
+# "The owner says they clicked it" is not evidence. A run can be dispatched and
+# still leave the package untouched: the engine can fail, generation can be
+# blocked by a readiness gate, or a retry can no-op. Every claim below has to
+# come from a timestamp or a digest, not from the fact that a click happened.
+#
+# Reference point, from inspect 34589272707 at 2026-09-11T10:29Z (BEFORE the
+# owner's clicks):
+#     currentOutputs 0, staleOutputs 33, FILE_FORMAT PENDING_PACKAGE
+#     newest job: ENGINE_RUN created 2026-09-10T19:14:01.740Z
+# Anything newer than that is this run.
+# ═════════════════════════════════════════════════════════════════════════════
+BASELINE = "2026-09-10T19:14:01.740Z"
+print("\n" + "=" * 78)
+print("FRESHNESS PROOF — is this a genuinely new package?")
+print(f"  baseline (newest job before the owner's clicks): {BASELINE}")
+print("=" * 78)
+
+_TERMINAL_BAD = {"FAILED", "CANCELED", "CANCELLED", "TIMED_OUT", "TIMEOUT"}
+
+if not isinstance(_jrows, list):
+    print("  !! job list unreadable — freshness CANNOT be asserted")
+else:
+    _newer = [j for j in _jrows if str(j.get("createdAt") or "") > BASELINE]
+    print(f"\n  jobs created after the baseline: {len(_newer)}")
+    for _j in _newer:
+        print(f"    {_j.get('createdAt')}  {_j.get('jobType'):<20} {_j.get('status'):<12}"
+              f" finished={_j.get('finishedAt')}")
+
+    # Each required stage, proven present-and-succeeded independently.
+    for _stage in ("ENGINE_RUN", "PROPOSAL_GENERATION", "AUTO_FINALIZE"):
+        _hits = [j for j in _newer if j.get("jobType") == _stage]
+        _ok = [j for j in _hits if j.get("status") == "SUCCEEDED"]
+        _verdict = "PRESENT+SUCCEEDED" if _ok else ("PRESENT but NOT succeeded" if _hits else "ABSENT")
+        print(f"  {_stage:<21} {_verdict}"
+              + (f"  ({len(_ok)}/{len(_hits)} succeeded)" if _hits else ""))
+
+    _bad = [j for j in _newer if str(j.get("status") or "").upper() in _TERMINAL_BAD]
+    print(f"\n  FAILED/CANCELED/TIMED_OUT among new jobs: {len(_bad)}")
+    for _j in _bad:
+        print(f"    !! {_j.get('createdAt')} {_j.get('jobType')} {_j.get('status')} id={_j.get('id')}")
+
+# Document-level proof: updatedAt moved AND the bytes are different.
+# updatedAt alone can move on a metadata-only write; contentSha256 is the
+# statement that the BYTES changed. Both are reported.
+print("\n--- current documents: updatedAt and contentSha256 ---")
+if not isinstance(_arows, list):
+    print("  !! audit rows unreadable — byte freshness CANNOT be asserted")
+else:
+    _current = [r for r in _arows if r.get("generationStatus") != "SUPERSEDED"]
+    print(f"  {len(_current)} non-superseded row(s) of {len(_arows)} total")
+    for _r in _current:
+        print(f"    {_r.get('exactFileName') or _r.get('documentName')}"
+              f"  format={_r.get('format')}  gen={_r.get('generationStatus')}"
+              f"  val={_r.get('validationStatus')}  rev={_r.get('reviewStatus')}")
+        print(f"        updatedAt={_r.get('updatedAt')}  created={_r.get('createdAt')}")
+        print(f"        contentSha256={str(_r.get('contentSha256'))[:64]}")
+        print(f"        exportCandidate={_r.get('finalExportCandidate')}"
+              f"  readyForExport={_r.get('readyForExport')}"
+              f"  quality={_r.get('qualityScore')}/{_r.get('qualityRecommendedStatus')}")
+    _moved = [r for r in _current if str(r.get("updatedAt") or "") > BASELINE]
+    print(f"  rows whose updatedAt is after the baseline: {len(_moved)}/{len(_current)}")
+
+print("\n--- package verdict right now (PENDING_PACKAGE means still empty) ---")
+_fpr2 = get(f"/api/tenders/{TENDER}/final-package-readiness")
+_rules2 = []
+_walk_rules(_fpr2, _rules2)
+for _r in _rules2:
+    print(f"  {_r.get('family')}: {_r.get('status')}")
+    print(f"      {_r.get('reason')}")
+if isinstance(_fpr2, dict):
+    for _k in ("ok", "finalExportReady", "readinessScore", "exportReadyDocuments",
+               "requiredDocuments", "tenderLevelBlockers", "blockers", "failures"):
+        if _k in _fpr2:
+            print(f"  {_k} = {json.dumps(_fpr2[_k])[:1200]}")
+
+print("\n--- export readiness, full ---")
+_er2 = get(f"/api/tenders/{TENDER}/export-readiness")
+print(json.dumps(_er2, indent=2)[:7000])
