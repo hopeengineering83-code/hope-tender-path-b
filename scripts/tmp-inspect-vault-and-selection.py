@@ -1008,21 +1008,26 @@ else:
     print(f"  totalMandatory={_cov.get('totalMandatory')} fullyCovered={_cov.get('fullyCovered')} "
           f"partiallyCovered={_cov.get('partiallyCovered')} coverageRatio={_cov.get('coverageRatio')}")
     for _row in _cov["rows"]:
-        _level = str(_row.get("strongestEvidenceLevel") or _row.get("supportLevel") or "")
-        if _level in ("FULL", "SUBSTANTIAL"):
+        _level = str(_row.get("supportLevel") or _row.get("strongestEvidenceLevel") or "")
+        if _row.get("coverageStatus") == "FULLY_MET":
             continue
         print(f"\n  --- {_row.get('title')}  [{str(_row.get('requirementId') or _row.get('id'))[:8]}]")
         print(f"      type={_row.get('requirementType')}  priority={_row.get('priority')}  level={_level or '(none)'}")
-        print(f"      displayStatus={_row.get('displayStatus')}  blockerReason={_row.get('blockerReason')}")
+        print(f"      coverageStatus={_row.get('coverageStatus')}  automationState={_row.get('automationState')}")
+        print(f"      supportLevel={_row.get('supportLevel')}  hasSourceRef={_row.get('hasSourceRef')}")
         print(f"      sourceExactQuote={str(_row.get('sourceExactQuote'))[:160]}")
-        _ev = _row.get("evidence") or _row.get("selectedEvidence") or _row.get("automaticEvidence") or []
+        # evidenceLinks is the real field name on this route's rows. Its
+        # evidenceSource is the discriminator that matters: AUTO_* tells you
+        # whether the linked record was a build-plan promise or the generated
+        # artifact itself, which is the difference between an ordering defect
+        # and evidence that is genuinely thin.
+        _ev = _row.get("evidenceLinks") or []
         if not isinstance(_ev, list) or not _ev:
-            print(f"      (no evidence array on this row; keys = {list(_row)[:18]})")
+            print(f"      (no evidenceLinks; row keys = {list(_row)[:20]})")
             continue
-        for _e in _ev[:6]:
+        for _e in _ev[:8]:
             if not isinstance(_e, dict):
-                print(f"      evidence: {str(_e)[:200]}"); continue
-            print(f"      evidence: recordType={_e.get('recordType')} supportLevel={_e.get('supportLevel')} "
-                  f"label={str(_e.get('label'))[:60]}")
-            print(f"                score={_e.get('score')} facets={json.dumps(_e.get('facets'))[:220]}")
-            print(f"                reasons={json.dumps(_e.get('reasons'))[:260]}")
+                print(f"      link: {str(_e)[:200]}"); continue
+            print(f"      link: source={_e.get('evidenceSource')} type={_e.get('evidenceType')} "
+                  f"support={_e.get('supportLevel')} auto={_e.get('autoLinked')}")
+            print(f"            reference={str(_e.get('evidenceReference'))[:200]}")
