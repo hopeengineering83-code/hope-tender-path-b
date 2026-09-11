@@ -537,7 +537,11 @@ else:
               "a non-DOCX letterhead (PDF/PNG/JPG) fails here even when guard 4 passes")
 
 # guard 6: per-document storagePath skip
-_au = get(f"/api/admin/generated-proposals/audit?tenderId={urllib.parse.quote(TENDER)}")
+# includeReady defaults to FALSE (audit/route.ts:202) — without it the endpoint
+# returns only documents that have an issue, so a clean package comes back
+# empty and reads as "0 live documents". limit defaults to 20 of 33 rows.
+_au = get(f"/api/admin/generated-proposals/audit?tenderId={urllib.parse.quote(TENDER)}"
+          "&includeReady=true&limit=200")
 # The audit route returns `documents` (route.ts:520), not `rows`. Reading the
 # wrong key printed "unreadable" for a payload that was perfectly readable.
 _arows = None
@@ -622,37 +626,52 @@ print(f"  {json.dumps(_sm, indent=2)[:1200]}" if _sm else "  (no summary in payl
 # "fixed". Find every job that reported one and print it with its type and time.
 # ─────────────────────────────────────────────────────────────────────────────
 print("\n########## LETTERHEAD: WHICH JOB REPORTED THE COUNT, AND WHEN ##########")
+# /api/ai-jobs returns ONLY {id, jobType, status, tenderId, createdAt, finishedAt}
+# (listUserJobs, lib/ai-jobs.ts:496). It carries no output and no steps, so
+# scanning the list payload for the word "letterhead" could only ever find
+# nothing — and "nothing" would have read as "no job applied letterhead",
+# which is a statement about the SELECT, not about the tender. The per-job
+# route /api/ai-jobs/<id> does return output and steps (getJob, ai-jobs.ts:200).
+# Read those.
 _jobs = get(f"/api/ai-jobs?tenderId={urllib.parse.quote(TENDER)}&take=50")
-_jrows = None
-if isinstance(_jobs, dict):
-    for _k in ("jobs", "items", "data", "results"):
-        if isinstance(_jobs.get(_k), list):
-            _jrows = _jobs[_k]
-            break
-elif isinstance(_jobs, list):
-    _jrows = _jobs
+_jrows = _jobs.get("jobs") if isinstance(_jobs, dict) else (_jobs if isinstance(_jobs, list) else None)
 
 if not isinstance(_jrows, list):
     print(f"  !! could not read ai-jobs; keys="
           f"{list(_jobs)[:12] if isinstance(_jobs, dict) else type(_jobs)}")
 else:
-    print(f"  {len(_jrows)} job row(s)")
-    _seen = 0
+    _types = {}
     for _j in _jrows:
-        _blob = json.dumps(_j)
-        if "etterhead" not in _blob:
+        _types[_j.get("jobType")] = _types.get(_j.get("jobType"), 0) + 1
+    print(f"  {len(_jrows)} job row(s): {_types}")
+
+    # Only these two job types can report a letterhead count at all.
+    _interesting = [_j for _j in _jrows
+                    if _j.get("jobType") in ("PROPOSAL_GENERATION", "AUTO_FINALIZE")]
+    if not _interesting:
+        print("  NO PROPOSAL_GENERATION and NO AUTO_FINALIZE job on this tender.")
+        print("  That is a real absence (jobType IS returned by the list endpoint),")
+        print("  and it would mean the documents were produced by some other path.")
+    for _j in _interesting[:12]:
+        _d = get(f"/api/ai-jobs/{urllib.parse.quote(_j['id'])}")
+        _job = _d.get("job") if isinstance(_d, dict) else None
+        if not isinstance(_job, dict):
+            print(f"  * {_j.get('jobType')} {_j.get('id')}: detail unreadable"
+                  f" (keys={list(_d)[:8] if isinstance(_d, dict) else type(_d)})")
             continue
-        _seen += 1
-        _out = _j.get("output") if isinstance(_j.get("output"), dict) else {}
-        print(f"  * {_j.get('jobType')}  status={_j.get('status')}"
-              f"  finished={_j.get('finishedAt') or _j.get('completedAt') or _j.get('updatedAt')}")
-        if "letterheadAppliedCount" in _out:
-            print(f"      letterheadAppliedCount = {_out['letterheadAppliedCount']!r}")
-        for _m in _re.finditer(r"letterhead[^\"]{0,80}", _blob, _re.I):
-            print(f"      ...{_m.group(0)}")
-    if _seen == 0:
-        print("  no job row mentions letterhead at all — the count did not come"
-              " from a job output on this tender.")
+        _out = _job.get("output") if isinstance(_job.get("output"), dict) else {}
+        _has = "letterheadAppliedCount" in _out
+        print(f"  * {_job.get('jobType')}  status={_job.get('status')}"
+              f"  finished={_job.get('finishedAt')}")
+        print(f"      letterheadAppliedCount: "
+              + (repr(_out['letterheadAppliedCount']) if _has
+                 else "KEY ABSENT FROM OUTPUT (not the same as zero)"))
+        for _st in (_job.get("steps") or []):
+            if "letterhead" in f"{_st.get('stepName')} {_st.get('message')}".lower():
+                print(f"      step {_st.get('stepName')} [{_st.get('status')}]"
+                      f" @ {_st.get('finishedAt') or _st.get('startedAt')}: {_st.get('message')}")
+        if _job.get("errorMessage"):
+            print(f"      errorMessage: {str(_job['errorMessage'])[:300]}")
 
 print("\n--- document formats now (letterhead only ever brands DOCX) ---")
 if isinstance(_arows, list):
