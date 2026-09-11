@@ -143,6 +143,72 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-11 — Why those two requirements are PARTIAL: a CV is the evidence
+
+Inspect 34612881290 (`60922b3a`), read-only. Exactly two mandatory rows sit
+below FULL, and both look like this:
+
+```
+--- Email Submission Only  [05bf37e7]
+    type=SUBMISSION_RULE  priority=MANDATORY  supportLevel=PARTIAL
+    coverageStatus=PARTIALLY_MET  automationState=PARTIALLY_VERIFIED
+    sourceExactQuote=Submission Method: Email submission only
+    link: source=Company evidence available for drafting
+          type=PROPOSAL_RESPONSE  support=PARTIAL  auto=False
+          reference=Expert CVS.pdf.txt
+
+--- Required Email Subject Line  [e2b6970a]
+    ... same shape ...
+    sourceExactQuote=Required Email Subject: Technical Proposal for Pharo Ventures
+    reference=Expert CVS.pdf.txt
+```
+
+Neither hypothesis from the previous entry was right. It is not an ordering
+problem and not unread artifact text. **The evidence linked to "the bid must
+be emailed" is a file of expert CVs.**
+
+Producer, found by reading rather than guessing:
+`findRequirementSupportDocument` (`lib/engine/compliance.ts:63`). It takes up
+to 8 tokens of 4+ characters from the requirement title and description, then
+returns the FIRST vault document whose category, filename or full extracted
+text contains any 2 of them. Every CV contains an email address, so
+`Expert CVS.pdf.txt` matches "email" plus one more term and wins. There is no
+scoring, no ranking, no relevance threshold, and no check that the KIND of
+document could support the KIND of requirement — `.find()` takes whatever
+comes first.
+
+Entirely generic: any tender whose submission rules mention email, against any
+vault holding a document with common words. Nothing about Pharo, healthcare or
+architecture is involved.
+
+**Two separate problems, and they must not be conflated.**
+
+1. *Provenance (proven).* The owner is shown a CV as the evidence for a
+   submission rule. That is false traceability and it is this function's fault.
+
+2. *The block (NOT yet proven to be the same fault).* `supportStrength` for a
+   proposal-response requirement is `draftingEvidenceExists ? 0.75 : 0.4` —
+   a boolean. It does not depend on WHICH document matched, so replacing the
+   CV with a better match would not by itself clear the gate. What caps these
+   at PARTIAL is that `isProposalResponseRequirement` (`compliance.ts:85`)
+   includes `SUBMISSION_RULE`, and this stage deliberately refuses to claim
+   coverage before generation — its own comment says so, and that refusal is
+   correct at that point in the pipeline.
+
+   The open question is therefore: after AUTO_FINALIZE reconciles coverage
+   with the generated artifact present, why does the SUBMISSION_RULE row stay
+   at the pre-generation 0.75/PARTIAL? `reconcileAutomaticRequirementCoverage`
+   IS called from `auto-finalize-continuation-service.ts:457` and `:542`, so
+   "it never re-runs" is already ruled out.
+
+Do not fix (1) and report the gate cleared — the two are independent, and
+fixing the displayed reference while the gate still blocks would look like
+progress and be none. This is the third time on this tender that a plausible
+single-cause story has been wrong (`01015c69` inert, `8f2eed4b` reverted,
+both hypotheses in the previous entry), so the next step is to read what the
+post-generation reconcile actually writes for a SUBMISSION_RULE row.
+
+
 ### 2026-09-11 — The automatic chain works. One evidence gate stands.
 
 Acceptance run 34611862046 on `3e5a6694`, branch-alias Preview. Two owner
