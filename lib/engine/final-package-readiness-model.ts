@@ -493,7 +493,7 @@ export function mapRequirementsToEvidence(
     const hasTrustedTrace = hasSourceTrace
       && evidenceRank(strongestEvidenceLevel) >= evidenceRank("PARTIAL");
     const hasStrongEvidence = evidenceRank(strongestEvidenceLevel) >= evidenceRank("SUBSTANTIAL");
-    const displayStatus = !hasTrustedTrace && evidenceRank(strongestEvidenceLevel) >= evidenceRank("PARTIAL")
+    const evidenceDisplayStatus = !hasTrustedTrace && evidenceRank(strongestEvidenceLevel) >= evidenceRank("PARTIAL")
       ? "NEEDS_TRACE"
       : hasTrustedTrace && hasStrongEvidence
         ? "FULLY_MET"
@@ -519,6 +519,40 @@ export function mapRequirementsToEvidence(
         )
       : null;
     const isPackageRule = Boolean(conformance?.applicable);
+
+    // A package rule is decided by the PACKAGE, not by the vault.
+    //
+    // blockerReason already knew this — it refuses to tell the owner that
+    // "no evidence is traced to this requirement" for a rule no document can
+    // evidence. displayStatus did not, and displayStatus is what the release
+    // snapshot counts: `covered = mandatoryStatuses.filter(s => s.displayStatus
+    // === "FULLY_MET")` (tender-release-snapshot.ts). So a submission rule the
+    // package objectively OBEYS still counted as an uncovered mandatory
+    // requirement, and the owner was told to "Add trusted traced evidence for
+    // mandatory requirement: Email Submission Only" — a document that cannot
+    // exist, for a rule that was already satisfied.
+    //
+    // Reproduced live on tender 08e250af: MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE
+    // at 3/6 with "Technical Proposal Document" PARTIALLY_MET while its own
+    // packageRule reason read "It is satisfied by the produced package and
+    // needs no owner-supplied evidence."
+    //
+    // FAIL-CLOSED IS UNCHANGED. Nothing is covered because a rule left a
+    // denominator. A package rule counts as met ONLY on an objective SATISFIED
+    // verdict from the package facts; VIOLATED is NOT_MET, and both
+    // PENDING_PACKAGE (no package yet) and NOT_MACHINE_DECIDABLE (page limits,
+    // binding, hard-copy counts — things stored bytes cannot decide) stay
+    // short of FULLY_MET and keep blocking. Capability and qualification
+    // requirements are untouched: they have no packageRule and still require
+    // source-backed evidence.
+    const displayStatus = conformance?.applicable
+      ? conformance.status === "SATISFIED"
+        ? "FULLY_MET"
+        : conformance.status === "VIOLATED"
+          ? "NOT_MET"
+          : "PARTIALLY_MET"
+      : evidenceDisplayStatus;
+
     const blockerReason = displayStatus === "FULLY_MET"
       ? null
       // A submission rule is never short of evidence — it is obeyed, broken, or

@@ -67,13 +67,25 @@ const FINANCIAL_PDF = { ...TECHNICAL_PDF, id: "doc-2", name: "Financial Proposal
 
 describe("the canonical resolver reports a submission rule as a rule", () => {
   it("marks a rule the package obeys as fully met, with no evidence link needed", () => {
+    // This test's NAME always described the intended behaviour; its assertions
+    // pinned the opposite. It required a SATISFIED rule to keep carrying a
+    // blockerReason, which it only ever did because displayStatus was computed
+    // from vault evidence and ignored the package verdict entirely — so an
+    // obeyed rule could never actually be "fully met". That is the defect
+    // reproduced live on tender 08e250af as
+    // MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE 3/6, and the assertions are
+    // updated here to match the name rather than the bug.
     const [status] = mapRequirementsToEvidence([ruleRequirement()], [], [], ACTIVE_FILES, {
       documents: [TECHNICAL_PDF],
     });
     assert.ok(status.packageRule, "a submission rule must be identified as one");
     assert.equal(status.packageRule!.status, "SATISFIED");
-    assert.equal(status.blockerReason, status.packageRule!.reason);
-    assert.doesNotMatch(status.blockerReason ?? "", /No selected or linked evidence/);
+    assert.equal(status.displayStatus, "FULLY_MET", "an obeyed rule is met — that is what the name says");
+    assert.equal(status.blockerReason, null, "a met requirement has nothing blocking it");
+    // The original intent survives: the reason is still available and still
+    // never asks the owner for evidence that cannot exist for a package rule.
+    assert.doesNotMatch(status.packageRule!.reason, /No selected or linked evidence/);
+    assert.equal(status.selectedEvidenceCount, 0, "and it needed no evidence link to get there");
   });
 
   it("keeps a rule the package breaks blocked, naming the package defect", () => {
