@@ -243,18 +243,45 @@ Guarded to fail loudly on an empty package rather than "verify" nothing.
 **Next action:** the owner's Run Engine + generation must actually produce
 jobs. Until then nothing downstream is executable.
 
-#### Practical lesson for the next session — do not fight your own deployments
+#### 6. CONCLUSIVE — the clicks reached no tender on this account
 
-Every push to this branch triggers a Vercel Preview rebuild, and the branch
-alias the inspect targets flips to the new deployment as each one finishes. A
-`confirm=inspect` dispatched while builds are churning can have its HTTP calls
-hang against an alias that is being swapped underneath it: run 34604412559
-sat in "Read the live vault" for 35+ minutes and produced no artifact, after a
-sequence of six pushes in the preceding hour. Let the Preview settle before
-dispatching an inspect, and batch script edits instead of pushing each one.
+Inspect 34604412559 (13:29Z):
 
-Separately, GitHub's Actions read endpoints served **stale** job/run state at
-least four times today — reporting `in_progress` for jobs that had already
+```
+jobs anywhere on this account after 2026-09-10T19:14:01.740Z: 0
+=> the clicks did not create a job on ANY tender in this account.
+
+tenders visible to this account:
+  08e250af  stage=MATCHING  status=MATCHED  updated=2026-09-10T19:15:33.872Z
+```
+
+**There is only ONE tender on this account**, so "the clicks landed on a
+different tender" is ruled out. No job was created anywhere, and the tender row
+itself has not been updated since `2026-09-10T19:15:33.872Z` — the ENGINE_RUN
+that finished at 19:15:37 yesterday.
+
+Remaining possibilities, none of which an agent can settle:
+  * the clicks never reached a server (client-side failure);
+  * they were refused before enqueue, which writes no AiJob (see §1);
+  * **they went to a different environment** — this inspect reads the Preview
+    `hope-tender-path-b-git-0db72a-…`, which has its own DATABASE_URL. Clicks on
+    Production, or on a different Preview deployment, would not appear here at
+    all.
+
+The third is worth checking first and costs the owner nothing.
+
+#### CORRECTION to the lesson previously written here
+
+An earlier version of this section stated that run 34604412559 "sat in 'Read
+the live vault' for 35+ minutes and produced no artifact". **That is false.**
+The run completed at 13:29:58, about 2.5 minutes after it started, and uploaded
+its artifact normally. I read `in_progress` and an empty artifact list from
+endpoints that were stale — the **fifth** time today — and wrote a deployment-
+churn theory on top of a misreading. The theory may still be sound advice, but
+it has no evidence behind it and is withdrawn as a finding.
+
+What survives, with evidence: GitHub's Actions read endpoints served **stale**
+job/run state at least five times today — reporting `in_progress` for jobs that had already
 finished, and an empty artifact list for artifacts that existed. The reliable
 signals are the completed-status run filter and, for a job believed finished,
 retrying `get_job_logs` rather than trusting the step list. Do not diagnose a
