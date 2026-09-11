@@ -796,7 +796,18 @@ if isinstance(_fpr2, dict):
 
 print("\n--- export readiness, full ---")
 _er2 = get(f"/api/tenders/{TENDER}/export-readiness")
-print(json.dumps(_er2, indent=2)[:7000])
+if isinstance(_er2, dict):
+    for _k in ("ok", "status", "primaryBlockerReason", "primaryFixAction",
+               "requiredDocumentsTotal", "generatedDocumentsTotal",
+               "exportReadyDocumentsTotal"):
+        if _k in _er2:
+            print(f"  {_k} = {json.dumps(_er2[_k])[:600]}")
+    for _b in (_er2.get("blockers") or []):
+        print(f"  BLOCKER {_b.get('code')}: {str(_b.get('message'))[:300]}")
+    for _w in (_er2.get("warnings") or []):
+        print(f"  warning {_w.get('code')}: {str(_w.get('message'))[:200]}")
+else:
+    print(f"  !! {str(_er2)[:300]}")
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -836,7 +847,9 @@ if isinstance(_wc, dict):
         print("  decision:")
         for _k, _v in list(_dec.items())[:20]:
             print(f"    {_k} = {json.dumps(_v)[:700]}")
-print(json.dumps(_wc, indent=2)[:5000])
+# Full payload intentionally NOT dumped: it is mostly per-field metadata and
+# it pushed the decisive sections out of the readable end of the job log.
+print(f"  (workflow-center payload keys: {list(_wc)[:14] if isinstance(_wc, dict) else type(_wc)})")
 
 
 # ═════════════════════════════════════════════════════════════════════════════
