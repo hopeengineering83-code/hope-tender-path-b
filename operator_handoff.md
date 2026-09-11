@@ -265,8 +265,46 @@ re-issued. CI covers it. Do not read anything here as local build verification.
 - Whether letterhead should apply to storage-backed documents.
 - 33 generated documents on one tender, 30 flagged `duplicatedSectionsIssues`.
 
-**Next action:** read the storage totals from the `b9e94f93` inspect, then
-establish what superseded the package before doing anything else to it.
+#### 5. RESOLVED — what emptied the package, and the letterhead fix that followed
+
+Newest jobs on the tender, from inspect 34589272707:
+
+```
+2026-09-10T19:14:01.740Z  ENGINE_RUN           SUCCEEDED  finished 19:15:37
+2026-09-10T18:16:34.256Z  AUTO_FINALIZE        SUCCEEDED
+2026-09-10T18:16:10.132Z  PROPOSAL_GENERATION  SUCCEEDED
+```
+
+**A Run Engine at 2026-09-10T19:14 — after the 18:55 inspect — with no
+PROPOSAL_GENERATION after it.** Run Engine supersedes the previous generated
+documents; generation is the separate step that never followed. So the package
+is empty because a manual gate was exercised and the next one was not. Not a
+code defect, and not caused by this branch. `PENDING_PACKAGE` is the correct
+fail-closed reading of that state.
+
+Whoever ran it was not this session — it only ever dispatched `confirm=inspect`.
+Consistent with this repo having more than one agent plus the owner.
+
+**Letterhead, concluded.** Storage totals from the same run:
+`storage-backed=0  inline-only=33  of 33`. So the `doc.storagePath` skip is
+ruled out as well — **my third wrong hypothesis on this question**, after
+"unsupported upload format" and "ran after PDF conversion". Six candidate
+causes eliminated against live data; what remained was that the applier
+reports a bare `0` through seven exits and `applyUploadedDocxLetterheadTemplate`
+returns the input unchanged through four silent paths. The likeliest live cause
+is a letterhead whose branding sits in the document BODY: a valid .docx that
+looks right in Word, but Word only repeats letterhead per page from the
+header/footer area, so there is no part to copy.
+
+Fixed in `4b6cc575` as **observability only** — same documents branded, same
+ones skipped, no gate weakened — so the count now arrives with an actionable
+reason. Two existing byte-integrity tests asserted the exact statements the
+change reworded; rewritten to require the condition AND a `continue` before any
+`await`, plus a case that proves the matcher can still fail.
+
+**Next action:** §9/§10 (authorship + the 17-dimension benchmark) need a
+converged package, which needs Run Engine followed by generation. Both are
+owner gates. Nothing further to do on them until the owner runs them.
 
 
 ### 2026-09-10T18:40Z — Claude Code (Opus 5) — the FILE_FORMAT fix had shipped INERT; fed and re-verified
