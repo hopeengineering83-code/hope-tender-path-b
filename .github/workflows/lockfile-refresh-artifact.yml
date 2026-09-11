@@ -23,8 +23,12 @@ on:
           quota. Type "health" to read /api/health and print BOTH database
           fingerprints (the pooled one the Preview reports and the direct one
           the migration URL resolves to) without touching anything — run this
-          first after any database swap. Any other value (including blank) runs
-          only the ordinary lockfile-refresh job.
+          first after any database swap. Type "ready" to check whether the
+          owner's re-upload has finished: it reports vault documents, brand
+          assets, projects, experts, tender files and extraction progress, and
+          it always succeeds, so it can be polled without painting a failed
+          check on the PR. Any other value (including blank) runs only the
+          ordinary lockfile-refresh job.
         required: false
         default: ""
       expected_fingerprint:
@@ -801,6 +805,52 @@ jobs:
             console.log("  and the pooled host carries a -pooler. marker. Passing the");
             console.log("  health one is what made the 2026-09-07 rebuild refuse.");
           '
+
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # TEMPORARY. Poll this while the owner re-uploads after a database swap.
+  #
+  # The acceptance run costs provider quota and produces the benchmark artifact.
+  # Starting it while the vault is half-uploaded measures the upload, not the
+  # app: unextracted vault documents cannot be matched as evidence, so every
+  # requirement is under-evidenced through no fault of the code.
+  #
+  # Read-only, and it ALWAYS exits 0. "Not ready" is a valid answer rather than
+  # a failure — a red X on the PR every time somebody checks is noise that
+  # teaches people to ignore red Xs.
+  # ───────────────────────────────────────────────────────────────────────────
+  temporary-preview-upload-readiness:
+    if: github.event_name == 'workflow_dispatch' && inputs.confirm == 'ready'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      OWNER_EMAIL: ${{ secrets.PREVIEW_OWNER_EMAIL }}
+      OWNER_PASSWORD: ${{ secrets.PREVIEW_OWNER_PASSWORD }}
+      BASE_URL: https://hope-tender-path-b-git-0db72a-hopeengineering83-codes-projects.vercel.app
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Sign in through the real /api/auth/login endpoint
+        run: |
+          code=$(curl -sS -o /tmp/login.json -w '%{http_code}' -D /tmp/login.headers \
+            --connect-timeout 15 --max-time 60 \
+            -H 'Content-Type: application/json' \
+            -d "{\"email\":\"$OWNER_EMAIL\",\"password\":\"$OWNER_PASSWORD\"}" \
+            "$BASE_URL/api/auth/login" || echo 000)
+          echo "login HTTP $code"
+          cookie=$(grep -i '^set-cookie: hope_session=' /tmp/login.headers | head -1 | sed 's/.*hope_session=//; s/;.*//')
+          if [ -z "$cookie" ]; then
+            echo "::error::Could not sign in. On a freshly provisioned database this means the owner account is missing; run confirm=provision."
+            exit 1
+          fi
+          echo "::add-mask::$cookie"
+          echo "SESSION_COOKIE=$cookie" >> "$GITHUB_ENV"
+
+      - name: Report what has been uploaded so far
+        run: python3 scripts/tmp-upload-readiness.py
 
   # database swap is done.
   temporary-preview-db-provision:
