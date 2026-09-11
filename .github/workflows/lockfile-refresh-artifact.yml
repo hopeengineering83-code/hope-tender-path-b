@@ -371,6 +371,40 @@ jobs:
           print(f'letterhead applied to {applied} generated document(s)')
           PYEOF
 
+      - name: Setup Node for artifact inspection
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies for artifact inspection
+        run: npm ci --no-audit --no-fund --ignore-scripts
+
+      - name: Audit the delivered PDF for branding, before the export gate
+        run: |
+          # "letterhead applied to 1 file(s)" says the DOCX was branded. It
+          # does NOT say the client's PDF carries that branding: letterhead is
+          # applied after generateTenderDocuments, the PDF is finalized
+          # separately, and the surface that would catch a disagreement (the
+          # ZIP audit) sits behind the export gate.
+          #
+          # GET /download?type=pdf serves the finalized PDF itself without
+          # assembling a ZIP, so this reads the real delivered bytes even while
+          # an unrelated readiness blocker holds the package back.
+          status=$(curl -sS --connect-timeout 15 --max-time 120 \
+            -o /tmp/delivered-technical-proposal.pdf -w "%{http_code}" \
+            -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/tenders/$TENDER_ID/download?type=pdf")
+          size=$(wc -c < /tmp/delivered-technical-proposal.pdf)
+          echo "PDF HTTP:$status SIZE:$size"
+          if [ "$status" != "200" ]; then
+            echo "::error::The finalized PDF could not be downloaded (HTTP $status). The response body follows; its code names the gate that refused."
+            head -c 2000 /tmp/delivered-technical-proposal.pdf; echo
+            exit 1
+          fi
+          node scripts/tmp-inspect-pdf-typography-and-assets.mjs \
+            /tmp/delivered-technical-proposal.pdf 2>&1 | tee /tmp/pdf-branding-pre-gate.txt
+
       - name: Snapshot final workflow-center and export-readiness state
         run: |
           curl -sS --connect-timeout 15 --max-time 30 -H "Cookie: hope_session=$SESSION_COOKIE" \
@@ -591,15 +625,6 @@ jobs:
           print(f'All {len(names)} delivered file(s) match their persisted identity.')
           PYEOF
 
-      - name: Setup Node for artifact inspection
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install dependencies for artifact inspection
-        run: npm ci --no-audit --no-fund --ignore-scripts
-
       - name: Render every page of the final PDF and check the layout
         run: |
           # "Do not accept a PDF from text extraction alone." Every page is
@@ -687,6 +712,8 @@ jobs:
             /tmp/preview-final.zip
             /tmp/pdf-page-report.txt
             /tmp/pdf-asset-audit.txt
+            /tmp/pdf-branding-pre-gate.txt
+            /tmp/delivered-technical-proposal.pdf
             /tmp/company-assets.json
             /tmp/final-pdf-text.txt
             /tmp/pdf-pages/
