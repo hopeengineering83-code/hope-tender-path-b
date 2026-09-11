@@ -398,9 +398,26 @@ jobs:
           size=$(wc -c < /tmp/delivered-technical-proposal.pdf)
           echo "PDF HTTP:$status SIZE:$size"
           if [ "$status" != "200" ]; then
-            echo "::error::The finalized PDF could not be downloaded (HTTP $status). The response body follows; its code names the gate that refused."
-            head -c 2000 /tmp/delivered-technical-proposal.pdf; echo
-            exit 1
+            # Observed on run 34627029199: HTTP 409
+            # MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE. proposalPdf() runs the
+            # same assertTenderReadyForGenerationAndExport gate as the ZIP, so
+            # there is NO route to the delivered bytes that skips it. That is
+            # the gate working; it is not a reason to add a bypass.
+            #
+            # This step is an observation, not an acceptance criterion, so it
+            # must not be the thing that fails the job — the canonical
+            # readiness step below says the same thing in the right place.
+            # It records NOT MEASURED explicitly, because a missing branding
+            # line must never be mistaken for a passing one.
+            echo "::warning::BRANDING IN THE DELIVERED PDF: NOT MEASURED — the finalized PDF is gate-refused (HTTP $status)."
+            {
+              echo "BRANDING IN THE DELIVERED PDF: NOT MEASURED"
+              echo "reason: GET /download?type=pdf returned HTTP $status"
+              head -c 2000 /tmp/delivered-technical-proposal.pdf
+              echo
+            } | tee /tmp/pdf-branding-pre-gate.txt
+            rm -f /tmp/delivered-technical-proposal.pdf
+            exit 0
           fi
           node scripts/tmp-inspect-pdf-typography-and-assets.mjs \
             /tmp/delivered-technical-proposal.pdf 2>&1 | tee /tmp/pdf-branding-pre-gate.txt
