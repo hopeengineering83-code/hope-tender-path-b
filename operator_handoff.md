@@ -143,6 +143,106 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-11T13:05Z — Claude Code (Opus 5) — the owner's clicks produced NOTHING; §6 half-fixed, half-withdrawn
+
+**Branch / PR:** `release/consolidated-recovery-20260717` — PR #1175. Not merged. Production untouched.
+
+#### 1. FRESHNESS: the owner-triggered run did not happen on this tender
+
+Inspect 34598632264, baseline = newest job before the clicks (`2026-09-10T19:14:01.740Z`):
+
+```
+jobs created after the baseline: 0
+ENGINE_RUN            ABSENT
+PROPOSAL_GENERATION   ABSENT
+AUTO_FINALIZE         ABSENT
+FAILED/CANCELED/TIMED_OUT among new jobs: 0
+0 non-superseded row(s) of 33 total
+FILE_FORMAT / FINANCIAL_SEPARATION: PENDING_PACKAGE
+```
+
+Not failed — **absent**. Nothing to inspect, so §1–§5 and §7 cannot be executed.
+
+Narrowing done from source: `enqueueEngineJob` reuses a job only in
+QUEUED/RUNNING/PARTIAL_SUCCESS (`enqueue-engine-job.ts:134`), so a SUCCEEDED
+ENGINE_RUN does **not** suppress a new one — a click that reached the enqueue
+would have created a row. Zero rows ⇒ refused **before** enqueue. A pre-enqueue
+refusal writes no AiJob, so it leaves no trace. **That is itself a defect: a
+refused manual gate gives the owner no durable record.** Not yet fixed.
+
+Live state: `readinessScore 34`, `stage MATCHING`, `planStatus PLAN_MISSING_DOCS`,
+`ungeneratedPlannedRequired 2`, one export blocker
+`MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE 3/6`, warning `DEADLINE_PASSED`
+(2026-08-25).
+
+#### 2. §6 — PART FIXED (`5cb8d694`)
+
+A requirement with an applicable `packageRule` now takes its `displayStatus`
+from that rule. `blockerReason` already consulted the package verdict;
+`displayStatus` did not — and `displayStatus` is what the snapshot counts
+(`covered = mandatoryStatuses.filter(s => s.displayStatus === "FULLY_MET")`).
+So a rule the package **obeyed** still counted as an uncovered mandatory
+requirement. Live proof: "Technical Proposal Document" PARTIALLY_MET while its
+own packageRule reason read *"It is satisfied by the produced package and needs
+no owner-supplied evidence."*
+
+Fail-closed unchanged: covered only on an objective SATISFIED verdict; VIOLATED
+is NOT_MET; PENDING_PACKAGE and NOT_MACHINE_DECIDABLE still block; capability
+requirements have no packageRule and still need source-backed evidence.
+
+An existing test named *"marks a rule the package obeys as fully met"* never
+asserted FULLY_MET — it asserted the rule still carried a blockerReason. The
+name described the intent, the assertions pinned the bug; updated to the name.
+
+#### 3. §6 — PART WITHDRAWN. I was wrong, and this is the important entry.
+
+I then built a `SUBMISSION_CHANNEL` family so "Email Submission Only" and
+"Required Email Subject Line" would stop falling through to the GENERAL
+evidence wildcard, on the reasoning that no vault document can prove them.
+Predicate, family, conformance check, exclusive evidence-kind routing and nine
+passing cross-sector tests.
+
+**Then the full suite failed one test, and the test was right:**
+
+```
+tests/generated-artifact-content-coverage.test.ts
+  "validated artifact text can substantially prove a submission instruction"
+```
+
+The architecture **already** implements option (B): a submission instruction
+can be proven by the produced artifact's own validated visible text. That is a
+deliberate, tested design decision, and my change would have broken it — it
+would have made those requirements permanently unsatisfiable instead of
+satisfiable by a correct package.
+
+**All of it reverted.** The real question is therefore NOT "is the model a
+category error" — it is **"why did the delivered artifact not prove those two
+instructions on this tender?"**, which needs a package to answer, which needs
+the owner gates. Per the standing instruction: evidence is insufficient to
+justify changing the model, so the gate is left unchanged and reported.
+
+#### Tests actually run (pushed head, after the revert)
+
+```
+npx tsc --noEmit                    clean
+npx next lint                       ✔ No ESLint warnings or errors
+RUN_DB_INTEGRATION=true npm test    11719 pass / 0 fail / 0 cancelled
+```
+
+Two earlier runs reported ~100 failures / 407 cancelled with Postgres down;
+restarted and re-run rather than recorded as regressions.
+
+#### Tooling added
+
+`confirm=export` on the acceptance workflow — the same export, ZIP integrity,
+per-page PDF rasterisation, brand-asset object-graph audit and text dump as
+`accept`, but skipping the seven steps that click the owner's gates, so a
+package can be verified without superseding it or spending provider quota.
+Guarded to fail loudly on an empty package rather than "verify" nothing.
+
+**Next action:** the owner's Run Engine + generation must actually produce
+jobs. Until then nothing downstream is executable.
+
 ### 2026-09-11T10:45Z — Claude Code (Opus 5) — FILE_FORMAT verified live; letterhead traced to a by-design skip; the package has since emptied
 
 **Branch / PR:** `release/consolidated-recovery-20260717` — PR #1175. Not merged. Production untouched.
