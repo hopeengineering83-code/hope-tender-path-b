@@ -4,9 +4,14 @@ BASE = os.environ["BASE_URL"]
 COOKIE = os.environ["SESSION_COOKIE"]
 TENDER = (os.environ.get("TENDER_ID") or "").strip()
 
-def get(path):
+def get(path, max_time="120"):
+    # max_time is per-call because the job has a 20-minute cap and a handful of
+    # slow endpoints can spend it all. Run 34588881212 did exactly that: twelve
+    # per-job detail reads at up to 120s each exhausted the budget before the
+    # report could be uploaded, so the run produced no artifact at all. Cheap,
+    # numerous calls get a short leash.
     out = subprocess.run(
-        ["curl", "-sS", "--connect-timeout", "15", "--max-time", "120",
+        ["curl", "-sS", "--connect-timeout", "15", "--max-time", max_time,
          "-H", f"Cookie: hope_session={COOKIE}", f"{BASE}{path}"],
         capture_output=True, text=True)
     try:
@@ -652,8 +657,10 @@ else:
         print("  NO PROPOSAL_GENERATION and NO AUTO_FINALIZE job on this tender.")
         print("  That is a real absence (jobType IS returned by the list endpoint),")
         print("  and it would mean the documents were produced by some other path.")
-    for _j in _interesting[:12]:
-        _d = get(f"/api/ai-jobs/{urllib.parse.quote(_j['id'])}")
+    # Four is enough to see the most recent generation and finalize pass, and
+    # keeps this section inside the job's time budget.
+    for _j in _interesting[:4]:
+        _d = get(f"/api/ai-jobs/{urllib.parse.quote(_j['id'])}", max_time="25")
         _job = _d.get("job") if isinstance(_d, dict) else None
         if not isinstance(_job, dict):
             print(f"  * {_j.get('jobType')} {_j.get('id')}: detail unreadable"
