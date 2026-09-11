@@ -143,6 +143,60 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-11 — The owner's single Run Engine retry: what the database actually says
+
+Read-only inspect 34610227620 against branch-alias Preview on `bdc420a9`.
+Quoted, not summarised:
+
+```
+jobs anywhere on this account after 2026-09-10T19:14:01.740Z: 0
+08e250af  stage=MATCHING  status=MATCHED  updated=2026-09-10T19:15:33.872Z
+RUN ENGINE REFUSALS — count = 0   (tender and account-wide)
+generatedDocumentsTotal = 0   requiredDocumentsTotal = 2
+```
+
+So the retry created no ENGINE_RUN, and no refusal row exists either. The
+second half proves less than it looks: refusal logging only went live at
+~13:43Z (`f3e17913`, deployment `dpl_DZy1UJVwEtoimuakpsVm3bnkuvgo`), and a
+refusal before that wrote nothing. **An empty refusal list is not evidence
+that no refusal happened.**
+
+Re-reading the route against that gap found three exits `f3e17913` never
+covered, and they are exactly the shape of what was observed — no job, no row:
+
+* `CLIENT_POLICY_OVERRIDE_REJECTED` (400) and `RATE_LIMITED` (429) sat above
+  `await params`, so there was no tender id to attribute a record to.
+* the terminal `catch` — anything thrown inside the try, the enqueue included —
+  returned a mapped error and persisted nothing at all.
+
+All three now record. No decision, status or body changed; `logAction` cannot
+throw, so no refusal can be turned into a 500 by its own logging. The catch
+record distinguishes "threw before enqueue, no run exists" from "threw after
+enqueue, the run exists" via a flag set at the enqueue — a false record would
+be worse than none, because the next reader would stop looking for a real job.
+
+Also captured, and new: the workflow centre's own decision for this tender.
+
+```
+currentBlockingStage    = MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE
+nextRequiredAction      = LINK_VAULT_EVIDENCE
+mandatoryFullOrSubstantialCoverageCount = 2 of 6
+stageStates: MATCH_EVIDENCE=BLOCKED, GENERATE_DOCUMENTS=BLOCKED_BY_PRIOR_STEP
+downstreamSuppressedBy  = MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE
+```
+
+Correction to my own tooling, twice-earned: `engine-readiness.canRunEngine`
+would have settled whether the button was even clickable, and it was
+unreachable — pushed past the readable end of the job log by the JSON dumps
+printed above it, at 330 lines of tail. `5e4ab3ef` trimmed two dumps for this
+same reason and it was not enough. The inspect now ends with a VERDICT block
+that states the answer in plain lines, last. A diagnostic whose output cannot
+be read is not a diagnostic.
+
+Gate on this change: `tsc` clean, `next lint` clean,
+`RUN_DB_INTEGRATION=true npm test` 11731 pass / 0 fail / 0 cancelled.
+
+
 ### 2026-09-11T13:05Z — Claude Code (Opus 5) — the owner's clicks produced NOTHING; §6 half-fixed, half-withdrawn
 
 **Branch / PR:** `release/consolidated-recovery-20260717` — PR #1175. Not merged. Production untouched.

@@ -93,31 +93,40 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
   const userId = actor.id;
 
+  // Resolved before any refusal so that EVERY terminated request can name the
+  // tender it was about. These two refusals used to sit above the point where
+  // the id was read, which is why they were the paths that left nothing behind.
+  const { id } = await params;
+
   const requestUrl = new URL(req.url);
   const rejectedPolicyParameters = CLIENT_POLICY_PARAMETERS.filter((parameter) => requestUrl.searchParams.has(parameter));
   if (rejectedPolicyParameters.length > 0) {
-    return NextResponse.json({
+    return refuseEngineRun({ userId, tenderId: id, diagnosticId, status: 400, body: {
       error: "Engine execution policy is controlled by the server.",
       code: "CLIENT_POLICY_OVERRIDE_REJECTED",
       rejectedParameters: rejectedPolicyParameters,
-      diagnosticId,
-    }, { status: 400 });
+    } });
   }
 
   const rate = await rateLimitPersistent(`engine:${userId}`, AI_RATE_LIMIT);
   if (!rate.allowed) {
     const retryAfter = Math.ceil((rate.resetAt - Date.now()) / 1000);
-    return NextResponse.json({
+    const refusal = await refuseEngineRun({ userId, tenderId: id, diagnosticId, status: 429, body: {
       error: "Rate limit exceeded — too many engine requests. Please wait before retrying.",
       code: "RATE_LIMITED",
       retryAfter,
-      diagnosticId,
-    }, { status: 429, headers: { "Retry-After": String(retryAfter) } });
+    } });
+    refusal.headers.set("Retry-After", String(retryAfter));
+    return refusal;
   }
+
+  // Set the moment a durable job exists. It decides what the terminal catch
+  // below is allowed to claim: before the enqueue, a throw means no run was
+  // ever created; after it, the run exists and only the response was lost.
+  let enqueuedJobId: string | null = null;
 
   try {
     await prismaReady;
-    const { id } = await params;
     const tender = await prisma.tender.findFirst({
       where: { id, userId },
       select: {
@@ -282,6 +291,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       } });
     }
     const { revision, idempotencyKey, job: enqueueResult } = enqueue;
+    enqueuedJobId = enqueueResult.id;
 
     logger.info("[engine route] durable Engine job accepted", {
       diagnosticId,
@@ -325,6 +335,31 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const errorName = error instanceof Error ? error.constructor.name : typeof error;
     logger.error("Engine enqueue failed:", { diagnosticId, errorName });
     const mapped = actionableEngineError(error);
+
+    // A throw here was the last way a Run Engine click could end with no trace
+    // at all: no AiJob, no audit row, and a log line that lives only in the
+    // platform's retention window. The owner is left with an error toast and
+    // nobody can later say what happened. Record it durably like every other
+    // terminated request, and say plainly whether a run exists.
+    await logAction({
+      userId,
+      action: "TENDER_ENGINE_RUN_REFUSED",
+      entityType: "Tender",
+      entityId: id,
+      description: enqueuedJobId
+        ? "Run Engine threw after the job was enqueued; the run exists."
+        : `Run Engine threw before enqueue: ${errorName}`,
+      metadata: {
+        code: String((mapped.body as Record<string, unknown>).code ?? "ENGINE_RUN_THREW"),
+        httpStatus: mapped.status,
+        errorName,
+        enqueuedJobId,
+        error: (mapped.body as Record<string, unknown>).error ?? null,
+        diagnosticId,
+      },
+      requestId: diagnosticId,
+    });
+
     return NextResponse.json({ ...mapped.body, diagnosticId }, { status: mapped.status });
   }
 }

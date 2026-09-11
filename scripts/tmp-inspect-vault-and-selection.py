@@ -824,13 +824,15 @@ print("\n" + "=" * 78)
 print("PRE-ENQUEUE GATE STATE — what a Run Engine click would hit right now")
 print("=" * 78)
 
+_gate = {}
 for _label, _path in (
     ("engine-readiness", f"/api/tenders/{TENDER}/engine-readiness"),
     ("generation-readiness", f"/api/tenders/{TENDER}/generation-readiness"),
     ("workflow-status", f"/api/tenders/{TENDER}/workflow-status"),
 ):
+    _gate[_label] = get(_path)
     print(f"\n----- {_label} -----")
-    print(json.dumps(get(_path), indent=2)[:4500])
+    print(json.dumps(_gate[_label], indent=2)[:4500])
 
 print("\n----- workflow-center: the canonical next action the owner is shown -----")
 _wc = get(f"/api/tenders/{TENDER}/workflow-center")
@@ -927,3 +929,45 @@ if isinstance(_refall, dict) and isinstance(_refall.get("refusals"), list):
         print(f"    {_r.get('createdAt')}  tender={str(_r.get('tenderId'))[:8]}  code={_r.get('code')}")
 else:
     print(f"  !! unreadable: {str(_refall)[:250]}")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# VERDICT — LAST, DELIBERATELY
+#
+# Everything above is evidence; this is the answer. It goes last because the
+# job log is read from the end and the readable tail is finite. Twice now the
+# decisive section has been pushed out of view by a large JSON dump printed
+# above it (5e4ab3ef trimmed two of them for exactly this reason), and on the
+# second occasion the field that would have settled the question —
+# engine-readiness.canRunEngine — was unreachable even at 330 lines of tail.
+#
+# So the rule this block encodes: whatever the question of the day is, its
+# answer is printed in the last twenty lines, in full, with no JSON around it.
+# ═════════════════════════════════════════════════════════════════════════════
+print("\n" + "=" * 78)
+print("VERDICT — could a Run Engine click have worked, and did one?")
+print("=" * 78)
+
+_er = _gate.get("engine-readiness")
+if isinstance(_er, dict) and "canRunEngine" in _er:
+    _can = _er.get("canRunEngine")
+    print(f"  canRunEngine      = {_can}")
+    print(f"  analysisCurrent   = {_er.get('analysisCurrent')}")
+    print(f"  sourceRevision    = {'present' if _er.get('sourceRevision') else 'MISSING'}")
+    print(f"  engineRunning     = {_er.get('engineRunning')}")
+    print(f"  engineComplete    = {_er.get('engineComplete')}")
+    print(f"  engineFailed      = {_er.get('engineFailed')}")
+    print(f"  blocker           = {_er.get('blocker')}")
+    print(f"  analysisBlocker   = {_er.get('analysisBlocker')}")
+    print("")
+    if _can is True:
+        print("  => The Run Engine button was ENABLED. A click reaches the server,")
+        print("     so a click that produced no job must have been refused or thrown,")
+        print("     and either now leaves a TENDER_ENGINE_RUN_REFUSED row.")
+    else:
+        print("  => The Run Engine button was DISABLED. A click fires no request at")
+        print("     all, which is why no job and no refusal row exist. 'Apparently")
+        print("     nothing' is then literally accurate, and the blocker above is")
+        print("     the reason the owner needs to be shown.")
+else:
+    print(f"  !! engine-readiness unreadable: {str(_er)[:300]}")

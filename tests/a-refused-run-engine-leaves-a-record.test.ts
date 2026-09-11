@@ -134,4 +134,78 @@ describe("a refused Run Engine leaves a durable record", () => {
     const fn = src.slice(at, at + 2000);
     assert.doesNotMatch(fn, /throw\b/, "the refusal path must not be able to throw");
   });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // The first fix (f3e17913) instrumented only the refusals BELOW the point
+  // where the tender is loaded. Re-reading the route against the live evidence
+  // showed three exits it never covered, and they are precisely the ones that
+  // fit what actually happened: no AiJob, no audit row, nothing.
+  //
+  //   * CLIENT_POLICY_OVERRIDE_REJECTED (400) and RATE_LIMITED (429) sat ABOVE
+  //     `await params`, so there was no tender id to attribute a row to. The
+  //     id is now resolved first; nothing else about either decision changed.
+  //   * The terminal catch — anything thrown inside the try, including the
+  //     enqueue itself — returned a mapped error and wrote nothing durable.
+  //
+  // A click that dies in the catch is indistinguishable afterwards from a
+  // click that was never made. That is the whole defect, so the catch is the
+  // most important of the three.
+  // ───────────────────────────────────────────────────────────────────────────
+
+  it("the tender id is resolved before the first refusal can happen", () => {
+    const idAt = src.indexOf("const { id } = await params;");
+    assert.ok(idAt > -1, "the route must still resolve the tender id");
+    for (const code of ["CLIENT_POLICY_OVERRIDE_REJECTED", "RATE_LIMITED"]) {
+      const at = src.indexOf(code);
+      assert.ok(at > -1, `${code} should still exist`);
+      assert.ok(
+        idAt < at,
+        `${code} is refused before the tender id is known, so it cannot be recorded`,
+      );
+    }
+  });
+
+  it("the policy-override and rate-limit refusals are recorded like the rest", () => {
+    for (const code of ["CLIENT_POLICY_OVERRIDE_REJECTED", "RATE_LIMITED"]) {
+      const at = src.indexOf(code);
+      // Look back from the code to the start of its return statement.
+      const head = src.lastIndexOf("return ", at);
+      const stmt = src.slice(head, at);
+      assert.match(
+        stmt,
+        /refuseEngineRun|const refusal = await refuseEngineRun/,
+        `${code} still returns without leaving a record`,
+      );
+    }
+  });
+
+  it("rate limiting keeps its Retry-After header after being recorded", () => {
+    // Recording must not quietly drop a header a client depends on.
+    const at = src.indexOf('code: "RATE_LIMITED"');
+    const region = src.slice(at, at + 400);
+    assert.match(region, /Retry-After/, "the 429 must still tell the client when to retry");
+  });
+
+  it("a throw anywhere in the run leaves a record too", () => {
+    const at = src.lastIndexOf("} catch (error) {");
+    assert.ok(at > -1, "the terminal catch must still exist");
+    const block = src.slice(at);
+    assert.match(block, /await logAction\(/, "a thrown Run Engine must persist something");
+    assert.match(block, /action: "TENDER_ENGINE_RUN_REFUSED"/);
+    assert.match(block, /entityId: id/, "the record must name the tender");
+    assert.match(block, /errorName/, "the record must say what threw");
+  });
+
+  it("the thrown-run record distinguishes 'no run exists' from 'run exists'", () => {
+    // Claiming nothing was created when the enqueue already succeeded would be
+    // a false record, which is worse than no record: the next reader would
+    // stop looking for a job that is really there.
+    assert.match(src, /let enqueuedJobId: string \| null = null;/,
+      "the route must track whether a durable job was created");
+    assert.match(src, /enqueuedJobId = enqueueResult\.id;/,
+      "the flag must be set at the enqueue, not guessed");
+    const block = src.slice(src.lastIndexOf("} catch (error) {"));
+    assert.match(block, /enqueuedJobId\s*\n?\s*\?/, "the description must branch on it");
+    assert.match(block, /enqueuedJobId,/, "and the id must be in the metadata");
+  });
 });
