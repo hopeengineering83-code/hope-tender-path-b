@@ -20,16 +20,26 @@ on:
           has already generated: it runs the same export, ZIP download and
           artifact inspection as "accept" but SKIPS AI Analyze and Run Engine,
           so it neither supersedes the owner's package nor spends provider
-          quota. Any other value (including blank) runs only the ordinary
-          lockfile-refresh job.
+          quota. Type "health" to read /api/health and print BOTH database
+          fingerprints (the pooled one the Preview reports and the direct one
+          the migration URL resolves to) without touching anything — run this
+          first after any database swap. Any other value (including blank) runs
+          only the ordinary lockfile-refresh job.
         required: false
         default: ""
       expected_fingerprint:
         description: >-
-          TEMPORARY, required with confirm=provision. The databaseFingerprint
-          /api/health reports for the database being rebuilt. The rebuild
+          TEMPORARY, required with confirm=provision. The fingerprint of the
+          database being rebuilt, AS THE MIGRATION URL SEES IT. The rebuild
           re-checks it and refuses to run against anything else, so the target
           can never be implicit or inherited from a stale secret.
+
+          NOT necessarily the number /api/health prints. The fingerprint is
+          sha256(host/dbname), Vercel holds the pooled host and the migration
+          secret holds the direct one, so the same database hashes two ways and
+          the 2026-09-07 rebuild refused on exactly that mismatch. Run
+          confirm=health first: it prints both and labels which one belongs
+          here.
         required: false
         default: ""
       tender_id:
@@ -691,6 +701,107 @@ jobs:
   #
   # prisma migrate deploy is additive: it applies the migrations already in
   # prisma/migrations and never drops or resets. Remove this job once the
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # TEMPORARY. The first thing to run after a Neon database swap.
+  #
+  # A swap has now happened three times (2026-09-03, 2026-09-07, 2026-09-11).
+  # Each time the same two questions decide everything that follows, and each
+  # time they were answered slowly:
+  #
+  #   1. Did a Preview process touch the new database before the migrations
+  #      did? lib/prisma.ts's legacy bootstrap builds the schema ad-hoc
+  #      whenever NODE_ENV != "production", leaving 54 tables, no
+  #      _prisma_migrations history and hundreds of drift statements, which is
+  #      why `prisma migrate deploy` then refuses with P3005.
+  #
+  #   2. Which fingerprint does the rebuild expect? sha256(host/dbname), and
+  #      Vercel holds the POOLED host while the migration secret holds the
+  #      DIRECT one, so one database hashes two ways. The 2026-09-07 rebuild
+  #      refused on precisely that mismatch and the run was wasted.
+  #
+  # This job answers both, changes nothing, and prints the two fingerprints
+  # side by side with the one provision needs labelled. Read-only: it issues a
+  # GET and computes two hashes. Remove it with the other temporary jobs.
+  # ───────────────────────────────────────────────────────────────────────────
+  temporary-preview-health:
+    if: github.event_name == 'workflow_dispatch' && inputs.confirm == 'health'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      BASE_URL: https://hope-tender-path-b-git-0db72a-hopeengineering83-codes-projects.vercel.app
+      MIGRATION_URL: ${{ secrets.PREVIEW_DATABASE_URL_MIGRATION }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read /api/health on the Preview
+        run: |
+          echo "BASE_URL: $BASE_URL"
+          code=$(curl -sS -o /tmp/health.json -w '%{http_code}' \
+            --connect-timeout 15 --max-time 60 "$BASE_URL/api/health" || echo 000)
+          echo "HTTP $code"
+          echo "--- /api/health ---"
+          cat /tmp/health.json || true
+          echo
+          echo "--- end ---"
+
+      - name: Summarise what the health payload decides
+        run: |
+          python3 - <<'PYEOF'
+          import json
+          try:
+              h = json.load(open('/tmp/health.json'))
+          except Exception as e:
+              print(f"  !! health payload unreadable: {e}")
+              print("  A 503 with every database probe false is the signature of a")
+              print("  DATABASE_URL the runtime cannot reach. That is an environment")
+              print("  fact, not a code regression.")
+              raise SystemExit(0)
+          print(f"  ok                      = {h.get('ok')}")
+          print(f"  status                  = {h.get('status')}")
+          print(f"  databaseFingerprint     = {h.get('databaseFingerprint')}   <-- POOLED (what Vercel uses)")
+          print(f"  schemaMatchesDeployedCode = {h.get('schemaMatchesDeployedCode')}")
+          tables = h.get('tables') or h.get('database') or {}
+          if isinstance(tables, dict):
+              missing = [k for k, v in tables.items() if v is not True]
+              print(f"  tables present          = {len(tables) - len(missing)}/{len(tables)}")
+              if missing:
+                  print(f"  tables NOT present      = {missing}")
+          print("")
+          if h.get('schemaMatchesDeployedCode') is True and h.get('ok') is True:
+              print("  => Schema is up to date and reachable. No rebuild needed.")
+              print("     The vault will still be EMPTY on a new database; the owner")
+              print("     must re-upload Company Vault + Brand Assets, then the tender.")
+          else:
+              print("  => Something is off. If migrate deploy refused with P3005, the")
+              print("     runtime bootstrap created the schema first; run confirm=provision")
+              print("     with the DIRECT fingerprint printed in the next step.")
+          PYEOF
+
+      - name: Print both fingerprints, and say which one provision needs
+        run: |
+          node -e '
+            const { createHash } = require("node:crypto");
+            const raw = (process.env.MIGRATION_URL || "").trim();
+            if (!raw) { console.log("  !! PREVIEW_DATABASE_URL_MIGRATION is not set"); process.exit(0); }
+            const fp = (u) => { const p = new URL(u); return createHash("sha256").update(`${p.hostname}/${p.pathname.replace(/^\//, "")}`).digest("hex").slice(0, 12); };
+            const direct = new URL(raw);
+            const pooledHost = direct.hostname.includes("-pooler.") ? direct.hostname : direct.hostname.replace(/^([^.]+)\./, "$1-pooler.");
+            const pooled = new URL(raw); pooled.hostname = pooledHost;
+            const bare = new URL(raw); bare.hostname = direct.hostname.replace("-pooler.", ".");
+            console.log("  migration secret host   =", direct.hostname);
+            console.log("  fingerprint (as stored) =", fp(direct.toString()));
+            console.log("  fingerprint (direct)    =", fp(bare.toString()), "  <-- pass THIS as expected_fingerprint");
+            console.log("  fingerprint (pooled)    =", fp(pooled.toString()), "  <-- what /api/health prints");
+            console.log("");
+            console.log("  The two differ because the fingerprint is sha256(host/dbname)");
+            console.log("  and the pooled host carries a -pooler. marker. Passing the");
+            console.log("  health one is what made the 2026-09-07 rebuild refuse.");
+          '
+
   # database swap is done.
   temporary-preview-db-provision:
     if: github.event_name == 'workflow_dispatch' && inputs.confirm == 'provision'
