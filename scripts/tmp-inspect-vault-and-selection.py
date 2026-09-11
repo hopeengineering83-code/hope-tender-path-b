@@ -837,3 +837,41 @@ if isinstance(_wc, dict):
         for _k, _v in list(_dec.items())[:20]:
             print(f"    {_k} = {json.dumps(_v)[:700]}")
 print(json.dumps(_wc, indent=2)[:5000])
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# DID THE OWNER'S CLICKS LAND ON A DIFFERENT TENDER?
+#
+# Everything above is scoped to one tender id. If the owner worked on a
+# different tender — an easy thing to do when several are open — this tender
+# would look untouched while the clicks worked perfectly. /api/ai-jobs without
+# a tenderId filter returns the newest jobs for the whole account, so a click
+# that landed anywhere shows up here.
+#
+# This distinguishes "the app refused the run" from "the run happened
+# somewhere else", and those have completely different fixes.
+# ═════════════════════════════════════════════════════════════════════════════
+print("\n" + "=" * 78)
+print("ACCOUNT-WIDE JOB ACTIVITY — did the clicks land on another tender?")
+print("=" * 78)
+_all = get("/api/ai-jobs?take=40")
+_allrows = _all.get("jobs") if isinstance(_all, dict) else (_all if isinstance(_all, list) else None)
+if not isinstance(_allrows, list):
+    print(f"  !! unreadable; keys={list(_all)[:10] if isinstance(_all, dict) else type(_all)}")
+else:
+    print(f"  {len(_allrows)} newest job(s) across ALL tenders for this account:")
+    for _j in _allrows[:25]:
+        _mine = "THIS TENDER" if _j.get("tenderId") == TENDER else f"other:{str(_j.get('tenderId'))[:8]}"
+        _new = "  <== AFTER BASELINE" if str(_j.get("createdAt") or "") > BASELINE else ""
+        print(f"    {_j.get('createdAt')}  {_j.get('jobType'):<20} {_j.get('status'):<12}"
+              f" {_mine}{_new}")
+    _after = [j for j in _allrows if str(j.get("createdAt") or "") > BASELINE]
+    print(f"\n  jobs anywhere on this account after {BASELINE}: {len(_after)}")
+    if not _after:
+        print("  => the clicks did not create a job on ANY tender in this account.")
+
+print("\n--- tenders visible to this account (is the owner working on another?) ---")
+for _t in (discover_tenders() or [])[:15]:
+    _mark = "  <== inspected" if _t.get("id") == TENDER else ""
+    print(f"  {str(_t.get('id'))[:8]}  stage={_t.get('stage')}  status={_t.get('status')}"
+          f"  updated={_t.get('updatedAt')}  {str(_t.get('title'))[:60]}{_mark}")
