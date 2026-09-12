@@ -19,6 +19,7 @@
  *   npx tsx scripts/enrich-project-portfolio-facts.ts
  *   npx tsx scripts/enrich-project-portfolio-facts.ts --apply
  *   npx tsx scripts/enrich-project-portfolio-facts.ts --company <companyId> --limit 50
+ *   npx tsx scripts/enrich-project-portfolio-facts.ts --reverify-stale --apply
  */
 
 import { enrichProjectPortfolio, type EnrichableProject } from "../lib/engine/project-portfolio-enrichment";
@@ -31,6 +32,7 @@ function flagValue(name: string): string | undefined {
 
 async function main(): Promise<void> {
   const isApply = process.argv.includes("--apply");
+  const reverify = process.argv.includes("--reverify-stale");
   const companyId = flagValue("--company");
   const limitRaw = flagValue("--limit");
   const limit = limitRaw ? Number.parseInt(limitRaw, 10) : undefined;
@@ -89,6 +91,7 @@ async function main(): Promise<void> {
       projects,
       client: prisma.project,
       apply: isApply,
+      reverifyStaleProvenance: reverify,
     });
 
     const { before, after } = result;
@@ -114,6 +117,7 @@ async function main(): Promise<void> {
     console.log(`rows skipped for ambiguity ${result.rowsSkippedForAmbiguity}`);
     console.log(`rows skipped to keep verification ${result.rowsSkippedToPreserveVerification}`);
     console.log(`verification provenance re-issued ${result.verificationReissued}`);
+    console.log(`stale provenance repaired      ${result.verificationRepaired}${reverify ? "" : "   (--reverify-stale not requested)"}`);
     console.log(`country corrected          ${result.countryCorrected}`);
     console.log(`contractValue filled       ${result.contractValueFilled}`);
     console.log(`currency filled            ${result.currencyFilled}`);
@@ -147,6 +151,7 @@ async function main(): Promise<void> {
           rowsSkippedForAmbiguity: result.rowsSkippedForAmbiguity,
           rowsSkippedToPreserveVerification: result.rowsSkippedToPreserveVerification,
           verificationReissued: result.verificationReissued,
+          verificationRepaired: result.verificationRepaired,
           countryCorrected: result.countryCorrected,
           contractValueFilled: result.contractValueFilled,
           currencyFilled: result.currencyFilled,

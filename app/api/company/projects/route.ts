@@ -6,6 +6,7 @@ import { logAction } from "../../../../lib/audit";
 import { MUTATION_RATE_LIMIT, rateLimit } from "../../../../lib/rate-limit";
 import { ensureCompanyForUser } from "../../../../lib/company-workspace";
 import { resolveProjectCountry } from "../../../../lib/engine/country-reference";
+import { extractProjectFacts, mergeProjectFacts } from "../../../../lib/engine/project-fact-extractor";
 import {
   buildReviewProvenance,
   buildPartialSourceVerificationProvenance,
@@ -131,14 +132,56 @@ export async function POST(req: Request) {
         })
       : null;
 
+    // DERIVED FACTS ARE PART OF THE RECORD BEING VERIFIED.
+    //
+    // These used to be extracted after the row was created and written in a
+    // second update, which quietly un-verified the record it was enriching.
+    // Durable source verification is a claim about a SET of fields, and
+    // provenanceMatchesCurrentRecord refuses a record that has GROWN since —
+    // and normalizedEvidenceFields drops empty values, so a project created
+    // with contractValue, currency or country blank was verified without them
+    // and then failed verification the moment the extractor filled them in.
+    // Observed on the live vault through the bulk path, which had the same
+    // shape. Deriving first means what gets written is what gets proved.
+    const derivedCandidateFacts = (() => {
+      const summary = typeof body.summary === "string" ? body.summary : "";
+      if (summary.trim().length <= 50) return {} as Record<string, unknown>;
+      try {
+        return mergeProjectFacts(
+          {
+            clientName: body.clientName || null,
+            country: body.country || null,
+            sector: body.sector || null,
+            contractValue,
+            currency: body.currency || null,
+          },
+          extractProjectFacts(summary, String(body.name).trim()),
+        ) as Record<string, unknown>;
+      } catch (extractErr) {
+        logger.warn("[project-fact-extractor] pre-create extraction failed:", {
+          detail: extractErr instanceof Error ? extractErr.message : extractErr,
+        });
+        return {} as Record<string, unknown>;
+      }
+    })();
+
+    const candidateCountry = (() => {
+      const stored = (derivedCandidateFacts.country as string | undefined) ?? body.country ?? null;
+      const resolution = resolveProjectCountry({
+        storedCountry: stored,
+        sourceText: typeof body.summary === "string" ? body.summary : null,
+      });
+      return resolution.shouldWrite ? resolution.country : stored || null;
+    })();
+
     const projectCandidateFields = {
       name: String(body.name).trim(),
-      clientName: body.clientName || null,
-      country: body.country || null,
-      sector: body.sector || null,
+      clientName: (derivedCandidateFacts.clientName as string | undefined) ?? body.clientName ?? null,
+      country: candidateCountry,
+      sector: (derivedCandidateFacts.sector as string | undefined) ?? body.sector ?? null,
       serviceAreas: toJsonArray(body.serviceAreas),
-      contractValue,
-      currency: body.currency || null,
+      contractValue: (derivedCandidateFacts.contractValue as number | undefined) ?? contractValue,
+      currency: (derivedCandidateFacts.currency as string | undefined) ?? body.currency ?? null,
     };
 
     const projectDurable = projectSourceDocument
@@ -175,51 +218,26 @@ export async function POST(req: Request) {
     const project = await prisma.project.create({
       data: {
         companyId: company.id,
+        // The verified field set, written verbatim. A second, different set of
+        // values here is how the provenance and the row drift apart.
         name: projectCandidateFields.name,
-        clientName: body.clientName || null,
-        country: body.country || null,
-        sector: body.sector || null,
+        clientName: projectCandidateFields.clientName,
+        country: projectCandidateFields.country,
+        sector: projectCandidateFields.sector,
         serviceAreas: projectCandidateFields.serviceAreas,
         summary: body.summary || null,
-        contractValue,
-        currency: body.currency || null,
+        contractValue: projectCandidateFields.contractValue,
+        currency: projectCandidateFields.currency,
+        ...(derivedCandidateFacts.startDate ? { startDate: derivedCandidateFacts.startDate as Date } : {}),
+        ...(derivedCandidateFacts.endDate ? { endDate: derivedCandidateFacts.endDate as Date } : {}),
         ...projectReviewState,
         sourceDocumentId,
       },
     });
 
-    // ─── Auto-extract project facts (May-7 gap fix) ───────────────────────
-    // Section B project cards used to render "Scale on file" / "Dates on
-    // file" / "Value detail in Appendix B" because contractValue, currency,
-    // country, startDate, endDate, sector were never populated. We now
-    // run the regex extractor over the just-created project's summary
-    // and fill ONLY the empty columns. Idempotent and never overwrites
-    // user-entered values.
-    if (project.summary && project.summary.trim().length > 50) {
-      try {
-        const { extractProjectFacts, mergeProjectFacts } = await import("../../../../lib/engine/project-fact-extractor");
-        const extracted = extractProjectFacts(project.summary, project.name);
-        const update: Record<string, unknown> = { ...mergeProjectFacts(project, extracted) };
-
-        // COUNTRY FIELD HYGIENE - the same conservative resolver the bulk
-        // import uses, so one project typed in by hand and a hundred imported
-        // from JSON end up with the same kind of value in the same column.
-        // A value that is already a country is never touched; a composite such
-        // as "Kigali, Rwanda" yields "Rwanda"; anything the record's own
-        // evidence cannot settle is left alone rather than guessed at.
-        const countryResolution = resolveProjectCountry({
-          storedCountry: (update.country as string | null | undefined) ?? project.country,
-          sourceText: project.summary,
-        });
-        if (countryResolution.shouldWrite) update.country = countryResolution.country;
-
-        if (Object.keys(update).length > 0) {
-          await prisma.project.update({ where: { id: project.id }, data: update });
-        }
-      } catch (eErr) {
-        logger.warn("[project-fact-extractor] auto-extraction failed:", { detail: eErr instanceof Error ? eErr.message : eErr });
-      }
-    }
+    // No second write here on purpose. Deriving the facts after creation and
+    // patching them in is what made the record grow past its own provenance;
+    // the derivation now happens above, inside the field set that gets verified.
 
     const refreshed = await prisma.project.findUnique({ where: { id: project.id } });
 

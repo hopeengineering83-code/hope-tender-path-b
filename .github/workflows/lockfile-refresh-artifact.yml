@@ -62,6 +62,19 @@ on:
           that no longer exists.
         required: false
         default: ""
+      reverify_stale_provenance:
+        description: >-
+          Paired with confirm=enrich. Set to "yes" to also re-prove rows whose
+          trustLevel says SOURCE_VERIFIED but whose stored provenance no longer
+          covers their current field set. A write that filled columns without
+          re-issuing provenance leaves rows in exactly that state, and once the
+          columns are full there is no further field change for a normal run to
+          attach new provenance to, so they would stay unprovable. It invents
+          nothing: every value is re-proved against the record's own linked
+          source document, anything the document does not support is recorded as
+          unverified, and a row carrying a human review is never touched.
+        required: false
+        default: ""
       apply_enrichment:
         description: >-
           Paired with confirm=enrich. Leave blank (or anything but "yes") and
@@ -1225,16 +1238,18 @@ jobs:
         run: npx prisma generate
 
       - name: Dry run — what would change, and what would be refused
-        run: npx tsx scripts/enrich-project-portfolio-facts.ts
+        run: npx tsx scripts/enrich-project-portfolio-facts.ts ${{ inputs.reverify_stale_provenance == 'yes' && '--reverify-stale' || '' }}
 
       - name: Apply
         if: inputs.apply_enrichment == 'yes'
-        run: npx tsx scripts/enrich-project-portfolio-facts.ts --apply
+        run: npx tsx scripts/enrich-project-portfolio-facts.ts --apply ${{ inputs.reverify_stale_provenance == 'yes' && '--reverify-stale' || '' }}
 
       - name: Re-read after applying, so the census is measured and not predicted
         if: inputs.apply_enrichment == 'yes'
         # A second dry run over the written rows. Every "rows modified" count
-        # must now be zero and the country/value populations must match what the
-        # applied run reported: that is what distinguishes a write that landed
-        # from a write that was only planned.
-        run: npx tsx scripts/enrich-project-portfolio-facts.ts
+        # must now be zero, "durably verified" must equal the row count, and the
+        # country/value populations must match what the applied run reported:
+        # that is what distinguishes a write that landed from a write that was
+        # only planned, and it is the check that would have caught the
+        # enrichment which silently un-verified 114 projects.
+        run: npx tsx scripts/enrich-project-portfolio-facts.ts ${{ inputs.reverify_stale_provenance == 'yes' && '--reverify-stale' || '' }}

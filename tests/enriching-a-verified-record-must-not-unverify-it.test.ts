@@ -252,3 +252,113 @@ describe("the census reports what is proven, not only what is claimed", () => {
     );
   });
 });
+
+describe("the single-project route assesses the fields it writes", () => {
+  const source = readFileSync(
+    path.join(__dirname, "..", "app", "api", "company", "projects", "route.ts"),
+    "utf8",
+  );
+
+  it("derives the facts before it builds the provenance", () => {
+    const derive = source.indexOf("const derivedCandidateFacts");
+    const candidate = source.indexOf("const projectCandidateFields");
+    const provenance = source.indexOf("buildReviewProvenance({");
+    assert.ok(derive > 0 && candidate > derive, "derivation must precede the candidate field set");
+    assert.ok(provenance > candidate, "the provenance is built from the candidate field set");
+  });
+
+  it("writes the candidate field set rather than the raw body", () => {
+    const create = source.slice(source.indexOf("prisma.project.create({"), source.indexOf("const refreshed"));
+    for (const field of ["clientName", "country", "sector", "contractValue", "currency"]) {
+      assert.ok(
+        create.includes(`${field}: projectCandidateFields.${field}`),
+        `${field} must be written from the verified field set, not re-read from the body`,
+      );
+    }
+  });
+
+  it("no longer patches derived facts in after creation", () => {
+    // The second write is what made the record grow past its own provenance.
+    assert.equal(
+      source.includes("mergeProjectFacts(project, extracted)"),
+      false,
+      "a post-create enrichment update must not come back",
+    );
+  });
+});
+
+describe("a row already enriched without provenance can still be repaired", () => {
+  /** The state a write that filled columns without re-issuing provenance leaves behind. */
+  function alreadyEnrichedButUnprovable(): EnrichableProject {
+    const row = verifiedRowWithEmptyNumbers();
+    return {
+      ...row,
+      contractValue: 1_000_000,
+      currency: "ETB",
+      country: "Ethiopia",
+      // Every derivable column already filled, so a normal run has no write to
+      // attach re-issued provenance to. That is the trap this repair exists for.
+      startDate: new Date("2015-06-30"),
+      endDate: new Date("2018-06-30"),
+    };
+  }
+
+  it("is invisible to a normal run, because there is nothing left to fill", async () => {
+    const row = alreadyEnrichedButUnprovable();
+    assert.equal(censusOf([row]).durablyVerified, 0, "the row is not provable");
+    const { client, writes } = recordingClient();
+    const result = await enrichProjectPortfolio({ projects: [row], client, apply: true });
+    assert.equal(writes.length, 0, "no field needs filling, so a normal run writes nothing");
+    assert.equal(result.after.durablyVerified, 0, "and the row stays unprovable");
+  });
+
+  it("is repaired when the repair is explicitly asked for", async () => {
+    const row = alreadyEnrichedButUnprovable();
+    const { client, writes } = recordingClient();
+    const result = await enrichProjectPortfolio({
+      projects: [row],
+      client,
+      apply: true,
+      reverifyStaleProvenance: true,
+    });
+
+    assert.equal(result.verificationRepaired, 1);
+    assert.equal(writes.length, 1);
+    assert.deepEqual(
+      Object.keys(writes[0].data).sort(),
+      ["reviewNotes", "reviewedAt", "reviewedBy", "trustLevel"],
+      "a repair touches provenance only — it never edits a value",
+    );
+    assert.equal(result.after.durablyVerified, 1, "the row is provable again");
+    assert.equal(
+      isDurablySourceVerified({ ...row, ...writes[0].data } as never),
+      true,
+    );
+  });
+
+  it("repairs nothing on a row that carries a human review", async () => {
+    const row = { ...alreadyEnrichedButUnprovable(), trustLevel: "REVIEWED", reviewedBy: "r1", reviewedAt: new Date() };
+    const { client, writes } = recordingClient();
+    const result = await enrichProjectPortfolio({
+      projects: [row as EnrichableProject],
+      client,
+      apply: true,
+      reverifyStaleProvenance: true,
+    });
+    assert.equal(result.verificationRepaired, 0);
+    assert.equal(writes.length, 0);
+  });
+
+  it("repairs nothing it cannot prove against the record's own document", async () => {
+    const row = { ...alreadyEnrichedButUnprovable(), sourceDocument: null };
+    const { client, writes } = recordingClient();
+    const result = await enrichProjectPortfolio({
+      projects: [row as EnrichableProject],
+      client,
+      apply: true,
+      reverifyStaleProvenance: true,
+    });
+    assert.equal(result.verificationRepaired, 0);
+    assert.equal(writes.length, 0);
+  });
+});

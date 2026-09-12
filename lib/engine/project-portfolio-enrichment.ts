@@ -111,6 +111,12 @@ export type PortfolioEnrichmentResult = {
   readonly rowsSkippedToPreserveVerification: number;
   /** Rows whose verification provenance was re-issued to cover the new values. */
   readonly verificationReissued: number;
+  /**
+   * Rows that needed no field change but whose stored provenance no longer
+   * covered their field set, re-proved against their own source document.
+   * Only counted when `reverifyStaleProvenance` is requested.
+   */
+  readonly verificationRepaired: number;
   readonly countryCorrected: number;
   readonly contractValueFilled: number;
   readonly currencyFilled: number;
@@ -311,6 +317,22 @@ export async function enrichProjectPortfolio(input: {
   projects: readonly EnrichableProject[];
   client?: ProjectUpdateClient;
   apply: boolean;
+  /**
+   * Re-prove rows whose trustLevel column claims SOURCE_VERIFIED but whose
+   * stored provenance no longer covers their current field set.
+   *
+   * Off by default, because re-proving a record is a claim and a claim should
+   * be asked for. It exists because a write that filled columns without
+   * re-issuing provenance leaves rows in exactly that state, and once the
+   * columns are filled there is no further field change for a normal run to
+   * attach the new provenance to — the rows would stay unprovable forever.
+   *
+   * It invents nothing: values are re-proved against the record's OWN linked
+   * source document, and anything the document does not support is recorded as
+   * unverified through the partial path rather than asserted. Rows carrying a
+   * human review are never touched.
+   */
+  reverifyStaleProvenance?: boolean;
 }): Promise<PortfolioEnrichmentResult> {
   const before = censusOf(input.projects);
   const plans: ProjectEnrichmentPlan[] = [];
@@ -322,6 +344,7 @@ export async function enrichProjectPortfolio(input: {
   let rowsSkippedForAmbiguity = 0;
   let rowsSkippedToPreserveVerification = 0;
   let verificationReissued = 0;
+  let verificationRepaired = 0;
   let countryCorrected = 0;
   let contractValueFilled = 0;
   let currencyFilled = 0;
@@ -346,6 +369,30 @@ export async function enrichProjectPortfolio(input: {
 
     const keys = Object.keys(plan.update);
     if (keys.length === 0) {
+      // Nothing to fill. The row may still be carrying provenance that no
+      // longer covers it, which a normal run cannot fix because it has no write
+      // to attach the re-issued provenance to.
+      const stale =
+        input.reverifyStaleProvenance === true &&
+        project.trustLevel === "SOURCE_VERIFIED" &&
+        !project.reviewedBy &&
+        !project.reviewedAt &&
+        Boolean(project.sourceDocument) &&
+        verificationState(project) === "NONE";
+      if (stale) {
+        const reissue = reissueVerification(project, {});
+        if (reissue.ok) {
+          if (input.apply) {
+            if (!input.client) throw new Error("enrichProjectPortfolio: apply was requested without a write client.");
+            await input.client.update({ where: { id: project.id }, data: reissue.data });
+          }
+          verificationRepaired += 1;
+          rowsModified += 1;
+          enriched.push({ ...project, ...reissue.data } as EnrichableProject);
+          continue;
+        }
+        verificationSkips.push({ id: project.id, name: project.name, reason: reissue.reason });
+      }
       enriched.push(project);
       continue;
     }
@@ -407,6 +454,7 @@ export async function enrichProjectPortfolio(input: {
     rowsSkippedForAmbiguity,
     rowsSkippedToPreserveVerification,
     verificationReissued,
+    verificationRepaired,
     countryCorrected,
     contractValueFilled,
     currencyFilled,
