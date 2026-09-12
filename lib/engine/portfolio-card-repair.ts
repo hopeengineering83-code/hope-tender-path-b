@@ -127,6 +127,28 @@ function parseJsonList(raw: string | null | undefined): string[] {
   }
 }
 
+/**
+ * The most specific place the record can support, composed rather than chosen.
+ *
+ * This used to read `project.country` first and print it as the LOCATION. While
+ * that column held a composite, the card got city-level detail by accident and
+ * an Ethiopian bid got "Abuja, Federal Capital Territory, Nigeria" by the same
+ * accident. The column now holds a plain country, so printing it alone would
+ * trade one wrong answer for a thin one: the detail belongs to the record's
+ * source text, and the card's job is to put the two together.
+ *
+ * "Kigali" + "Rwanda" -> "Kigali, Rwanda". A detail that already names the
+ * country is not made to name it twice. Either half alone is used alone.
+ */
+function composeLocation(detail?: string | null, country?: string | null): string | undefined {
+  const place = tidy(detail ?? "");
+  const nation = tidy(country ?? "");
+  if (!place) return nation || undefined;
+  if (!nation) return place;
+  const alreadyNamed = new RegExp(`(?:^|[,\\s])${nation.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:$|[,\\s])`, "i").test(place);
+  return alreadyNamed ? place : `${place}, ${nation}`;
+}
+
 export function recordFactsFor(project: PortfolioCardProject): RecordFacts {
   const summary = project.summary ?? "";
   const derived = extractProjectFacts(summary, project.name);
@@ -145,7 +167,7 @@ export function recordFactsFor(project: PortfolioCardProject): RecordFacts {
       : undefined;
 
   return {
-    location: tidy(project.country || derived.country || derived.location || "") || undefined,
+    location: composeLocation(derived.location, project.country || derived.country),
     // tidy() collapses runs of whitespace but not the newlines the source text
     // wraps on: "5\nkm" reached an Executive Summary sentence as a line break
     // mid-phrase.

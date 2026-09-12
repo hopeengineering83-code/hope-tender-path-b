@@ -11,6 +11,7 @@ import {
   resolveProjectCountry,
 } from "../lib/engine/country-reference";
 import { extractProjectFacts, mergeProjectFacts } from "../lib/engine/project-fact-extractor";
+import { recordFactsFor } from "../lib/engine/portfolio-card-repair";
 
 /**
  * THE DEFECT
@@ -337,5 +338,45 @@ describe("both ingestion paths actually apply the resolver", () => {
       /projects: \{[^}]*countryCorrected[^}]*countryUnresolved/.test(source),
       "both counts belong in the import response, not only in a log line",
     );
+  });
+});
+
+describe("the project card shows a place, composed rather than chosen", () => {
+  it("puts the detail and the country together, without saying the country twice", () => {
+    const cases: Array<[string, string | null, string | undefined]> = [
+      // detail names the country already
+      ["Design and supervision of a referral hospital in Bahir Dar, Ethiopia for the Ministry of Health", "Ethiopia", "Bahir Dar, Ethiopia"],
+      // detail is city-only: the country is appended
+      ["Water supply master plan located in Kigali. Construction Cost: 88,000,000.00 RWF", "Rwanda", "Kigali, Rwanda"],
+      // no detail at all: the country stands alone rather than nothing showing
+      ["Core banking software implementation across 34 branches", "Jordan", "Jordan"],
+      // neither: the field stays empty instead of printing a placeholder
+      ["Core banking software implementation across 34 branches", null, undefined],
+    ];
+    for (const [summary, country, expected] of cases) {
+      const facts = recordFactsFor({ name: "Project", country, summary, serviceAreas: "[]" } as never);
+      assert.equal(facts.location, expected, summary);
+    }
+  });
+
+  it("keeps the sentence around a place out of the place", () => {
+    // The capture runs until the pattern stops, so this used to reach a card as
+    // "Kajiado County, Kenya under a World Bank credit".
+    for (const [summary, expected] of [
+      ["Feasibility study for rural access roads in Kajiado County, Kenya under a World Bank credit", "Kajiado County, Kenya"],
+      ["Resident engineer services at Dar es Salaam Port, Tanzania, funded by the African Development Bank", "Dar es Salaam Port, Tanzania"],
+      ["Contract administration for a development in Accra, Ghana (7,000 m2) Ref No. HAEC/2019/14", "Accra, Ghana"],
+    ] as Array<[string, string]>) {
+      assert.equal(extractProjectFacts(summary).location, expected, summary);
+    }
+  });
+
+  it("does not read a date or a bare figure as a place", () => {
+    for (const summary of [
+      "Construction completed in March 2019 under a design-build contract",
+      "Services rendered in 2021 across several districts",
+    ]) {
+      assert.equal(extractProjectFacts(summary).location, undefined, summary);
+    }
   });
 });

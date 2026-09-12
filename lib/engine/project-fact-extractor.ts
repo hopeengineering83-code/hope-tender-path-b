@@ -331,14 +331,39 @@ export function extractProjectFacts(summary: string, name?: string): ProjectFact
     if (rx.test(text)) { out.sector = sector; break; }
   }
 
-  // Location: short freeform string captured from "in <Place>", "at <Place>", or
-  // a bracketed location with parentheses around an area number.
-  const locM = text.match(/\b(?:in|at|located\s+in|location\s*[:\-]?)\s+([A-Z][A-Za-z0-9,'\-/() ]{6,140})/);
+  // Location: a short place string captured from "in <Place>", "at <Place>" or
+  // "location: <Place>".
+  //
+  // The capture runs on until the regex stops, so it used to swallow whatever
+  // followed the place — "Bahir Dar, Ethiopia for the Ministry of Health",
+  // "Kajiado County, Kenya under a World Bank credit", "Accra, Ghana
+  // (7,000 m2)". That was tolerable while nothing read it: the portfolio card
+  // preferred `project.country`, which held a composite of its own. Now that
+  // the country column holds a plain country, the card composes its location
+  // from THIS value, so the value has to be a place and nothing else.
+  // The lower bound is 1 trailing character, not 6: "in Kigali." used to fail
+  // the pattern outright because a six-letter city name followed by a full stop
+  // was one character short, and the card then printed the bare country.
+  const locM = text.match(/\b(?:in|at|located\s+in|location\s*[:\-]?)\s+([A-Z][A-Za-z0-9,'\-/() ]{1,140})/);
   if (locM) {
     let loc = locM[1].replace(/\s+/g, " ").trim();
-    // Strip trailing common boilerplate.
-    loc = loc.replace(/\b(?:Ref(?:erence)?\s+(?:No\.?|#).*)$/i, "").trim();
-    if (loc.length >= 6 && loc.length <= 200) out.location = loc;
+    // Everything from the first connective onwards belongs to the sentence,
+    // not to the place.
+    loc = loc.replace(/\s+\b(?:for|under|with|by|on\s+behalf|funded|financed|financing|awarded|commissioned|through|as\s+part|comprising|including|and\s+its)\b.*$/i, "");
+    loc = loc.replace(/\b(?:Ref(?:erence)?\s+(?:No\.?|#).*)$/i, "");
+    // A trailing bracketed figure is scale, which has its own field.
+    loc = loc.replace(/\s*\([^)]*\)\s*$/, "");
+    loc = loc.replace(/[\s,;:.\-]+$/, "").trim();
+    // A place is at most a few comma-separated parts. More than that is a
+    // sentence that happened to start with one.
+    const parts = loc.split(",").map((part) => part.trim()).filter(Boolean).slice(0, 4);
+    loc = parts.join(", ");
+    // A date, a bare figure or a lone initial is not a place. "in March 2019"
+    // and "in 2021" both reach this pattern, and a wrong location on a project
+    // card is a claim the record does not support.
+    const isDate = /^(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b/i.test(loc);
+    const hasWord = /[A-Za-z]{3}/.test(loc);
+    if (!isDate && hasWord && loc.length >= 3 && loc.length <= 80) out.location = loc;
   }
 
   return out;
