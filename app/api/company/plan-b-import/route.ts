@@ -1127,11 +1127,57 @@ export async function POST(req: Request) {
       const sector = clean(project.sector || project.sectors?.[0]) || null;
       const serviceAreasJson = arr(serviceAreas);
       const linkedSourceDoc = resolveLinkedSourceDoc(recordTrustCtx, project.sourceDocument, project.sourceSha256);
+      const existing = projectMap.get(key(name));
+      // DERIVED PORTFOLIO FACTS — derived BEFORE the trust decision, on purpose.
+      //
+      // These used to be merged in after `decidePlanBTrust` had already built
+      // the provenance, which quietly broke the record it was enriching. Durable
+      // source verification is a claim about a SET of fields, and
+      // provenanceMatchesCurrentRecord refuses a record that has GROWN since it
+      // was verified — a field the provenance never assessed is a claim nothing
+      // checked. `normalizedEvidenceFields` drops empty values, so a record
+      // imported with contractValue and currency null was verified on
+      // name/clientName/sector alone; filling those columns afterwards made the
+      // record grow and it stopped being durably verified. Verified on the live
+      // Preview vault: 114 SOURCE_VERIFIED projects, and readiness reporting
+      // "No verified, source-backed projects are available" over all of them.
+      //
+      // Deriving first means the trust decision assesses exactly the fields that
+      // get written. A derived number that is not provable in the source text
+      // lands in the provenance's `unverifiedFields` through the partial path,
+      // which is the honest record of it — not an unassessed field smuggled into
+      // a verified row.
+      let derivedFacts: Record<string, unknown> = {};
+      if (summary && summary.trim().length > 50) {
+        try {
+          const { extractProjectFacts, mergeProjectFacts } = await import("../../../../lib/engine/project-fact-extractor");
+          derivedFacts = mergeProjectFacts(
+            { ...(existing ?? {}), clientName, country, sector },
+            extractProjectFacts(summary, name),
+          );
+        } catch (factErr) {
+          // Enrichment is additive. A failure here must never cost the import
+          // the record itself.
+          warnings.push(`Project ${name}: portfolio facts could not be derived from the reference text (${factErr instanceof Error ? factErr.message : String(factErr)}).`);
+        }
+      }
+
       const projectDecision = decidePlanBTrust({
         requested: importTrust,
         recordType: "PROJECT",
         sourceDocument: linkedSourceDoc,
-        fields: projectReviewFields({ name, clientName, country, sector, serviceAreas: serviceAreasJson }),
+        // The enriched values, not the payload's: whatever gets written has to
+        // be what gets assessed, or the provenance covers a record that no
+        // longer exists.
+        fields: projectReviewFields({
+          name,
+          clientName,
+          country,
+          sector,
+          serviceAreas: serviceAreasJson,
+          contractValue: (derivedFacts.contractValue as number | undefined) ?? null,
+          currency: (derivedFacts.currency as string | undefined) ?? null,
+        }),
         fallbackNotes: notes,
       });
       const effectiveTrust: TrustLevel = projectDecision.trustLevel;
@@ -1157,49 +1203,8 @@ export async function POST(req: Request) {
         reviewedAt: null,
         reviewNotes: effectiveReviewNotes,
       };
-      const existing = projectMap.get(key(name));
-
-      // DERIVED PORTFOLIO FACTS — the same enrichment the single-project route
-      // (app/api/company/projects) has always applied, which this bulk path
-      // never did.
-      //
-      // Reproduced on the owner's own portfolio. Every project record carries
-      // its reference text, and the text carries the numbers: the flagship
-      // hospital's summary reads "1. Construction Cost: 550,074,678.02 ETB"
-      // and "(7,000 m²)" and "2015-2018 E.C.". The Project model has columns
-      // for exactly these — contractValue, currency, startDate, endDate — and
-      // this import left all four null on all 114 records, so
-      // portfolio-metrics computed a total contract value of 0, the
-      // "Aggregate Portfolio Value" tile never rendered, and the delivered
-      // 35-page proposal contained ZERO monetary figures. The reference
-      // proposal the owner benchmarks against leads with ETB 550 million and
-      // cites 35 amounts. Nothing was missing from the vault; nothing had been
-      // parsed out of it.
-      //
-      // extractProjectFacts recovers a contract value from 112 of those 114
-      // records and a country from all 114, and it is the SAME extractor the
-      // other ingestion path already trusts. Two paths, one behaviour.
-      //
-      // mergeProjectFacts fills only fields that are empty, so:
-      //   * a value the payload supplied is kept;
-      //   * a value already stored on the row is kept, which is why the
-      //     select above was widened;
-      //   * the trust decision above is untouched — projectReviewFields still
-      //     verifies name/clientName/country/sector against the source bytes,
-      //     and derived numbers claim no verification they do not have.
-      let derivedFacts: Record<string, unknown> = {};
-      if (summary && summary.trim().length > 50) {
-        try {
-          const { extractProjectFacts, mergeProjectFacts } = await import("../../../../lib/engine/project-fact-extractor");
-          derivedFacts = mergeProjectFacts({ ...(existing ?? {}), ...data }, extractProjectFacts(summary, name));
-        } catch (factErr) {
-          // Enrichment is additive. A failure here must never cost the import
-          // the record itself.
-          warnings.push(`Project ${name}: portfolio facts could not be derived from the reference text (${factErr instanceof Error ? factErr.message : String(factErr)}).`);
-        }
-      }
+      // One payload for the write, assessed as one field set above.
       const dataWithFacts = { ...data, ...derivedFacts };
-
       if (existing) {
         await tx.project.update({ where: { id: existing.id }, data: dataWithFacts });
         projectsUpdated += 1;

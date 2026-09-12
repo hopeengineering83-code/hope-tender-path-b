@@ -94,8 +94,22 @@ describe("every proposal path derives its provider order from one place", () => 
     // section cap must still appear — dropping it in favour of the provider's
     // headroom would let a generous provider pull one section past its share
     // of the concurrent budget.
+    //
+    // The clamp is now named rather than written inline at the call, so that the
+    // same number can be reported as authorship telemetry instead of being
+    // recomputed somewhere else — a second copy of this expression is exactly
+    // what this suite exists to prevent. The three assertions below are together
+    // stricter than the single substring match they replace: the clamp must
+    // exist, it must be what is dispatched, and nothing else may be.
     const body = sliceFunction("generateOneSection");
-    assert.match(body, /maxOutputTokens: Math\.min\(spec\.maxOutputTokens \?\? 4096, preflight\.maxOutputTokens/);
+    assert.match(body, /const requestedOutputTokens = Math\.min\(spec\.maxOutputTokens \?\? 4096, preflight\.maxOutputTokens/);
+    assert.match(body, /maxOutputTokens: requestedOutputTokens,/);
+    const dispatchedCaps = [...body.matchAll(/maxOutputTokens: ([^,\n]+),/g)].map((m) => m[1].trim());
+    assert.deepEqual(
+      [...new Set(dispatchedCaps)],
+      ["requestedOutputTokens"],
+      "every dispatched output cap must be the one clamped value",
+    );
   });
 
   it("keeps Anthropic last, by position in the order rather than by a special case", () => {

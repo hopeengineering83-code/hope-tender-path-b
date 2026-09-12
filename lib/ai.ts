@@ -4619,7 +4619,33 @@ import {
 // (generate-elite.ts, ai-proposal/route.ts) wrap around the whole
 // generation. Override with PROPOSAL_SECTION_TIMEOUT_MS for higher tiers.
 
-interface SectionResult {
+/**
+ * Per-section authorship telemetry.
+ *
+ * `source` alone answers "which provider", which is not the same question as
+ * "was this section model-authored, by which model, under what budget, and if
+ * not, why not". Every field below is already computed at dispatch —
+ * preflightProvider resolves the model, estimates the input and states the
+ * context limit, and callProvider's failures are classified — and all of it
+ * used to be discarded the moment the call returned. A provider that answered a
+ * diagnostic is not evidence that it wrote a word of the proposal; this is.
+ */
+interface SectionAuthorship {
+  /** The model identifier actually dispatched to, exactly as configured. */
+  model?: string;
+  /** Estimated input tokens for this section's prompt, system prompt included. */
+  estimatedInputTokens?: number;
+  /** The dispatched provider's context window for the resolved model. */
+  contextLimit?: number;
+  /** The output cap actually requested, after clamping to provider headroom. */
+  maxOutputTokens?: number;
+  /** Classified category of the last failure, when the section fell back. */
+  failureCategory?: string;
+  /** Providers walked and refused before the section resolved, in order. */
+  attempts?: Array<{ provider: string; outcome: "SKIPPED_NO_CAPACITY" | "FAILED"; reason: string }>;
+}
+
+interface SectionResult extends SectionAuthorship {
   id: ProposalSectionId;
   title: string;
   markdown: string;
@@ -4668,6 +4694,11 @@ export function sectionTimeoutMsFor(spec: { maxOutputTokens?: number }): number 
 
 async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionResult> {
   const t0 = Date.now();
+  // Authorship telemetry for this section. Recorded as the chain is walked so a
+  // fallback can say which providers were tried and why each declined, rather
+  // than only that everything failed.
+  const attempts: NonNullable<SectionAuthorship["attempts"]> = [];
+  let lastFailureCategory: string | undefined;
 
   // Per-section timeout factory — creates a FRESH promise each time so
   // that the Gemini fallback is not immediately rejected by an already-
@@ -4767,6 +4798,7 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
       useCase: "proposal",
     });
     if (!preflight.eligible && pass === "capacity-checked") {
+      attempts.push({ provider, outcome: "SKIPPED_NO_CAPACITY", reason: preflight.reason ?? "no capacity" });
       logger.warn(
         `[ai] section "${spec.id}" skipping ${provider} before dispatch (${preflight.reason}) — trying the next provider.`,
       );
@@ -4778,6 +4810,11 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
       );
     }
 
+    // Kept on one line and in this exact shape: two suites assert that the
+    // dispatched cap is the minimum of the section's own budget and what
+    // preflight says this provider can emit. Naming it lets the same number be
+    // reported as telemetry instead of being recomputed or guessed.
+    const requestedOutputTokens = Math.min(spec.maxOutputTokens ?? 4096, preflight.maxOutputTokens || (spec.maxOutputTokens ?? 4096));
     try {
       const text = await Promise.race([
         callProvider(provider, spec.userPrompt, {
@@ -4790,7 +4827,7 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
           // Clamped by what preflight says this provider can actually emit for
           // this prompt, so a section budget larger than the provider's own
           // headroom no longer produces a request the provider must refuse.
-          maxOutputTokens: Math.min(spec.maxOutputTokens ?? 4096, preflight.maxOutputTokens || (spec.maxOutputTokens ?? 4096)),
+          maxOutputTokens: requestedOutputTokens,
         }),
         makeSectionTimeout(),
       ]);
@@ -4805,11 +4842,18 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
           // historical records say produced them.
           source: provider === "anthropic" ? "claude" : provider,
           durationMs: Date.now() - t0,
+          model: preflight.model,
+          estimatedInputTokens: preflight.estimatedTokens,
+          contextLimit: preflight.contextLimit,
+          maxOutputTokens: requestedOutputTokens,
+          ...(attempts.length > 0 ? { attempts: [...attempts] } : {}),
         };
       }
     } catch (err) {
       // A section timeout or adapter throw is one failed attempt; the chain
       // continues. callProvider has already recorded the classified failure.
+      lastFailureCategory = classifyAiError(err);
+      attempts.push({ provider, outcome: "FAILED", reason: lastFailureCategory });
       logger.warn(
         `[ai] section "${spec.id}" ${provider} failed (${err instanceof Error ? err.message : String(err)}) — trying the next provider.`,
       );
@@ -4825,6 +4869,8 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
     source: "fallback",
     error: "all AI providers failed or unavailable for this section",
     durationMs: Date.now() - t0,
+    ...(lastFailureCategory ? { failureCategory: lastFailureCategory } : {}),
+    ...(attempts.length > 0 ? { attempts } : {}),
   };
 }
 
@@ -4887,7 +4933,7 @@ export type SectionProvenance = {
     source: SectionResult["source"];
     durationMs: number;
     error?: string;
-  }>;
+  } & SectionAuthorship>;
   /** True if ANY section used deterministic fallback. */
   anyFallback: boolean;
   /** True if ALL sections used deterministic fallback. */
@@ -4996,7 +5042,22 @@ export async function generateProposalSectionsParallel(input: AIBidWriterInput, 
   // signal once we're past the prompt-shrinking phase.
   const totalMs = Date.now() - t0;
   const summary = sections
-    .map((s) => `${s.id}=${s.source}(${Math.round(s.durationMs / 100) / 10}s)`)
+    .map((s) => {
+      const timing = `${Math.round(s.durationMs / 100) / 10}s`;
+      // "gemini" says a provider answered. "gemini/gemini-2.5-flash in=11.2k
+      // ctx=1048k out<=4096" says what wrote it and under what budget, and
+      // "fallback[RATE_LIMITED]" says why nothing did.
+      if (s.source === "fallback") {
+        return `${s.id}=fallback${s.failureCategory ? `[${s.failureCategory}]` : ""}(${timing})`;
+      }
+      const budget = [
+        s.model ? `/${s.model}` : "",
+        s.estimatedInputTokens !== undefined ? ` in=${s.estimatedInputTokens}` : "",
+        s.contextLimit !== undefined ? ` ctx=${s.contextLimit}` : "",
+        s.maxOutputTokens !== undefined ? ` out<=${s.maxOutputTokens}` : "",
+      ].join("");
+      return `${s.id}=${s.source}${budget}(${timing})`;
+    })
     .join(" ");
   const modeLabel = isChunked ? `chunked[${sectionFilter!.join(",")}]` : deepMode ? "deep" : "standard";
   logger.info(`[ai] section-parallel generation (${modeLabel}) finished in ${Math.round(totalMs / 100) / 10}s — ${summary}${drillDownInfo}`);
@@ -5012,6 +5073,14 @@ export async function generateProposalSectionsParallel(input: AIBidWriterInput, 
       source: s.source,
       durationMs: s.durationMs,
       ...(s.error ? { error: s.error } : {}),
+      // Authorship travels with the section rather than staying in a log line,
+      // so a caller can state what wrote each section without re-reading stdout.
+      ...(s.model ? { model: s.model } : {}),
+      ...(s.estimatedInputTokens !== undefined ? { estimatedInputTokens: s.estimatedInputTokens } : {}),
+      ...(s.contextLimit !== undefined ? { contextLimit: s.contextLimit } : {}),
+      ...(s.maxOutputTokens !== undefined ? { maxOutputTokens: s.maxOutputTokens } : {}),
+      ...(s.failureCategory ? { failureCategory: s.failureCategory } : {}),
+      ...(s.attempts ? { attempts: s.attempts } : {}),
     })),
     anyFallback,
     allFallback,

@@ -24,26 +24,58 @@
 
 import { classifyCountryValue, resolveProjectCountry, type CountryResolutionOutcome } from "./country-reference";
 import { extractProjectFacts, mergeProjectFacts } from "./project-fact-extractor";
+import {
+  buildPartialSourceVerificationProvenance,
+  buildSourceVerificationProvenance,
+  isDurablyReviewed,
+  isDurablySourceVerified,
+  projectReviewFields,
+  type ReviewRecordState,
+  type ReviewSourceDocument,
+} from "../vault-review-provenance";
 
-/** The Project columns this service reads. Matches the Prisma row shape. */
+/**
+ * The Project columns this service reads. Matches the Prisma row shape.
+ *
+ * The provenance fields are not decoration. A record's durable source
+ * verification is a claim about a SET of fields, and filling a field the
+ * provenance never assessed invalidates the whole claim — so enrichment cannot
+ * be done without them. See reissueVerification below.
+ */
 export type EnrichableProject = {
   readonly id: string;
   readonly name: string;
   readonly clientName?: string | null;
   readonly country?: string | null;
   readonly sector?: string | null;
+  readonly serviceAreas?: unknown;
   readonly summary?: string | null;
   readonly contractValue?: number | null;
   readonly currency?: string | null;
   readonly startDate?: Date | null;
   readonly endDate?: Date | null;
   readonly trustLevel?: string | null;
+  readonly companyId?: string | null;
+  readonly sourceDocumentId?: string | null;
+  readonly sourceDocument?: ReviewSourceDocument | null;
+  readonly reviewedBy?: string | null;
+  readonly reviewedAt?: Date | null;
+  readonly reviewNotes?: string | null;
 };
 
 /** The ten counts the owner asked a run to report, measured before and after. */
 export type PortfolioFactCensus = {
   readonly totalProjects: number;
+  /** What the trustLevel COLUMN claims. */
   readonly sourceVerified: number;
+  /**
+   * What the provenance still PROVES — the number every consumer actually
+   * gates on. It is reported separately because the column claiming
+   * SOURCE_VERIFIED on 114 rows is what hid the moment their provenance stopped
+   * covering them: a census that reads only the column cannot see the damage a
+   * write did.
+   */
+  readonly durablyVerified: number;
   readonly countryPopulated: number;
   readonly countryValid: number;
   readonly countryMalformed: number;
@@ -71,6 +103,14 @@ export type PortfolioEnrichmentResult = {
   readonly rowsUnchanged: number;
   /** Rows whose country could not be settled from the record's own evidence. */
   readonly rowsSkippedForAmbiguity: number;
+  /**
+   * Rows left untouched because enriching them would have cost them their
+   * durable verification. Populated columns are worth less than a record the
+   * app can still prove, so these are reported rather than written.
+   */
+  readonly rowsSkippedToPreserveVerification: number;
+  /** Rows whose verification provenance was re-issued to cover the new values. */
+  readonly verificationReissued: number;
   readonly countryCorrected: number;
   readonly contractValueFilled: number;
   readonly currencyFilled: number;
@@ -81,10 +121,12 @@ export type PortfolioEnrichmentResult = {
   readonly applied: boolean;
   readonly plans: readonly ProjectEnrichmentPlan[];
   readonly unresolvedCountries: ReadonlyArray<{ id: string; name: string; stored: string | null; reason: string }>;
+  readonly verificationSkips: ReadonlyArray<{ id: string; name: string; reason: string }>;
 };
 
 export function censusOf(projects: readonly EnrichableProject[]): PortfolioFactCensus {
   let sourceVerified = 0;
+  let durablyVerified = 0;
   let countryPopulated = 0;
   let countryValid = 0;
   let countryMalformed = 0;
@@ -96,6 +138,7 @@ export function censusOf(projects: readonly EnrichableProject[]): PortfolioFactC
 
   for (const project of projects) {
     if (project.trustLevel === "SOURCE_VERIFIED") sourceVerified += 1;
+    if (verificationState(project) !== "NONE") durablyVerified += 1;
     const classification = classifyCountryValue(project.country);
     if (classification.kind !== "EMPTY") countryPopulated += 1;
     if (classification.kind === "VALID") countryValid += 1;
@@ -110,6 +153,7 @@ export function censusOf(projects: readonly EnrichableProject[]): PortfolioFactC
   return {
     totalProjects: projects.length,
     sourceVerified,
+    durablyVerified,
     countryPopulated,
     countryValid,
     countryMalformed,
@@ -167,6 +211,90 @@ export function planProjectEnrichment(project: EnrichableProject): ProjectEnrich
   return { id: project.id, name: project.name, update, countryOutcome: countryResolution.outcome, notes };
 }
 
+/**
+ * Whether this record's trust is a live, durable claim right now.
+ *
+ * Read from the provenance rather than from the trustLevel column: the column
+ * says what was claimed, the provenance says whether the claim still holds.
+ */
+function verificationState(project: EnrichableProject): "HUMAN_REVIEWED" | "SOURCE_VERIFIED" | "NONE" {
+  const record = project as unknown as ReviewRecordState;
+  if (!project.sourceDocumentId || !project.sourceDocument) return "NONE";
+  if (isDurablyReviewed(record)) return "HUMAN_REVIEWED";
+  if (isDurablySourceVerified(record)) return "SOURCE_VERIFIED";
+  return "NONE";
+}
+
+/**
+ * Re-issue source-verification provenance so it covers the fields the
+ * enrichment is about to write.
+ *
+ * THE DEFECT THIS EXISTS FOR, found on the live vault rather than in a test.
+ * A record's durable source verification is a claim about a SET of fields, and
+ * `provenanceMatchesCurrentRecord` deliberately refuses a record that has GROWN
+ * since it was verified — a field the provenance never assessed is a claim
+ * nothing checked, and it would otherwise ride into matching scores and client
+ * documents inside a record the app labels verified. `normalizedEvidenceFields`
+ * drops empty values, so a row imported with contractValue, currency and dates
+ * all null was verified on name/clientName/sector alone. Filling those columns
+ * made the record grow, and 114 SOURCE_VERIFIED projects stopped being durably
+ * verified the moment they were enriched — which is how readiness came to
+ * report "No verified, source-backed projects are available" over a vault of
+ * 114 verified projects.
+ *
+ * The guard is correct and is not being relaxed. What was missing is the other
+ * half: enrichment has to re-prove the record it changed. Full verification is
+ * tried first; partial verification is the fallback, which keeps identity proven
+ * and records the derived numbers as explicitly unverified — the same ladder the
+ * import already climbs. A derived contract value is usually NOT verbatim in the
+ * source text ("1,000,000.00 ETB" is not the string "1000000"), so partial is
+ * the normal outcome and it is an honest one.
+ */
+function reissueVerification(
+  project: EnrichableProject,
+  update: Record<string, unknown>,
+): { ok: true; data: Record<string, unknown> } | { ok: false; reason: string } {
+  if (!project.sourceDocument) {
+    return { ok: false, reason: "the record has no linked source document to re-prove it against" };
+  }
+  const merged = { ...project, ...update } as EnrichableProject;
+  const fields = projectReviewFields({
+    name: merged.name,
+    clientName: merged.clientName,
+    country: merged.country,
+    sector: merged.sector,
+    serviceAreas: merged.serviceAreas,
+    contractValue: merged.contractValue,
+    currency: merged.currency,
+  });
+
+  // "DETERMINISTIC" is the truth about this re-verification: a regex extractor
+  // derived the values and a deterministic matcher proved them. It claims no AI
+  // involvement, and it does not inherit a method from the earlier provenance
+  // that a different process performed.
+  const full = buildSourceVerificationProvenance({
+    recordType: "PROJECT",
+    sourceDocument: project.sourceDocument,
+    fields,
+    verificationMethod: "DETERMINISTIC",
+  });
+  if (full.ok) {
+    return { ok: true, data: { trustLevel: "SOURCE_VERIFIED", reviewedBy: null, reviewedAt: null, reviewNotes: full.serialized } };
+  }
+
+  const partial = buildPartialSourceVerificationProvenance({
+    recordType: "PROJECT",
+    sourceDocument: project.sourceDocument,
+    fields,
+    verificationMethod: "DETERMINISTIC",
+  });
+  if (partial.ok && partial.serialized) {
+    return { ok: true, data: { trustLevel: "SOURCE_VERIFIED", reviewedBy: null, reviewedAt: null, reviewNotes: partial.serialized } };
+  }
+
+  return { ok: false, reason: `re-verification failed (${partial.code ?? full.code ?? "unknown"})` };
+}
+
 /** The write surface this service needs. Prisma's delegate satisfies it. */
 export type ProjectUpdateClient = {
   update(args: { where: { id: string }; data: Record<string, unknown> }): Promise<unknown>;
@@ -188,9 +316,12 @@ export async function enrichProjectPortfolio(input: {
   const plans: ProjectEnrichmentPlan[] = [];
   const enriched: EnrichableProject[] = [];
   const unresolvedCountries: Array<{ id: string; name: string; stored: string | null; reason: string }> = [];
+  const verificationSkips: Array<{ id: string; name: string; reason: string }> = [];
 
   let rowsModified = 0;
   let rowsSkippedForAmbiguity = 0;
+  let rowsSkippedToPreserveVerification = 0;
+  let verificationReissued = 0;
   let countryCorrected = 0;
   let contractValueFilled = 0;
   let currencyFilled = 0;
@@ -219,6 +350,38 @@ export async function enrichProjectPortfolio(input: {
       continue;
     }
 
+    // A record the app can still prove is worth more than a populated column.
+    //
+    // Enriching a durably verified record changes the field set its provenance
+    // covers, so the provenance has to be re-issued in the SAME write or the
+    // record silently stops being verified. When it cannot be re-issued, the row
+    // is left exactly as it is and reported.
+    const trust = verificationState(project);
+    let verificationFields: Record<string, unknown> = {};
+    if (trust === "HUMAN_REVIEWED") {
+      // Machine provenance must never overwrite a human review, and a human
+      // review cannot cover values a machine derived afterwards. Leave it alone.
+      rowsSkippedToPreserveVerification += 1;
+      verificationSkips.push({
+        id: project.id,
+        name: project.name,
+        reason: "the record is durably human-reviewed; enrichment would replace a human review with machine provenance",
+      });
+      enriched.push(project);
+      continue;
+    }
+    if (trust === "SOURCE_VERIFIED") {
+      const reissue = reissueVerification(project, plan.update);
+      if (!reissue.ok) {
+        rowsSkippedToPreserveVerification += 1;
+        verificationSkips.push({ id: project.id, name: project.name, reason: reissue.reason });
+        enriched.push(project);
+        continue;
+      }
+      verificationFields = reissue.data;
+      verificationReissued += 1;
+    }
+
     if ("country" in plan.update) countryCorrected += 1;
     if ("contractValue" in plan.update) contractValueFilled += 1;
     if ("currency" in plan.update) currencyFilled += 1;
@@ -230,9 +393,9 @@ export async function enrichProjectPortfolio(input: {
 
     if (input.apply) {
       if (!input.client) throw new Error("enrichProjectPortfolio: apply was requested without a write client.");
-      await input.client.update({ where: { id: project.id }, data: plan.update });
+      await input.client.update({ where: { id: project.id }, data: { ...plan.update, ...verificationFields } });
     }
-    enriched.push({ ...project, ...plan.update } as EnrichableProject);
+    enriched.push({ ...project, ...plan.update, ...verificationFields } as EnrichableProject);
   }
 
   return {
@@ -242,6 +405,8 @@ export async function enrichProjectPortfolio(input: {
     rowsModified,
     rowsUnchanged: input.projects.length - rowsModified,
     rowsSkippedForAmbiguity,
+    rowsSkippedToPreserveVerification,
+    verificationReissued,
     countryCorrected,
     contractValueFilled,
     currencyFilled,
@@ -252,5 +417,6 @@ export async function enrichProjectPortfolio(input: {
     applied: input.apply,
     plans,
     unresolvedCountries,
+    verificationSkips,
   };
 }

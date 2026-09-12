@@ -11,7 +11,9 @@
  * - soft-deleted rows are excluded;
  * - no column is ever blanked, and no populated column is overwritten except a
  *   `country` value the resolver proves is not a country;
- * - a row whose own evidence cannot settle its country is skipped and listed.
+ * - a row whose own evidence cannot settle its country is skipped and listed;
+ * - a durably verified row is re-proved in the same write, or left untouched:
+ *   enrichment may never cost a record its verification.
  *
  * Usage:
  *   npx tsx scripts/enrich-project-portfolio-facts.ts
@@ -44,18 +46,40 @@ async function main(): Promise<void> {
   try {
     const projects = (await prisma.project.findMany({
       where: { deletedAt: null, ...(companyId ? { companyId } : {}) },
+      // The provenance fields are not optional here. Enriching a durably
+      // verified record changes the field set its provenance covers, so the
+      // service has to be able to re-prove the record in the same write — see
+      // reissueVerification. Reading the row without them would silently
+      // un-verify every record it touched.
       select: {
         id: true,
         name: true,
         clientName: true,
         country: true,
         sector: true,
+        serviceAreas: true,
         summary: true,
         contractValue: true,
         currency: true,
         startDate: true,
         endDate: true,
         trustLevel: true,
+        companyId: true,
+        sourceDocumentId: true,
+        reviewedBy: true,
+        reviewedAt: true,
+        reviewNotes: true,
+        sourceDocument: {
+          select: {
+            id: true,
+            companyId: true,
+            extractedText: true,
+            contentSha256: true,
+            contentByteLength: true,
+            integrityStatus: true,
+            metadata: true,
+          },
+        },
       },
       orderBy: { createdAt: "asc" },
       ...(limit ? { take: limit } : {}),
@@ -73,7 +97,8 @@ async function main(): Promise<void> {
 
     console.log(isApply ? "=== APPLIED ===" : "=== DRY RUN (no writes) ===");
     console.log(line("total projects", before.totalProjects, after.totalProjects));
-    console.log(line("SOURCE_VERIFIED", before.sourceVerified, after.sourceVerified));
+    console.log(line("SOURCE_VERIFIED (column)", before.sourceVerified, after.sourceVerified));
+    console.log(line("durably verified (proven)", before.durablyVerified, after.durablyVerified));
     console.log(line("country populated", before.countryPopulated, after.countryPopulated));
     console.log(line("country valid", before.countryValid, after.countryValid));
     console.log(line("country malformed", before.countryMalformed, after.countryMalformed));
@@ -87,6 +112,8 @@ async function main(): Promise<void> {
     console.log(`rows modified              ${result.rowsModified}`);
     console.log(`rows unchanged             ${result.rowsUnchanged}`);
     console.log(`rows skipped for ambiguity ${result.rowsSkippedForAmbiguity}`);
+    console.log(`rows skipped to keep verification ${result.rowsSkippedToPreserveVerification}`);
+    console.log(`verification provenance re-issued ${result.verificationReissued}`);
     console.log(`country corrected          ${result.countryCorrected}`);
     console.log(`contractValue filled       ${result.contractValueFilled}`);
     console.log(`currency filled            ${result.currencyFilled}`);
@@ -118,6 +145,8 @@ async function main(): Promise<void> {
           rowsModified: result.rowsModified,
           rowsUnchanged: result.rowsUnchanged,
           rowsSkippedForAmbiguity: result.rowsSkippedForAmbiguity,
+          rowsSkippedToPreserveVerification: result.rowsSkippedToPreserveVerification,
+          verificationReissued: result.verificationReissued,
           countryCorrected: result.countryCorrected,
           contractValueFilled: result.contractValueFilled,
           currencyFilled: result.currencyFilled,
@@ -130,6 +159,17 @@ async function main(): Promise<void> {
         2,
       ),
     );
+
+    if (result.verificationSkips.length > 0) {
+      console.log("");
+      console.log(`--- ${result.verificationSkips.length} row(s) left untouched to keep their durable verification ---`);
+      for (const row of result.verificationSkips.slice(0, 40)) {
+        console.log(`  ${row.name}: ${row.reason}`);
+      }
+      if (result.verificationSkips.length > 40) {
+        console.log(`  ... and ${result.verificationSkips.length - 40} more`);
+      }
+    }
 
     if (!isApply) console.log("\nTo write these changes, rerun with --apply.");
   } finally {
