@@ -690,6 +690,41 @@ jobs:
           # findings in this workstream.
           node scripts/tmp-inspect-pdf-typography-and-assets.mjs "/tmp/zip-extract/Technical Proposal.pdf" 2>&1 | tee /tmp/pdf-asset-audit.txt
 
+          # DID THE PORTFOLIO NUMBERS REACH THE CLIENT?
+          #
+          # The vault carries a contract value on 113 of 114 projects, and the
+          # reference proposal the owner benchmarks against leads with an ETB
+          # figure and cites 35 amounts. A delivered proposal that cites none is
+          # the symptom that led to the whole enrichment; it is also invisible to
+          # every gate above, because an absent number breaks no rule.
+          #
+          # This counts the monetary figures the client actually reads. It is
+          # informational and never fails the run: "how persuasive is this
+          # document" is not a pass/fail contract, and turning it into one would
+          # be a gate nobody agreed to.
+          node scripts/tmp-dump-pdf-text.mjs "/tmp/zip-extract/Technical Proposal.pdf" > /tmp/pdf-text.txt 2>/dev/null || true
+          python3 - <<'PYEOF' | tee /tmp/pdf-money-report.txt || true
+          import re
+          try:
+              text = open('/tmp/pdf-text.txt', encoding='utf-8').read()
+          except OSError:
+              print('MONETARY FIGURES IN THE DELIVERED PDF: NOT MEASURED (no text dump)')
+              raise SystemExit(0)
+          # A currency code or symbol next to a number of at least four digits.
+          pattern = re.compile(
+              r'(?:[A-Z]{3}|[$\u00a3\u20ac\u00a5\u20a6])\s?[0-9][0-9,.]{3,}(?:\s?(?:million|billion|M|B))?'
+              r'|[0-9][0-9,.]{3,}\s?(?:[A-Z]{3}|million|billion)',
+          )
+          hits = [m.group(0).strip() for m in pattern.finditer(text)]
+          print(f'MONETARY FIGURES IN THE DELIVERED PDF: {len(hits)}')
+          for sample in hits[:12]:
+              print(f'  {sample}')
+          areas = re.findall(r'[0-9][0-9,]{2,}\s?m(?:2|\u00b2)', text)
+          print(f'SCALE FIGURES (area) IN THE DELIVERED PDF: {len(areas)}')
+          for sample in areas[:6]:
+              print(f'  {sample}')
+          PYEOF
+
           # The audit above says whether the bytes ARRIVED. This says what the
           # store holds, so a zero above can be attributed rather than guessed:
           # an asset the applier skips because it has no inline bytes looks
@@ -757,6 +792,7 @@ jobs:
             /tmp/preview-final.zip
             /tmp/pdf-page-report.txt
             /tmp/pdf-asset-audit.txt
+            /tmp/pdf-money-report.txt
             /tmp/pdf-branding-pre-gate.txt
             /tmp/delivered-technical-proposal.pdf
             /tmp/company-assets.json
