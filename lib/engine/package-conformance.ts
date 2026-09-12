@@ -66,7 +66,7 @@ import {
 } from "./document-output-state";
 import { inferEnvelope } from "./submission-plan";
 import { statesFinancialSeparation } from "./financial-separation-rule";
-import { isPackagingOrFormatRequirement } from "./packaging-requirement-rule";
+import { isPackagingOrFormatRequirement, normaliseRequirementText } from "./packaging-requirement-rule";
 
 export type PackageRuleFamily =
   | "FINANCIAL_SEPARATION"
@@ -126,7 +126,13 @@ export type PackageRuleRequirement = {
   sourceExactQuote?: string | null;
 };
 
-function normalise(value: string | null | undefined): string {
+/**
+ * File names, not prose. This is NOT the requirement-text normaliser and must
+ * not become it: a planned file name is compared for identity, so its
+ * punctuation is meaningful and stripping it could make two distinct names
+ * collide. Only case and whitespace are normalised here.
+ */
+function normaliseFileName(value: string | null | undefined): string {
   return (value ?? "")
     .toLowerCase()
     .replace(/[‐-―]/g, "-")
@@ -134,8 +140,17 @@ function normalise(value: string | null | undefined): string {
     .trim();
 }
 
+/**
+ * Requirement prose goes through the ONE shared contract.
+ *
+ * This file used to keep its own normaliser that preserved punctuation, while
+ * packaging-requirement-rule's stripped it — and both tested the same shared
+ * phrases. classifyPackageRule consults isPackagingOrFormatRequirement (their
+ * normaliser) and then matches families (this one), so a single requirement
+ * was read under two different contracts in one call.
+ */
 function requirementText(requirement: PackageRuleRequirement): string {
-  return normalise(
+  return normaliseRequirementText(
     [requirement.title, requirement.description, requirement.restrictions]
       .filter(Boolean)
       .join(" "),
@@ -188,7 +203,8 @@ const SINGLE_FILE_PHRASES: RegExp[] = [
 const FILE_FORMAT_PHRASES: RegExp[] = [
   /\b(?:submitted?|submission|provided?|uploaded?|saved?)\s+in\s+(?:pdf|docx?|word|excel|xlsx)\s*(?:format)?\b/,
   /\b(?:pdf|docx?|xlsx)\s+format\s+(?:only|is\s+required|required)\b/,
-  /\bformat\s*:\s*(?:pdf|docx?|word|excel)\b/,
+  // The colon is a separator under the normalisation contract, not a literal.
+  /\bformat\s+(?:pdf|docx?|word|excel)\b/,
   /\bsearchable\s+pdf\b/,
   /\bnon[- ]?editable\s+(?:pdf|format)\b/,
 ];
@@ -491,9 +507,9 @@ function checkFileNaming(
     );
   }
   const planned = new Set(
-    facts.plannedFileNames.map((name) => normalise(name)).filter(Boolean),
+    facts.plannedFileNames.map((name) => normaliseFileName(name)).filter(Boolean),
   );
-  const unplanned = current.filter((doc) => !planned.has(normalise(docLabel(doc))));
+  const unplanned = current.filter((doc) => !planned.has(normaliseFileName(docLabel(doc))));
   if (unplanned.length > 0) {
     return verdict(
       "FILE_NAMING",

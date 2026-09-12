@@ -35,15 +35,52 @@
 // an unrelated file as support now accepts only the artifact evidence that can
 // actually prove it, and stays unsupported until that artifact exists.
 
-/** Lower-case, collapse whitespace, drop punctuation that splits phrases. */
-function normalise(value: string | null | undefined): string {
+/**
+ * THE ONE NORMALISATION CONTRACT for requirement prose.
+ *
+ * Every phrase pattern in this module and in package-conformance.ts is written
+ * against the output of THIS function. That sentence used to be false, and the
+ * two halves of the rule engine disagreed about punctuation:
+ *
+ *   packaging-requirement-rule.normalise   stripped ":" to a space
+ *   package-conformance.normalise          kept ":" verbatim
+ *
+ * while both tested the SAME shared phrase, /\bformat\s*:\s*(?:pdf|...)/.
+ * That phrase could therefore never match here — the colon was gone before the
+ * pattern ran — so "Format: PDF" failed isPackagingOrFormatRequirement, which
+ * is the gate classifyPackageRule consults first, and the rule was classified
+ * as an ordinary evidence requirement on every surface. An unreachable pattern
+ * is invisible: it looks like coverage and provides none.
+ *
+ * THE CONTRACT
+ *   1. lower case;
+ *   2. every Unicode dash becomes "-";
+ *   3. every character that is not a letter, digit, "%", "." or "-" becomes a
+ *      SPACE — so ":", ",", ";", "/", "(" and quotes are separators, never
+ *      literals. A pattern must never contain one of them;
+ *   4. a hyphen used as a SEPARATOR — whitespace or a string edge on either
+ *      side — becomes a space, so "Font - Arial 11" reads as "Font Arial 11".
+ *      A hyphen INSIDE a word is spelling and survives, so "e-mail",
+ *      "non-editable" and "spiral-bound" still read as themselves;
+ *   5. whitespace collapses to one space.
+ *
+ * Consequence, and the point of the exercise: "Font: Arial 11",
+ * "Font - Arial 11" and "Font Arial 11" all normalise to "font arial 11", so
+ * one pattern classifies all three. A test pins that, and another test pins
+ * that no pattern contains a character rule 3 removes.
+ */
+export function normaliseRequirementText(value: string | null | undefined): string {
   return (value ?? "")
     .toLowerCase()
     .replace(/[‐-―]/g, "-")
     .replace(/[^a-z0-9%.\- ]+/g, " ")
+    .replace(/(^|\s)-+/g, "$1 ")
+    .replace(/-+(\s|$)/g, " $1")
     .replace(/\s+/g, " ")
     .trim();
 }
+
+const normalise = normaliseRequirementText;
 
 /**
  * Phrases that make a requirement about the SHAPE of the submission rather
@@ -60,7 +97,9 @@ const PACKAGING_PHRASES: RegExp[] = [
   // File format rules
   /\b(?:submitted?|submission|provided?|uploaded?|saved?)\s+in\s+(?:pdf|docx?|word|excel|xlsx)\s*(?:format)?\b/,
   /\b(?:pdf|docx?|xlsx)\s+format\s+(?:only|is\s+required|required)\b/,
-  /\bformat\s*:\s*(?:pdf|docx?|word|excel)\b/,
+  // "Format: PDF". The colon is a SEPARATOR under the normalisation contract,
+  // never a literal — this pattern used to spell it out and could not match.
+  /\bformat\s+(?:pdf|docx?|word|excel)\b/,
   /\bsearchable\s+pdf\b/,
   /\bnon[-\s]?editable\s+(?:pdf|format)\b/,
   // File naming rules
@@ -76,10 +115,35 @@ const PACKAGING_PHRASES: RegExp[] = [
   /\bpackag(?:e|ing)\s+(?:rule|structure|instruction|requirement)/,
   // Layout limits that the artifact itself proves
   /\bpage\s+limit\b/,
-  /\b(?:maximum|max|not\s+(?:to\s+)?exceed|no\s+more\s+than)\s+\d+\s+pages?\b/,
-  /\bfont\s+(?:size|type)\b/,
+  /\b(?:maximum|max|not\s+(?:to\s+)?exceed|no\s+more\s+than)\s+(?:of\s+)?\d+\s+pages?\b/,
+  /\bwithin\s+\d+\s+pages?\b/,
+  /\b\d+\s+pages?\s+(?:maximum|max|or\s+less|or\s+fewer|limit)\b/,
+  // TYPOGRAPHY. A rule about the face, size or leading of the text is a
+  // property of the produced artifact, exactly like a page limit — and like a
+  // page limit, stored bytes cannot adjudicate it, so classifyPackageRule
+  // lands it in NOT_MACHINE_DECIDABLE and the coverage denominator excludes
+  // it. Before this, "All submissions shall be typed in Arial 11pt with 1.15
+  // line spacing" matched NOTHING: it names no "font size" and no "font
+  // type", so it fell through to the GENERAL evidence path and any vault
+  // document with overlapping words could be offered as its proof.
+  //
+  // The SUBSTANTIVE_EVIDENCE_SIGNALS guard runs BEFORE these, so a
+  // requirement that also asks for a CV, a licence or a methodology stays an
+  // evidence requirement with its real evidence link intact.
+  /\bfonts?\b/,
+  /\b(?:arial|times\s+new\s+roman|calibri|helvetica|verdana|garamond|cambria|tahoma|courier\s+new)\b/,
+  // "11pt", "12 pt". Deliberately NOT \d+\s*points?, which would claim
+  // "a 5 point action plan".
+  /\b\d{1,2}\s*pt\b/,
+  /\btyped\s+in\b/,
+  /\bline\s+spac(?:ing|ed)\b/,
+  /\b(?:single|double|1\.5|1\.15)\s+spac(?:ing|ed)\b/,
   /\b(?:line\s+spacing|margins?)\s+(?:of|must|shall|should)\b/,
-  /\b(?:a4|letter)\s+(?:size|paper|format)\b/,
+  // PAGE SIZE. "A4-size" keeps its intra-word hyphen under the contract, so
+  // the separator here is [\s-]+ rather than \s+.
+  /\b(?:a3|a4|letter|legal)[\s-]+(?:size|paper|format|sheets?)\b/,
+  /\b(?:printed|produced|submitted|prepared)\s+on\s+(?:a3|a4|letter|legal)\b/,
+  /\bpaper\s+size\b/,
   // File-size limits
   /\b(?:file\s+size|maximum\s+size)\b/,
   /\bnot\s+exceed(?:ing)?\s+\d+\s*(?:mb|kb|gb)\b/,
