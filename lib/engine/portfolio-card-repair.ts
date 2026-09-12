@@ -277,11 +277,59 @@ export function repairPortfolioCards(
 
   let current: PortfolioCardProject | undefined;
   let facts: RecordFacts = {};
+  // Which value labels this card already carries, and where its table ends, so
+  // a row the record supports can be ADDED when the writer never wrote one.
+  let seenLabels = new Set<string>();
+  let lastTableRowIndex = -1;
+
+  /**
+   * A project card's value is the most checkable fact on it, and it was
+   * reaching the page only when the writer happened to ask for it.
+   *
+   * This pass could fill an empty cell or drop a row, but it had no way to add
+   * one. In the delivered proposal the writer emitted Client, Location & Scale,
+   * Duration and Services Provided and no value row at all, so three cards
+   * backed by records stating a construction cost of 550,074,678.02 ETB showed
+   * the evaluator no figure — and the document cited no money anywhere, which
+   * no gate can see because an absent number breaks no rule.
+   *
+   * Rows are added only from what the record states, under the role the SOURCE
+   * gives the amount. A construction cost is never printed as a contract value:
+   * doing so would overstate this firm's consultancy contract by orders of
+   * magnitude in a document an evaluator may check against the client's own
+   * records. A monthly supervision rate is still never printed at all.
+   */
+  /** Push a line that belongs to the current card's table, remembering where it ended. */
+  function pushTableRow(line: string): void {
+    out.push(line);
+    lastTableRowIndex = out.length - 1;
+  }
+
+  function appendMissingValueRows(): void {
+    if (lastTableRowIndex < 0) return;
+    const additions: string[] = [];
+    const has = (key: string) => seenLabels.has(key);
+    if (facts.contractValue && !has("contractvalue") && !has("value")) {
+      additions.push(`| Contract Value | ${facts.contractValue} |`);
+    } else if (facts.consultancyFee && !has("consultancyfee") && !has("contractvalue") && !has("value")) {
+      additions.push(`| Consultancy Fee | ${facts.consultancyFee} |`);
+    }
+    if (facts.constructionValue && !has("constructionvalueofworks") && !has("constructionvalue")) {
+      additions.push(`| Construction Value of Works | ${facts.constructionValue} |`);
+    }
+    if (additions.length === 0) return;
+    out.splice(lastTableRowIndex + 1, 0, ...additions);
+    for (const addition of additions) filled.push(addition.split("|")[1].trim());
+    lastTableRowIndex += additions.length;
+  }
 
   for (const line of lines) {
     if (/^#{1,6}\s+/.test(line)) {
+      appendMissingValueRows();
       current = matchProject(line, projects);
       facts = current ? recordFactsFor(current) : {};
+      seenLabels = new Set<string>();
+      lastTableRowIndex = -1;
       out.push(line);
       continue;
     }
@@ -296,10 +344,11 @@ export function repairPortfolioCards(
     const value = row[2];
     // Never touch the header or the separator: they carry no assertion.
     if (/^-{2,}$/.test(label.replace(/[:\s]/g, "")) || /^\s*Field\s*$/i.test(label)) {
-      out.push(line);
+      pushTableRow(line);
       continue;
     }
     const labelKey = label.toLowerCase().replace(/[^a-z]/g, "");
+    seenLabels.add(labelKey);
     if (labelKey === "client" && isLocationNotAClient(value)) {
       // The row is removed rather than rewritten: the record does not state a
       // client, and the place it does state belongs in the location row.
@@ -321,7 +370,7 @@ export function repairPortfolioCards(
       const tidied = kept.join(" — ");
       if (tidied === value.trim()) {
         // The cell is complete as written. Never overwrite it.
-        out.push(line);
+        pushTableRow(line);
         continue;
       }
       // Half empty. If the record can complete it WITHOUT contradicting what
@@ -330,13 +379,13 @@ export function repairPortfolioCards(
       const completes = replacement !== undefined
         && kept.every((part) => replacement.toLowerCase().includes(part.toLowerCase()));
       filled.push(label.trim());
-      out.push(`| ${label} | ${completes ? replacement : tidied} |`);
+      pushTableRow(`| ${label} | ${completes ? replacement : tidied} |`);
       continue;
     }
 
     if (replacement) {
       filled.push(label.trim());
-      out.push(`| ${label} | ${replacement} |`);
+      pushTableRow(`| ${label} | ${replacement} |`);
       continue;
     }
 
@@ -349,10 +398,10 @@ export function repairPortfolioCards(
     const valueKey = label.toLowerCase().replace(/[^a-z]/g, "");
     if ((valueKey === "contractvalue" || valueKey === "value") && facts.consultancyFee) {
       filled.push("Consultancy Fee");
-      out.push(`| Consultancy Fee | ${facts.consultancyFee} |`);
+      pushTableRow(`| Consultancy Fee | ${facts.consultancyFee} |`);
       if (facts.constructionValue) {
         filled.push("Construction Value of Works");
-        out.push(`| Construction Value of Works | ${facts.constructionValue} |`);
+        pushTableRow(`| Construction Value of Works | ${facts.constructionValue} |`);
       }
       continue;
     }
@@ -361,6 +410,8 @@ export function repairPortfolioCards(
     // absent: it reads as a fact the bidder could not produce.
     removed.push(label.trim());
   }
+
+  appendMissingValueRows();
 
   return { markdown: out.join("\n"), filled, removed };
 }
