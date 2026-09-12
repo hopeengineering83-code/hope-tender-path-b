@@ -245,7 +245,17 @@ async function resolveBrandImages(
         settings: { select: { allowSignatureDefault: true, allowStampDefault: true } },
         assets: {
           where: { assetType: { in: ["SIGNATURE", "STAMP"] }, isActive: true },
-          select: { assetType: true, fileContent: true, mimeType: true },
+          // storagePath and originalFileName belong here. A brand asset is not
+          // always inline: the upload path can persist the bytes to private
+          // storage and leave fileContent null, and selecting only fileContent
+          // made a storage-backed asset indistinguishable from no asset.
+          select: {
+            assetType: true,
+            fileContent: true,
+            storagePath: true,
+            originalFileName: true,
+            mimeType: true,
+          },
         },
       },
     });
@@ -254,11 +264,60 @@ async function resolveBrandImages(
     const signatureAllowed = policy.signatureAllowed && company.settings?.allowSignatureDefault !== false;
     const stampAllowed = policy.stampAllowed && company.settings?.allowStampDefault !== false;
 
-    const pick = (assetType: string, allowed: boolean): PdfBrandImage | null => {
+    // Reproduced defect (live Preview, tender 50940b8b, run 34697159299). The
+    // whole pipeline went green — export-readiness ok=True READY blockers=0,
+    // the ZIP verified against its persisted digest — and the delivered PDF
+    // still said:
+    //
+    //   === DELIVERED PDF ASSET AUDIT (35 pages, 221639 bytes) ===
+    //   EMBEDDED IMAGE XOBJECTS: 0
+    //     RESULT: the client's copy contains NO images at all.
+    //
+    // while the vault held all three, every one storage-backed:
+    //
+    //   STAMP      103,155 B  active VERIFIED  inline=False storage=True
+    //   SIGNATURE    3,246 B  active VERIFIED  inline=False storage=True
+    //   LETTERHEAD 126,100 B  active VERIFIED  inline=False storage=True
+    //
+    // This is the same defect already fixed in apply-active-letterhead.ts
+    // (3e41c502), surviving in a second place: read fileContent and nothing
+    // else, and an asset whose bytes are stored — just not inline — resolves
+    // to null. The two branding paths have to agree about where bytes live.
+    //
+    // Storage-backed content is normal on this deployment, and the codebase
+    // has one way to read it. This uses that, not a second one.
+    const readAssetBytes = async (asset: {
+      fileContent: string | null;
+      storagePath: string | null;
+      originalFileName: string | null;
+    }): Promise<Buffer | null> => {
+      if (asset.fileContent) return Buffer.from(asset.fileContent, "base64");
+      if (!asset.storagePath) return null;
+      try {
+        const { getStorageAdapter } = await import("../../storage");
+        return await getStorageAdapter().getFile({
+          storagePath: asset.storagePath,
+          fileContent: null,
+          fileName: asset.originalFileName ?? "brand-asset",
+        });
+      } catch (error) {
+        // Branding is cosmetic; the declaration's signature rule still gives
+        // the signatory somewhere to sign by hand. Naming the storage failure
+        // beats reporting it as an absent asset.
+        logger.warn("pdf-finalizer: brand asset is stored but unreadable", {
+          storagePath: asset.storagePath,
+          detail: error,
+        });
+        return null;
+      }
+    };
+
+    const pick = async (assetType: string, allowed: boolean): Promise<PdfBrandImage | null> => {
       if (!allowed) return null;
       const asset = company.assets.find((a: { assetType: string }) => a.assetType === assetType);
-      if (!asset?.fileContent) return null;
-      const bytes = Buffer.from(asset.fileContent, "base64");
+      if (!asset) return null;
+      const bytes = await readAssetBytes(asset);
+      if (!bytes) return null;
       // Only real image bytes; a mislabelled row must not reach pdf-lib.
       const isPng = bytes.length > 4 && bytes[0] === 0x89 && bytes[1] === 0x50;
       const isJpeg = bytes.length > 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
@@ -266,7 +325,12 @@ async function resolveBrandImages(
       return { bytes: new Uint8Array(bytes), mimeType: isPng ? "image/png" : "image/jpeg" };
     };
 
-    return { signature: pick("SIGNATURE", signatureAllowed), stamp: pick("STAMP", stampAllowed) };
+    // Both gates above still decide WHETHER an image may be drawn; this only
+    // decides where its bytes come from once they may be.
+    return {
+      signature: await pick("SIGNATURE", signatureAllowed),
+      stamp: await pick("STAMP", stampAllowed),
+    };
   } catch (error) {
     logger.warn("pdf-finalizer: could not resolve brand images", { detail: error });
     return none;
