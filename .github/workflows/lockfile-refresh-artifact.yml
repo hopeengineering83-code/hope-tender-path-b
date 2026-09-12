@@ -27,8 +27,13 @@ on:
           owner's re-upload has finished: it reports vault documents, brand
           assets, projects, experts, tender files and extraction progress, and
           it always succeeds, so it can be polled without painting a failed
-          check on the PR. Any other value (including blank) runs only the
-          ordinary lockfile-refresh job.
+          check on the PR. Type "enrich" to bring already-stored Project rows
+          up to the behaviour the ingestion paths now have — portfolio numbers
+          derived from each record's own reference text, and a country column
+          that actually holds a country. It DRY-RUNS by default and prints the
+          full before/after census; it writes only when apply_enrichment is
+          "yes". Any other value (including blank) runs only the ordinary
+          lockfile-refresh job.
         required: false
         default: ""
       expected_fingerprint:
@@ -55,6 +60,16 @@ on:
           owner's own upload, so it cannot be known before that upload, and a
           default carried over from a previous database would inspect a tender
           that no longer exists.
+        required: false
+        default: ""
+      apply_enrichment:
+        description: >-
+          Paired with confirm=enrich. Leave blank (or anything but "yes") and
+          the enrichment is a true dry run: it reads every Project row, prints
+          exactly what it would change and writes nothing. Set it to "yes" to
+          apply those changes to the Preview database. The dry run is printed
+          either way, so an applied run still shows what it decided and which
+          rows it refused to decide.
         required: false
         default: ""
 
@@ -1146,3 +1161,80 @@ jobs:
 
       - name: Provision the owner account
         run: node scripts/tmp-provision-preview-owner.mjs
+
+  # ---------------------------------------------------------------------------
+  # TEMPORARY, owner-authorized: portfolio enrichment against the Preview
+  # database.
+  #
+  # Two write-path defects were fixed in the app: the bulk import never derived
+  # the portfolio numbers sitting verbatim in each record's own reference text,
+  # and neither ingestion path checked that the value going into
+  # `Project.country` was a country. Neither fix reaches a row that was already
+  # written, and the rows already written are the ones the proposal writer
+  # reads — on the owner's portfolio that meant 0 of 114 rows held a plain
+  # country and none held a contract value.
+  #
+  # This job runs the same service the ingestion paths use, against the
+  # Preview database, through the MIGRATION url (the pooled one is fine for
+  # row updates, but reusing the migration secret keeps the target explicit
+  # rather than inherited). It is a dry run unless apply_enrichment is "yes",
+  # it never blanks a column, it never overwrites a populated one except a
+  # country value proven not to be a country, and it lists every row whose own
+  # evidence cannot settle its country instead of guessing.
+  # ---------------------------------------------------------------------------
+  temporary-preview-portfolio-enrichment:
+    if: github.event_name == 'workflow_dispatch' && inputs.confirm == 'enrich'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      DATABASE_URL: ${{ secrets.PREVIEW_DATABASE_URL_MIGRATION }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify the target is named, not inherited
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::PREVIEW_DATABASE_URL_MIGRATION is not set. This job has no database to read."
+            exit 1
+          fi
+          node -e '
+            const url = new URL(process.env.DATABASE_URL);
+            const crypto = require("node:crypto");
+            const fingerprint = crypto
+              .createHash("sha256")
+              .update(`${url.host}${url.pathname}`)
+              .digest("hex")
+              .slice(0, 16);
+            console.log(`target host: ${url.host.replace(/^[^.]*/, "***")}`);
+            console.log(`target fingerprint (sha256 of host/dbname, first 16): ${fingerprint}`);
+          '
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund --ignore-scripts
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Dry run — what would change, and what would be refused
+        run: npx tsx scripts/enrich-project-portfolio-facts.ts
+
+      - name: Apply
+        if: inputs.apply_enrichment == 'yes'
+        run: npx tsx scripts/enrich-project-portfolio-facts.ts --apply
+
+      - name: Re-read after applying, so the census is measured and not predicted
+        if: inputs.apply_enrichment == 'yes'
+        # A second dry run over the written rows. Every "rows modified" count
+        # must now be zero and the country/value populations must match what the
+        # applied run reported: that is what distinguishes a write that landed
+        # from a write that was only planned.
+        run: npx tsx scripts/enrich-project-portfolio-facts.ts
