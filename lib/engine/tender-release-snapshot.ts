@@ -217,6 +217,11 @@ export async function getTenderReleaseSnapshot(
           priority: true,
           requirementType: true,
           description: true,
+          // classifyPackageRule reads restrictions too. Omitting it here while
+          // the readiness model selected every column made the two surfaces
+          // classify the SAME requirement differently — see the comment in
+          // final-package-readiness-model's RequirementLike.
+          restrictions: true,
           sourceTenderFileId: true,
           sourcePageNumber: true,
           sourceExactQuote: true,

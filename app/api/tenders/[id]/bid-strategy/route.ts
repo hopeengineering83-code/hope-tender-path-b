@@ -116,6 +116,8 @@ export async function GET(
             description: true,
             requirementType: true,
             priority: true,
+            // Part of the text classifyPackageRule reads; see tender-release-snapshot.
+            restrictions: true,
             requiredQuantity: true,
             exactFileName: true,
             sourceConfidence: true,

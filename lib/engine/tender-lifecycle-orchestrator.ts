@@ -389,6 +389,8 @@ export async function computeTenderLifecycle(
           description: true,
           priority: true,
           requirementType: true,
+          // Part of the text classifyPackageRule reads; see tender-release-snapshot.
+          restrictions: true,
           sectionReference: true,
           sourceTenderFileId: true,
           sourcePageNumber: true,

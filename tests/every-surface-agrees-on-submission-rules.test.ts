@@ -200,6 +200,51 @@ describe("classification reads the same requirement text on every surface", () =
     ]) {
       const source = readFileSync(path, "utf8");
       assert.match(source, /description: true/, `${path} must select the requirement description`);
+      // restrictions is the half this test used to miss. classifyPackageRule
+      // reads title + description + restrictions + requirementType +
+      // sourceExactQuote; the readiness model reached it only because it uses
+      // `include` and gets every column, while all four surfaces here name
+      // their columns explicitly and named all of them but this one.
+      //
+      // Reproduced live on tender 50940b8b, run 34696242297. The readiness
+      // model classified "Technical Proposal Email Submission" as a package
+      // rule and correctly set it aside (machineDecidableMandatory 2 of 3,
+      // requirement blockers []), while the release snapshot — reading the
+      // same requirement without its restrictions text — classified it as an
+      // ordinary requirement, so evidence.notMachineDecidable was 0 and the
+      // canonical gate still refused at "2/3 automatically decidable".
+      assert.match(source, /restrictions: true/, `${path} must select the requirement restrictions`);
     }
+  });
+
+  it("a rule stated only in restrictions classifies the same as one in the description", () => {
+    // The data shape the select bug produced: the classifier's phrase lives in
+    // a field the caller did not fetch, so the same row is a package rule on
+    // one surface and an evidence requirement on another.
+    const stated = {
+      id: "req-pages",
+      title: "Proposal Presentation",
+      description: "Bidders shall present their offer clearly.",
+      restrictions: "The technical proposal must not exceed a 40 page limit.",
+      priority: "MANDATORY",
+      requirementType: "SUBMISSION_RULE",
+      sourceTenderFileId: FILE_ID,
+      sourcePageNumber: 5,
+      sourceExactQuote: QUOTE,
+      complianceMatrixRows: [] as Array<{ supportLevel?: string | null }>,
+    };
+    const [withRestrictions] = mapRequirementsToEvidence([stated], [], [], ACTIVE_FILES, {
+      documents: [TECHNICAL_PDF],
+    });
+    assert.ok(withRestrictions.packageRule, "a rule stated in restrictions is still a package rule");
+    assert.equal(withRestrictions.machineDecidable, false);
+
+    // And the shape that caused the disagreement: drop the field the caller
+    // failed to select, and the same row reads as an ordinary requirement.
+    const { restrictions: _dropped, ...withoutRestrictions } = stated;
+    const [blind] = mapRequirementsToEvidence([withoutRestrictions], [], [], ACTIVE_FILES, {
+      documents: [TECHNICAL_PDF],
+    });
+    assert.equal(blind.packageRule, null, "this is the misclassification the select bug produced");
   });
 });
