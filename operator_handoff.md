@@ -143,6 +143,112 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-12 UTC (later) — Country/currency knowledge, the live vault, and a regression I caused
+
+Claude Code (Opus 5) · branch `release/consolidated-recovery-20260717` · PR #1175
+(draft, unmerged). Head at start `4cc776a1`, head now `602227bc`. Production
+untouched, no merge, no DATABASE_URL change, no gate weakened or relaxed.
+
+**Two columns were being decided by hand-written regional lists (`2261d848`).**
+`Project.country` held whatever the payload put in that slot — on the live vault
+**0 of 114 rows held a plain country** — and three consumers read it as one: the
+portfolio card renders it as the project LOCATION (this is how "Abuja, Federal
+Capital Territory, Nigeria" reached the opening capability paragraph of an
+Ethiopian bid), the tender/project matcher scores country agreement by substring
+so a composite never matched, and the writer context prints ", <country>" after
+every project name. `lib/engine/country-reference.ts` now owns one predicate,
+one text extractor and one conservative resolver that may use ONLY the record's
+own evidence, refuses to decide on ambiguity, and cannot reach the tender, the
+company or another project — a property of its signature, not of a code path.
+The extractor's own country step had walked two dozen mostly East African names
+in list order, so list order decided the answer and a project in Vietnam, Peru or
+Jordan got no country at all. Same defect one file over in currency: six
+currencies were recognised and every other figure read as no figure, so an amount
+in NGN, RWF, VND, PEN or JOD vanished although it sat verbatim in the record's
+own text. `lib/engine/currency-reference.ts` carries ISO 4217, case-sensitively
+so "1,000 all of which" is not a thousand Albanian lek; ambiguous currency NAMES
+("shilling" is three currencies) are deliberately absent.
+
+**A fix that never reaches the live rows is not a fix (`dc0fb98b`).**
+`confirm=enrich` on the acceptance workflow runs the enrichment service against
+the Preview database, dry-run unless `apply_enrichment=yes`.
+
+**Live vault, measured (runs 34712406813 dry, 34712495295 apply):**
+
+```
+                    before   after
+total projects         114     114
+country populated       11     114
+country valid            0     114
+country malformed       11       0
+contractValue            0     113
+currency                 0     113
+start/end dates        0/0   91/91
+rows modified 114 · skipped for ambiguity 0
+```
+
+**THE CORRECTION — that apply un-verified all 114 projects, and I caused it.**
+The read-only inspection I ran eleven minutes later (34713063992) showed
+generation readiness reporting `COMPANY_INGESTION_NOT_READY: "No verified,
+source-backed projects are available."` over those 114 rows, while 28 expert
+matches were fine. Experts were untouched; projects had just been written.
+Durable source verification is a claim about a SET of fields, and
+`provenanceMatchesCurrentRecord` refuses a record that has GROWN since —
+`normalizedEvidenceFields` drops empty values, so a project imported with
+contractValue and currency null was verified on name/clientName/sector alone,
+and filling those columns invalidated the claim. Reproduced directly:
+
+```
+before enrichment  isDurablySourceVerified  true   SOURCE_VERIFIED
+after  enrichment  isDurablySourceVerified  false  SOURCE_VERIFICATION_REQUIRED
+```
+
+The guard is correct and was NOT relaxed. Enrichment now re-proves the record it
+changed in the same write (`dff1f8ef`), full verification first and partial as
+the fallback, skipping the row rather than downgrading it where neither works;
+the bulk import derives facts BEFORE the trust decision so the assessed field set
+is the written one; the single-project route no longer patches derived facts in
+with a second write after its provenance was built (602227bc); and the census
+now reports the DURABLE count next to the trustLevel column, because the column
+still claiming 114 is exactly what hid the damage.
+
+Re-running the enrichment did not repair the live rows: their columns were
+already full, so there was no write left for the re-issue to attach to
+(`rows modified 0 · durably verified 0`). `--reverify-stale` re-proves such rows
+against their own linked source document, off by default, provenance columns
+only, never touching a human review. **Live repair: run 34715823426 on `602227bc`.** The measured re-read afterwards
+reports `durablyVerified 114 / 114` with `rows modified 0`, alongside country
+valid 114, contractValue 113, currency 113 and 91 date ranges — the enriched
+values intact AND provable. (Two earlier repair attempts, 34714749098 and
+34715678172, reported `verificationRepaired 0`: the first predated the repair
+mode, and the second was dispatched while GitHub still resolved the branch to
+the previous commit. Neither repaired anything, and neither claimed to.)
+
+**Local gate on `602227bc`:** `npx tsc --noEmit` clean · `npx next lint` "✔ No
+ESLint warnings or errors" · `RUN_DB_INTEGRATION=true npm test` **11881 pass / 0
+fail / 0 cancelled** · `npm run build` "✓ Compiled successfully".
+
+**Also landed:** per-section authorship telemetry — each section now carries the
+resolved model, estimated input tokens, the provider's context limit, the
+dispatched output cap, a classified failure category and the providers it walked,
+instead of only a provider name. Two existing budget guards failed on that change
+and were right to; one was my line break, the other became three assertions
+strictier than the substring it replaced.
+
+**Live tender state, read at 19:05 (not caused by this session):** tender
+`50940b8b-f2ba-4558-a630-898763d82f98` is at ANALYSIS_REQUIRED. An AI_ANALYZE at
+16:04 FAILED, which reset the downstream — `generatedDocumentsTotal 0`,
+`latestPackageStatus STALE`, Run Engine disabled with "AI Analyze is not in a
+release-ready state (current: FAILED)". The 15:29 green package is gone.
+
+**Next action:** re-read readiness after the vault repair to confirm
+COMPANY_INGESTION_NOT_READY has cleared, then a fresh model-backed generation and
+the 17-dimension benchmark.
+
+**Merge status: NOT REVIEWED — do not merge.** The 17-dimension target is not
+yet measured on a model-backed run.
+
+
 ### 2026-09-12 UTC — Final hardening + release audit (PR #1175)
 
 Head at start `96ba456f`, clean; head now `b1d6d7b9`. Four commits, all
