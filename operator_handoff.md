@@ -143,6 +143,64 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-12 UTC — Green end to end, and the owner's branding reaches the client
+
+Tender `50940b8b-f2ba-4558-a630-898763d82f98`, four hosted runs, each one
+answering the previous one's question.
+
+**Run 34696242297 (`ed5ad52b`)** — the coverage fix the owner chose worked in
+the readiness model (`machineDecidable=false`, `machineDecidableMandatory` 2 of
+3, `requirements.blockers []`, one `humanJudgementReviewItem`) and the gate
+still refused at "2/3". Cause: `classifyPackageRule` reads `restrictions`, and
+four surfaces — release snapshot, lifecycle orchestrator, bid-strategy,
+requirement-coverage — selected every field it reads except that one, while the
+readiness model uses `include` and got them all. Same row, opposite
+classification. Fixed in `780f23c3`.
+
+**Run 34697159299 (`780f23c3`)** — first fully green pipeline:
+
+```
+export-readiness: ok=True status=READY blockers=0
+POST /export 200 · ZIP HTTP:200 SIZE:219670 · unzip -t clean
+ZIP contains 1 file: Technical Proposal.pdf (221,639 B), digest verified
+audit: score=100 PASSED readyForExport=True zipEligible=True
+```
+
+and the delivered PDF still had `EMBEDDED IMAGE XOBJECTS: 0`. Cause:
+`pdf-finalizer`'s `resolveBrandImages` read only inline `fileContent` — the
+same defect fixed in `apply-active-letterhead.ts` (`3e41c502`), alive in a
+second place. It matters more here: `finalizeRequiredPdf` renders from the
+DOCX's extracted TEXT, so the renderer drawing images itself is the ONLY route
+by which any image reaches the client. Fixed in `8213d300`.
+
+**Run 34698133772 (`8213d300`) — verified:**
+
+```
+=== DELIVERED PDF ASSET AUDIT (35 pages, 328522 bytes) ===
+EMBEDDED IMAGE XOBJECTS: 2
+  page 35: /Image-8615938766  251x101   /DCTDecode   3,246 bytes
+  page 35: /Image-4382285944 1056x992   /DCTDecode 103,155 bytes
+  RESULT: 2 image(s) reached the client's copy.
+
+export-readiness: ok=True status=READY blockers=0
+ZIP HTTP:200 SIZE:322655 — Technical Proposal.pdf 328,522 B, digest verified
+```
+
+3,246 and 103,155 bytes are the vault's SIGNATURE and STAMP exactly, on the
+Declaration page. This closes the question open since 2026-09-11: the owner's
+branding now reaches the delivered document.
+
+**Not claimed.** The LETTERHEAD asset is a .docx and is applied to the
+generated DOCX (`letterhead applied to 1 file(s)`), not to the PDF — the PDF
+carries the company header and contact footer as text on every page, which is
+what that renderer does. Two images in the PDF is the correct outcome for this
+tender's branding policy, not a shortfall.
+
+**Still open:** `DEADLINE_PASSED` is advisory and live (2026-08-25, 19 days
+ago). The typography-only classifier gap (`"typed in Arial 11pt"` matches no
+PACKAGING_PHRASE) is recorded and deliberately unfixed. The
+`PACKAGING_PHRASES` colon-stripping bug is still latent.
+
 ### 2026-09-11 UTC — Letterhead reaches the DOCX; the PDF cannot be read at all
 
 Two hosted runs, both on the owner's re-uploaded Pharo data
