@@ -1,4 +1,4 @@
-import { randomBytes } from "crypto";
+import { createHash, randomBytes } from "crypto";
 
 const MAX_LABEL_LENGTH = 120;
 const MAX_SHARE_LIFETIME_DAYS = 365;
@@ -11,7 +11,39 @@ export type ShareCreateInput = {
   maxDownloads: number | null;
 };
 
+export type GeneratedShareToken = {
+  /** Raw token — return to the caller ONCE, never persisted. */
+  token: string;
+  /** SHA-256 hash — persist this as TenderShare.tokenHash. */
+  tokenHash: string;
+};
+
+/**
+ * Generate a new share token + its SHA-256 hash. The raw token is returned to
+ * the caller ONCE (so they can construct the share URL) and never persisted.
+ * Only the hash is stored in the DB, so a DB leak does not produce usable
+ * share URLs.
+ *
+ * Mirrors the password-reset token pattern in lib/reset-token.ts.
+ */
+export function generateTenderShareToken(): GeneratedShareToken {
+  const token = randomBytes(32).toString("base64url");
+  return { token, tokenHash: hashTenderShareToken(token) };
+}
+
+/**
+ * Hash a raw TenderShare token for storage or lookup. Uses SHA-256 — same
+ * algorithm as hashResetToken in lib/reset-token.ts. The hash is not salted
+ * because the token itself has 256 bits of entropy from randomBytes(32),
+ * which makes rainbow-table attacks infeasible.
+ */
+export function hashTenderShareToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
+
 export function createTenderShareToken(): string {
+  // Kept for backward compatibility with existing callers. New callers should
+  // use generateTenderShareToken() so they also get the hash for storage.
   return randomBytes(32).toString("base64url");
 }
 

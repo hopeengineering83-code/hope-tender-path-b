@@ -15,6 +15,8 @@ import { Prisma } from "@prisma/client";
 import { executeTenderDeletion } from "../../../../lib/tender/delete-tender";
 import { processTenderStorageCleanupTask } from "../../../../lib/tender/tender-storage-cleanup-task";
 import { buildPublicReadinessEnvelope } from "../../../../lib/engine/public-readiness-envelope";
+import { withPrismaWriteConflictRetry } from "../../../../lib/prisma-write-conflict-retry";
+import { isExportReady } from "../../../../lib/engine/document-output-state";
 
 function withDashboardGeneratedDocuments<T extends { generatedDocuments: any[] }>(tender: T): T {
   const prepared = prepareDashboardGeneratedDocuments(tender.generatedDocuments);
@@ -102,9 +104,6 @@ const TENDER_DASHBOARD_SELECT = {
   clientNameSourcePage: true, clientNameSourceQuote: true, clientNameSourceFileId: true,
   titleSourcePage: true, titleSourceQuote: true, titleSourceFileId: true,
   deadlineSourcePage: true, deadlineSourceQuote: true, deadlineSourceFileId: true,
-  // Reference source evidence — dedicated columns read first by the canonical
-  // resolver's getSourceEvidence for fieldKey="reference". Without these, the
-  // dashboard payload diverges from the strict BuildPlan validator's view.
   referenceSourcePage: true, referenceSourceQuote: true, referenceSourceFileId: true,
   submissionMethodSourcePage: true, submissionMethodSourceQuote: true, submissionMethodSourceFileId: true,
   submissionAddressSourcePage: true, submissionAddressSourceQuote: true, submissionAddressSourceFileId: true,
@@ -137,18 +136,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
     if (!tender) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-    // Surface the latest resumable analysis job so the UI can show a
-    // "Resume analysis" banner and pre-wire the continue flow on page load.
-    // Failed AI_ANALYZE jobs can still be resumable when their output preserved
-    // successful chunkResults before a timeout/provider failure triggered regex fallback.
     let partialJobInfo: { jobId: string; completedChunks: number; totalChunks: number } | null = null;
-
-    // Check cache first (10-second TTL prevents N+1 queries on dashboard reloads)
     const cached = getCachedPartialJobInfo(id, userId);
     if (cached) {
       partialJobInfo = cached;
     } else {
-      // Cache miss: query database and cache result
       const latestPartialJobCandidates = await prisma.aiJob.findMany({
         where: { tenderId: id, userId, jobType: "AI_ANALYZE", status: { in: ["PARTIAL_SUCCESS", "FAILED"] } },
         orderBy: [{ finishedAt: "desc" }, { startedAt: "desc" }],
@@ -166,7 +158,6 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
             completedChunks,
             totalChunks: out.totalChunks ?? 0,
           };
-          // Cache the result for 10 seconds
           setCachedPartialJobInfo(id, userId, partialJobInfo.jobId, partialJobInfo.completedChunks, partialJobInfo.totalChunks);
           break;
         } catch { /* ignore */ }
@@ -177,7 +168,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     const payload = await withDashboardPayload(tender as any);
     const requiredDocumentsTotal = Math.max(payload.requirements.length, payload.generatedDocuments.filter((doc: any) => (doc.generationStatus ?? "").toUpperCase() === "PLANNED").length);
     const generatedDocumentsTotal = payload.generatedDocuments.filter((doc: any) => (doc.generationStatus ?? "").toUpperCase() === "GENERATED").length;
-    const exportReadyDocumentsTotal = payload.generatedDocuments.filter((doc: any) => (doc.generationStatus ?? "").toUpperCase() === "GENERATED" && /READY_FOR_EXPORT|APPROVED/i.test(doc.reviewStatus ?? "")).length;
+    const exportReadyDocumentsTotal = payload.generatedDocuments.filter((doc: any) => (doc.generationStatus ?? "").toUpperCase() === "GENERATED" && isExportReady(doc)).length;
     const detailBlockers = requiredDocumentsTotal > 0 && exportReadyDocumentsTotal < requiredDocumentsTotal
       ? [{ code: "REQUIRED_DOCUMENTS_NOT_EXPORT_READY", message: `${exportReadyDocumentsTotal}/${requiredDocumentsTotal} required documents are export-ready.`, nextAction: "Open export readiness." }]
       : [];
@@ -202,12 +193,6 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 }
 
 export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  // RBAC: Only ADMIN and PROPOSAL_MANAGER may mutate tenders. VIEWER is
-  // read-only by policy, and REVIEWER has no TENDER_UPDATE permission.
-  // Previously this handler called getSession() (userId only) and accepted
-  // any authenticated role — a vertical privilege escalation allowing
-  // VIEWER/REVIEWER to edit tender metadata. Mirrors the DELETE handler's
-  // requireRole gate on line 322.
   let actor;
   try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
   catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
@@ -231,11 +216,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
       }
     }
     const status = parseTenderStatus(body.status);
-
     const prevStatus = existing.status;
-
-    // When the user manually provides a new clientName, re-evaluate the
-    // contamination flag so a valid correction clears the generation block.
     const newClientName = body.clientName ?? existing.clientName;
     const metadataContaminatedOverride =
       body.clientName != null && body.clientName !== existing.clientName
@@ -285,11 +266,6 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
       metadata: { tenderId: id, prevStatus, newStatus: status ?? prevStatus },
     });
 
-    // Record a MANUAL_CONFIRMED audit entry when the user provided a NEW
-    // value for one of the critical metadata fields. The metadata-repair
-    // endpoint and the AI-extracted analysis are the only other sources for
-    // these fields; logging a manual confirmation lets later panels show
-    // "this field was set by <user> on <date>" instead of "AI-extracted".
     const MANUAL_FIELDS = [
       ["clientName", existing.clientName, tender.clientName],
       ["reference", existing.reference, tender.reference],
@@ -312,9 +288,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
       });
     }
 
-    // Invalidate dashboard cache when tender is updated
     invalidateDashboardCache(id);
-
     return NextResponse.json(await withDashboardPayload(tender as any));
   } catch (error) {
     logger.error("Request failed", { detail: error });
@@ -323,7 +297,6 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
 }
 
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
-  // Generate correlationId up front so it's available for both success and error logs/responses.
   const correlationId = crypto.randomUUID().slice(0, 8);
 
   let actor;
@@ -335,38 +308,39 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   const existing = await prisma.tender.findFirst({ where: { id: tenderId, userId: actor.id } });
   if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  logger.info(`[tender-delete] Starting deletion`, { tenderId, correlationId, userId: actor.id, title: existing.title });
+  logger.info("[tender-delete] Starting deletion", { tenderId, correlationId, userId: actor.id, title: existing.title });
 
   try {
-    // Comprehensive ordered deletion within a transaction.
-    //
-    // Ordering rationale:
-    //  - Children of GeneratedDocument (DocumentReview, DocumentComment) must die first.
-    //  - ComplianceMatrix must die before TenderRequirement (FK).
-    //  - CostLine must die before PricingWorkbook (FK).
-    //  - AiJobStep / AiAnalyzeChunk / AiAnalyzeRetryState must die before AiJob (FK).
-    //  - FallbackApprovalRecord & ExtractionQualityOverride are scalar-only (no @relation,
-    //    no FK constraint — see migration 20260622193000) so they would survive Tender
-    //    deletion as orphans. We DELETE them here for hygiene (tender-specific operational
-    //    state should not persist after the tender is gone).
-    //  - AiUsageRecord has a SetNull relation. Migration 20260628000000_add_aiusagerecord_tender_fk
-    //    added the FK constraint; typed Prisma updateMany now works without raw SQL.
-    const result = await prisma.$transaction(
-      async (tx) => executeTenderDeletion(
-        tx,
-        tenderId,
-        correlationId,
-        actor.id,
+    // Request-scoped upload workers can finish an EXTRACT_TEXT write at the
+    // same moment an authorized cleanup deletes the tender. PostgreSQL reports
+    // that serializable collision as Prisma P2034. Retry the complete fresh
+    // transaction; never reuse the aborted transaction and never retry any
+    // other error class.
+    const result = await withPrismaWriteConflictRetry(
+      () => prisma.$transaction(
+        async (tx) => executeTenderDeletion(
+          tx,
+          tenderId,
+          correlationId,
+          actor.id,
+        ),
+        { timeout: 30000, isolationLevel: "Serializable" },
       ),
-      { timeout: 30000, isolationLevel: "Serializable" },
+      {
+        maxAttempts: 3,
+        baseDelayMs: 75,
+        onRetry: ({ attempt, maxAttempts, delayMs }) => {
+          logger.warn("[tender-delete] retrying complete transaction after Prisma write conflict", {
+            tenderId,
+            correlationId,
+            attempt,
+            maxAttempts,
+            delayMs,
+          });
+        },
+      },
     );
 
-    // The cleanup pointer was committed inside the deletion transaction.
-    // All external blob cleanup is handled exclusively through the durable
-    // manifest via processTenderStorageCleanupTask. This prevents orphaned
-    // blobs if the process crashes between the transaction commit and a
-    // direct deleteFile call. Failed objects remain in the durable AuditLog
-    // manifest for cron-based retry.
     let storageCleanupPending = false;
     if (result.storageCleanupTaskId) {
       try {
@@ -397,15 +371,12 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
       metadata: { tenderId, title: existing.title, clientName: existing.clientName, correlationId },
     });
 
-    logger.info(`[tender-delete] Deletion complete`, { tenderId, correlationId });
+    logger.info("[tender-delete] Deletion complete", { tenderId, correlationId });
     return NextResponse.json({ success: true, correlationId, storageCleanupPending });
   } catch (error) {
     const errorClass =
       error instanceof Prisma.PrismaClientKnownRequestError ? `PrismaError(${error.code})` :
       error instanceof Error ? error.constructor.name : "UnknownError";
-    // Pass the raw error object to logger — never leak its message/string in the
-    // HTTP response. The response only contains a correlationId the operator can
-    // use to look up this log entry.
     logger.error("Tender deletion failed", { detail: error, tenderId, correlationId, errorClass });
 
     return NextResponse.json({

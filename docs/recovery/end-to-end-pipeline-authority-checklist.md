@@ -1,0 +1,8 @@
+- [x] Remove duplicate client-side AI Analyze trigger
+- [x] Enforce server-side analysis-before-engine sequencing by queuing only AI_ANALYZE from upload; Engine remains gated until canonical analysis succeeds
+- [x] Restrict expert/project authority to dedicated original source categories by rejecting PR #1244 classifier behavior
+- [x] Keep content detection advisory only; no content-based authority was incorporated
+- [x] Preserve partial/fallback blocks on Build Plan, generation, GeneratedDocument, approval, and ZIP
+- [x] Route Action Center to canonical mutation owners
+- [x] Add pipeline authority regression coverage
+- [ ] Run full exact-head CI and screenshot audit

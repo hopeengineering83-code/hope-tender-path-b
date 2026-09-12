@@ -1,0 +1,1033 @@
+import json, os, subprocess, sys, urllib.parse
+
+BASE = os.environ["BASE_URL"]
+COOKIE = os.environ["SESSION_COOKIE"]
+TENDER = (os.environ.get("TENDER_ID") or "").strip()
+
+def get(path, max_time="120"):
+    # max_time is per-call because the job has a 20-minute cap and a handful of
+    # slow endpoints can spend it all. Run 34588881212 did exactly that: twelve
+    # per-job detail reads at up to 120s each exhausted the budget before the
+    # report could be uploaded, so the run produced no artifact at all. Cheap,
+    # numerous calls get a short leash.
+    out = subprocess.run(
+        ["curl", "-sS", "--connect-timeout", "15", "--max-time", max_time,
+         "-H", f"Cookie: hope_session={COOKIE}", f"{BASE}{path}"],
+        capture_output=True, text=True)
+    try:
+        return json.loads(out.stdout)
+    except Exception:
+        return {"_unparsed": out.stdout[:400], "_stderr": out.stderr[:200]}
+
+def show(label, path, limit=6000):
+    print(f"\n----- {label}  [{path}] -----")
+    print(json.dumps(get(path), indent=2)[:limit])
+
+
+# The tender ID is not knowable ahead of time on a freshly rebuilt database:
+# the owner uploads through the real UI, so the ID is whatever that upload
+# created. Discover it rather than carrying a stale default from the previous
+# database, which would silently inspect nothing.
+def discover_tenders():
+    data = get("/api/tenders?limit=50")
+    rows = None
+    if isinstance(data, dict):
+        for key in ("tenders", "items", "data", "results"):
+            if isinstance(data.get(key), list):
+                rows = data[key]
+                break
+    elif isinstance(data, list):
+        rows = data
+    if rows is None:
+        print(f"  !! could not read /api/tenders; payload keys={list(data)[:10] if isinstance(data, dict) else type(data)}")
+        return []
+    return rows
+
+
+HEALTH_RX = ("hospital", "health", "medical", "clinic", "healthcare", "specialty",
+             "specialised", "specialized", "maternity", "pharma", "laboratory",
+             "diagnostic", "mch", "icu", "surgical")
+
+def healthy(text):
+    t = (text or "").lower()
+    return [w for w in HEALTH_RX if w in t]
+
+def page_all(path):
+    """Page through a cursor-paginated vault collection."""
+    items, cursor, guard = [], None, 0
+    while guard < 60:
+        guard += 1
+        sep = "&" if "?" in path else "?"
+        url = f"{path}{sep}limit=100" + (f"&cursor={urllib.parse.quote(cursor)}" if cursor else "")
+        data = get(url)
+        if not isinstance(data, dict):
+            print(f"  !! unexpected payload for {url}: {str(data)[:200]}")
+            break
+        batch = None
+        for key in ("projects", "experts", "items", "data", "results"):
+            if isinstance(data.get(key), list):
+                batch = data[key]
+                break
+        if batch is None:
+            print(f"  !! no list field in {url}; keys={list(data.keys())[:10]}")
+            break
+        items.extend(batch)
+        cursor = data.get("nextCursor") or data.get("cursor")
+        if not cursor or not batch:
+            break
+    return items
+
+def tally(items, label, name_keys):
+    print(f"\n===== {label}: {len(items)} total =====")
+    by_trust = {}
+    for it in items:
+        by_trust.setdefault(it.get("trustLevel") or "(none)", []).append(it)
+    for lvl in sorted(by_trust):
+        print(f"  trustLevel {lvl}: {len(by_trust[lvl])}")
+    rel = []
+    for it in items:
+        blob = " ".join(str(it.get(k) or "") for k in name_keys)
+        hits = healthy(blob)
+        if hits:
+            rel.append((it, hits))
+    print(f"  healthcare-relevant by text: {len(rel)}")
+    for it, hits in rel[:40]:
+        nm = it.get("name") or it.get("fullName")
+        print(f"    - [{it.get('trustLevel')}] {nm} | sector={it.get('sector')} "
+              f"| client={it.get('clientName')} | hits={','.join(hits)}")
+    return by_trust, rel
+
+print("########## TENDERS ON THIS DATABASE ##########")
+_tenders = discover_tenders()
+print(f"tenders: {len(_tenders)}")
+for _t in _tenders:
+    print(f"  id={_t.get('id')} | status={_t.get('status')} | stage={_t.get('stage') or _t.get('lifecycleStage')} "
+          f"| title={_t.get('title')} | client={_t.get('clientName')} | created={_t.get('createdAt')}")
+if not TENDER:
+    if not _tenders:
+        print("!! No tender on this database and no TENDER_ID supplied — nothing to trace.")
+        sys.exit(1)
+    TENDER = _tenders[0].get("id")
+    print(f"\nUsing most recent tender: {TENDER}")
+else:
+    print(f"\nUsing supplied TENDER_ID: {TENDER}")
+
+print("\n########## LIVE VAULT TRUTH ##########")
+projects = page_all("/api/company/projects")
+tally(projects, "PROJECTS", ["name", "clientName", "sector", "serviceAreas", "country"])
+
+experts = page_all("/api/company/experts")
+tally(experts, "EXPERTS", ["fullName", "title", "disciplines", "sectors"])
+
+print("\n########## TENDER MATCHES ##########")
+m = get(f"/api/tenders/{TENDER}/matches")
+pm = m.get("projectMatches", []) if isinstance(m, dict) else []
+em = m.get("expertMatches", []) if isinstance(m, dict) else []
+print(f"projectMatches rows: {len(pm)}  (selected {sum(1 for x in pm if x.get('isSelected'))})")
+for x in pm:
+    p = x.get("project", {}) or {}
+    print(f"  selected={str(x.get('isSelected')):5} score={x.get('score')} "
+          f"trust={p.get('trustLevel')} | {p.get('name')} | sector={p.get('sector')}")
+    if x.get("rationale"):
+        print(f"      rationale: {str(x['rationale'])[:300]}")
+print(f"\nexpertMatches rows: {len(em)}  (selected {sum(1 for x in em if x.get('isSelected'))})")
+for x in em:
+    e = x.get("expert", {}) or {}
+    print(f"  selected={str(x.get('isSelected')):5} score={x.get('score')} "
+          f"trust={e.get('trustLevel')} | {e.get('fullName')} | sectors={e.get('sectors')}")
+
+# A compact, always-first selection table. The full-record dump below is
+# valuable but long enough that it pushed this table off the retrievable end of
+# the job log last time, which is how "which two projects were selected?" went
+# unanswered while every other number was in hand.
+print("\n########## SELECTION TABLE (compact) ##########")
+_ranked = sorted(pm, key=lambda x: -(x.get("score") or 0))
+print(f"selected projects: {[ (x.get('project') or {}).get('name') for x in pm if x.get('isSelected') ]}")
+for x in [y for y in pm if y.get("isSelected")] + _ranked[:15]:
+    p_ = x.get("project", {}) or {}
+    print(f"  sel={str(x.get('isSelected')):5} score={x.get('score'):.4f} | {p_.get('name')}")
+print(f"selected experts: {[ (x.get('expert') or {}).get('fullName') for x in em if x.get('isSelected') ]}")
+
+print("\n########## FULL RECORDS + RATIONALES FOR THE CONTESTED PROJECTS ##########")
+# The three healthcare records and every project match that scored above 0.4,
+# with NOTHING truncated. The previous pass cut rationales at 300 characters,
+# which hid the capability-family list that decides the strict-family gate.
+contested = [x for x in pm if (x.get("score") or 0) > 0.4]
+for x in contested:
+    p_ = x.get("project", {}) or {}
+    print(f"\n--- {p_.get('name')} ---")
+    print(f"  id={p_.get('id')} selected={x.get('isSelected')} score={x.get('score')}")
+    print(f"  FULL RATIONALE: {x.get('rationale')}")
+    detail = get(f"/api/company/projects/{p_.get('id')}")
+    d = detail.get("project", detail) if isinstance(detail, dict) else {}
+    for k in ("name", "clientName", "country", "sector", "serviceAreas", "summary",
+              "contractValue", "currency", "startDate", "endDate", "trustLevel",
+              "sourceDocumentId", "reviewedBy", "reviewedAt"):
+        v = d.get(k) if isinstance(d, dict) else None
+        if k == "summary" and isinstance(v, str):
+            print(f"  {k}: len={len(v)} :: {v[:600]}")
+        else:
+            print(f"  {k}: {v}")
+
+print("\n########## MATCHING QUALITY ##########")
+print(json.dumps(get(f"/api/tenders/{TENDER}/matching-quality"), indent=2)[:4000])
+
+print("\n########## PROVIDER DIAGNOSTICS (durable snapshot, no quota) ##########")
+print(json.dumps(get("/api/ai-providers/diagnostics"), indent=2)[:6000])
+
+# ONE live generation capability probe.
+#
+# The note that used to stand here declined the live probe because provider
+# configuration had not changed. It has: Cerebras credit is now available on
+# the same account and API key already configured in this environment, and the
+# last real workload observation for Cerebras was HTTP 402 payment_required —
+# a durable snapshot can only keep reporting that stale refusal.
+#
+# Capability is what matters, not key presence: connectivity proves the route,
+# not that the provider can return usable structured generation. This asks the
+# generation capability specifically, in a single request across the chain, so
+# it is one probe rather than a per-provider poll.
+print("\n########## PROVIDER CAPABILITY — LIVE GENERATION PROBE (one pass) ##########")
+# Connectivity, not generation, for THIS pass. availableModels comes from
+# listAccountModels and is returned whatever capability is tested, but a
+# generation test costs a real completion per provider and the 60s route
+# deadline stopped the last run after four of ten — leaving Cerebras, the one
+# provider this run exists to inspect, untested. Connectivity reaches all ten.
+live = get("/api/ai-providers/diagnostics?live=1&capability=connectivity")
+print(json.dumps(live, indent=2)[:9000])
+
+print("\n########## BRAND ASSETS — STORAGE vs APPLICATION ##########")
+# ACTIVE metadata is not proof the bytes reached the artifact. This reports
+# what the asset store holds; whether those bytes are embedded in the delivered
+# DOCX/PDF is checked separately against the artifact itself.
+_assets = get("/api/company/assets")
+if isinstance(_assets, dict):
+    _rows = None
+    for key in ("assets", "items", "data", "results"):
+        if isinstance(_assets.get(key), list):
+            _rows = _assets[key]
+            break
+    if _rows is None:
+        print(f"  !! unexpected payload; keys={list(_assets.keys())[:10]}")
+    else:
+        print(f"assets: {len(_rows)}")
+        for a in _rows:
+            # storagePath vs inline bytes matters: the signature/stamp applier
+            # skips storage-backed rows, so an ACTIVE asset held only in
+            # storage never reaches the document.
+            print(f"  type={a.get('assetType')} active={a.get('isActive')} "
+                  f"name={a.get('originalFileName')} mime={a.get('mimeType')} "
+                  f"size={a.get('size')} inlineBytes={a.get('fileContentLength')} "
+                  f"storagePath={'yes' if a.get('storagePath') else 'no'} "
+                  f"integrity={a.get('integrityStatus')} id={a.get('id')}")
+else:
+    print(f"  !! {str(_assets)[:200]}")
+
+print("\n########## PIPELINE STATE AFTER AI ANALYZE + RUN ENGINE ##########")
+show("TENDER RECORD", f"/api/tenders/{TENDER}", 8000)
+show("WORKFLOW STATUS", f"/api/tenders/{TENDER}/workflow-status", 8000)
+show("AI JOBS", f"/api/ai-jobs?tenderId={urllib.parse.quote(TENDER)}&take=50", 12000)
+show("EXTRACTION QUALITY", f"/api/tenders/{TENDER}/extraction-quality", 8000)
+show("ANALYSIS QUALITY", f"/api/tenders/{TENDER}/analysis-quality", 6000)
+show("ENGINE READINESS", f"/api/tenders/{TENDER}/engine-readiness", 6000)
+show("SUBMISSION PLAN", f"/api/tenders/{TENDER}/submission-plan", 8000)
+show("GENERATION READINESS", f"/api/tenders/{TENDER}/generation-readiness", 6000)
+show("PROPOSAL EVIDENCE READINESS", f"/api/tenders/{TENDER}/proposal-evidence-readiness", 6000)
+show("EXPORT READINESS", f"/api/tenders/{TENDER}/export-readiness", 8000)
+show("FINAL PACKAGE READINESS", f"/api/tenders/{TENDER}/final-package-readiness", 8000)
+show("READINESS SCORE", f"/api/tenders/{TENDER}/readiness-score", 4000)
+
+print("\n########## CAPABILITY VERDICTS (printed last — this is the answer) ##########")
+# Field names come from ProviderCapabilityReport / CapabilityTestResult in
+# lib/ai-provider-capability-test.ts: results (not "tests"), diagnosticState,
+# availableModels. An earlier version of this block guessed "tests" and printed
+# nothing, which is worse than printing the wrong thing because it reads as a
+# clean result.
+rows = live.get("perProvider") if isinstance(live, dict) else None
+if not rows:
+    print("  NO perProvider ROWS. Raw response keys:",
+          list(live.keys()) if isinstance(live, dict) else type(live).__name__)
+    print("  Raw (first 1500):", json.dumps(live)[:1500])
+else:
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        name = row.get("provider")
+        print(f"\n  == {name} ==")
+        print(f"     diagnosticState = {row.get('diagnosticState')}")
+        print(f"     eligible={row.get('eligible')} keyPresent={row.get('keyPresent')}"
+              f" usableForGeneration={row.get('usableForGeneration')}"
+              f" usableForAiAnalyze={row.get('usableForAiAnalyze')}")
+        print(f"     resolvedModels  = {row.get('resolvedModels')}")
+        print(f"     modelVisible={row.get('modelVisible')}")
+        avail = row.get("availableModels")
+        if avail is None:
+            print("     availableModels = None (provider did not return a model list)")
+        else:
+            print(f"     availableModels ({len(avail)}): {avail}")
+        for r in (row.get("results") or []):
+            if isinstance(r, dict):
+                print(f"     [{r.get('capability')}] status={r.get('status')}"
+                      f" model={r.get('model')}"
+                      f" confirmedByProvider={r.get('modelConfirmedByProvider')}"
+                      f" category={r.get('category')}"
+                      f" msg={str(r.get('safeMessage'))[:220]}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BLOCKER FORENSICS — Company Profile BID_TEAM_TO_CONFIRM and FILE_ORDER
+#
+# Read-only. Runs no generation and spends no provider quota, which is why the
+# evidence for both blockers is gathered here rather than by re-running the
+# hosted acceptance.
+# ─────────────────────────────────────────────────────────────────────────────
+print("\n########## BLOCKER FORENSICS ##########")
+
+import re as _re
+
+# The exact patterns the gate uses. Kept in sync deliberately by eye — this is
+# throwaway acceptance tooling, and duplicating them here lets the report show
+# WHICH pattern fires on WHICH text without another deploy.
+_PLACEHOLDER_RX = [
+    (r"\bbid[\s-]?team\s+to\s+confirm\b", "bid-team-to-confirm"),
+    (r"\bto\s+be\s+(?:confirmed|determined|provided|completed|inserted)\b", "to-be-X"),
+    (r"\b(?:tbd|tbc|tba)\b", "tbd/tbc/tba"),
+    (r"\b(?:not\s+provided|not\s+available|not\s+specified|unknown|pending)\b", "not-provided/unknown/pending"),
+    (r"\bn\/?a\b", "n/a"),
+    (r"\bplaceholder\b", "placeholder"),
+    (r"\b(?:insert|add|fill)\b.{0,40}\b(?:here|later|manually)\b", "insert-here"),
+    (r"\b\[?fill[\s_-]?in\]?", "fill-in"),
+    (r"\bexact\s+site\s+to\s+be\s+determined\b", "exact-site-tbd"),
+    (r"\bwith\s+consultant'?s\s+assistance\b", "consultant-assistance"),
+]
+
+def _scan(label, text):
+    """Report every placeholder pattern that fires, with surrounding context."""
+    if not text:
+        print(f"  {label}: (no text)")
+        return 0
+    total = 0
+    for src, name in _PLACEHOLDER_RX:
+        for m in _re.finditer(src, text, _re.I):
+            total += 1
+            a, b = max(0, m.start() - 90), min(len(text), m.end() + 90)
+            ctx = _re.sub(r"\s+", " ", text[a:b])
+            print(f"  {label}: [{name}] matched {m.group(0)!r}")
+            print(f"      …{ctx}…")
+            if total >= 25:
+                print(f"  {label}: (truncated at 25 matches)")
+                return total
+    if total == 0:
+        print(f"  {label}: no placeholder pattern fires")
+    return total
+
+# ── 1. Requirements, verbatim. narrativeDraftContent() echoes requirement
+#       title + description straight into the client-facing planned-row DOCX,
+#       so a requirement carrying "TBD"/"to be confirmed"/"N/A" becomes a
+#       placeholder hit inside a shipped document.
+print("\n--- TENDER REQUIREMENTS (echoed verbatim into planned-row documents) ---")
+_reqs = get(f"/api/tenders/{TENDER}/requirements")
+_rows = _reqs.get("requirements") if isinstance(_reqs, dict) else (_reqs if isinstance(_reqs, list) else None)
+if not _rows:
+    print(f"  !! could not read requirements; payload={str(_reqs)[:400]}")
+else:
+    print(f"  {len(_rows)} requirement(s)")
+    _flagged = 0
+    for _r in _rows:
+        _t = f"{_r.get('title') or ''} — {_r.get('description') or ''}"
+        _hits = _scan(f"REQ {str(_r.get('id'))[:8]}", _t)
+        if _hits:
+            _flagged += 1
+    print(f"  => {_flagged} requirement(s) carry placeholder wording that would be copied into a shipped document")
+
+# ── 2. Every generated document's quality verdict, with the gate's own
+#       (now phrase-naming) message.
+print("\n--- GENERATED DOCUMENT QUALITY (the gate's own message) ---")
+_audit = get("/api/admin/generated-proposals/audit")
+_docs = None
+if isinstance(_audit, dict):
+    for _k in ("documents", "rows", "results", "items"):
+        if isinstance(_audit.get(_k), list):
+            _docs = _audit[_k]
+            break
+if _docs is None:
+    print(f"  !! unexpected audit shape; keys={list(_audit)[:15] if isinstance(_audit, dict) else type(_audit).__name__}")
+    print(f"  raw: {json.dumps(_audit)[:2500]}")
+else:
+    for _d in _docs:
+        if str(_d.get("tenderId") or "") not in ("", TENDER):
+            continue
+        _nm = _d.get("exactFileName") or _d.get("name")
+        print(f"\n  * {_nm}")
+        print(f"      type={_d.get('documentType')} format={_d.get('format')}")
+        print(f"      qualityScore={_d.get('qualityScore')} recommended={_d.get('qualityRecommendedStatus')}")
+        print(f"      generationStatus={_d.get('generationStatus')} validationStatus={_d.get('validationStatus')}")
+        print(f"      readyForExport={_d.get('readyForExport')} zipEligible={_d.get('zipEligible')}")
+        print(f"      exactOrder={_d.get('exactOrder')}  bidTeamToConfirmIssue={_d.get('bidTeamToConfirmIssue')}")
+        for _i in (_d.get("qualityIssues") or _d.get("issues") or []):
+            print(f"      ISSUE {_i.get('code')} [{_i.get('severity')}] {str(_i.get('message'))[:600]}")
+        _vt = _d.get("visibleText") or _d.get("textExcerpt") or _d.get("excerpt")
+        if _vt:
+            _scan(f"      TEXT[{_nm}]", _vt)
+        else:
+            print("      (audit response carries no text excerpt for this document)")
+
+# ── 3. FILE_ORDER — the confirmed plan's order vs what was generated.
+print("\n--- FILE_ORDER: PLAN ORDER vs GENERATED ORDER vs MANIFEST ---")
+_plan = get(f"/api/tenders/{TENDER}/submission-plan")
+_items = None
+if isinstance(_plan, dict):
+    for _k in ("items", "files", "plan", "rows", "planItems"):
+        _v = _plan.get(_k)
+        if isinstance(_v, list):
+            _items = _v
+            break
+        if isinstance(_v, dict) and isinstance(_v.get("items"), list):
+            _items = _v["items"]
+            break
+if _items is None:
+    print(f"  !! unexpected plan shape; keys={list(_plan)[:15] if isinstance(_plan, dict) else type(_plan).__name__}")
+    print(f"  raw: {json.dumps(_plan)[:2500]}")
+else:
+    print(f"  CONFIRMED PLAN ORDER ({len(_items)} row(s)):")
+    for _n, _it in enumerate(_items, 1):
+        print(f"    {_n:>2}. {_it.get('fileName') or _it.get('exactFileName') or _it.get('name')!r}"
+              f"  order={_it.get('order') or _it.get('sortOrder') or _it.get('position')}"
+              f"  format={_it.get('format')}  status={_it.get('status')}"
+              f"  superseded={_it.get('supersededAt') or _it.get('superseded')}")
+
+if _docs:
+    print(f"\n  GENERATED DOCUMENT ORDER:")
+    for _n, _d in enumerate(
+        sorted([d for d in _docs if str(d.get('tenderId') or '') in ('', TENDER)],
+               key=lambda d: (d.get('exactOrder') if d.get('exactOrder') is not None else 9999,
+                              str(d.get('exactFileName') or d.get('name') or ''))), 1):
+        print(f"    {_n:>2}. {(_d.get('exactFileName') or _d.get('name'))!r}"
+              f"  exactOrder={_d.get('exactOrder')}"
+              f"  generationStatus={_d.get('generationStatus')}"
+              f"  finalExportCandidate={_d.get('finalExportCandidate')}"
+              f"  zipEligible={_d.get('zipEligible')}")
+
+print("\n--- EXPORT-READINESS BLOCKERS, FULL DETAIL ---")
+_er = get(f"/api/tenders/{TENDER}/export-readiness")
+print(json.dumps(_er, indent=2)[:9000])
+
+print("\n--- FINAL PACKAGE READINESS, FULL DETAIL ---")
+print(json.dumps(get(f"/api/tenders/{TENDER}/final-package-readiness"), indent=2)[:9000])
+
+# ── 4. Brand assets — letterheadAppliedCount=0 question.
+print("\n--- BRAND ASSETS (letterhead vs signature/stamp are separate rules) ---")
+_ba = get("/api/company/assets")
+_alist = _ba.get("assets") if isinstance(_ba, dict) else (_ba if isinstance(_ba, list) else None)
+if _alist is None:
+    print(f"  !! unexpected assets shape: {str(_ba)[:400]}")
+else:
+    for _a in _alist:
+        print(f"  {_a.get('assetType') or _a.get('type')}: {_a.get('fileName') or _a.get('name')}"
+              f"  active={_a.get('isActive')}  status={_a.get('status')}"
+              f"  bytes={_a.get('fileContentLength') or _a.get('size')}"
+              f"  storagePath={'yes' if _a.get('storagePath') else 'no'}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FILE-FORMAT AUTHORITY — does the tender name a format per file, or envelope-wide?
+#
+# The remaining blocker is FILE_FORMAT VIOLATED: "The tender requires PDF for
+# the technical envelope, but 1 current document(s) are not PDF: Company
+# Profile.docx (DOCX)."
+#
+# Two opposite fixes depend on ONE fact:
+#   * if exactFileNaming itself names "Company Profile.docx", the tender wants
+#     that file as DOCX and the envelope-wide reading of the format clause is
+#     what is wrong;
+#   * if it does not, the package really should have produced a PDF.
+#
+# Converting a file the tender asked for as DOCX would ship the wrong format
+# to the procuring entity, so this is not a guess worth making.
+# ─────────────────────────────────────────────────────────────────────────────
+print("\n########## FILE-FORMAT AUTHORITY ##########")
+_t = get(f"/api/tenders/{TENDER}")
+_rec = _t.get("tender") if isinstance(_t, dict) and isinstance(_t.get("tender"), dict) else _t
+if not isinstance(_rec, dict):
+    print(f"  !! unexpected tender shape: {str(_t)[:300]}")
+else:
+    for _k in ("exactFileNaming", "exactFileOrder"):
+        print(f"  {_k} = {json.dumps(_rec.get(_k))[:900]}")
+
+print("\n--- the FILE_FORMAT requirement's own source text ---")
+_rq = get(f"/api/tenders/{TENDER}/requirements")
+_rows = _rq.get("requirements") if isinstance(_rq, dict) else (_rq if isinstance(_rq, list) else [])
+for _r in (_rows or []):
+    _title = (_r.get("title") or "")
+    if not _re.search(r"technical proposal document|format|pdf", f"{_title} {_r.get('description') or ''}", _re.I):
+        continue
+    print(f"  * {_title}")
+    print(f"      priority={_r.get('priority')} type={_r.get('requirementType')}")
+    print(f"      description={str(_r.get('description'))[:700]}")
+    print(f"      sourceExactQuote={str(_r.get('sourceExactQuote'))[:700]}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LETTERHEAD FORENSICS — why letterheadAppliedCount is 0
+#
+# applyActiveUploadedLetterheadToTenderDocuments() returns 0 through SIX
+# indistinguishable early exits. "0" therefore carries no diagnosis, and
+# guessing which one fired would be inventing a cause. Each guard is evaluated
+# here from live data instead, so the answer names the guard.
+#
+# Signature/stamp rules are deliberately NOT merged into this: a tender that
+# demands a signed and stamped form is a different instruction from one that
+# permits company branding, and an asset existing is not an instruction to
+# apply it.
+# ─────────────────────────────────────────────────────────────────────────────
+print("\n########## LETTERHEAD FORENSICS — which guard returns 0 ##########")
+
+# guard 1: forbidsBranding(tender.requirements) — lib/engine/scope-policy.ts:103
+_BRANDING_PROHIBITION = _re.compile(
+    r"no\s+(company\s+)?(logo|letterhead|branding|stamp|seal)"
+    r"|without\s+(company\s+)?(logo|letterhead|branding|stamp|seal)"
+    r"|plain\s+template"
+    r"|do\s+not\s+(use|include)\s+(company\s+)?(logo|letterhead|branding|stamp|seal)",
+    _re.I)
+
+_rq = get(f"/api/tenders/{TENDER}/requirements")
+_rrows = _rq.get("requirements") if isinstance(_rq, dict) else (_rq if isinstance(_rq, list) else [])
+_alltext = " ".join(
+    " ".join(str(r.get(f) or "") for f in
+             ("title", "description", "restrictions", "sourceExactQuote", "category", "requirementType"))
+    for r in (_rrows or []))
+_hit = _BRANDING_PROHIBITION.search(_alltext)
+print(f"  guard 1 forbidsBranding      = {bool(_hit)}"
+      + (f"   matched {_hit.group(0)!r}" if _hit else "   (no prohibition in tender text)"))
+
+# guard 1b: the separate signature/stamp instruction — reported, never acted on
+_SIG = _re.compile(r"signature|signed|stamp|seal|company seal", _re.I)
+_sig = _SIG.search(_alltext)
+print(f"  (separate) requiresSignatureOrStamp = {bool(_sig)}"
+      + (f"   matched {_sig.group(0)!r}" if _sig else ""))
+
+# guard 2: AppSettings.allowBrandingDefault === false
+_st = get("/api/settings")
+_stv = _st.get("settings") if isinstance(_st, dict) and isinstance(_st.get("settings"), dict) else _st
+_allow = _stv.get("allowBrandingDefault") if isinstance(_stv, dict) else "?"
+print(f"  guard 2 allowBrandingDefault = {json.dumps(_allow)}   (false blocks; absent/true allows)")
+if isinstance(_stv, dict):
+    for _k in ("allowSignatureDefault", "allowStampDefault"):
+        print(f"          {_k} = {json.dumps(_stv.get(_k))}")
+
+# guards 3-5: the active LETTERHEAD asset itself
+_ba = get("/api/company/assets")
+_alist = _ba.get("assets") if isinstance(_ba, dict) else (_ba if isinstance(_ba, list) else [])
+_lh = [a for a in (_alist or []) if (a.get("assetType") or a.get("type")) == "LETTERHEAD" and a.get("isActive")]
+if not _lh:
+    print("  guard 3 active LETTERHEAD    = NONE  -> returns 0 here")
+else:
+    for _a in _lh:
+        _mime = str(_a.get("mimeType") or "")
+        # A MISSING KEY IS NOT AN EMPTY COLUMN. The previous version printed
+        # `fileContentLength or 0` and rendered 0 for an asset the same payload
+        # reports as 126,100 bytes, because the endpoint does not return that
+        # key at all. Report which keys exist rather than a number that reads
+        # like a measurement.
+        _byte_keys = {k: _a.get(k) for k in ("fileContentLength", "size", "byteSize", "contentByteLength")
+                      if k in _a}
+        _mime_ok = bool(_re.search(r"wordprocessingml\.document|msword|octet-stream", _mime, _re.I))
+        print(f"  guard 3 byte fields present  = {_byte_keys or 'NONE EXPOSED BY THIS ENDPOINT'}"
+              f"   storagePath={'yes' if _a.get('storagePath') else 'no'}")
+        print("          (inline-vs-storage cannot be settled from this endpoint;"
+              " it does not return fileContent. Not evidence either way.)")
+        print(f"  guard 4 mimeType accepted    = {_mime_ok}   mimeType={_mime!r}")
+        print(f"          originalFileName     = {_a.get('originalFileName') or _a.get('fileName')!r}")
+        print("  guard 5 looksLikeDocx(PK..)  = not observable from the API; "
+              "a non-DOCX letterhead (PDF/PNG/JPG) fails here even when guard 4 passes")
+
+# guard 6: per-document storagePath skip
+# includeReady defaults to FALSE (audit/route.ts:202) — without it the endpoint
+# returns only documents that have an issue, so a clean package comes back
+# empty and reads as "0 live documents". limit defaults to 20 of 33 rows.
+_au = get(f"/api/admin/generated-proposals/audit?tenderId={urllib.parse.quote(TENDER)}"
+          "&includeReady=true&limit=200")
+# The audit route returns `documents` (route.ts:520), not `rows`. Reading the
+# wrong key printed "unreadable" for a payload that was perfectly readable.
+_arows = None
+if isinstance(_au, dict):
+    for _k in ("documents", "rows", "items", "results"):
+        if isinstance(_au.get(_k), list):
+            _arows = _au[_k]
+            break
+if not isinstance(_arows, list):
+    print(f"  guard 6 audit rows unreadable; keys="
+          f"{list(_au)[:12] if isinstance(_au, dict) else type(_au)}")
+else:
+    _live = [r for r in _arows if r.get("generationStatus") != "SUPERSEDED"]
+    _skipped = [r for r in _live if r.get("hasStoragePath")]
+    print(f"  guard 6 storage-backed docs  = {len(_skipped)}/{len(_live)} live documents"
+          "   (each one is skipped by design: branding storage-backed bytes could"
+          " replace authoritative content)")
+    for _r in _live:
+        print(f"          {_r.get('exactFileName') or _r.get('documentName')}"
+              f"  format={_r.get('format')}  storagePath={_r.get('hasStoragePath')}"
+              f"  inline={_r.get('hasFileContent')}")
+    print("          note: only DOCX bytes are letterheadable; a PDF-only package"
+          " reaches guard 5 per document and is skipped there.")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PHARO RE-VERIFICATION — did the FILE_FORMAT fix actually land in production?
+#
+# The previous attempt (01015c69) shipped INERT: the scope resolver was fixed
+# but two callers never passed sourceExactQuote, so it read no file names. The
+# full readiness dump above is truncated at 9000 chars and the verdict can hide
+# inside it, so pull every package-rule verdict out by name. A fix is not
+# verified until the live verdict says so.
+# ─────────────────────────────────────────────────────────────────────────────
+print("\n########## PACKAGE-RULE VERDICTS (verbatim, untruncated) ##########")
+_fpr = get(f"/api/tenders/{TENDER}/final-package-readiness")
+
+def _walk_rules(node, out):
+    if isinstance(node, dict):
+        if "family" in node and "status" in node:
+            out.append(node)
+        for v in node.values():
+            _walk_rules(v, out)
+    elif isinstance(node, list):
+        for v in node:
+            _walk_rules(v, out)
+
+_rules = []
+_walk_rules(_fpr, _rules)
+if not _rules:
+    print(f"  !! no package-rule verdicts found; payload keys="
+          f"{list(_fpr)[:12] if isinstance(_fpr, dict) else type(_fpr)}")
+for _r in _rules:
+    print(f"  {_r.get('family')}: {_r.get('status')}")
+    print(f"      reason: {_r.get('reason')}")
+    if _r.get("scope") or _r.get("scopeLabel"):
+        print(f"      scope: {_r.get('scopeLabel') or _r.get('scope')}")
+
+print("\n--- tender-level blockers + export readiness flags ---")
+for _k in ("tenderLevelBlockers", "blockers", "failures", "finalExportReady", "ok",
+           "readinessScore", "exportReadyDocuments", "requiredDocuments"):
+    if isinstance(_fpr, dict) and _k in _fpr:
+        print(f"  {_k} = {json.dumps(_fpr[_k])[:1500]}")
+
+
+print("\n--- audit summary (stale-output accumulation) ---")
+_sm = _au.get("summary") if isinstance(_au, dict) else None
+print(f"  {json.dumps(_sm, indent=2)[:1200]}" if _sm else "  (no summary in payload)")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WHEN was letterhead attempted, and what did the documents look like then?
+#
+# The applier only brands DOCX bytes (looksLikeDocx). PROPOSAL_GENERATION calls
+# it immediately after generation, while documents are still DOCX; AUTO_FINALIZE
+# converts them to PDF afterwards. So a letterheadAppliedCount of 0 means one
+# thing if it was recorded before finalization and something completely
+# different if it was recorded after — after, zero is CORRECT BEHAVIOUR, not a
+# defect, because there is no DOCX left to brand.
+#
+# Reading the count without its timestamp is how a working guard gets
+# "fixed". Find every job that reported one and print it with its type and time.
+# ─────────────────────────────────────────────────────────────────────────────
+print("\n########## LETTERHEAD: WHICH JOB REPORTED THE COUNT, AND WHEN ##########")
+# /api/ai-jobs returns ONLY {id, jobType, status, tenderId, createdAt, finishedAt}
+# (listUserJobs, lib/ai-jobs.ts:496). It carries no output and no steps, so
+# scanning the list payload for the word "letterhead" could only ever find
+# nothing — and "nothing" would have read as "no job applied letterhead",
+# which is a statement about the SELECT, not about the tender. The per-job
+# route /api/ai-jobs/<id> does return output and steps (getJob, ai-jobs.ts:200).
+# Read those.
+_jobs = get(f"/api/ai-jobs?tenderId={urllib.parse.quote(TENDER)}&take=50")
+_jrows = _jobs.get("jobs") if isinstance(_jobs, dict) else (_jobs if isinstance(_jobs, list) else None)
+
+if not isinstance(_jrows, list):
+    print(f"  !! could not read ai-jobs; keys="
+          f"{list(_jobs)[:12] if isinstance(_jobs, dict) else type(_jobs)}")
+else:
+    _types = {}
+    for _j in _jrows:
+        _types[_j.get("jobType")] = _types.get(_j.get("jobType"), 0) + 1
+    print(f"  {len(_jrows)} job row(s): {_types}")
+
+    # Only these two job types can report a letterhead count at all.
+    _interesting = [_j for _j in _jrows
+                    if _j.get("jobType") in ("PROPOSAL_GENERATION", "AUTO_FINALIZE")]
+    if not _interesting:
+        print("  NO PROPOSAL_GENERATION and NO AUTO_FINALIZE job on this tender.")
+        print("  That is a real absence (jobType IS returned by the list endpoint),")
+        print("  and it would mean the documents were produced by some other path.")
+    # Four is enough to see the most recent generation and finalize pass, and
+    # keeps this section inside the job's time budget.
+    for _j in _interesting[:4]:
+        _d = get(f"/api/ai-jobs/{urllib.parse.quote(_j['id'])}", max_time="25")
+        _job = _d.get("job") if isinstance(_d, dict) else None
+        if not isinstance(_job, dict):
+            print(f"  * {_j.get('jobType')} {_j.get('id')}: detail unreadable"
+                  f" (keys={list(_d)[:8] if isinstance(_d, dict) else type(_d)})")
+            continue
+        _out = _job.get("output") if isinstance(_job.get("output"), dict) else {}
+        _has = "letterheadAppliedCount" in _out
+        print(f"  * {_job.get('jobType')}  status={_job.get('status')}"
+              f"  finished={_job.get('finishedAt')}")
+        print(f"      letterheadAppliedCount: "
+              + (repr(_out['letterheadAppliedCount']) if _has
+                 else "KEY ABSENT FROM OUTPUT (not the same as zero)"))
+        for _st in (_job.get("steps") or []):
+            if "letterhead" in f"{_st.get('stepName')} {_st.get('message')}".lower():
+                print(f"      step {_st.get('stepName')} [{_st.get('status')}]"
+                      f" @ {_st.get('finishedAt') or _st.get('startedAt')}: {_st.get('message')}")
+        if _job.get("errorMessage"):
+            print(f"      errorMessage: {str(_job['errorMessage'])[:300]}")
+
+# WHAT RAN MOST RECENTLY, ALL JOB TYPES.
+# currentOutputs fell from 2 (2026-09-10 18:55) to 0 with no new
+# PROPOSAL_GENERATION, so something else superseded the package.
+# isFinalExportCandidateDocument depends only on the document row's own
+# fields (document-output-state.ts:151), so those rows changed. Print the
+# newest jobs of EVERY type, not just the two that brand letterhead.
+print("\n--- newest jobs, all types (what could have superseded the package) ---")
+if isinstance(_jrows, list):
+    for _j in _jrows[:12]:
+        print(f"  {_j.get('createdAt')}  {_j.get('jobType')}  {_j.get('status')}"
+              f"  finished={_j.get('finishedAt')}")
+
+# STORAGE-BACKED OR INLINE? This decides letterhead guard 3/6.
+# Printed for stale rows too: how this deployment stores generated bytes is
+# the same whether a row is current or superseded, and right now every row
+# is superseded — filtering them out is what made the previous run report
+# "0/0 live documents" and answer nothing.
+print("\n--- how generated documents are stored (letterhead only brands inline DOCX) ---")
+if isinstance(_arows, list):
+    print(f"  {len(_arows)} audit row(s) returned")
+    for _r in _arows[:12]:
+        print(f"  {_r.get('exactFileName') or _r.get('documentName')}"
+              f"  format={_r.get('format')}  genStatus={_r.get('generationStatus')}"
+              f"  storagePath={_r.get('hasStoragePath')}  inline={_r.get('hasFileContent')}")
+    _with_storage = sum(1 for _r in _arows if _r.get("hasStoragePath"))
+    _inline_only = sum(1 for _r in _arows
+                       if _r.get("hasFileContent") and not _r.get("hasStoragePath"))
+    print(f"  TOTALS: storage-backed={_with_storage}  inline-only={_inline_only}"
+          f"  of {len(_arows)}")
+    print("  apply-active-letterhead.ts:65 skips every row with a storagePath,"
+          " by design. If storage-backed is the whole population, letterhead"
+          " can never apply in this deployment — that is a product gap, not a"
+          " broken guard, and it is the owner's call what to do about it.")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# FRESHNESS PROOF — did the owner's Run Engine + generation actually produce a
+# NEW package, or are we looking at the same rows as before?
+#
+# "The owner says they clicked it" is not evidence. A run can be dispatched and
+# still leave the package untouched: the engine can fail, generation can be
+# blocked by a readiness gate, or a retry can no-op. Every claim below has to
+# come from a timestamp or a digest, not from the fact that a click happened.
+#
+# Reference point, from inspect 34589272707 at 2026-09-11T10:29Z (BEFORE the
+# owner's clicks):
+#     currentOutputs 0, staleOutputs 33, FILE_FORMAT PENDING_PACKAGE
+#     newest job: ENGINE_RUN created 2026-09-10T19:14:01.740Z
+# Anything newer than that is this run.
+# ═════════════════════════════════════════════════════════════════════════════
+BASELINE = "2026-09-10T19:14:01.740Z"
+print("\n" + "=" * 78)
+print("FRESHNESS PROOF — is this a genuinely new package?")
+print(f"  baseline (newest job before the owner's clicks): {BASELINE}")
+print("=" * 78)
+
+_TERMINAL_BAD = {"FAILED", "CANCELED", "CANCELLED", "TIMED_OUT", "TIMEOUT"}
+
+if not isinstance(_jrows, list):
+    print("  !! job list unreadable — freshness CANNOT be asserted")
+else:
+    _newer = [j for j in _jrows if str(j.get("createdAt") or "") > BASELINE]
+    print(f"\n  jobs created after the baseline: {len(_newer)}")
+    for _j in _newer:
+        print(f"    {_j.get('createdAt')}  {_j.get('jobType'):<20} {_j.get('status'):<12}"
+              f" finished={_j.get('finishedAt')}")
+
+    # Each required stage, proven present-and-succeeded independently.
+    for _stage in ("ENGINE_RUN", "PROPOSAL_GENERATION", "AUTO_FINALIZE"):
+        _hits = [j for j in _newer if j.get("jobType") == _stage]
+        _ok = [j for j in _hits if j.get("status") == "SUCCEEDED"]
+        _verdict = "PRESENT+SUCCEEDED" if _ok else ("PRESENT but NOT succeeded" if _hits else "ABSENT")
+        print(f"  {_stage:<21} {_verdict}"
+              + (f"  ({len(_ok)}/{len(_hits)} succeeded)" if _hits else ""))
+
+    _bad = [j for j in _newer if str(j.get("status") or "").upper() in _TERMINAL_BAD]
+    print(f"\n  FAILED/CANCELED/TIMED_OUT among new jobs: {len(_bad)}")
+    for _j in _bad:
+        print(f"    !! {_j.get('createdAt')} {_j.get('jobType')} {_j.get('status')} id={_j.get('id')}")
+
+# Document-level proof: updatedAt moved AND the bytes are different.
+# updatedAt alone can move on a metadata-only write; contentSha256 is the
+# statement that the BYTES changed. Both are reported.
+print("\n--- current documents: updatedAt and contentSha256 ---")
+if not isinstance(_arows, list):
+    print("  !! audit rows unreadable — byte freshness CANNOT be asserted")
+else:
+    _current = [r for r in _arows if r.get("generationStatus") != "SUPERSEDED"]
+    print(f"  {len(_current)} non-superseded row(s) of {len(_arows)} total")
+    for _r in _current:
+        print(f"    {_r.get('exactFileName') or _r.get('documentName')}"
+              f"  format={_r.get('format')}  gen={_r.get('generationStatus')}"
+              f"  val={_r.get('validationStatus')}  rev={_r.get('reviewStatus')}")
+        print(f"        updatedAt={_r.get('updatedAt')}  created={_r.get('createdAt')}")
+        print(f"        contentSha256={str(_r.get('contentSha256'))[:64]}")
+        print(f"        exportCandidate={_r.get('finalExportCandidate')}"
+              f"  readyForExport={_r.get('readyForExport')}"
+              f"  quality={_r.get('qualityScore')}/{_r.get('qualityRecommendedStatus')}")
+    _moved = [r for r in _current if str(r.get("updatedAt") or "") > BASELINE]
+    print(f"  rows whose updatedAt is after the baseline: {len(_moved)}/{len(_current)}")
+
+print("\n--- package verdict right now (PENDING_PACKAGE means still empty) ---")
+_fpr2 = get(f"/api/tenders/{TENDER}/final-package-readiness")
+_rules2 = []
+_walk_rules(_fpr2, _rules2)
+for _r in _rules2:
+    print(f"  {_r.get('family')}: {_r.get('status')}")
+    print(f"      {_r.get('reason')}")
+if isinstance(_fpr2, dict):
+    for _k in ("ok", "finalExportReady", "readinessScore", "exportReadyDocuments",
+               "requiredDocuments", "tenderLevelBlockers", "blockers", "failures"):
+        if _k in _fpr2:
+            print(f"  {_k} = {json.dumps(_fpr2[_k])[:1200]}")
+
+print("\n--- export readiness, full ---")
+_er2 = get(f"/api/tenders/{TENDER}/export-readiness")
+if isinstance(_er2, dict):
+    for _k in ("ok", "status", "primaryBlockerReason", "primaryFixAction",
+               "requiredDocumentsTotal", "generatedDocumentsTotal",
+               "exportReadyDocumentsTotal"):
+        if _k in _er2:
+            print(f"  {_k} = {json.dumps(_er2[_k])[:600]}")
+    for _b in (_er2.get("blockers") or []):
+        print(f"  BLOCKER {_b.get('code')}: {str(_b.get('message'))[:300]}")
+    for _w in (_er2.get("warnings") or []):
+        print(f"  warning {_w.get('code')}: {str(_w.get('message'))[:200]}")
+else:
+    print(f"  !! {str(_er2)[:300]}")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# WHY DID THE OWNER'S CLICKS PRODUCE NO JOB?
+#
+# enqueueEngineJob only reuses a job in QUEUED / RUNNING / PARTIAL_SUCCESS
+# (enqueue-engine-job.ts:134). A SUCCEEDED ENGINE_RUN does NOT suppress a new
+# one, so a click that reached the enqueue would have created a row. Zero new
+# rows therefore means the request was refused BEFORE enqueue — and a
+# pre-enqueue refusal writes no AiJob, so it leaves no trace the job list can
+# show. These endpoints are where that refusal is visible.
+# ═════════════════════════════════════════════════════════════════════════════
+print("\n" + "=" * 78)
+print("PRE-ENQUEUE GATE STATE — what a Run Engine click would hit right now")
+print("=" * 78)
+
+_gate = {}
+for _label, _path in (
+    ("engine-readiness", f"/api/tenders/{TENDER}/engine-readiness"),
+    ("generation-readiness", f"/api/tenders/{TENDER}/generation-readiness"),
+    ("workflow-status", f"/api/tenders/{TENDER}/workflow-status"),
+):
+    _gate[_label] = get(_path)
+    print(f"\n----- {_label} -----")
+    print(json.dumps(_gate[_label], indent=2)[:4500])
+
+print("\n----- workflow-center: the canonical next action the owner is shown -----")
+_wc = get(f"/api/tenders/{TENDER}/workflow-center")
+if isinstance(_wc, dict):
+    # Print the decision fields first; the full payload is large and the
+    # question here is only "what does the app tell the owner to do next".
+    for _k in ("nextRequiredAction", "nextRequiredActionReason", "nextAction",
+               "blockerCodes", "blockerDetails", "stage", "status",
+               "canonicalStage", "readinessScore", "ok"):
+        if _k in _wc:
+            print(f"  {_k} = {json.dumps(_wc[_k])[:900]}")
+    _dec = _wc.get("decision") if isinstance(_wc.get("decision"), dict) else None
+    if _dec:
+        print("  decision:")
+        for _k, _v in list(_dec.items())[:20]:
+            print(f"    {_k} = {json.dumps(_v)[:700]}")
+# Full payload intentionally NOT dumped: it is mostly per-field metadata and
+# it pushed the decisive sections out of the readable end of the job log.
+print(f"  (workflow-center payload keys: {list(_wc)[:14] if isinstance(_wc, dict) else type(_wc)})")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# DID THE OWNER'S CLICKS LAND ON A DIFFERENT TENDER?
+#
+# Everything above is scoped to one tender id. If the owner worked on a
+# different tender — an easy thing to do when several are open — this tender
+# would look untouched while the clicks worked perfectly. /api/ai-jobs without
+# a tenderId filter returns the newest jobs for the whole account, so a click
+# that landed anywhere shows up here.
+#
+# This distinguishes "the app refused the run" from "the run happened
+# somewhere else", and those have completely different fixes.
+# ═════════════════════════════════════════════════════════════════════════════
+print("\n" + "=" * 78)
+print("ACCOUNT-WIDE JOB ACTIVITY — did the clicks land on another tender?")
+print("=" * 78)
+_all = get("/api/ai-jobs?take=40")
+_allrows = _all.get("jobs") if isinstance(_all, dict) else (_all if isinstance(_all, list) else None)
+if not isinstance(_allrows, list):
+    print(f"  !! unreadable; keys={list(_all)[:10] if isinstance(_all, dict) else type(_all)}")
+else:
+    print(f"  {len(_allrows)} newest job(s) across ALL tenders for this account:")
+    for _j in _allrows[:25]:
+        _mine = "THIS TENDER" if _j.get("tenderId") == TENDER else f"other:{str(_j.get('tenderId'))[:8]}"
+        _new = "  <== AFTER BASELINE" if str(_j.get("createdAt") or "") > BASELINE else ""
+        print(f"    {_j.get('createdAt')}  {_j.get('jobType'):<20} {_j.get('status'):<12}"
+              f" {_mine}{_new}")
+    _after = [j for j in _allrows if str(j.get("createdAt") or "") > BASELINE]
+    print(f"\n  jobs anywhere on this account after {BASELINE}: {len(_after)}")
+    if not _after:
+        print("  => the clicks did not create a job on ANY tender in this account.")
+
+print("\n--- tenders visible to this account (is the owner working on another?) ---")
+for _t in (discover_tenders() or [])[:15]:
+    _mark = "  <== inspected" if _t.get("id") == TENDER else ""
+    print(f"  {str(_t.get('id'))[:8]}  stage={_t.get('stage')}  status={_t.get('status')}"
+          f"  updated={_t.get('updatedAt')}  {str(_t.get('title'))[:60]}{_mark}")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# WAS A RUN ENGINE REFUSED? The durable answer.
+#
+# Until f3e17913 every pre-enqueue refusal in the engine route returned JSON
+# and wrote nothing, so "I clicked and nothing happened" could not be told
+# apart from "the click never reached the server". Refusals are now persisted
+# as TENDER_ENGINE_RUN_REFUSED audit rows carrying the code, HTTP status,
+# nextAction and the diagnosticId the owner saw.
+#
+# IMPORTANT: this only sees refusals that happened AFTER that deployment went
+# live. A refusal before it leaves no row, and an empty list must not be read
+# as "no refusal ever happened" in that window.
+# ═════════════════════════════════════════════════════════════════════════════
+print("\n" + "=" * 78)
+print("RUN ENGINE REFUSALS — persisted, with the code that caused them")
+print("=" * 78)
+_ref = get(f"/api/admin/engine-refusals?tenderId={urllib.parse.quote(TENDER)}&limit=25")
+if not isinstance(_ref, dict) or "refusals" not in _ref:
+    print(f"  !! unreadable; keys={list(_ref)[:12] if isinstance(_ref, dict) else type(_ref)}")
+    print(f"  raw: {str(_ref)[:400]}")
+else:
+    print(f"  count = {_ref.get('count')}")
+    print(f"  {_ref.get('meaning')}")
+    for _r in _ref.get("refusals") or []:
+        print(f"    {_r.get('createdAt')}  code={_r.get('code')}  http={_r.get('httpStatus')}")
+        print(f"        nextAction={_r.get('nextAction')}")
+        print(f"        error={str(_r.get('error'))[:220]}")
+        print(f"        diagnosticId={_r.get('diagnosticId')}")
+
+print("\n--- account-wide refusals (any tender), in case the click went elsewhere ---")
+_refall = get("/api/admin/engine-refusals?limit=25")
+if isinstance(_refall, dict) and isinstance(_refall.get("refusals"), list):
+    print(f"  count = {_refall.get('count')}")
+    for _r in _refall["refusals"][:10]:
+        print(f"    {_r.get('createdAt')}  tender={str(_r.get('tenderId'))[:8]}  code={_r.get('code')}")
+else:
+    print(f"  !! unreadable: {str(_refall)[:250]}")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# VERDICT — LAST, DELIBERATELY
+#
+# Everything above is evidence; this is the answer. It goes last because the
+# job log is read from the end and the readable tail is finite. Twice now the
+# decisive section has been pushed out of view by a large JSON dump printed
+# above it (5e4ab3ef trimmed two of them for exactly this reason), and on the
+# second occasion the field that would have settled the question —
+# engine-readiness.canRunEngine — was unreachable even at 330 lines of tail.
+#
+# So the rule this block encodes: whatever the question of the day is, its
+# answer is printed in the last twenty lines, in full, with no JSON around it.
+# ═════════════════════════════════════════════════════════════════════════════
+print("\n" + "=" * 78)
+print("VERDICT — could a Run Engine click have worked, and did one?")
+print("=" * 78)
+
+_er = _gate.get("engine-readiness")
+if isinstance(_er, dict) and "canRunEngine" in _er:
+    _can = _er.get("canRunEngine")
+    print(f"  canRunEngine      = {_can}")
+    print(f"  analysisCurrent   = {_er.get('analysisCurrent')}")
+    print(f"  sourceRevision    = {'present' if _er.get('sourceRevision') else 'MISSING'}")
+    print(f"  engineRunning     = {_er.get('engineRunning')}")
+    print(f"  engineComplete    = {_er.get('engineComplete')}")
+    print(f"  engineFailed      = {_er.get('engineFailed')}")
+    print(f"  blocker           = {_er.get('blocker')}")
+    print(f"  analysisBlocker   = {_er.get('analysisBlocker')}")
+    print("")
+    if _can is True:
+        print("  => The Run Engine button was ENABLED. A click reaches the server,")
+        print("     so a click that produced no job must have been refused or thrown,")
+        print("     and either now leaves a TENDER_ENGINE_RUN_REFUSED row.")
+    else:
+        print("  => The Run Engine button was DISABLED. A click fires no request at")
+        print("     all, which is why no job and no refusal row exist. 'Apparently")
+        print("     nothing' is then literally accurate, and the blocker above is")
+        print("     the reason the owner needs to be shown.")
+else:
+    print(f"  !! engine-readiness unreadable: {str(_er)[:300]}")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# WHY IS A MANDATORY REQUIREMENT ONLY PARTIAL?
+#
+# Acceptance 34611862046 got the whole chain through to a complete package and
+# stopped on one gate: MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE at 4/6, with
+# "Email Submission Only" and "Required Email Subject Line" both traced,
+# both selectedEvidenceCount=1, both strongestEvidenceLevel=PARTIAL.
+#
+# Knowing they are PARTIAL is not knowing why. supportForCandidate() reaches
+# PARTIAL by several different routes, and they call for opposite responses:
+#
+#   * a BUILD_PLAN_ITEM without artifactBytesVerified  -> ordering problem
+#   * a GENERATED_DOCUMENT with visibleTextInspected=false -> the artifact's
+#     text was never read, so the +40 "text addresses the requirement" boost
+#     could not apply
+#   * visibleTextInspected=true but fewer than 2 matching tokens -> the
+#     artifact genuinely does not say what the requirement asks
+#   * a vault record scoring 84 or less -> evidence really is thin
+#
+# Only the last is "the gate is right and the owner must supply evidence".
+# Printing the record type, support level and facets of the actual selected
+# row is what separates them. Guessing between them is how the reverted
+# SUBMISSION_CHANNEL change happened.
+# ═════════════════════════════════════════════════════════════════════════════
+print("\n" + "=" * 78)
+print("WHY PARTIAL — the selected evidence behind every sub-FULL mandatory row")
+print("=" * 78)
+
+_cov = get(f"/api/tenders/{TENDER}/requirement-coverage")
+if not isinstance(_cov, dict) or not isinstance(_cov.get("rows"), list):
+    print(f"  !! unreadable: {str(_cov)[:300]}")
+else:
+    print(f"  totalMandatory={_cov.get('totalMandatory')} fullyCovered={_cov.get('fullyCovered')} "
+          f"partiallyCovered={_cov.get('partiallyCovered')} coverageRatio={_cov.get('coverageRatio')}")
+    for _row in _cov["rows"]:
+        _level = str(_row.get("supportLevel") or _row.get("strongestEvidenceLevel") or "")
+        if _row.get("coverageStatus") == "FULLY_MET":
+            continue
+        print(f"\n  --- {_row.get('title')}  [{str(_row.get('requirementId') or _row.get('id'))[:8]}]")
+        print(f"      type={_row.get('requirementType')}  priority={_row.get('priority')}  level={_level or '(none)'}")
+        print(f"      coverageStatus={_row.get('coverageStatus')}  automationState={_row.get('automationState')}")
+        print(f"      supportLevel={_row.get('supportLevel')}  hasSourceRef={_row.get('hasSourceRef')}")
+        print(f"      sourceExactQuote={str(_row.get('sourceExactQuote'))[:160]}")
+        # evidenceLinks is the real field name on this route's rows. Its
+        # evidenceSource is the discriminator that matters: AUTO_* tells you
+        # whether the linked record was a build-plan promise or the generated
+        # artifact itself, which is the difference between an ordering defect
+        # and evidence that is genuinely thin.
+        _ev = _row.get("evidenceLinks") or []
+        if not isinstance(_ev, list) or not _ev:
+            print(f"      (no evidenceLinks; row keys = {list(_row)[:20]})")
+            continue
+        for _e in _ev[:8]:
+            if not isinstance(_e, dict):
+                print(f"      link: {str(_e)[:200]}"); continue
+            print(f"      link: source={_e.get('evidenceSource')} type={_e.get('evidenceType')} "
+                  f"support={_e.get('supportLevel')} auto={_e.get('autoLinked')}")
+            print(f"            reference={str(_e.get('evidenceReference'))[:200]}")

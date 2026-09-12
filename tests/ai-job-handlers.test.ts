@@ -1,7 +1,7 @@
 // Tests for the AI job handler registry.
 //
 // Coverage:
-//   • All 6 JobType values have handlers registered (no orphans).
+//   • Every canonical job type has a handler registered.
 //   • Each handler validates its required context before invoking
 //     downstream work (tenderId / userId / required input fields).
 //   • Unknown / future JobType values fall through to null so the
@@ -14,7 +14,6 @@ import type { JobType } from "../lib/ai-jobs";
 
 const ALL_HANDLERS: JobType[] = [
   "ENGINE_RUN",
-  "AI_REMATCH",
   "PROPOSAL_GENERATION",
   "EVALUATOR_SIM",
   "COPILOT_DEEP_ANALYSIS",
@@ -22,7 +21,7 @@ const ALL_HANDLERS: JobType[] = [
 ];
 
 describe("ai-job-handlers registry", () => {
-  it("all 6 JobType values have a handler registered (no orphans)", () => {
+  it("all canonical JobType values have a handler registered (no orphans)", () => {
     for (const jobType of ALL_HANDLERS) {
       const handler = getHandler(jobType);
       assert.ok(handler, `Expected ${jobType} handler to be registered`);
@@ -56,14 +55,9 @@ describe("ai-job-handlers registry", () => {
     );
   });
 
-  it("AI_REMATCH handler rejects when tenderId is missing", async () => {
-    const handler = getHandler("AI_REMATCH");
-    assert.ok(handler);
-    await assert.rejects(
-      handler({ jobId: "job-2", userId: "user-1", tenderId: null, input: {} }),
-      /tenderId/i,
-      "Expected AI_REMATCH to reject when tenderId is null",
-    );
+  it("does not register the retired standalone AI_REMATCH owner", () => {
+    assert.equal(getHandler("AI_REMATCH"), null);
+    assert.equal(supportedJobTypes().includes("AI_REMATCH"), false);
   });
 
   it("PROPOSAL_GENERATION handler rejects when tenderId is missing", async () => {

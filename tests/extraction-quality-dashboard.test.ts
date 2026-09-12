@@ -431,85 +431,82 @@ describe("ExtractionQualityDashboard — clientDetailPages shown in content grid
     assert.ok(Array.isArray(report.clientDetailPages), "clientDetailPages must be an array");
   });
 
-  it("dashboard component source shows clientDetailPages in the content-page grid", async () => {
+  it("the live extraction-quality-panel shows clientDetailPages in the content-page grid", async () => {
+    // ExtractionQualityDashboard (this describe block's original subject) was
+    // deleted as unrendered dead code — nothing imported or mounted it. Its
+    // CLAUDE.md-mandated per-page detail rendering was independently
+    // reimplemented (under different field/label names) in the live,
+    // rendered components/extraction-quality-panel.tsx. Re-pointed rather
+    // than deleted so this CLAUDE.md requirement keeps real coverage.
     const src = readFileSync(
-      resolve(process.cwd(), "components/extraction-quality-dashboard.tsx"),
+      resolve(process.cwd(), "components/extraction-quality-panel.tsx"),
       "utf8",
     );
     assert.ok(
       src.includes("clientDetailPages"),
-      "dashboard must show clientDetailPages in the content-page detection grid",
+      "panel must show clientDetailPages in the content-page detection grid",
     );
     assert.ok(
-      src.includes("Client Details"),
-      "dashboard must label the clientDetailPages column as 'Client Details'",
-    );
-    assert.ok(
-      src.includes("client/contact detail pages"),
-      "dashboard must warn when no client/contact detail pages are detected",
+      src.includes("Client/contact details"),
+      "panel must label the clientDetailPages row as 'Client/contact details'",
     );
   });
 });
 
-describe("ExtractionQualityDashboard — page-list display (CLAUDE.md requirement)", () => {
-  it("dashboard source exposes failedPageNums, blankPageNums, lowDensityPageNums in fileData", () => {
+describe("ExtractionQualityPanel — page-list display (CLAUDE.md requirement)", () => {
+  it("panel source exposes failedPages, blankPages, lowDensityPages, ocrPages per-page arrays", () => {
     const src = readFileSync(
-      resolve(process.cwd(), "components/extraction-quality-dashboard.tsx"),
+      resolve(process.cwd(), "components/extraction-quality-panel.tsx"),
       "utf8",
     );
-    assert.ok(src.includes("failedPageNums"), "fileData must expose failedPageNums array");
-    assert.ok(src.includes("blankPageNums"), "fileData must expose blankPageNums array");
-    assert.ok(src.includes("lowDensityPageNums"), "fileData must expose lowDensityPageNums array");
-    assert.ok(src.includes("ocrPageNums"), "fileData must expose ocrPageNums array");
-    assert.ok(src.includes("perPageEntries"), "fileData must expose perPageEntries for per-page confidence table");
+    assert.ok(src.includes("pp.failedPages"), "must expose per-page failedPages array");
+    assert.ok(src.includes("pp.blankPages"), "must expose per-page blankPages array");
+    assert.ok(src.includes("pp.lowDensityPages"), "must expose per-page lowDensityPages array");
+    assert.ok(src.includes("pp.ocrPages"), "must expose per-page ocrPages array");
   });
 
-  it("dashboard source renders specific page numbers for failed pages", () => {
+  it("panel source renders specific page numbers for failed pages", () => {
     const src = readFileSync(
-      resolve(process.cwd(), "components/extraction-quality-dashboard.tsx"),
+      resolve(process.cwd(), "components/extraction-quality-panel.tsx"),
       "utf8",
     );
     assert.ok(
-      src.includes("failedPageNums.length > 0"),
-      "dashboard must render failed page numbers when failedPageNums is non-empty",
+      src.includes("pp.failedPages.length > 0"),
+      "must render failed page numbers when failedPages is non-empty",
     );
     assert.ok(
-      src.includes("pageList(file.failedPageNums)"),
-      "dashboard must call pageList() to format failed page numbers",
+      src.includes("formatPages(pp.failedPages"),
+      "must call formatPages() to format failed page numbers",
     );
   });
 
-  it("dashboard source renders specific page numbers for low-confidence pages", () => {
+  it("panel source renders specific page numbers for low-confidence pages", () => {
     const src = readFileSync(
-      resolve(process.cwd(), "components/extraction-quality-dashboard.tsx"),
+      resolve(process.cwd(), "components/extraction-quality-panel.tsx"),
       "utf8",
     );
     assert.ok(
-      src.includes("lowDensityPageNums.length > 0"),
-      "dashboard must render low-density page numbers",
+      src.includes("pp.lowDensityPages.length > 0"),
+      "must render low-density page numbers",
     );
     assert.ok(
       src.includes("Low-confidence pages"),
-      "dashboard must label low-density pages as 'Low-confidence pages'",
+      "must label low-confidence pages as 'Low-confidence pages'",
     );
   });
 
-  it("dashboard source renders per-page confidence table for problem pages", () => {
+  it("panel source renders a per-page problem breakdown", () => {
     const src = readFileSync(
-      resolve(process.cwd(), "components/extraction-quality-dashboard.tsx"),
+      resolve(process.cwd(), "components/extraction-quality-panel.tsx"),
       "utf8",
     );
     assert.ok(
-      src.includes("Per-page confidence"),
-      "dashboard must include a per-page confidence section header",
+      src.includes("Failed pages:"),
+      "must include a per-page failed-pages line",
     );
     assert.ok(
-      src.includes("perPageEntries"),
-      "dashboard must render perPageEntries in the per-page table",
-    );
-    assert.ok(
-      src.includes("PAGE_MARKERS"),
-      "per-page confidence table must only show when PAGE_MARKERS detection mode is active",
+      src.includes("hasProblemPages"),
+      "per-page problem breakdown must only show when problem pages exist",
     );
   });
 

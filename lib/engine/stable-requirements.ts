@@ -1,5 +1,30 @@
 import { RequirementDraft } from "./types";
 
+const IDENTITY_STOP_WORDS = new Set("a an and bidder bidders company document documents evidence for from must of provide required requirement shall submit submission the to with".split(" "));
+
+export function canonicalRequirementIdentity(requirement: Pick<RequirementDraft, "title" | "description" | "requirementType">): string {
+  const normalized = requirement.title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/curriculum vitae/g, " cv ")
+    .replace(/past performance|project references?/g, " project experience ")
+    .split(/\s+/)
+    .filter((token) => token.length > 2 && !IDENTITY_STOP_WORDS.has(token));
+  return `${requirement.requirementType ?? "UNKNOWN"}::${[...new Set(normalized)].sort().slice(0, 24).join("-")}`;
+}
+
+export function deduplicateRequirements(requirements: RequirementDraft[]): RequirementDraft[] {
+  const byIdentity = new Map<string, RequirementDraft>();
+  for (const requirement of requirements) {
+    const identity = canonicalRequirementIdentity(requirement);
+    const current = byIdentity.get(identity);
+    if (!current || `${requirement.title} ${requirement.description}`.length > `${current.title} ${current.description}`.length) {
+      byIdentity.set(identity, requirement);
+    }
+  }
+  return [...byIdentity.values()];
+}
+
 /**
  * Reconciles new requirements from analysis with existing ones in the DB.
  * Tries to match by normalized title and type to preserve IDs.
@@ -19,7 +44,7 @@ export async function upsertRequirements(
 
   const existingMap = new Map<string, string>();
   for (const e of existing) {
-    const key = `${e.requirementType ?? "UNKNOWN"}::${(e.title ?? "").toLowerCase().replace(/\s+/g, " ").trim()}`;
+    const key = canonicalRequirementIdentity({ ...e, description: "" });
     if (!existingMap.has(key)) existingMap.set(key, e.id);
   }
 
@@ -53,8 +78,8 @@ export async function upsertRequirements(
   }> = [];
   const toUpdate: Array<{ id: string; data: Record<string, unknown> }> = [];
 
-  for (const req of newReqs) {
-    const key = `${req.requirementType ?? "UNKNOWN"}::${(req.title ?? "").toLowerCase().replace(/\s+/g, " ").trim()}`;
+  for (const req of deduplicateRequirements(newReqs)) {
+    const key = canonicalRequirementIdentity(req);
     const existingId = existingMap.get(key);
 
     const data = {

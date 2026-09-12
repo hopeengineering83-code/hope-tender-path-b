@@ -1,18 +1,17 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
+import { MATCH_PAGE_SIZE } from "../../../../../lib/engine/matching-config";
 
-export async function PUT(
-  req: Request,
+export const dynamic = "force-dynamic";
+
+export async function GET(
+  _req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   let actor;
-  try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
-  catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
-
-  const rl = rateLimit(`matches:${actor.id}`, MUTATION_RATE_LIMIT);
-  if (!rl.allowed) return NextResponse.json({ error: "Too many requests", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
+  try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER"); }
+  catch (error) { return error instanceof Error && error.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
 
   await prismaReady;
   const { id: tenderId } = await params;
@@ -21,19 +20,61 @@ export async function PUT(
   const tender = await prisma.tender.findFirst({ where: { id: tenderId, userId } });
   if (!tender) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const body = await req.json().catch(() => null) as { matchId: string; matchType: "expert" | "project"; isSelected: boolean } | null;
-  if (!body) return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 });
-  const { matchId, matchType, isSelected } = body;
+  const [selectedExperts, selectedProjects, unselectedExperts, unselectedProjects] = await Promise.all([
+    prisma.tenderExpertMatch.findMany({
+      where: { tenderId, isSelected: true },
+      orderBy: { score: "desc" },
+      include: {
+        expert: { select: { id: true, fullName: true, title: true, disciplines: true, sectors: true, trustLevel: true } },
+      },
+    }),
+    prisma.tenderProjectMatch.findMany({
+      where: { tenderId, isSelected: true },
+      orderBy: { score: "desc" },
+      include: {
+        project: { select: { id: true, name: true, clientName: true, sector: true, contractValue: true, currency: true, trustLevel: true } },
+      },
+    }),
+    prisma.tenderExpertMatch.findMany({
+      where: { tenderId, isSelected: false },
+      orderBy: { score: "desc" },
+      take: MATCH_PAGE_SIZE,
+      include: {
+        expert: { select: { id: true, fullName: true, title: true, disciplines: true, sectors: true, trustLevel: true } },
+      },
+    }),
+    prisma.tenderProjectMatch.findMany({
+      where: { tenderId, isSelected: false },
+      orderBy: { score: "desc" },
+      take: MATCH_PAGE_SIZE,
+      include: {
+        project: { select: { id: true, name: true, clientName: true, sector: true, contractValue: true, currency: true, trustLevel: true } },
+      },
+    }),
+  ]);
 
-  if (matchType === "expert") {
-    const match = await prisma.tenderExpertMatch.findFirst({ where: { id: matchId, tenderId } });
-    if (!match) return NextResponse.json({ error: "Match not found" }, { status: 404 });
-    const updated = await prisma.tenderExpertMatch.update({ where: { id: matchId }, data: { isSelected, updatedAt: new Date() } });
-    return NextResponse.json(updated);
-  } else {
-    const match = await prisma.tenderProjectMatch.findFirst({ where: { id: matchId, tenderId } });
-    if (!match) return NextResponse.json({ error: "Match not found" }, { status: 404 });
-    const updated = await prisma.tenderProjectMatch.update({ where: { id: matchId }, data: { isSelected, updatedAt: new Date() } });
-    return NextResponse.json(updated);
-  }
+  const combineMatches = <T extends { isSelected: boolean; score: number }>(selected: T[], unselected: T[]): T[] =>
+    [...selected, ...unselected].sort((a, b) => {
+      if (a.isSelected !== b.isSelected) return a.isSelected ? -1 : 1;
+      return b.score - a.score;
+    });
+
+  return NextResponse.json({
+    expertMatches: combineMatches(selectedExperts, unselectedExperts).map((match) => ({
+      id: match.id,
+      score: match.score,
+      rationale: match.rationale,
+      isSelected: match.isSelected,
+      revision: match.updatedAt.toISOString(),
+      expert: match.expert,
+    })),
+    projectMatches: combineMatches(selectedProjects, unselectedProjects).map((match) => ({
+      id: match.id,
+      score: match.score,
+      rationale: match.rationale,
+      isSelected: match.isSelected,
+      revision: match.updatedAt.toISOString(),
+      project: match.project,
+    })),
+  });
 }

@@ -20,8 +20,8 @@ export function PanelErrorFallback({
         </svg>
         <div className="flex-1">
           <p className="text-sm font-semibold text-amber-800">{panelName} unavailable</p>
-          <p className="mt-1 text-xs text-amber-700">
-            Refresh to retry. If the problem persists, contact admin.
+          <p className="mt-1 text-xs text-amber-800">
+            If the problem persists, contact admin.
           </p>
           {diagnosticId && (
             <p className="mt-1 text-[10px] text-amber-500">

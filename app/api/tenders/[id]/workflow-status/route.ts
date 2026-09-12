@@ -32,6 +32,13 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
           format: true, generationStatus: true, validationStatus: true,
           reviewStatus: true, storagePath: true, documentType: true,
           reviewNotes: true, updatedAt: true,
+          // Cheap scalars that say whether content exists, without loading it.
+          // storagePath alone cannot answer that: a document whose bytes live
+          // in the fileContent column has storagePath null, so testing only
+          // storagePath reported every DB-stored document as having no
+          // content. These three columns are integers/short strings, not the
+          // multi-MB blob this select exists to avoid.
+          contentByteLength: true, contentSha256: true, integrityStatus: true,
         },
       },
       exportPackages: { orderBy: { createdAt: "desc" }, take: 1 },
@@ -54,22 +61,51 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
   const fileIntegrityProblems = tender.generatedDocuments.flatMap((doc) => {
     // fileContent is not loaded in the select (to avoid loading multi-MB blobs).
-    // Skip the byte-level integrity check here — the download route does a
-    // full integrity check before serving. This route only needs status-level
-    // info (GENERATED / FAILED / SUPERSEDED).
-    return doc.generationStatus === "GENERATED" && !doc.storagePath
+    // The byte-level integrity check stays with the download route, which
+    // loads and verifies the bytes in full before serving. This route asks
+    // only the cheap question: does this document have content at all?
+    //
+    // It used to ask that as `!doc.storagePath`, which is only one of the two
+    // places content lives. Every document whose bytes are held in the
+    // fileContent column has storagePath null, so three VERIFIED, non-empty,
+    // downloadable documents were each reported as
+    // "Generated document has no stored content" and blocked this route while
+    // the ZIP built from those same rows returned 200.
+    //
+    // contentByteLength answers it directly and costs nothing to select. A
+    // GENERATED document with neither a storage path nor any recorded bytes is
+    // still reported, so the case this check was written for is unchanged.
+    const hasStoredBytes = (doc.contentByteLength ?? 0) > 0;
+    return doc.generationStatus === "GENERATED" && !doc.storagePath && !hasStoredBytes
       ? [{ documentId: doc.id, filename: doc.exactFileName ?? doc.name, problem: "Generated document has no stored content" }]
       : [];
   });
 
-  const manifest = buildFinalPackageManifest(tender.generatedDocuments.map((doc) => ({
-    id: doc.id,
-    exactFileName: doc.exactFileName,
-    name: doc.name,
-    fileContent: null, // Not loaded — download route fetches lazily
-    exactOrder: doc.exactOrder,
-    generationStatus: doc.generationStatus,
-  })));
+  // The select above deliberately omits fileContent, so the manifest is built
+  // with contentLoaded: false. Passing fileContent: null without saying so made
+  // the builder measure every document as zero bytes with an empty hash, and
+  // the strict validation turned that into three hard blockers per document —
+  //
+  //   "<file>: required file invalid" / "zero-byte file" / "invalid sha256"
+  //
+  // — for documents that were VERIFIED, non-empty and downloadable. Those
+  // blockers went into this route's public readiness envelope, so a complete
+  // package published BLOCKED here while export-readiness, readiness-score,
+  // authority-review, the Export Hub and the ZIP itself all said it was ready.
+  //
+  // Nothing is loosened: the byte-level check still runs wherever the bytes are
+  // loaded, and the download route verifies them in full before serving.
+  const manifest = buildFinalPackageManifest(
+    tender.generatedDocuments.map((doc) => ({
+      id: doc.id,
+      exactFileName: doc.exactFileName,
+      name: doc.name,
+      fileContent: null, // Not loaded — download route fetches lazily
+      exactOrder: doc.exactOrder,
+      generationStatus: doc.generationStatus,
+    })),
+    { contentLoaded: false },
+  );
 
   const finalPackage = await getFinalPackageReadinessModel(prisma, tenderId, actor.id);
   const blockers = [

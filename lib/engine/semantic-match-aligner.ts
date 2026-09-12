@@ -35,7 +35,7 @@ import { logger } from "../observability";
  * legacy lexical match.
  */
 
-import { generateWithFallback, isAIEnabled } from "../ai";
+import { generateWithFallback, isAIEnabled, runAsAdvisory } from "../ai";
 import type { DeepTenderComprehension } from "./evaluation-criteria-extractor";
 
 export type AlignmentCandidate = {
@@ -358,7 +358,7 @@ export function formatAlignmentForPrompt(report: AlignmentReport): string {
  * Callers MUST tolerate null and continue with legacy lexical
  * matching.
  */
-export async function alignMatchesToEvaluatorCriteria(input: {
+async function alignMatchesToEvaluatorCriteriaImpl(input: {
   tenderTitle: string;
   clientName: string;
   comprehension: DeepTenderComprehension | null;
@@ -398,3 +398,15 @@ export async function alignMatchesToEvaluatorCriteria(input: {
  * call.
  */
 export const __testing__ = { buildAlignmentPrompt };
+
+/**
+ * Optional semantic alignment. Advisory: the engine logs "falling through to
+ * legacy lexical match only" and carries on when this returns null, so it gets
+ * one attempt per provider rather than the full retry budget. Wrapped here so
+ * every caller inherits it — see the note in ai-multi-perspective-matcher.ts.
+ */
+export async function alignMatchesToEvaluatorCriteria(
+  input: Parameters<typeof alignMatchesToEvaluatorCriteriaImpl>[0],
+): Promise<AlignmentReport | null> {
+  return runAsAdvisory(() => alignMatchesToEvaluatorCriteriaImpl(input));
+}

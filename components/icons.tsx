@@ -46,7 +46,7 @@ export function SparklesIcon(props: IconProps) {
   );
 }
 
-/** Lightning bolt — Generate Docs. Replaces ⚡ */
+/** Lightning bolt — document generation. Replaces ⚡ */
 export function BoltIcon(props: IconProps) {
   return (
     <svg {...base(props)}>
@@ -128,6 +128,46 @@ export function ChevronDownIcon(props: IconProps) {
   );
 }
 
+/** Chevron up — collapse / show fewer. Replaces ▲ */
+export function ChevronUpIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <path d="M6 15l6-6 6 6" />
+    </svg>
+  );
+}
+
+/** Chevron left — previous. Replaces ◀ */
+export function ChevronLeftIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <path d="M15 6l-6 6 6 6" />
+    </svg>
+  );
+}
+
+/** Chevron right — next. Replaces ▶ */
+export function ChevronRightIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <path d="M9 6l6 6-6 6" />
+    </svg>
+  );
+}
+
+/** Hollow circle — not yet run / not started. Replaces ○ */
+export function CircleIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <circle cx="12" cy="12" r="8" />
+    </svg>
+  );
+}
+
 /** Hourglass / clock — cooldown / waiting. Replaces ⏳ */
 export function ClockIcon(props: IconProps) {
   return (
@@ -168,6 +208,18 @@ export function CheckCircleIcon(props: IconProps) {
       {props.title ? <title>{props.title}</title> : null}
       <circle cx="12" cy="12" r="9" />
       <path d="M9 12l2 2 4-4" />
+    </svg>
+  );
+}
+
+/** Horizontal dash — explicitly not applicable / no value.
+ *  Used by the canonical readiness model for the NOT_APPLICABLE module state
+ *  so every state uses an inline SVG icon (no Unicode glyph dependency). */
+export function DashIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <path d="M6 12h12" />
     </svg>
   );
 }
@@ -346,6 +398,285 @@ export function SearchIcon(props: IconProps) {
       {props.title ? <title>{props.title}</title> : null}
       <circle cx="11" cy="11" r="8" />
       <path d="m21 21-4.35-4.35" />
+    </svg>
+  );
+}
+
+// ─── Primary navigation icons ───────────────────────────────────────────────
+// The main sidebar previously rendered its 17 nav items as raw emoji
+// characters (🏠 📋 🕘 etc). Emoji rendering depends entirely on the
+// *viewer's* OS/browser having a full-color emoji font installed — it is a
+// client-side concern, not something a production deploy can fix server-side.
+// Environments without one (many headless browsers, screenshot/automation
+// tools, and some desktop Linux setups) show blank "tofu" boxes for every
+// single nav item, on every single page. Same root cause already documented
+// above for the dingbat action icons; these are the same failure mode.
+
+/** House — dashboard overview / home. */
+export function HomeIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <path d="M3 11.5 12 4l9 7.5" />
+      <path d="M5 10v10h14V10" />
+      <path d="M9 20v-6h6v6" />
+    </svg>
+  );
+}
+
+/** Calendar — deadlines, dates. */
+export function CalendarIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <rect x="3" y="5" width="18" height="16" rx="2" />
+      <path d="M3 10h18M8 3v4M16 3v4" />
+    </svg>
+  );
+}
+
+/** Database / vault — company knowledge store. */
+export function DatabaseIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <ellipse cx="12" cy="5.5" rx="8" ry="3" />
+      <path d="M4 5.5V12c0 1.7 3.6 3 8 3s8-1.3 8-3V5.5" />
+      <path d="M4 12v6.5c0 1.7 3.6 3 8 3s8-1.3 8-3V12" />
+    </svg>
+  );
+}
+
+/** Trending line — readiness / progress over time. */
+export function TrendingUpIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <path d="M3 17l6-6 4 4 8-8" />
+      <path d="M15 6h6v6" />
+    </svg>
+  );
+}
+
+/** Picture / image frame — brand assets. */
+export function ImageIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <circle cx="8.5" cy="9.5" r="1.5" />
+      <path d="M21 16l-5.5-5.5a2 2 0 0 0-2.83 0L3 20" />
+    </svg>
+  );
+}
+
+/** Brain — AI-driven analysis. */
+export function BrainIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <path d="M9 4a3 3 0 0 0-3 3 3 3 0 0 0-2 2.8V13a3 3 0 0 0 2 2.8V17a3 3 0 0 0 3 3" />
+      <path d="M15 4a3 3 0 0 1 3 3 3 3 0 0 1 2 2.8V13a3 3 0 0 1-2 2.8V17a3 3 0 0 1-3 3" />
+      <path d="M9 4v16M15 4v16" />
+    </svg>
+  );
+}
+
+/** Puzzle piece — matching. */
+export function PuzzleIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <path d="M9 4h4v2.2a1.8 1.8 0 0 0 3 1.3 1.8 1.8 0 0 1 3 1.3V13h-2.2a1.8 1.8 0 0 0 0 3.6H19v4h-4a1.8 1.8 0 0 0-3.6 0V20H7v-4.2a1.8 1.8 0 0 1-1.3-3 1.8 1.8 0 0 0-1.3-3H2V5.6A1.6 1.6 0 0 1 3.6 4H9z" />
+    </svg>
+  );
+}
+
+/** Shield — compliance. */
+export function ShieldIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <path d="M12 3l7 3v6c0 4.5-3 7.7-7 9-4-1.3-7-4.5-7-9V6l7-3z" />
+    </svg>
+  );
+}
+
+/** Package box — export bundle. */
+export function PackageIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <path d="M3 8l9-5 9 5-9 5-9-5z" />
+      <path d="M3 8v8l9 5 9-5V8" />
+      <path d="M12 13v8" />
+    </svg>
+  );
+}
+
+/** Bar chart — analytics. */
+export function BarChartIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
+    </svg>
+  );
+}
+
+/** Two people — user management. */
+export function UsersIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <circle cx="9" cy="8" r="3.2" />
+      <path d="M2.5 20v-1.5A4.5 4.5 0 0 1 7 14h4a4.5 4.5 0 0 1 4.5 4.5V20" />
+      <path d="M16.5 5.3a3.2 3.2 0 0 1 0 6.1" />
+      <path d="M21.5 20v-1.5a4.5 4.5 0 0 0-3.2-4.3" />
+    </svg>
+  );
+}
+
+/** Gauge / dial — system status. */
+export function GaugeIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <path d="M4 15a8 8 0 1 1 16 0" />
+      <path d="M12 15l4-5" />
+      <path d="M12 15v.01" />
+    </svg>
+  );
+}
+
+/** Hamburger — open navigation drawer. Replaces ☰ */
+export function MenuIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <path d="M3 6h18M3 12h18M3 18h18" />
+    </svg>
+  );
+}
+
+/** Trophy — bid outcome / win recorded. Replaces 🏆 */
+export function TrophyIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <path d="M8 4h8v5a4 4 0 0 1-8 0V4z" />
+      <path d="M8 5H5a3 3 0 0 0 3 5M16 5h3a3 3 0 0 1-3 5" />
+      <path d="M12 13v3M9 20h6M10 16.5h4v3.5h-4z" />
+    </svg>
+  );
+}
+
+/** Bell — notifications. Replaces 🔔 */
+export function BellIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+      <path d="M13.7 21a2 2 0 0 1-3.4 0" />
+    </svg>
+  );
+}
+
+/** Single person — expert / individual record. Replaces 👤 */
+export function PersonIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <circle cx="12" cy="8" r="3.5" />
+      <path d="M4.5 20v-1a6 6 0 0 1 6-6h3a6 6 0 0 1 6 6v1" />
+    </svg>
+  );
+}
+
+/** Folder — project portfolio / document group. Replaces 📁 */
+export function FolderIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <path d="M3 6a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6z" />
+    </svg>
+  );
+}
+
+/** Speech bubble — comment / clarification / chat. Replaces 💬 */
+export function ChatIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <path d="M4 5h16v10H8l-4 4V5z" />
+    </svg>
+  );
+}
+
+/** Question mark in a circle — question control. Replaces ❓ */
+export function QuestionIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <circle cx="12" cy="12" r="9" />
+      <path d="M9.5 9a2.5 2.5 0 0 1 4.7 1.2c0 1.6-2.2 1.8-2.2 3.3" />
+      <path d="M12 17v.01" />
+    </svg>
+  );
+}
+
+/** Flag — milestone reached. Replaces 🏁 */
+export function FlagIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <path d="M5 21V4" />
+      <path d="M5 5h13l-3 4 3 4H5" />
+    </svg>
+  );
+}
+
+/** Coin — commercial / pricing assumption. Replaces 💰 */
+export function CoinIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v10M9.5 9.3c0-1.3 1.2-2 2.5-2s2.5.7 2.5 1.9-1 1.6-2.5 1.8c-1.5.2-2.5.7-2.5 1.9S10.7 15 12 15s2.5-.6 2.5-1.9" />
+    </svg>
+  );
+}
+
+/**
+ * Wrench — Repair / fix action. Distinct from RefreshIcon (which means
+ * "retry the same operation"): Wrench means "fix the underlying input then
+ * retry". Used by Extraction Quality "Repair Extraction" and any future
+ * repair affordance, so "repair" never has to compete with "retry" for the
+ * circular-arrow icon.
+ */
+export function WrenchIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18v3h3l6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.1-.4-.4-2.1 2.4-2.4z" />
+    </svg>
+  );
+}
+
+/**
+ * Trash — Permanent delete. Used by DeleteTenderButton's compact mode so
+ * the action stays available on dense table rows without forcing the row's
+ * Action cell past the table's available width. The full "Permanently
+ * delete" label is exposed via aria-label and the native title tooltip, so
+ * screen readers and hover users still see the verb; only the visible
+ * glyph is compressed.
+ */
+export function TrashIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+      <path d="M10 11v6M14 11v6" />
     </svg>
   );
 }

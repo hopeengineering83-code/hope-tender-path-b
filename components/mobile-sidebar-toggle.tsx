@@ -8,6 +8,8 @@ import {
   getActiveDashboardHref,
   type DashboardNavGroup,
 } from "../lib/dashboard-navigation";
+import { MenuIcon, CrossIcon } from "./icons";
+import { DashboardNavIcon } from "./dashboard-nav-icon";
 
 type Props = {
   groups: DashboardNavGroup[];
@@ -81,7 +83,7 @@ export function MobileSidebarToggle({ groups, user, company }: Props) {
         aria-expanded={open}
         aria-controls="mobile-navigation-drawer"
       >
-        <span className="text-lg leading-none" aria-hidden="true">☰</span>
+        <MenuIcon className="text-lg" />
       </button>
 
       {open && (
@@ -116,7 +118,7 @@ export function MobileSidebarToggle({ groups, user, company }: Props) {
                 className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100"
                 aria-label="Close navigation"
               >
-                <span aria-hidden="true">✕</span>
+                <CrossIcon className="text-base" />
               </button>
             </div>
 
@@ -141,7 +143,9 @@ export function MobileSidebarToggle({ groups, user, company }: Props) {
                               : "text-slate-700 hover:bg-slate-100 hover:text-slate-950"
                           }`}
                         >
-                          <span className="text-base leading-none" aria-hidden="true">{link.icon}</span>
+                          <span className="text-base leading-none" aria-hidden="true">
+                            <DashboardNavIcon iconName={link.iconName} />
+                          </span>
                           <span className="min-w-0 truncate">{link.label}</span>
                         </Link>
                       );

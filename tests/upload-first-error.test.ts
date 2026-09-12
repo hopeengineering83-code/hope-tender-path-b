@@ -34,8 +34,13 @@ describe("upload-first route wrapper fail-closed errors", () => {
     assert.match(source, /errorClass: error instanceof Error \? error\.constructor\.name : "UnknownError"/);
   });
 
-  it("preserves delegation to the canonical upload-first handler", () => {
+  it("preserves canonical delegation and adds only the automatic extraction wake", () => {
     assert.match(source, /import\("\.\.\/\.\.\/\.\.\/\.\.\/lib\/tender-upload-first"\)/);
-    assert.match(source, /return await handleUploadFirstTender\(req\)/);
+    assert.match(source, /const response = await handleUploadFirstTender\(req\)/);
+    assert.match(source, /pipelineStage === "EXTRACT_TEXT_QUEUED"/);
+    assert.match(source, /scheduleRequestScopedWorkerWake\(req, "EXTRACT_TEXT", payload\.queuedExtractionFiles \?\? 1\)/);
+    assert.match(source, /return response/);
+    assert.doesNotMatch(source, /scheduleRequestScopedWorkerWake\(req,\s*"(?:AI_ANALYZE|ENGINE_RUN)"/);
+    assert.doesNotMatch(source, /run-next\?jobType=(?:AI_ANALYZE|ENGINE_RUN)/);
   });
 });

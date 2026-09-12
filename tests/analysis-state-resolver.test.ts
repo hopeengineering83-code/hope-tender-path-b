@@ -110,6 +110,49 @@ test("derive: SUCCEEDED with all chunks succeeded → AI_SUCCEEDED", () => {
   assert.equal(canExportWithAnalysisState(d.state), true);
 });
 
+test("non-current analysis next actions require re-running AI Analyze while AI_SUCCEEDED directs Run Engine", () => {
+  const succeeded = deriveAnalysisStateDetail(makeInput({
+    job: makeJob({ status: "SUCCEEDED", promotedAt: new Date() }),
+    chunks: [chunk("SUCCEEDED")],
+  }));
+  const fallback = deriveAnalysisStateDetail(makeInput({
+    job: makeJob({
+      status: "FAILED",
+      stagedMergedResult: JSON.stringify({ analysisSource: "FALLBACK_DRAFT" }),
+    }),
+  }));
+  const reviewedFallback = deriveAnalysisStateDetail(makeInput({
+    job: makeJob({
+      status: "FAILED",
+      stagedMergedResult: JSON.stringify({ analysisSource: "FALLBACK_DRAFT" }),
+      promotedAt: new Date(),
+    }),
+  }));
+  const failed = deriveAnalysisStateDetail(makeInput({
+    job: makeJob({ status: "FAILED" }),
+  }));
+  const unstructured = deriveAnalysisStateDetail(makeInput({
+    job: makeJob({ status: "SUCCEEDED", promotedAt: new Date() }),
+    chunks: [chunk("SUCCEEDED")],
+    sectionsDetectedButNoRequirements: true,
+    requirementsExtracted: 0,
+  }));
+
+  assert.equal(succeeded.state, "AI_SUCCEEDED");
+  assert.match(succeeded.nextAction, /Run Engine/i);
+  for (const result of [fallback, reviewedFallback]) {
+    assert.match(result.nextAction, /Re-run AI Analyze/i);
+    assert.doesNotMatch(result.nextAction, /Review and approve|Proceed with caution/i);
+  }
+  assert.match(reviewedFallback.nextAction, /audit only/i);
+  assert.equal(failed.state, "FAILED");
+  assert.match(failed.nextAction, /Re-run AI Analyze/i);
+  assert.doesNotMatch(failed.nextAction, /manual entry/i);
+  assert.equal(unstructured.state, "SECTION_DETECTED_REQUIREMENTS_NOT_STRUCTURED");
+  assert.match(unstructured.nextAction, /Re-run AI Analyze/i);
+  assert.doesNotMatch(unstructured.nextAction, /manually add requirements|manual requirement/i);
+});
+
 test("derive: SUCCEEDED single-shot with zero chunks → AI_SUCCEEDED only after promotion", () => {
   const d = deriveAnalysisStateDetail(makeInput({
     job: makeJob({ status: "SUCCEEDED", analysisInputHash: null, promotedAt: new Date() }),
@@ -290,7 +333,9 @@ test("derive: error message with API key is redacted in diagnostics", () => {
   }));
   assert.ok(!d.safeDiagnosticSummary.includes("sk-abc123XYZsecretkey"), "raw sk- key must not leak");
   assert.ok(!d.safeDiagnosticSummary.includes("topsecret999"), "raw api_key value must not leak");
-  assert.ok(d.safeDiagnosticSummary.includes("[KEY]"), "redaction marker present");
+  // redactSecrets() produces [KEY_REDACTED] (consolidated helper in sanitize-error.ts).
+  // The previous redactSafe() produced [KEY] — updated to match the canonical format.
+  assert.ok(d.safeDiagnosticSummary.includes("[KEY_REDACTED]"), "redaction marker present");
 });
 
 test("derive: Bearer token redacted", () => {

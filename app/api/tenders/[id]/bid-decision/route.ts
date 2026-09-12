@@ -2,10 +2,27 @@ import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { evaluateBidDecision } from "../../../../../lib/engine/bid-decision";
+import { getTenderReleaseSnapshot } from "../../../../../lib/engine/tender-release-snapshot";
 import { logAction } from "../../../../../lib/audit";
 import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 
 export const dynamic = "force-dynamic";
+
+// A bid verdict must never be evaluated with confidence before the tender
+// has valid source extraction and grounded AI analysis — an automatic
+// evaluation from empty/ungrounded data defaults to non-blocking scores
+// (see evaluateBidDecision) and would present a false BID/NO_BID verdict.
+// A human MAY still record an explicit, audited override before grounding
+// (matches the ≥10-character reason bar used elsewhere for critical
+// audited overrides) — that is a deliberate human judgment call, not an
+// automatic evaluation.
+const MIN_UNGROUNDED_OVERRIDE_REASON_LENGTH = 10;
+
+async function isReadinessCalculable(tenderId: string, userId: string): Promise<boolean> {
+  const snapshot = await getTenderReleaseSnapshot(prisma, tenderId, userId).catch(() => null);
+  if (!snapshot) return false;
+  return snapshot.extraction.overallOk && snapshot.analysis.eligibleForExport;
+}
 
 function appendBidDecisionNote(existingNotes: string | null, summary: string): string {
   const line = `Bid decision: ${summary}`;
@@ -41,6 +58,15 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   });
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
+  if (!(await isReadinessCalculable(id, actor.id))) {
+    return NextResponse.json({
+      success: true,
+      decision: null,
+      calculable: false,
+      message: "Decision unavailable — valid source extraction and grounded AI analysis are required before a bid verdict can be calculated.",
+    });
+  }
+
   const decision = evaluateBidDecision({
     deadline: tender.deadline,
     budget: tender.budget,
@@ -51,7 +77,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     generatedDocuments: tender.generatedDocuments,
   });
 
-  return NextResponse.json({ success: true, decision });
+  return NextResponse.json({ success: true, decision, calculable: true });
 }
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -82,22 +108,55 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   });
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
-  const evaluated = evaluateBidDecision({
-    deadline: tender.deadline,
-    budget: tender.budget,
-    requirements: tender.requirements,
-    complianceGaps: tender.complianceGaps,
-    expertMatches: tender.expertMatches,
-    projectMatches: tender.projectMatches,
-    generatedDocuments: tender.generatedDocuments,
-  });
-
+  const calculable = await isReadinessCalculable(id, actor.id);
   const overrideDecision = ["BID", "BID_WITH_CONDITIONS", "NO_BID"].includes(body.overrideDecision ?? "") ? body.overrideDecision : null;
-  if (overrideDecision && !body.overrideReason?.trim()) {
-    return NextResponse.json({ error: "Override reason is required when overriding the evaluated bid decision." }, { status: 400 });
+
+  // An automatic evaluation must never be recorded from ungrounded data — it
+  // would default to non-blocking scores (see evaluateBidDecision) and record
+  // a false verdict. A human MAY still record an explicit, audited override.
+  if (!calculable && !overrideDecision) {
+    return NextResponse.json({
+      error: "Automatic bid-decision evaluation is unavailable — valid source extraction and grounded AI analysis are required first. Provide an explicit overrideDecision with a reason to record a manual decision anyway.",
+    }, { status: 409 });
   }
 
-  const decision = overrideDecision ? { ...evaluated, decision: overrideDecision as typeof evaluated.decision, summary: `${overrideDecision.replace(/_/g, " ")} — manual override from evaluated ${evaluated.decision} at ${evaluated.score}/100. ${body.overrideReason}` } : evaluated;
+  const minReasonLength = calculable ? 1 : MIN_UNGROUNDED_OVERRIDE_REASON_LENGTH;
+  if (overrideDecision && (body.overrideReason ?? "").trim().length < minReasonLength) {
+    return NextResponse.json({
+      error: calculable
+        ? "Override reason is required when overriding the evaluated bid decision."
+        : `Override reason must be at least ${MIN_UNGROUNDED_OVERRIDE_REASON_LENGTH} characters when recording a decision before source extraction and AI analysis are grounded.`,
+    }, { status: 400 });
+  }
+
+  const evaluated = calculable
+    ? evaluateBidDecision({
+        deadline: tender.deadline,
+        budget: tender.budget,
+        requirements: tender.requirements,
+        complianceGaps: tender.complianceGaps,
+        expertMatches: tender.expertMatches,
+        projectMatches: tender.projectMatches,
+        generatedDocuments: tender.generatedDocuments,
+      })
+    : {
+        decision: "NO_BID" as const,
+        score: 0,
+        criteria: [],
+        blockers: [],
+        conditions: [],
+        summary: "Automatic evaluation unavailable — source extraction and AI analysis are not yet grounded.",
+      };
+
+  const decision = overrideDecision
+    ? {
+        ...evaluated,
+        decision: overrideDecision as typeof evaluated.decision,
+        summary: calculable
+          ? `${overrideDecision.replace(/_/g, " ")} — manual override from evaluated ${evaluated.decision} at ${evaluated.score}/100. ${body.overrideReason}`
+          : `${overrideDecision.replace(/_/g, " ")} — manual override recorded before source extraction and AI analysis were grounded (automatic evaluation unavailable). ${body.overrideReason}`,
+      }
+    : evaluated;
   const nextStatus = decision.decision === "NO_BID" ? "NO_BID" : decision.decision === "BID_WITH_CONDITIONS" ? "COMPLIANCE_REVIEW" : tender.status;
   const nextStage = decision.decision === "NO_BID" ? "BID_DECISION" : tender.stage === "TENDER_INTAKE" ? "MATCHING" : tender.stage;
 

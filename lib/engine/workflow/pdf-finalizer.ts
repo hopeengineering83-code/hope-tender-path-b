@@ -25,7 +25,8 @@
  */
 import { logger } from "../../observability";
 import { generateProposalPdf } from "../proposal-pdf";
-import { extractDocxVisibleText, extractDocxMarkdownText, documentHygieneIssues } from "../export-readiness";
+import { extractDocxVisibleText, extractDocxMarkdownText, documentHygieneIssues, renderedArtifactHygieneIssues } from "../export-readiness";
+import type { PdfBrandImage } from "../proposal-pdf";
 import { validateDocumentQuality } from "../document-quality-validator";
 import {
   isFinalExportCandidateDocument,
@@ -34,6 +35,7 @@ import {
   isValidationPassed,
 } from "../document-output-state";
 import type { TenderFormatPolicy } from "../export-format-policy";
+import { cleanClientName } from "../proposal-labels";
 
 export type PdfFinalizationBlockerCode =
   | "PDF_REQUIRED_CONVERSION_UNAVAILABLE"
@@ -213,6 +215,128 @@ export function internalArtifactIssues(text: string): string[] {
  * Render the required PDF from an approved generated source document.
  * Fail-closed at every step; see module doc for the guarantees.
  */
+
+/**
+ * The active signature and stamp images this PDF may carry.
+ *
+ * Mirrors apply-signature-stamp.ts exactly on authority: the tender's branding
+ * policy can forbid either, the company's own settings can disable either, and
+ * only ACTIVE assets with real image bytes are used. Tender requirements
+ * override brand preference, never the other way round.
+ *
+ * Returns nulls rather than throwing: a proposal must still be produced when
+ * the assets are missing, and the declaration's signature rule then gives the
+ * signatory somewhere to sign by hand.
+ */
+async function resolveBrandImages(
+  ownerUserId: string | null,
+  tenderText: string,
+): Promise<{ signature: PdfBrandImage | null; stamp: PdfBrandImage | null }> {
+  const none = { signature: null, stamp: null };
+  if (!ownerUserId) return none;
+  try {
+    const { detectBrandingPolicy } = await import("../export-format-policy");
+    const { prisma } = await import("../../prisma");
+    const policy = detectBrandingPolicy(tenderText);
+
+    const company = await prisma.company.findUnique({
+      where: { userId: ownerUserId },
+      select: {
+        settings: { select: { allowSignatureDefault: true, allowStampDefault: true } },
+        assets: {
+          where: { assetType: { in: ["SIGNATURE", "STAMP"] }, isActive: true },
+          // storagePath and originalFileName belong here. A brand asset is not
+          // always inline: the upload path can persist the bytes to private
+          // storage and leave fileContent null, and selecting only fileContent
+          // made a storage-backed asset indistinguishable from no asset.
+          select: {
+            assetType: true,
+            fileContent: true,
+            storagePath: true,
+            originalFileName: true,
+            mimeType: true,
+          },
+        },
+      },
+    });
+    if (!company) return none;
+
+    const signatureAllowed = policy.signatureAllowed && company.settings?.allowSignatureDefault !== false;
+    const stampAllowed = policy.stampAllowed && company.settings?.allowStampDefault !== false;
+
+    // Reproduced defect (live Preview, tender 50940b8b, run 34697159299). The
+    // whole pipeline went green — export-readiness ok=True READY blockers=0,
+    // the ZIP verified against its persisted digest — and the delivered PDF
+    // still said:
+    //
+    //   === DELIVERED PDF ASSET AUDIT (35 pages, 221639 bytes) ===
+    //   EMBEDDED IMAGE XOBJECTS: 0
+    //     RESULT: the client's copy contains NO images at all.
+    //
+    // while the vault held all three, every one storage-backed:
+    //
+    //   STAMP      103,155 B  active VERIFIED  inline=False storage=True
+    //   SIGNATURE    3,246 B  active VERIFIED  inline=False storage=True
+    //   LETTERHEAD 126,100 B  active VERIFIED  inline=False storage=True
+    //
+    // This is the same defect already fixed in apply-active-letterhead.ts
+    // (3e41c502), surviving in a second place: read fileContent and nothing
+    // else, and an asset whose bytes are stored — just not inline — resolves
+    // to null. The two branding paths have to agree about where bytes live.
+    //
+    // Storage-backed content is normal on this deployment, and the codebase
+    // has one way to read it. This uses that, not a second one.
+    const readAssetBytes = async (asset: {
+      fileContent: string | null;
+      storagePath: string | null;
+      originalFileName: string | null;
+    }): Promise<Buffer | null> => {
+      if (asset.fileContent) return Buffer.from(asset.fileContent, "base64");
+      if (!asset.storagePath) return null;
+      try {
+        const { getStorageAdapter } = await import("../../storage");
+        return await getStorageAdapter().getFile({
+          storagePath: asset.storagePath,
+          fileContent: null,
+          fileName: asset.originalFileName ?? "brand-asset",
+        });
+      } catch (error) {
+        // Branding is cosmetic; the declaration's signature rule still gives
+        // the signatory somewhere to sign by hand. Naming the storage failure
+        // beats reporting it as an absent asset.
+        logger.warn("pdf-finalizer: brand asset is stored but unreadable", {
+          storagePath: asset.storagePath,
+          detail: error,
+        });
+        return null;
+      }
+    };
+
+    const pick = async (assetType: string, allowed: boolean): Promise<PdfBrandImage | null> => {
+      if (!allowed) return null;
+      const asset = company.assets.find((a: { assetType: string }) => a.assetType === assetType);
+      if (!asset) return null;
+      const bytes = await readAssetBytes(asset);
+      if (!bytes) return null;
+      // Only real image bytes; a mislabelled row must not reach pdf-lib.
+      const isPng = bytes.length > 4 && bytes[0] === 0x89 && bytes[1] === 0x50;
+      const isJpeg = bytes.length > 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+      if (!isPng && !isJpeg) return null;
+      return { bytes: new Uint8Array(bytes), mimeType: isPng ? "image/png" : "image/jpeg" };
+    };
+
+    // Both gates above still decide WHETHER an image may be drawn; this only
+    // decides where its bytes come from once they may be.
+    return {
+      signature: await pick("SIGNATURE", signatureAllowed),
+      stamp: await pick("STAMP", stampAllowed),
+    };
+  } catch (error) {
+    logger.warn("pdf-finalizer: could not resolve brand images", { detail: error });
+    return none;
+  }
+}
+
 export async function finalizeRequiredPdf(input: {
   requiredFileName: string;
   tender: {
@@ -229,9 +353,19 @@ export async function finalizeRequiredPdf(input: {
     email?: string | null;
     website?: string | null;
   } | null;
+  /**
+   * The tender owner, used to resolve the active signature and stamp images.
+   *
+   * The PDF is rendered from the DOCX's extracted TEXT, so the images
+   * apply-signature-stamp.ts embeds into the DOCX cannot survive into the PDF.
+   * A delivered proposal therefore carried 36 XObject references and not one
+   * image, while the vault held an ACTIVE, integrity-VERIFIED signature and
+   * stamp. The renderer draws them itself; this is where it learns which.
+   */
+  ownerUserId?: string | null;
   sourceDocument: PdfFinalizerSourceDocument;
 }): Promise<PdfFinalizationResult> {
-  const { requiredFileName, tender, company, sourceDocument: doc } = input;
+  const { requiredFileName, tender, company, ownerUserId, sourceDocument: doc } = input;
 
   const nameProblem = validateRequiredFileName(requiredFileName);
   if (nameProblem) return blocker("PDF_INVALID_REQUIRED_FILENAME", nameProblem);
@@ -259,11 +393,16 @@ export async function finalizeRequiredPdf(input: {
       `"${label}" has not passed validation. Run Validate on the source document before finalizing the PDF.`,
     );
   }
-  // …and approved / ready for export.
-  if (!isReviewReadyForExport(doc.reviewStatus)) {
+  // …and either human-approved (READY_FOR_EXPORT/APPROVED) OR canonically
+  // validated (VALIDATED) by the Document Validator. Per Gap 5, the
+  // automatic chain may finalize PDFs from VALIDATED sources without a
+  // separate human reviewStatus — the canonical validator is the
+  // machine-safe authority. The human reviewStatus remains required only
+  // where legally mandatory ( Gap 6: one explicit human release decision).
+  if (!isReviewReadyForExport(doc.reviewStatus) && !isValidationPassed(doc.validationStatus)) {
     return blocker(
       "PDF_SOURCE_NOT_APPROVED",
-      `"${label}" is not approved for export. Complete the review/approval step before finalizing the PDF.`,
+      `"${label}" is neither approved for export nor canonically validated. Run Validate on the source document before finalizing the PDF.`,
     );
   }
 
@@ -311,12 +450,17 @@ export async function finalizeRequiredPdf(input: {
     storagePath: doc.storagePath ?? null,
     visibleText: text,
   });
-  const hygiene = documentHygieneIssues(text, {
-    name: doc.name ?? label,
-    exactFileName: doc.exactFileName ?? null,
-    documentType: doc.documentType ?? null,
-    format: doc.format ?? null,
-  });
+  const hygiene = [
+    ...documentHygieneIssues(text, {
+      name: doc.name ?? label,
+      exactFileName: doc.exactFileName ?? null,
+      documentType: doc.documentType ?? null,
+      format: doc.format ?? null,
+    }),
+    // `text` here is the visible text of the finished PDF, so raw Markdown
+    // syntax in it is unambiguously a rendering failure the reader would see.
+    ...renderedArtifactHygieneIssues(text),
+  ];
   const internalIssues = internalArtifactIssues(text);
   if (quality.status === "BLOCKED" || hygiene.length > 0 || internalIssues.length > 0) {
     const categories = Array.from(
@@ -349,15 +493,21 @@ export async function finalizeRequiredPdf(input: {
     if (company?.phone) contactParts.push(company.phone);
     if (company?.email) contactParts.push(company.email);
     if (company?.website) contactParts.push(company.website);
+    const brandImages = await resolveBrandImages(
+      ownerUserId ?? null,
+      [tender.title ?? "", tender.clientName ?? "", renderText].join("\n"),
+    );
     pdfBytes = await generateProposalPdf({
       title: tender.title?.trim() || "Technical Proposal",
-      clientName: tender.clientName ?? null,
+      clientName: tender.clientName ? cleanClientName(tender.clientName) : null,
       reference: tender.reference ?? null,
       submissionEmailSubject: tender.submissionEmailSubject ?? null,
       markdown: renderText,
       companyName: company?.name ?? null,
       companyAddress: company?.address ?? null,
       companyContact: contactParts.length ? contactParts.join("  |  ") : null,
+      signature: brandImages.signature,
+      stamp: brandImages.stamp,
     });
   } catch (error) {
     logger.error("pdf-finalizer: PDF rendering failed", { documentId: doc.id, detail: error });

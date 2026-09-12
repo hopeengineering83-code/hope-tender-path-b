@@ -3,13 +3,24 @@ import { prisma } from "../prisma";
 import { exactSelectionLimit } from "./scope-policy";
 import { buildDeterministicComprehension } from "./deterministic-prohibition-extractor";
 import { validateConstraints } from "./constraint-validator";
-import { filterFinalExportCandidateDocuments } from "./document-output-state";
-import { documentHygieneIssues } from "./export-readiness";
+import { filterFinalExportCandidateDocuments, hasConsistentArtifactIdentity } from "./document-output-state";
+import { documentHygieneIssues, extractDocxVisibleText } from "./export-readiness";
+import { isDurablyReviewed, VAULT_REVIEW_CONSUMER_SELECT } from "../vault-review-provenance";
+import { resolveCurrentDocumentVerdict } from "./current-document-quality";
 
 export interface ValidationIssue {
   code: string;
   severity: "BLOCK" | "WARN";
   message: string;
+  /**
+   * The document this issue is ABOUT, when it is about one.
+   *
+   * Absent means the issue is about the package — a required file that is
+   * missing, a count that does not match, a compliance gap — not about the
+   * bytes of any particular document. The distinction decides what gets
+   * stamped FAILED; see the status write at the end of validateTender().
+   */
+  documentId?: string;
 }
 
 export interface ValidationReport {
@@ -53,14 +64,47 @@ function staffingShortfallMessage(type: "expert" | "project", required: number, 
 export async function validateTender(tenderId: string): Promise<ValidationReport> {
   const issues: ValidationIssue[] = [];
 
+  // Bring requirement coverage up to date before judging it.
+  //
+  // The Engine computes coverage BEFORE generation, when every build-plan item
+  // is still a promise and no artifact exists, and nothing recomputed it once
+  // the documents were written. So the evidence this function reads was stale
+  // by construction: a requirement answered by the proposal's own deliverable
+  // stayed at PARTIAL for ever, mandatory-evidence blockers never cleared, and
+  // the only way past it was for someone to know to POST
+  // /api/tenders/{id}/requirement-coverage/auto-sync by hand — an step the
+  // owner is never told about and the automation contract does not allow.
+  //
+  // Reconciling here rather than at each generation site covers every path
+  // that reaches a verdict, since both POST /validate and POST /export come
+  // through this function. The service is an idempotent desired-state sync
+  // with its own retry, so calling it on an already-current tender is a no-op.
+  //
+  // A failure must not fail validation: coverage that could not be refreshed
+  // is reported as a warning, and the gates below still judge what is stored.
+  const owner = await prisma.tender.findUnique({ where: { id: tenderId }, select: { userId: true } });
+  if (owner?.userId) {
+    try {
+      const { reconcileAutomaticRequirementCoverage } = await import("./reconcile-automatic-requirement-coverage");
+      await reconcileAutomaticRequirementCoverage(prisma, tenderId, owner.userId);
+    } catch (error) {
+      logger.warn(`[validate] requirement-coverage reconcile failed; judging stored coverage: ${error instanceof Error ? error.message : String(error)}`);
+      issues.push({
+        code: "REQUIREMENT_COVERAGE_NOT_REFRESHED",
+        severity: "WARN",
+        message: "Requirement evidence could not be refreshed before validation, so the result reflects the last stored coverage.",
+      });
+    }
+  }
+
   const tender = await prisma.tender.findUnique({
     where: { id: tenderId },
     include: {
       requirements: true,
       complianceGaps: true,
       generatedDocuments: true,
-      expertMatches: { where: { isSelected: true } },
-      projectMatches: { where: { isSelected: true } },
+      expertMatches: { where: { isSelected: true }, include: { expert: { select: { fullName: true } } } },
+      projectMatches: { where: { isSelected: true }, include: { project: { select: { name: true } } } },
       complianceMatrix: { select: { requirementId: true, supportLevel: true } },
     },
   });
@@ -70,9 +114,24 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
   const selectedExpertIds = tender.expertMatches.map((m) => m.expertId);
   const selectedProjectIds = tender.projectMatches.map((m) => m.projectId);
 
+  // Vault records are re-read scoped to the tender owner, not by bare ID.
+  // These IDs arrive from TenderExpertMatch/TenderProjectMatch rows, and
+  // matching is company-scoped, so a foreign ID should never reach here — but
+  // "should never" is the tenant boundary being inherited from a caller two
+  // levels up rather than enforced where the read happens. The messages below
+  // interpolate fullName/name, so a single cross-tenant match row would leak
+  // another company's expert and project names into a validation report.
+  // Scoping the read makes the boundary local and self-evident.
+  const ownedByTenant = { company: { userId: tender.userId } } as const;
+
   if (selectedExpertIds.length > 0) {
-    const experts = await prisma.expert.findMany({ where: { id: { in: selectedExpertIds } }, select: { id: true, fullName: true, trustLevel: true } });
-    const unreviewed = experts.filter((e) => e.trustLevel !== "REVIEWED");
+    const experts = await prisma.expert.findMany({ where: { id: { in: selectedExpertIds }, deletedAt: null, ...ownedByTenant }, select: { id: true, ...VAULT_REVIEW_CONSUMER_SELECT.EXPERT } });
+    // isDurablyReviewed(), not a raw trustLevel==="REVIEWED" check — a stale
+    // or never-durably-provenance-backed REVIEWED record must not pass this
+    // check as if genuinely human-reviewed (it would otherwise produce a
+    // false-positive "✓ All experts are REVIEWED" that contradicts the
+    // Engine's and generation's own durable gate).
+    const unreviewed = experts.filter((e) => !isDurablyReviewed(e));
     const regexDraft = experts.filter((e) => !e.trustLevel || e.trustLevel === "REGEX_DRAFT");
     const aiDraft = experts.filter((e) => e.trustLevel === "AI_DRAFT");
     if (regexDraft.length > 0) issues.push({ code: "REGEX_DRAFT_EXPERT_SELECTED", severity: "BLOCK", message: `${regexDraft.length} selected expert(s) are REGEX_DRAFT — pattern-extracted records with low reliability. Re-run AI extraction, then review and mark REVIEWED. Affected: ${regexDraft.map((e) => e.fullName).join(", ")}.` });
@@ -81,11 +140,36 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
   }
 
   if (selectedProjectIds.length > 0) {
-    const projects = await prisma.project.findMany({ where: { id: { in: selectedProjectIds } }, select: { id: true, name: true, trustLevel: true } });
+    const projects = await prisma.project.findMany({ where: { id: { in: selectedProjectIds }, deletedAt: null, ...ownedByTenant }, select: { id: true, ...VAULT_REVIEW_CONSUMER_SELECT.PROJECT } });
     const regexDraft = projects.filter((p) => !p.trustLevel || p.trustLevel === "REGEX_DRAFT");
     const aiDraft = projects.filter((p) => p.trustLevel === "AI_DRAFT");
     if (regexDraft.length > 0) issues.push({ code: "REGEX_DRAFT_PROJECT_SELECTED", severity: "BLOCK", message: `${regexDraft.length} selected project(s) are REGEX_DRAFT — pattern-extracted records with low reliability. Re-run AI extraction, then review and mark REVIEWED. Affected: ${regexDraft.map((p) => p.name).join(", ")}.` });
     if (aiDraft.length > 0) issues.push({ code: "AI_DRAFT_PROJECT_NOT_REVIEWED", severity: "BLOCK", message: `${aiDraft.length} selected project(s) are AI_DRAFT but not yet reviewed. Verify each project against source documents and mark REVIEWED before final validation. Affected: ${aiDraft.map((p) => p.name).join(", ")}.` });
+  }
+
+  // A mislabelled artifact is a DEFECT, not a workflow state, and must not be
+  // silently skipped.
+  //
+  // filterFinalExportCandidateDocuments excludes control rows, planned rows,
+  // superseded rows and non-exportable records — all legitimate states the
+  // owner sees elsewhere. It also excludes rows whose file name, declared
+  // format and bytes disagree. Those are broken outputs, and leaving them out
+  // of validation without a word meant Validate could report a clean tender
+  // while the export gate refused the very same document: the owner is told
+  // nothing is wrong, then cannot export. Name them here.
+  const identityBroken = (tender.generatedDocuments as any[]).filter(
+    (doc) => String(doc.generationStatus ?? "").toUpperCase() === "GENERATED"
+      && String(doc.validationStatus ?? "").toUpperCase() !== "SUPERSEDED"
+      && !hasConsistentArtifactIdentity(doc),
+  );
+  for (const doc of identityBroken) {
+    const label = doc.exactFileName ?? doc.name ?? doc.id;
+    issues.push({
+      code: "ARTIFACT_IDENTITY_MISMATCH",
+      severity: "BLOCK",
+      documentId: doc.id,
+      message: `"${label}" is not the kind of file it claims to be — its name, declared format and actual bytes disagree. A file that will not open cannot be submitted; regenerate or re-attach it.`,
+    });
   }
 
   // Validate only final-export candidates. Internal control rows, original-replacement placeholders,
@@ -121,21 +205,73 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
   if (generatedDocs.length === 0) issues.push({ code: "NO_GENERATED_DOCUMENTS", severity: "BLOCK", message: "No documents have been generated yet. Run document generation first." });
 
   for (const doc of generatedDocs) {
-    const textToCheck = [doc.contentSummary ?? "", doc.name, doc.exactFileName ?? ""].join(" ");
-    if (hasPlaceholder(textToCheck)) issues.push({ code: "PLACEHOLDER_IN_DOCUMENT", severity: "BLOCK", message: `Document "${doc.name}" contains placeholder text that must be replaced.` });
+    // Check the DOCUMENT, not the metadata about it.
+    //
+    // Both checks below used to read doc.contentSummary. For a generated
+    // proposal that field holds the generator's own diagnostic report, which
+    // describes the document's problems in the document's own vocabulary — so
+    // a summary reading 'Proposal still has 6 unresolved spot(s) reading "to be
+    // confirmed by bid team"' tripped the placeholder block, and one reading
+    // "Executive Summary lacks a specific project name or contract value"
+    // tripped the pricing-leakage block. Both fired on proposals whose text
+    // contained neither a placeholder nor a price: the report of a problem was
+    // punished as the problem, and no edit to the document could clear it
+    // because the document was never what was read.
+    //
+    // The comment here previously claimed these were "the same checks the
+    // export-readiness gate runs". They now are — that gate extracts the
+    // document's visible text, so this does too.
+    const fileName = doc.exactFileName ?? doc.name ?? "";
+    const isDocx = fileName.toLowerCase().endsWith(".docx");
+    let documentText = "";
+    if (typeof doc.fileContent === "string" && doc.fileContent.length > 0 && doc.fileContent.length < 2_000_000) {
+      documentText = isDocx
+        ? (await extractDocxVisibleText(doc.fileContent, fileName)) ?? ""
+        : doc.fileContent;
+    }
 
-    // Document hygiene: catch pricing leakage in technical envelopes, AI disclosure
-    // phrases, and unresolved placeholder instructions. These are the same checks the
-    // export-readiness gate runs, but surfacing them at validation time means problems
-    // are caught one step earlier — before the user tries to export.
-    const hygieneIssues = documentHygieneIssues(doc.contentSummary, {
+    // A DOCX that carries bytes but yields no readable text is not evidence of
+    // cleanliness — say so rather than passing it silently. WARN, not BLOCK:
+    // export-readiness owns the byte-level verdict and refuses it there.
+    if (isDocx && documentText.trim().length === 0 && (doc.fileContent ?? "").length > 0) {
+      issues.push({
+        code: "DOCUMENT_TEXT_UNREADABLE",
+        severity: "WARN",
+        documentId: doc.id,
+        message: `Document "${doc.name}" has stored bytes but no readable text could be extracted, so placeholder and hygiene checks could not inspect it.`,
+      });
+    }
+
+    if (hasPlaceholder(documentText)) issues.push({ code: "PLACEHOLDER_IN_DOCUMENT", severity: "BLOCK", documentId: doc.id, message: `Document "${doc.name}" contains placeholder text that must be replaced.` });
+
+    // Document hygiene: catch pricing leakage in technical envelopes, AI
+    // disclosure phrases, and unresolved placeholder instructions. Surfacing
+    // them at validation time means problems are caught one step earlier —
+    // before the user tries to export.
+    const hygieneIssues = documentHygieneIssues(documentText, {
       name: doc.name,
       exactFileName: doc.exactFileName ?? null,
       documentType: (doc as { documentType?: string | null }).documentType ?? null,
       format: (doc as { format?: string | null }).format ?? null,
     });
     for (const hygieneIssue of hygieneIssues) {
-      issues.push({ code: "DOCUMENT_HYGIENE_FAILURE", severity: "BLOCK", message: `Document "${doc.name}": ${hygieneIssue}` });
+      issues.push({ code: "DOCUMENT_HYGIENE_FAILURE", severity: "BLOCK", documentId: doc.id, message: `Document "${doc.name}": ${hygieneIssue}` });
+    }
+
+    // Validation and readiness use the same narrative-quality authority. A
+    // document that still needs rewriting must not be stamped VALIDATED merely
+    // because its container bytes and placeholder scan are clean.
+    const verdict = await resolveCurrentDocumentVerdict(doc, tender.requirements, {
+      selectedExpertNames: tender.expertMatches.map((match) => match.expert.fullName),
+      selectedProjectNames: tender.projectMatches.map((match) => match.project.name),
+    });
+    if (verdict.score !== "GOOD") {
+      issues.push({
+        code: "GENERATED_DOCUMENT_QUALITY_FAILED",
+        severity: "BLOCK",
+        documentId: doc.id,
+        message: `Document "${doc.name}" has not passed the canonical narrative-quality rubric (${verdict.report.score}/100): ${verdict.reasons.slice(0, 4).map((reason) => reason.message).join("; ")}`,
+      });
     }
   }
 
@@ -215,8 +351,47 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
 
   if (tender.deadline && new Date(tender.deadline) < new Date()) issues.push({ code: "DEADLINE_PASSED", severity: "WARN", message: "The tender deadline has already passed." });
 
-  const blockCount = issues.filter((i) => i.severity === "BLOCK").length;
-  const newStatus = blockCount === 0 ? "PASSED" : "FAILED";
-  await prisma.generatedDocument.updateMany({ where: { id: { in: generatedDocs.map((d) => d.id) } }, data: { validationStatus: newStatus } });
-  return { passed: blockCount === 0, issues, checkedAt: new Date().toISOString() };
+  // Each document is stamped with ITS OWN outcome.
+  //
+  // This flattened every BLOCK issue into one tender-wide status and wrote it
+  // onto all of them, so a blocker about a file that does NOT EXIST condemned
+  // the files that do. On a real owner run the tender required
+  // "Technical Proposal.pdf", nothing had rendered it yet, and
+  // MISSING_REQUIRED_FILES therefore stamped validationStatus FAILED on a
+  // 98/100 source DOCX and an 84/100 annex whose only findings were MEDIUM.
+  // finalize-pdf then refused to render the PDF — PDF_REQUIRED_NOT_READY,
+  // "no machine-validated source" — because the source it needed had just been
+  // failed by a blocker about the PDF's own absence. Neither route could move,
+  // and the owner was told to "run Validate", which is what produced the state.
+  //
+  // Attribution decides the stamp: an issue carrying a documentId is about
+  // that document's bytes; an unattributed BLOCK is about the PACKAGE — a
+  // missing file, a count mismatch, an unresolved compliance gap — and is not
+  // evidence that an existing document is bad. The two exceptions are content
+  // findings computed across the whole proposal text, which no single document
+  // owns and every document shares.
+  //
+  // Nothing is relaxed for EXPORT: `passed` still requires zero BLOCK issues
+  // of any kind, every tender-level blocker is still returned, and the export
+  // gate still refuses the package. Only the per-document column changes, so
+  // that a document is judged by what is wrong with IT.
+  const WHOLE_PROPOSAL_CONTENT_CODES = new Set(["PROHIBITION_VIOLATION", "DISQUALIFIER_VIOLATION"]);
+  const blockingIssues = issues.filter((issue) => issue.severity === "BLOCK");
+  const condemnsEveryDocument = blockingIssues.some(
+    (issue) => !issue.documentId && WHOLE_PROPOSAL_CONTENT_CODES.has(issue.code),
+  );
+  const failedDocumentIds = new Set(
+    blockingIssues.map((issue) => issue.documentId).filter((id): id is string => Boolean(id)),
+  );
+  const failedIds = generatedDocs
+    .filter((doc) => condemnsEveryDocument || failedDocumentIds.has(doc.id))
+    .map((doc) => doc.id);
+  const passedIds = generatedDocs.map((doc) => doc.id).filter((id) => !failedIds.includes(id));
+  if (failedIds.length > 0) {
+    await prisma.generatedDocument.updateMany({ where: { id: { in: failedIds } }, data: { validationStatus: "FAILED" } });
+  }
+  if (passedIds.length > 0) {
+    await prisma.generatedDocument.updateMany({ where: { id: { in: passedIds } }, data: { validationStatus: "PASSED" } });
+  }
+  return { passed: blockingIssues.length === 0, issues, checkedAt: new Date().toISOString() };
 }

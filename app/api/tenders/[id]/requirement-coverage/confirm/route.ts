@@ -94,26 +94,26 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const tender = await prisma.tender.findFirst({ where: { id, userId: actor.id }, select: { id: true, userId: true } });
   if (!tender) return NextResponse.json({ ok: false, error: "Tender not found" }, { status: 404 });
 
-  const requirement = await prisma.tenderRequirement.findFirst({ where: { id: body.requirementId, tenderId: id }, select: { id: true, title: true } });
+  const requirement = await prisma.tenderRequirement.findFirst({
+    where: { id: body.requirementId, tenderId: id },
+    select: {
+      id: true,
+      title: true,
+      sourceTenderFileId: true,
+      sourcePageNumber: true,
+      sourceExactQuote: true,
+    },
+  });
   if (!requirement) return NextResponse.json({ ok: false, error: "Requirement not found for this tender" }, { status: 404 });
 
   const requestedLevel = requestedSupportLevel(body.supportLevel);
 
   if (isManualReviewerConfirmation(body)) {
-    const evidenceReference = String(body.evidenceReference ?? `manual-${requirement.id}`).trim();
-    const notes = body.notes ?? `Reviewer manually confirmed ${requestedLevel} coverage.`;
-    const existing = await prisma.complianceMatrix.findFirst({
-      where: { tenderId: id, requirementId: requirement.id, evidenceType: "MANUAL_REVIEWER_CONFIRMATION" },
-      select: { id: true },
-    });
-
-    const row = existing
-      ? await prisma.complianceMatrix.update({ where: { id: existing.id }, data: { evidenceSource: "REVIEWER_CONFIRMED", evidenceReference, supportLevel: requestedLevel, notes, updatedAt: new Date() } })
-      : await prisma.complianceMatrix.create({ data: { tenderId: id, requirementId: requirement.id, evidenceType: "MANUAL_REVIEWER_CONFIRMATION", evidenceSource: "REVIEWER_CONFIRMED", evidenceReference, supportLevel: requestedLevel, notes } });
-
-    await logAction({ userId: actor.id, action: "REQUIREMENT_COVERAGE_MANUALLY_CONFIRMED", entityType: "Tender", entityId: id, description: `Manually confirmed ${requestedLevel.toLowerCase()} coverage for requirement: ${requirement.title}`, metadata: { requirementId: requirement.id, complianceMatrixId: row.id, supportLevel: requestedLevel }, requestId });
-
-    return NextResponse.json({ ok: true, success: true, row, requestedSupportLevel: requestedLevel, effectiveSupportLevel: requestedLevel, supportLevelCapped: false, supportLevelPolicy: null });
+    return NextResponse.json({
+      ok: false,
+      code: "REQUIREMENT_SOURCE_GROUNDING_REQUIRED",
+      error: "A confirmation click cannot establish requirement provenance. Run automatic source grounding; if the active source cannot prove the requirement, re-run AI Analyze, upload a better source, or correct the requirement from the genuine source.",
+    }, { status: 422 });
   }
 
   const company = await prisma.company.findUnique({ where: { userId: tender.userId }, select: { id: true } });

@@ -1,6 +1,6 @@
 import { prisma } from "./prisma";
 
-export const SUPPORT_ONLY_CATEGORIES = new Set([
+export const MIXED_OR_SUPPORT_CATEGORIES = new Set([
   "COMPANY_PROFILE",
   "LEGAL_REGISTRATION",
   "FINANCIAL_STATEMENT",
@@ -11,52 +11,55 @@ export const SUPPORT_ONLY_CATEGORIES = new Set([
 ]);
 
 /**
- * Non-reviewable trust levels that may be safely removed during a support-import
- * cleanup. REVIEWED records are preserved because a human has explicitly
- * validated them — even if they were originally derived from a support
- * document, the human review makes them authoritative company facts.
+ * Mixed and support documents are not deletion authority.
+ *
+ * A company profile, certification bundle, financial record, or unclassified
+ * document may contain an exact expert/project claim. Such a claim can be
+ * source-verified when every bound field is present in the owned bytes; an
+ * uncertain claim must remain available for automatic verification. This audit helper
+ * therefore reports records for follow-up but never destroys them.
  */
-const REMOVABLE_TRUST_LEVELS = ["REGEX_DRAFT", "AI_DRAFT"];
-
 export async function cleanupSupportDocImportedRecords(companyId: string) {
-  return prisma.$transaction(async (tx) => {
-    const supportDocs = await tx.companyDocument.findMany({
-      where: { companyId, category: { in: [...SUPPORT_ONLY_CATEGORIES] } },
-      select: { id: true, originalFileName: true, category: true },
-    });
-    const supportDocIds = supportDocs.map((doc) => doc.id);
-
-    // Authority: sourceDocumentId only. Filename-text matching is NOT a safe
-    // deletion authority because a legitimate Expert or Project may mention a
-    // support filename in its profile/summary without being derived from that
-    // document. Text matching would silently destroy real business data.
-    //
-    // Additionally, only REGEX_DRAFT and AI_DRAFT records are removed.
-    // REVIEWED records are preserved because human review makes them
-    // authoritative — a failed import must not undo human-validated facts.
-    const directExperts = supportDocIds.length > 0
-      ? await tx.expert.deleteMany({
-          where: {
-            companyId,
-            sourceDocumentId: { in: supportDocIds },
-            trustLevel: { in: REMOVABLE_TRUST_LEVELS },
-          },
-        })
-      : { count: 0 };
-    const directProjects = supportDocIds.length > 0
-      ? await tx.project.deleteMany({
-          where: {
-            companyId,
-            sourceDocumentId: { in: supportDocIds },
-            trustLevel: { in: REMOVABLE_TRUST_LEVELS },
-          },
-        })
-      : { count: 0 };
-
-    return {
-      supportDocuments: supportDocs.length,
-      expertsDeleted: directExperts.count,
-      projectsDeleted: directProjects.count,
-    };
+  const supportDocs = await prisma.companyDocument.findMany({
+    where: { companyId, category: { in: [...MIXED_OR_SUPPORT_CATEGORIES] } },
+    select: { id: true },
   });
+  const supportDocIds = supportDocs.map((document) => document.id);
+
+  if (supportDocIds.length === 0) {
+    return {
+      supportDocuments: 0,
+      expertsDeleted: 0,
+      projectsDeleted: 0,
+      expertsPreservedForReview: 0,
+      projectsPreservedForReview: 0,
+    };
+  }
+
+  const [expertsPreservedForReview, projectsPreservedForReview] = await Promise.all([
+    prisma.expert.count({
+      where: {
+        companyId,
+        sourceDocumentId: { in: supportDocIds },
+        trustLevel: { in: ["REGEX_DRAFT", "AI_DRAFT", "SOURCE_VERIFIED"] },
+        deletedAt: null,
+      },
+    }),
+    prisma.project.count({
+      where: {
+        companyId,
+        sourceDocumentId: { in: supportDocIds },
+        trustLevel: { in: ["REGEX_DRAFT", "AI_DRAFT", "SOURCE_VERIFIED"] },
+        deletedAt: null,
+      },
+    }),
+  ]);
+
+  return {
+    supportDocuments: supportDocs.length,
+    expertsDeleted: 0,
+    projectsDeleted: 0,
+    expertsPreservedForReview,
+    projectsPreservedForReview,
+  };
 }

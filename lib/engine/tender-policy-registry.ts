@@ -247,7 +247,7 @@ export function fieldDisplayLabel(field: string): string {
 // override does NOT silently unlock generation, export, or ZIP (Policy point 4).
 
 export type GateConsequence = {
-  /** Blocks Generate Docs when this field is unusable. */
+  /** Blocks document generation when this field is unusable. */
   blocksGeneration: boolean;
   /** Blocks Export / final ZIP when this field is unusable. */
   blocksExport: boolean;

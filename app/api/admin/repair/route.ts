@@ -9,6 +9,7 @@ import { getStorageAdapter } from "../../../../lib/storage";
 import { logAction } from "../../../../lib/audit";
 import { rateLimit } from "../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../lib/request-id";
+import { inspectActualFileBytes } from "../../../../lib/engine/persisted-byte-integrity";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -20,7 +21,13 @@ type AdminRepairStep =
   | "labels"
   | "requirements"
   | "appsettings"
-  | "prune-superseded";
+  | "prune-superseded"
+  // Defect 3: restore official bytes / hash / MIME on CompanyDocument rows
+  // that were previously overwritten by a Plan B synthetic JSON import, and
+  // invalidate stale provenance on dependent Expert/Project/Legal/Financial/
+  // Compliance rows so they re-run the source-verification gate against
+  // the restored bytes.
+  | "restore-vault-bytes";
 
 const ADMIN_REPAIR_STEPS = new Set<AdminRepairStep>([
   "all",
@@ -30,6 +37,7 @@ const ADMIN_REPAIR_STEPS = new Set<AdminRepairStep>([
   "requirements",
   "appsettings",
   "prune-superseded",
+  "restore-vault-bytes",
 ]);
 
 /**
@@ -125,6 +133,14 @@ export async function POST(req: Request) {
       requirements: null as null | { scanned: number; cleared: number },
       appsettings: null as null | { ensured: number },
       pruneSuperseded: null as null | { deleted: number; cutoffDays: number },
+      // Defect 3: result of the restore-vault-bytes step.
+      restoreVaultBytes: null as null | {
+        total: number;
+        restored: number;
+        bytesLost: number;
+        provenanceInvalidated: number;
+        details: Array<{ name: string; status: string; error?: string }>;
+      },
       timestamp: new Date().toISOString(),
     };
 
@@ -339,6 +355,176 @@ export async function POST(req: Request) {
       results.appsettings = { ensured };
     }
 
+    if (step === "restore-vault-bytes") {
+      // Defect 3: Repair already-corrupted Vault rows.
+      //
+      // For each tenant-owned CompanyDocument:
+      //   1. Read persisted bytes from fileContent (base64) or storagePath.
+      //   2. Re-run inspectActualFileBytes against those bytes — restores the
+      //      correct contentSha256, contentByteLength, contentMimeType,
+      //      detectedFormat, integrityStatus.
+      //   3. Re-extract text using the DETECTED mime type (not the persisted,
+      //      possibly tampered one).
+      //   4. Detect the "official bytes lost" case: if the persisted row
+      //      looks like a Plan B synthetic JSON artifact (mimeType ===
+      //      "application/json" AND metadata.planB === true AND the
+      //      originalFileName ends in .pdf/.docx), the original upload's
+      //      bytes have been overwritten. Surface OFFICIAL_BYTES_LOST so
+      //      the user knows they must re-upload.
+      //   5. Invalidate stale provenance on all dependent Expert/Project/
+      //      Legal/Financial/Compliance rows that point at this document:
+      //      reset trustLevel to AI_DRAFT, null out reviewedBy/reviewedAt/
+      //      reviewNotes. The next autoVerifyCompanyKnowledge pass re-runs
+      //      the source-verification gate against the restored bytes.
+      const documents = await prisma.companyDocument.findMany({
+        where: {
+          companyId: company.id,
+          OR: [{ fileContent: { not: null } }, { storagePath: { not: "" } }],
+        },
+        select: {
+          id: true,
+          originalFileName: true,
+          fileName: true,
+          mimeType: true,
+          fileContent: true,
+          storagePath: true,
+          metadata: true,
+          contentSha256: true,
+          contentByteLength: true,
+          integrityStatus: true,
+        },
+      });
+
+      let restored = 0;
+      let bytesLost = 0;
+      let provenanceInvalidated = 0;
+      const details: Array<{ name: string; status: string; error?: string }> = [];
+      const deadline = Date.now() + 45_000;
+
+      for (const document of documents) {
+        if (Date.now() > deadline) {
+          details.push({ name: "…aborted", status: "timeout", error: "Deadline reached — run again to process remaining documents" });
+          break;
+        }
+        const displayName = document.originalFileName ?? document.fileName ?? document.id;
+
+        // Detect the "official bytes lost" case.
+        let isPlanBArtifact = false;
+        try {
+          const meta = JSON.parse(document.metadata ?? "{}") as Record<string, unknown>;
+          isPlanBArtifact = meta.planB === true;
+        } catch {
+          isPlanBArtifact = false;
+        }
+        const originalName = (document.originalFileName ?? "").toLowerCase();
+        const wasOfficialUpload = /\.(pdf|docx?|xlsx?|pptx?)$/.test(originalName);
+        if (isPlanBArtifact && wasOfficialUpload && (document.mimeType ?? "").includes("json")) {
+          // The original PDF/DOCX upload's bytes were overwritten by a Plan B
+          // synthetic JSON artifact (Defect 1's corruption case). Original
+          // bytes are gone — cannot restore. Surface the failure.
+          bytesLost += 1;
+          details.push({
+            name: displayName,
+            status: "OFFICIAL_BYTES_LOST",
+            error: "Original uploaded bytes were overwritten by a Plan B synthetic JSON artifact. Re-upload the document through the Company Vault to restore it.",
+          });
+          // Still invalidate provenance on dependent rows — they must not keep
+          // claiming SOURCE_VERIFIED against the corrupted row.
+          const invalidated = await invalidateDependentProvenance(prisma, company.id, document.id);
+          provenanceInvalidated += invalidated;
+          continue;
+        }
+
+        try {
+          const buffer = document.fileContent
+            ? Buffer.from(document.fileContent, "base64")
+            : await getStorageAdapter().getFile({
+                storagePath: document.storagePath,
+                fileContent: null,
+                fileName: document.originalFileName,
+              });
+
+          // Re-run byte-integrity inspection against the actual bytes.
+          const integrity = inspectActualFileBytes({
+            bytes: buffer,
+            filename: document.originalFileName ?? document.fileName ?? "document",
+            claimedMimeType: document.mimeType ?? undefined,
+          });
+
+          // Re-extract text using the DETECTED mime type, not the persisted one.
+          const detectedMime = integrity.contentMimeType ?? document.mimeType;
+          const extractedText = await extractTextFromBuffer(
+            buffer,
+            detectedMime,
+            document.originalFileName,
+          );
+          const meaningful = isMeaningfulExtraction(extractedText);
+
+          let existingMetadata: Record<string, unknown> = {};
+          try {
+            existingMetadata = JSON.parse(document.metadata || "{}") as Record<string, unknown>;
+          } catch {
+            existingMetadata = {};
+          }
+
+          await prisma.companyDocument.update({
+            where: { id: document.id },
+            data: {
+              // Restore byte-integrity fields from the actual bytes.
+              ...integrity,
+              // Restore extracted text using the detected mime type.
+              extractedText: extractedText || null,
+              aiExtractionStatus: meaningful ? "EXTRACTED" : "FAILED",
+              aiExtractionError: meaningful ? null : "No text extracted from document after byte restore",
+              aiExtractedAt: meaningful ? new Date() : null,
+              metadata: JSON.stringify({
+                ...existingMetadata,
+                byteRestoredAt: new Date().toISOString(),
+                byteRestorePreviousHash: document.contentSha256 ?? null,
+                byteRestorePreviousMime: document.mimeType ?? null,
+                byteRestorePreviousIntegrity: document.integrityStatus ?? null,
+              }),
+              updatedAt: new Date(),
+            },
+          });
+
+          // Invalidate stale provenance on dependent rows. Only do this when
+          // the hash actually changed (otherwise the provenance is still
+          // valid and we avoid an unnecessary reset).
+          const hashChanged = (document.contentSha256 ?? "") !== (integrity.contentSha256 ?? "");
+          if (hashChanged) {
+            const invalidated = await invalidateDependentProvenance(prisma, company.id, document.id);
+            provenanceInvalidated += invalidated;
+          }
+
+          restored += 1;
+          details.push({
+            name: displayName,
+            status: hashChanged ? "restored+reverified" : "verified-unchanged",
+          });
+        } catch (error) {
+          details.push({
+            name: displayName,
+            status: "error",
+            error: "Processing failed",
+          });
+          logger.error("[admin/repair] restore-vault-bytes failed", {
+            requestId,
+            documentId: document.id,
+            errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+          });
+        }
+      }
+
+      results.restoreVaultBytes = {
+        total: documents.length,
+        restored,
+        bytesLost,
+        provenanceInvalidated,
+        details: details.slice(0, 200),
+      };
+    }
+
     if (step === "prune-superseded") {
       const cutoffDays = Math.max(
         1,
@@ -372,6 +558,9 @@ export async function POST(req: Request) {
         labelsUpdated: results.labels?.updated ?? 0,
         requirementsCleaned: results.requirements?.cleared ?? 0,
         documentsDeleted: results.pruneSuperseded?.deleted ?? 0,
+        vaultBytesRestored: results.restoreVaultBytes?.restored ?? 0,
+        vaultBytesLost: results.restoreVaultBytes?.bytesLost ?? 0,
+        vaultProvenanceInvalidated: results.restoreVaultBytes?.provenanceInvalidated ?? 0,
       },
       requestId,
     }).catch((error) => {
@@ -398,4 +587,52 @@ export async function POST(req: Request) {
       { status: 500 },
     );
   }
+}
+
+/**
+ * Defect 3: invalidate stale provenance on all Expert/Project/Legal/
+ * Financial/Compliance rows whose sourceDocumentId points at the given
+ * CompanyDocument.
+ *
+ * After a byte-restore, the source bytes have a new SHA-256. Any dependent
+ * record that was previously SOURCE_VERIFIED or REVIEWED against the old
+ * bytes is now carrying stale provenance — its reviewNotes encodes the old
+ * sourceContentHash / sourceTextHash. Reset trustLevel to AI_DRAFT and null
+ * out reviewer identity so the next autoVerifyCompanyKnowledge pass re-runs
+ * the source-verification gate against the restored bytes.
+ *
+ * Returns the total number of dependent rows invalidated.
+ */
+async function invalidateDependentProvenance(
+  client: typeof prisma,
+  companyId: string,
+  sourceDocumentId: string,
+): Promise<number> {
+  const expertResult = await client.expert.updateMany({
+    where: { companyId, sourceDocumentId, trustLevel: { in: ["REVIEWED", "SOURCE_VERIFIED"] } },
+    data: { trustLevel: "AI_DRAFT", reviewedBy: null, reviewedAt: null, reviewNotes: null },
+  });
+  const projectResult = await client.project.updateMany({
+    where: { companyId, sourceDocumentId, trustLevel: { in: ["REVIEWED", "SOURCE_VERIFIED"] } },
+    data: { trustLevel: "AI_DRAFT", reviewedBy: null, reviewedAt: null, reviewNotes: null },
+  });
+  const legalResult = await client.legalRecord.updateMany({
+    where: { companyId, sourceDocumentId, trustLevel: { in: ["REVIEWED", "SOURCE_VERIFIED"] } },
+    data: { trustLevel: "AI_DRAFT", reviewedBy: null, reviewedAt: null, reviewNotes: null },
+  });
+  const financialResult = await client.financialRecord.updateMany({
+    where: { companyId, sourceDocumentId, trustLevel: { in: ["REVIEWED", "SOURCE_VERIFIED"] } },
+    data: { trustLevel: "AI_DRAFT", reviewedBy: null, reviewedAt: null, reviewNotes: null },
+  });
+  const complianceResult = await client.companyComplianceRecord.updateMany({
+    where: { companyId, sourceDocumentId, trustLevel: { in: ["REVIEWED", "SOURCE_VERIFIED"] } },
+    data: { trustLevel: "AI_DRAFT", reviewedBy: null, reviewedAt: null, reviewNotes: null },
+  });
+  return (
+    expertResult.count +
+    projectResult.count +
+    legalResult.count +
+    financialResult.count +
+    complianceResult.count
+  );
 }

@@ -15,42 +15,40 @@ describe("company reimport safety", () => {
     assert.doesNotMatch(route, /"REVIEWER"|"VIEWER"/);
   });
 
-  it("defers destructive cleanup until primary and safety imports complete", () => {
+  it("enqueues re-extraction + the single canonical ingestion owner as one background job", () => {
+    // Re-extracting bytes for every company document and then ingesting them
+    // used to run inline (inspectActualFileBytes -> ingestCompanyVault ->
+    // cleanupSupportDocImportedRecords), which could exceed the request's
+    // time budget for a large vault. All three now run inside the
+    // VAULT_INGEST job handler (lib/ai-job-handlers-legacy.ts, reExtractAll: true)
+    // instead — this route only enqueues it.
     const postStart = route.indexOf("export async function POST");
-    const primaryPos = route.indexOf("importCompanyKnowledgeFromDocuments(company.id)", postStart);
-    const safetyPos = route.indexOf("runCompanyKnowledgeSafetyImport(prisma, company.id)", postStart);
-    const cleanupPos = route.indexOf("cleanupSupportDocImportedRecords(company.id)", postStart);
     assert.ok(postStart >= 0);
-    assert.ok(primaryPos > postStart);
-    assert.ok(safetyPos > primaryPos);
-    assert.ok(cleanupPos > safetyPos);
     const postRegion = route.slice(postStart);
-    assert.equal(postRegion.match(/cleanupSupportDocImportedRecords\(company\.id\)/g)?.length, 1);
-    assert.doesNotMatch(route.slice(postStart, primaryPos), /cleanupSupportDocImportedRecords\(company\.id\)/);
+    assert.doesNotMatch(postRegion, /inspectActualFileBytes/);
+    assert.doesNotMatch(postRegion, /ingestCompanyVault\(/);
+    assert.doesNotMatch(postRegion, /cleanupSupportDocImportedRecords\(/);
+    assert.match(postRegion, /enqueueJob\(\{/);
+    assert.match(postRegion, /jobType: "VAULT_INGEST"/);
+    assert.match(postRegion, /reExtractAll: true/);
+    assert.match(postRegion, /auditAction: "COMPANY_KNOWLEDGE_REPAIR"/);
   });
 
-  it("makes support-derived deletion one transaction", () => {
-    assert.match(cleanup, /return prisma\.\$transaction\(async \(tx\) =>/);
-    assert.match(cleanup, /tx\.companyDocument\.findMany/);
-    assert.match(cleanup, /tx\.expert\.deleteMany/);
-    assert.match(cleanup, /tx\.project\.deleteMany/);
-    assert.doesNotMatch(cleanup, /prisma\.(?:expert|project)\.deleteMany/);
+  it("treats mixed/support document handling as a non-destructive audit", () => {
+    assert.match(cleanup, /uncertain claim must remain available for automatic verification/);
+    assert.match(cleanup, /prisma\.expert\.count/);
+    assert.match(cleanup, /prisma\.project\.count/);
+    assert.match(cleanup, /expertsPreservedForReview/);
+    assert.match(cleanup, /projectsPreservedForReview/);
+    assert.match(cleanup, /expertsDeleted: 0/);
+    assert.match(cleanup, /projectsDeleted: 0/);
+    assert.doesNotMatch(cleanup, /deleteMany|\.delete\(/);
   });
 
-  it("keeps every cleanup query company-scoped", () => {
+  it("keeps every support-evidence audit query company-scoped", () => {
     const scopes = cleanup.match(/companyId/g) ?? [];
     assert.ok(scopes.length >= 4, `expected repeated company scoping, found ${scopes.length}`);
-    // Each deleteMany WHERE must include both companyId and sourceDocumentId.
-    const expertDeleteMatches = cleanup.match(/tx\.expert\.deleteMany\([\s\S]*?\}\)/g) ?? [];
-    for (const m of expertDeleteMatches) {
-      assert.match(m, /companyId/, "expert deleteMany must be company-scoped");
-      assert.match(m, /sourceDocumentId:/, "expert deleteMany must use sourceDocumentId");
-    }
-    const projectDeleteMatches = cleanup.match(/tx\.project\.deleteMany\([\s\S]*?\}\)/g) ?? [];
-    for (const m of projectDeleteMatches) {
-      assert.match(m, /companyId/, "project deleteMany must be company-scoped");
-      assert.match(m, /sourceDocumentId:/, "project deleteMany must use sourceDocumentId");
-    }
+    assert.match(cleanup, /companyId,\s*sourceDocumentId: \{ in: supportDocIds \}/s);
   });
 
   it("uses persistent throttling and stable correlated runtime errors", () => {
@@ -61,10 +59,18 @@ describe("company reimport safety", () => {
     assert.doesNotMatch(route, /error:\s*(?:error\.message|String\(error\))/);
   });
 
-  it("makes post-success audit persistence non-fatal", () => {
-    assert.match(route, /void logAction\(/);
-    assert.match(route, /company reimport audit persistence failed/);
-    assert.match(route, /\.catch\(\(error\) =>/);
+  it("the audit entry moved to the job handler (real outcome, not a pre-run guess)", () => {
+    // The route can no longer log real counts synchronously because
+    // ingestion hasn't run yet at response time. lib/ai-job-handlers.ts's
+    // VAULT_INGEST handler logs COMPANY_KNOWLEDGE_REPAIR once the job
+    // actually completes, gated on the auditAction this route passes in.
+    assert.doesNotMatch(route, /logAction\(/);
+    // VAULT_INGEST's implementation lives in ai-job-handlers-legacy.ts —
+    // lib/ai-job-handlers.ts now only re-exports it and locally overrides
+    // EXTRACT_TEXT's getHandler branch.
+    const handlers = readFileSync("lib/ai-job-handlers-legacy.ts", "utf8");
+    assert.match(handlers, /auditAction === "COMPANY_KNOWLEDGE_REPAIR"/);
+    assert.match(handlers, /\.catch\(\(error\) => \{/);
   });
 
   it("keeps Vercel Git deployment enabled (repo policy)", () => {

@@ -1,17 +1,14 @@
 // lib/engine/repair-source-grounding.ts
 //
-// Attempts to repair ungrounded mandatory requirements by finding matching
-// text in uploaded tender files with extractedText.
-//
-// Repair rules:
-// - Only uses uploaded tender files with non-empty extractedText.
-// - Never fabricates quotes — only saves text actually found in the file.
-// - Saves sourceTenderFileId, sourceExactQuote, sourceConfidence > 0.
-// - Saves sourcePageNumber and sourceSectionHeading when detectable.
-// - Low-confidence matches are saved but flagged with a warning.
+// Repairs missing or stale source coordinates for mandatory/critical tender
+// requirements. Every persisted quote is copied from an ACTIVE uploaded tender
+// file, is re-checked for containment, and is paired with a proven page number.
+// The service never invents quotes, never uses deleted files, and never turns a
+// low-confidence lexical guess into release authority.
 
 import { prisma } from "../prisma";
 import { computeProvenPageNumber } from "./page-provenance";
+import { isGroundedEvidenceInActiveFiles } from "./evidence-grounding";
 
 export type RepairSourceGroundingResult = {
   checkedCount: number;
@@ -22,7 +19,15 @@ export type RepairSourceGroundingResult = {
   warnings: string[];
 };
 
-// Stop-words excluded from key-phrase extraction to reduce false positives.
+export type RepairSourceGroundingOptions = {
+  /** Injectable Prisma-compatible client for transactions/tests. */
+  db?: any;
+  /** When supplied, proves the tender belongs to the caller before mutation. */
+  userId?: string;
+};
+
+export const MIN_AUTOMATIC_GROUNDING_CONFIDENCE = 0.5;
+
 const STOP_WORDS = new Set([
   "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
   "of", "with", "by", "from", "is", "are", "was", "were", "be", "been",
@@ -30,180 +35,374 @@ const STOP_WORDS = new Set([
   "should", "may", "might", "shall", "can", "that", "this", "these", "those",
   "it", "its", "not", "no", "all", "any", "each", "which", "who", "when",
   "where", "how", "what", "why", "as", "if", "so", "than", "then", "also",
-  "more", "most", "only", "such", "must", "shall", "very", "per", "upon",
-  "about", "after", "before", "between", "during", "into", "through",
-  "above", "below", "under", "over", "within", "without", "including",
-  "based", "provide", "submit", "required", "requirement", "minimum",
-  "maximum", "least", "date", "time", "year", "years", "month", "months",
+  "more", "most", "only", "such", "must", "very", "per", "upon", "about",
+  "after", "before", "between", "during", "into", "through", "above", "below",
+  "under", "over", "within", "without", "including", "based", "provide",
+  "submit", "required", "requirement", "minimum", "maximum", "least", "date",
+  "time", "year", "years", "month", "months", "document", "tender", "bidder",
 ]);
 
-function extractKeyPhrases(text: string): string[] {
+export function extractSourceGroundingKeyPhrases(text: string): string[] {
   return text
-    .toLowerCase()
+    .toLocaleLowerCase("en-US")
     .replace(/[^a-z0-9\s]/g, " ")
     .split(/\s+/)
-    .filter((w) => w.length >= 5 && !STOP_WORDS.has(w))
-    .filter((w, i, a) => a.indexOf(w) === i) // unique
-    .slice(0, 12);
+    .filter((word) => word.length >= 4 && !STOP_WORDS.has(word))
+    .filter((word, index, all) => all.indexOf(word) === index)
+    .slice(0, 16);
 }
 
-// Find the best match for the given key phrases within the source text.
-// Returns the quote (≤500 chars) and a confidence score 0–1.
-function findBestQuote(
+export function findBestSourceGroundingQuote(
   keyPhrases: string[],
   sourceText: string,
 ): { quote: string; confidence: number; offset: number } | null {
-  if (keyPhrases.length === 0 || sourceText.length === 0) return null;
+  if (keyPhrases.length < 2 || sourceText.trim().length < 20) return null;
 
-  const lower = sourceText.toLowerCase();
-  const WINDOW = 600;
-  const MIN_MATCHES = 2;
-
+  const lower = sourceText.toLocaleLowerCase("en-US");
+  // The persisted quote is capped at 500 characters. Score the same compact
+  // window so every term used to justify the match is actually inside the
+  // exact quote that will be stored and re-validated by release gates.
+  const windowSize = 500;
+  const step = 60;
+  // Short phrase sets carry little redundancy. Require every phrase when four
+  // or fewer are available so terms outside the persisted quote cannot silently
+  // justify an otherwise ambiguous three-word match. Longer descriptions still
+  // require at least three coherent specific terms in the same compact quote.
+  const minimumHits = keyPhrases.length <= 4 ? keyPhrases.length : 3;
+  const denominator = Math.min(6, keyPhrases.length);
   let bestScore = 0;
   let bestOffset = -1;
+  let bestHits = 0;
 
-  // Slide a window across the text and count phrase hits in each window.
-  for (let start = 0; start < lower.length - 50; start += 80) {
-    const end = Math.min(start + WINDOW, lower.length);
-    const window = lower.slice(start, end);
-    const hits = keyPhrases.filter((p) => window.includes(p)).length;
-    const score = hits / keyPhrases.length;
-    if (hits >= MIN_MATCHES && score > bestScore) {
+  const scoreWindow = (start: number) => {
+    const window = lower.slice(start, Math.min(start + windowSize, lower.length));
+    const hits = keyPhrases.filter((phrase) => window.includes(phrase)).length;
+    if (hits < minimumHits) return { hits, score: 0 };
+    return { hits, score: Math.min(1, hits / denominator) };
+  };
+
+  const lastStart = Math.max(0, lower.length - 20);
+  for (let start = 0; start <= lastStart; start += step) {
+    const { hits, score } = scoreWindow(start);
+    if (score > bestScore || (score === bestScore && hits > bestHits)) {
       bestScore = score;
       bestOffset = start;
+      bestHits = hits;
+    }
+    if (start + step > lastStart && start !== lastStart) {
+      const { hits: tailHits, score: tailScore } = scoreWindow(lastStart);
+      if (tailScore > bestScore || (tailScore === bestScore && tailHits > bestHits)) {
+        bestScore = tailScore;
+        bestOffset = lastStart;
+        bestHits = tailHits;
+      }
+      break;
     }
   }
 
-  if (bestOffset < 0) return null;
+  if (
+    bestOffset < 0
+    || bestHits < minimumHits
+    || bestScore < MIN_AUTOMATIC_GROUNDING_CONFIDENCE
+  ) return null;
 
-  // Extract up to 500 chars of real (un-lowercased) text around the best window.
-  const rawSlice = sourceText.slice(bestOffset, Math.min(bestOffset + 500, sourceText.length)).trim();
-  if (rawSlice.length < 20) return null;
+  const quote = sourceText
+    .slice(bestOffset, Math.min(bestOffset + windowSize, sourceText.length))
+    .trim();
+  if (quote.length < 20) return null;
 
-  return { quote: rawSlice, confidence: bestScore, offset: bestOffset };
+  const normalizedQuote = quote.toLocaleLowerCase("en-US");
+  const quoteHits = keyPhrases.filter((phrase) => normalizedQuote.includes(phrase)).length;
+  if (quoteHits < minimumHits) return null;
+
+  return { quote, confidence: bestScore, offset: bestOffset };
 }
 
-// Attempt to detect a page number from the text around an offset.
-// Uses computeProvenPageNumber with the file's stored totalPages as the
-// authoritative guard. Pages outside 1..totalPages are rejected; page 1
-// is only allowed when totalPages === 1 and there are no page boundaries.
-function detectPageNumber(text: string, offset: number, totalPages: number | null | undefined = null): number | null {
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Locate an already-extracted quote in current source bytes, tolerating only whitespace changes. */
+function findExistingQuoteOffset(sourceText: string, quote: string): number | null {
+  const exact = sourceText.indexOf(quote);
+  if (exact >= 0) return exact;
+  const terms = quote.trim().split(/\s+/).filter(Boolean).slice(0, 80);
+  if (terms.length < 3) return null;
+  const match = new RegExp(terms.map(escapeRegExp).join("\\s+"), "i").exec(sourceText);
+  return match && typeof match.index === "number" ? match.index : null;
+}
+
+function detectPageNumber(
+  text: string,
+  offset: number,
+  totalPages: number | null | undefined,
+): number | null {
   return computeProvenPageNumber(text, offset, totalPages);
 }
 
-// Attempt to detect the nearest preceding section heading.
 function detectSectionHeading(text: string, offset: number): string | null {
-  const before = text.slice(Math.max(0, offset - 600), offset);
-  const headingMatch = before.match(/(?:^|\n)(#+\s+[^\n]{5,80}|[A-Z][^\n]{4,80})(?=\n)/m);
+  const before = text.slice(Math.max(0, offset - 800), offset);
+  const headingMatch = before.match(/(?:^|\n)(#+\s+[^\n]{5,100}|[A-Z][^\n]{4,100})(?=\n)/m);
   if (!headingMatch) return null;
   const heading = headingMatch[1].replace(/^#+\s*/, "").trim();
-  return heading.length >= 5 && heading.length <= 100 ? heading : null;
+  return heading.length >= 5 && heading.length <= 120 ? heading : null;
 }
 
-export async function repairSourceGrounding(tenderId: string): Promise<RepairSourceGroundingResult> {
+type ActiveTenderFile = {
+  id: string;
+  extractedText: string | null;
+  fileName: string;
+  totalPages: number | null;
+};
+
+type RequirementToRepair = {
+  id: string;
+  title: string;
+  description: string;
+  sourceTenderFileId: string | null;
+  sourcePageNumber: number | null;
+  sourceExactQuote: string | null;
+  sourceConfidence: number;
+};
+
+function bestRepairForRequirement(
+  requirement: RequirementToRepair,
+  files: ActiveTenderFile[],
+): {
+  fileId: string;
+  quote: string;
+  confidence: number;
+  page: number;
+  heading: string | null;
+} | null {
+  let best: {
+    fileId: string;
+    quote: string;
+    confidence: number;
+    page: number;
+    heading: string | null;
+  } | null = null;
+
+  if (requirement.sourceExactQuote?.trim()) {
+    const preferred = files.find((file) => file.id === requirement.sourceTenderFileId);
+    const ordered = preferred
+      ? [preferred, ...files.filter((file) => file.id !== preferred.id)]
+      : files;
+    for (const file of ordered) {
+      if (!file.extractedText) continue;
+      const offset = findExistingQuoteOffset(file.extractedText, requirement.sourceExactQuote);
+      if (offset == null) continue;
+      const page = detectPageNumber(file.extractedText, offset, file.totalPages);
+      if (!page) continue;
+      return {
+        fileId: file.id,
+        quote: file.extractedText.slice(offset, Math.min(offset + requirement.sourceExactQuote.length, file.extractedText.length)).trim(),
+        confidence: 1,
+        page,
+        heading: detectSectionHeading(file.extractedText, offset),
+      };
+    }
+  }
+
+  const keyPhrases = extractSourceGroundingKeyPhrases(
+    `${requirement.title} ${requirement.description}`,
+  );
+  for (const file of files) {
+    if (!file.extractedText) continue;
+    const match = findBestSourceGroundingQuote(keyPhrases, file.extractedText);
+    if (!match || match.confidence < MIN_AUTOMATIC_GROUNDING_CONFIDENCE) continue;
+    const page = detectPageNumber(file.extractedText, match.offset, file.totalPages);
+    if (!page) continue;
+    if (!file.extractedText.includes(match.quote)) continue;
+    const candidate = {
+      fileId: file.id,
+      quote: match.quote,
+      confidence: match.confidence,
+      page,
+      heading: detectSectionHeading(file.extractedText, match.offset),
+    };
+    if (!best || candidate.confidence > best.confidence) best = candidate;
+  }
+  return best;
+}
+
+/**
+ * Confidence written when a requirement's EXISTING evidence is re-confirmed to
+ * resolve against an active tender file. Deliberately the same value the
+ * analysis promotion writes for verbatim containment: the fact being recorded
+ * is identical, so the two paths must not disagree about how strong it is.
+ */
+const CONFIRMED_EXISTING_EVIDENCE_CONFIDENCE = 0.9;
+
+export async function repairSourceGrounding(
+  tenderId: string,
+  options: RepairSourceGroundingOptions = {},
+): Promise<RepairSourceGroundingResult> {
+  const db = options.db ?? prisma;
   const warnings: string[] = [];
 
-  // Fetch all MANDATORY ungrounded requirements (confidence <= 0 or not set).
-  const ungrounded = await prisma.tenderRequirement.findMany({
-    where: {
-      tenderId,
-      priority: "MANDATORY",
-      sourceConfidence: { lte: 0 },
-    },
-    select: { id: true, title: true, description: true },
-  });
+  if (options.userId) {
+    const owned = await db.tender.findFirst({
+      where: { id: tenderId, userId: options.userId },
+      select: { id: true },
+    });
+    if (!owned) {
+      return {
+        checkedCount: 0,
+        repairedCount: 0,
+        remainingCount: 0,
+        repairedRequirementIds: [],
+        remainingRequirements: [],
+        warnings: ["Tender ownership could not be verified; source repair was not run."],
+      };
+    }
+  }
+
+  const [requirements, tenderFiles] = await Promise.all([
+    db.tenderRequirement.findMany({
+      where: {
+        tenderId,
+        priority: { in: ["MANDATORY", "CRITICAL"] },
+      },
+      orderBy: { createdAt: "asc" },
+      select: {
+        id: true,
+        title: true,
+        description: true,
+        sourceTenderFileId: true,
+        sourcePageNumber: true,
+        sourceExactQuote: true,
+        sourceConfidence: true,
+      },
+    }),
+    db.tenderFile.findMany({
+      where: {
+        tenderId,
+        deletionStatus: "ACTIVE",
+        extractedText: { not: null },
+      },
+      select: {
+        id: true,
+        extractedText: true,
+        fileName: true,
+        totalPages: true,
+      },
+    }),
+  ]);
+
+  const usableFiles: ActiveTenderFile[] = tenderFiles.filter(
+    (file: ActiveTenderFile) => Boolean(file.extractedText && file.extractedText.trim().length >= 100),
+  );
+  const activeFiles = usableFiles.map((file) => ({
+    id: file.id,
+    extractedText: file.extractedText,
+    totalPages: file.totalPages,
+  }));
+  // A requirement needs repair when EITHER its evidence does not resolve
+  // against an active file, OR its stored sourceConfidence is <= 0.
+  //
+  // The second condition is not redundant. The generate and export gates block
+  // on `sourceConfidence <= 0` alone, while this routine used to ask only
+  // whether the evidence resolved. A requirement whose quote does resolve but
+  // whose confidence was never written therefore blocked generation while this
+  // routine reported checkedCount: 0 — and the block's own nextAction is
+  // REPAIR_SOURCE_GROUNDING, so the owner was directed at a button that could
+  // not possibly clear it, forever. Whatever else changes, the recovery a gate
+  // advertises must be able to address what that gate is blocking on.
+  const needsRepair = (requirement: RequirementToRepair): boolean => {
+    if ((requirement.sourceConfidence ?? 0) <= 0) return true;
+    return !isGroundedEvidenceInActiveFiles(
+      requirement.sourcePageNumber,
+      requirement.sourceExactQuote,
+      requirement.sourceTenderFileId,
+      activeFiles,
+    );
+  };
+  const ungrounded: RequirementToRepair[] = requirements.filter(needsRepair);
 
   const checkedCount = ungrounded.length;
   if (checkedCount === 0) {
-    return { checkedCount: 0, repairedCount: 0, remainingCount: 0, repairedRequirementIds: [], remainingRequirements: [], warnings };
+    return {
+      checkedCount: 0,
+      repairedCount: 0,
+      remainingCount: 0,
+      repairedRequirementIds: [],
+      remainingRequirements: [],
+      warnings,
+    };
   }
 
-  // Fetch tender files with usable extracted text.
-  const tenderFiles = await prisma.tenderFile.findMany({
-    where: { tenderId, extractedText: { not: null } },
-    select: { id: true, extractedText: true, fileName: true, totalPages: true, deletionStatus: true },
-  });
-
-  const usableFiles = tenderFiles.filter(
-    (f) => f.extractedText && f.extractedText.trim().length > 100,
-  );
-
   if (usableFiles.length === 0) {
-    warnings.push("No tender files with usable extracted text found — repair could not run. Upload and process official tender files first.");
+    warnings.push("No ACTIVE official tender file has usable extracted text. Automatic source grounding remains fail-closed until extraction succeeds.");
     return {
       checkedCount,
       repairedCount: 0,
       remainingCount: checkedCount,
       repairedRequirementIds: [],
-      remainingRequirements: ungrounded.map((r) => ({ id: r.id, title: r.title })),
+      remainingRequirements: ungrounded.map((requirement) => ({ id: requirement.id, title: requirement.title })),
       warnings,
     };
   }
 
-  const repairedIds: string[] = [];
+  const repairedRequirementIds: string[] = [];
   const remainingRequirements: Array<{ id: string; title: string }> = [];
 
-  for (const req of ungrounded) {
-    const keyPhrases = extractKeyPhrases(`${req.title} ${req.description}`);
-    let bestMatch: { fileId: string; quote: string; confidence: number; page: number | null; heading: string | null } | null = null;
-
-    for (const file of usableFiles) {
-      const text = file.extractedText!;
-      const result = findBestQuote(keyPhrases, text);
-      if (!result) continue;
-      if (!bestMatch || result.confidence > bestMatch.confidence) {
-        bestMatch = {
-          fileId: file.id,
-          quote: result.quote,
-          confidence: result.confidence,
-          page: detectPageNumber(text, result.offset, file.totalPages),
-          // Note: sourcePageNumber is always written below (even when null)
-          // to clear stale page evidence from a prior repair.
-          heading: detectSectionHeading(text, result.offset),
-        };
-      }
-    }
-
-    if (!bestMatch || bestMatch.confidence < 0.15) {
-      remainingRequirements.push({ id: req.id, title: req.title });
+  for (const requirement of ungrounded) {
+    // Evidence that already resolves against an active file needs confirming,
+    // not replacing: write the confidence the gates read and keep the quote the
+    // analysis established. Re-deriving a quote here would discard a correct
+    // citation just because a number beside it was missing.
+    if (isGroundedEvidenceInActiveFiles(
+      requirement.sourcePageNumber,
+      requirement.sourceExactQuote,
+      requirement.sourceTenderFileId,
+      activeFiles,
+    )) {
+      await db.tenderRequirement.update({
+        where: { id: requirement.id },
+        data: {
+          sourceConfidence: CONFIRMED_EXISTING_EVIDENCE_CONFIDENCE,
+          sourceExtractionMethod: "automatic_repair_confirmed",
+          updatedAt: new Date(),
+        },
+      });
+      repairedRequirementIds.push(requirement.id);
       continue;
     }
 
-    // Verify the quote is actually present in the file text (safety guard).
-    const matchFile = usableFiles.find((f) => f.id === bestMatch!.fileId);
-    if (!matchFile?.extractedText?.includes(bestMatch.quote.slice(0, 50))) {
-      remainingRequirements.push({ id: req.id, title: req.title });
-      warnings.push(`Requirement "${req.title}": quote verification failed — skipping.`);
+    const repair = bestRepairForRequirement(requirement, usableFiles);
+    if (!repair) {
+      remainingRequirements.push({ id: requirement.id, title: requirement.title });
       continue;
     }
 
-    if (bestMatch.confidence < 0.35) {
-      warnings.push(`Requirement "${req.title}": low-confidence match (${Math.round(bestMatch.confidence * 100)}%) — saved but needs human review.`);
+    const file = usableFiles.find((candidate) => candidate.id === repair.fileId);
+    if (!file?.extractedText || !file.extractedText.includes(repair.quote)) {
+      remainingRequirements.push({ id: requirement.id, title: requirement.title });
+      warnings.push(`Requirement "${requirement.title}": source containment re-check failed; no update was written.`);
+      continue;
     }
 
-    await prisma.tenderRequirement.update({
-      where: { id: req.id },
+    await db.tenderRequirement.update({
+      where: { id: requirement.id },
       data: {
-        sourceTenderFileId: bestMatch.fileId,
-        sourceExactQuote: bestMatch.quote.slice(0, 500),
-        sourceConfidence: Math.round(bestMatch.confidence * 100) / 100,
-        // Always write sourcePageNumber — even when null — to clear stale
-        // page evidence from a prior repair that doesn't correspond to the
-        // new quote.
-        sourcePageNumber: bestMatch.page,
-        ...(bestMatch.heading !== null ? { sourceSectionHeading: bestMatch.heading } : {}),
+        sourceTenderFileId: repair.fileId,
+        sourceExactQuote: repair.quote.slice(0, 500),
+        sourceConfidence: Math.round(repair.confidence * 100) / 100,
+        sourcePageNumber: repair.page,
+        sourceSectionHeading: repair.heading,
+        sourceExtractionMethod: "automatic_repair",
         updatedAt: new Date(),
       },
     });
-
-    repairedIds.push(req.id);
+    repairedRequirementIds.push(requirement.id);
   }
 
   return {
     checkedCount,
-    repairedCount: repairedIds.length,
+    repairedCount: repairedRequirementIds.length,
     remainingCount: remainingRequirements.length,
-    repairedRequirementIds: repairedIds,
+    repairedRequirementIds,
     remainingRequirements,
     warnings,
   };

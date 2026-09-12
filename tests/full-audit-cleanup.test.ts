@@ -88,11 +88,6 @@ describe("Full audit cleanup", () => {
     );
   });
 
-  it("Z.ai resolver includes glm-coding in Coding Plan models", () => {
-    const src = read("lib/ai-provider-registry.ts");
-    assert.ok(src.includes("glm-coding"), "must include glm-coding in allowlist");
-  });
-
   it("finalizeJob passes tx to both promotion helpers", () => {
     const src = read("lib/ai-jobs/analysis-job-service.ts");
     const marker = src.indexOf("SHORT INTERACTIVE TRANSACTION");

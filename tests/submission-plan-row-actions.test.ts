@@ -33,9 +33,16 @@ describe("plan-action endpoint contract", () => {
   });
 
   it("uses the document-type normalizer to map a row to its plan type", () => {
-    assert.match(source, /normalizeDocumentType/);
-    assert.match(source, /requiresOfficialOriginal/);
-    assert.match(source, /isControlDocument/);
+    // The normalizer, the official-original rule and the control-document rule
+    // are now applied through planDocumentReclassification, the one helper that
+    // also answers whether applying them would change anything — see
+    // tests/no-op-reclassification-is-not-offered.test.ts. Assert the route is
+    // on that path rather than pinning the three call sites it used to inline.
+    assert.match(source, /planDocumentReclassification/);
+    const helper = readFileSync("lib/engine/document-type-normalizer.ts", "utf8");
+    assert.match(helper, /planDocumentReclassification[\s\S]*normalizeDocumentType\(/);
+    assert.match(helper, /planDocumentReclassification[\s\S]*requiresOfficialOriginal\(/);
+    assert.match(helper, /planDocumentReclassification[\s\S]*isControlDocument\(/);
   });
 });
 
@@ -59,7 +66,12 @@ describe("Submission Plan Completeness panel renders row actions", () => {
   const source = readFileSync("components/submission-plan-completeness-panel.tsx", "utf8");
 
   it("renders reclassify + outside-plan recovery buttons", () => {
-    assert.match(source, /Reclassify to plan/);
+    // The reclassify label now names the target type ("Reclassify to legal
+    // evidence") and is rendered only when reclassifying would actually change
+    // the stored type, so the panel can no longer report
+    // "reclassified TECHNICAL_PROPOSAL → TECHNICAL_PROPOSAL" as work.
+    assert.match(source, /label=\{`Reclassify to \$\{row\.reclassifyTo/);
+    assert.match(source, /RECLASSIFY_TO_PLAN/);
     assert.match(source, /Mark control \/ not exportable/);
     assert.match(source, /Supersede duplicate/);
     assert.match(source, /Exclude outside-plan/);

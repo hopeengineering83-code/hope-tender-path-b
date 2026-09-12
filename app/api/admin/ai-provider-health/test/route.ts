@@ -2,40 +2,55 @@ import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "@/lib/auth";
 import { logAction } from "@/lib/audit";
 import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "@/lib/rate-limit";
+import { type AiProviderName } from "@/lib/ai-provider-health";
+import { CANONICAL_AI_PROVIDER_ORDER, automaticChainDisplay } from "@/lib/ai-provider-registry";
 import {
-  recordProviderPingSuccess,
-  recordProviderAnalysisSuccess,
-  recordProviderSuccess,
-  recordProviderFailure,
-  isProviderCooledDown,
-  isProviderConfigured,
-  getGeminiApiKey,
-  getOpenRouterSiteUrl,
-  getOpenRouterAppName,
-  getAnthropicApiKey,
-  type AiProviderName
-} from "@/lib/ai-provider-health";
-import {
-  CANONICAL_AI_PROVIDER_ORDER,
-  getProviderEntry,
-  getProviderModel,
-  getProviderBaseUrl,
-  readProviderKey,
-} from "@/lib/ai-provider-registry";
-import { PER_PROVIDER_TIMEOUT_MS, ANTHROPIC_TIMEOUT_MS, GEMINI_TIMEOUT_MS } from "@/lib/timeout-config";
+  testProviderCapabilities,
+  testAutomaticChainCapabilities,
+  verifiedAnalysisProviders,
+  diagnosticDeadlineFrom,
+  type CapabilityName,
+  type ProviderCapabilityReport,
+  type UntestedProvider,
+} from "@/lib/ai-provider-capability-test";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 30;
+export const maxDuration = 60;
+
+/**
+ * Operator "Test provider chain".
+ *
+ * This route used to carry its own copy of every provider's wire call — its own
+ * fetch, its own headers, its own model defaults. Two of those defaults openly
+ * contradicted the registry (Gemini fell back to a different model than the one
+ * AI Analyze uses; Anthropic to a hardcoded haiku alias), so the operator could
+ * be shown a green provider that the workflow could not actually use. It also
+ * wrote its findings into the routing health state, meaning that running the
+ * diagnostic imposed real cooldowns on real analysis work.
+ *
+ * Both are gone. Everything here delegates to lib/ai-provider-capability-test.ts,
+ * which drives the real runtime adapter and keeps its observations off the
+ * routing path. There is now exactly one implementation of "call this provider".
+ */
+
+/** Legacy capability names accepted from existing clients. */
+function normalizeCapability(raw: string | null | undefined): CapabilityName {
+  if (raw === "analysis" || raw === "generation") return raw;
+  if (raw === "connectivity") return "connectivity";
+  // "ping" is what the existing operator UI sends for the connectivity check.
+  return "connectivity";
+}
 
 export type ProviderTestResult = {
   provider: string;
-  status: "ok" | "failed" | "skipped_cooldown" | "not_configured";
-  capability: "ping" | "analysis" | "generation";
+  status: "ok" | "failed" | "skipped_cooldown" | "not_configured" | "not_tested";
+  capability: CapabilityName;
   model: string;
   durationMs: number;
   errorCategory?: string;
   safeError?: string;
-  structuredOutput?: any;
+  /** Whether the provider's own model listing confirms the account can call it. */
+  modelConfirmedByProvider?: boolean | null;
 };
 
 export type ProviderTestSummary = {
@@ -44,229 +59,98 @@ export type ProviderTestSummary = {
   failed: number;
   skipped: number;
   notConfigured: number;
+  /** Providers the request never got to. Non-zero means the answer is partial. */
+  notTested: number;
+  /** Providers in the active chain, so `tested` is readable as N of M. */
+  chainLength: number;
+  /** True when the run stopped early at its own deadline. */
+  partial: boolean;
 };
 
-function summarizeResults(results: ProviderTestResult[]): ProviderTestSummary {
+/** Flatten a capability report into the row shape the operator grid renders. */
+function toRows(report: ProviderCapabilityReport): ProviderTestResult[] {
+  return report.results.map((result) => ({
+    provider: report.provider,
+    capability: result.capability,
+    status:
+      result.status === "ok"
+        ? "ok"
+        // Not a verdict on the provider: the request ran out of time before it
+        // was contacted. Folding this into "failed" or "not configured" would
+        // invent a result the diagnostic never measured.
+        : result.status === "not_tested"
+        ? "not_tested"
+        : result.status === "skipped"
+          // A provider excluded for requiring payment is NOT "not configured" —
+          // the key may well be present. Reporting it as unconfigured would send
+          // an operator hunting for a missing key that is already there.
+          ? (result.category === "BILLING" ? "skipped_cooldown" : "not_configured")
+          : "failed",
+    model: result.model ?? "",
+    durationMs: result.durationMs,
+    errorCategory: result.category ?? undefined,
+    safeError: result.safeMessage ?? undefined,
+    modelConfirmedByProvider: result.modelConfirmedByProvider,
+  }));
+}
+
+function summarizeResults(
+  results: ProviderTestResult[],
+  untested: readonly UntestedProvider[],
+  chainLength: number,
+): ProviderTestSummary {
   return {
     tested: results.length,
     ok: results.filter((r) => r.status === "ok").length,
     failed: results.filter((r) => r.status === "failed").length,
     skipped: results.filter((r) => r.status === "skipped_cooldown").length,
     notConfigured: results.filter((r) => r.status === "not_configured").length,
+    notTested: results.filter((r) => r.status === "not_tested").length + untested.length,
+    chainLength,
+    partial: untested.length > 0 || results.some((r) => r.status === "not_tested"),
   };
 }
 
-const SYNTHETIC_TENDER_TEXT = `
-[FILE_ID:doc-1|FILE_NAME:tender.pdf]
-# PROJECT: Alpha Bridge Construction
-Sector: Infrastructure
-Tender Type: RFP
-The Alpha Bridge Project requires a qualified engineering firm to provide design and supervision services.
-Submission Deadline: 2026-12-31
-Requirements:
-1. Valid Professional Indemnity Insurance of at least $10M.
-2. At least 10 years of experience in bridge design.
-Submission instructions: Submit technical and financial proposals via email to procurement@alpha.gov.
-`;
+async function runTests(
+  provider: AiProviderName | null,
+  capability: CapabilityName,
+): Promise<{
+  reports: ProviderCapabilityReport[];
+  results: ProviderTestResult[];
+  notTested: UntestedProvider[];
+  deadlineExceeded: boolean;
+  chainLength: number;
+}> {
+  // One deadline for the whole request, derived from this route's own
+  // maxDuration so the two can never drift. A full chain is up to ten real
+  // provider round-trips; without this the loop simply ran until the platform
+  // killed the worker, returning a bodiless 504 that discarded every provider
+  // result already measured.
+  const deadlineAt = diagnosticDeadlineFrom(maxDuration);
 
-const ANALYSIS_PROMPT = `
-Analyze the following synthetic tender text and return a JSON object with:
-- tenderType (e.g. RFP, EOI)
-- oneRequirement (an object with title, description, requirementType, priority, sourcePage, sourceQuote)
-- submissionInstruction (string)
-
-Synthetic Tender Text:
-${SYNTHETIC_TENDER_TEXT}
-
-Respond ONLY with valid JSON.
-`;
-
-const GENERATION_PROMPT = "Write a 2-paragraph professional introduction for a proposal responding to the Alpha Bridge Construction project. Mention our 25 years of experience.";
-
-class ProviderTester {
-  provider: AiProviderName;
-  capability: "ping" | "analysis" | "generation";
-
-  constructor(provider: AiProviderName, capability: "ping" | "analysis" | "generation" = "ping") {
-    this.provider = provider;
-    this.capability = capability;
-  }
-
-  async run(): Promise<ProviderTestResult> {
-    return testProvider(this.provider, this.capability);
-  }
-}
-
-function redactMessage(message: string | null | undefined): string {
-  return (message ?? "")
-    .replace(/sk-ant-[A-Za-z0-9-_=]{8,}/g, "[REDACTED]")
-    .replace(/sk-or-[A-Za-z0-9-_=]{8,}/g, "[REDACTED]")
-    .replace(/sk-[A-Za-z0-9-_]{8,}/g, "[REDACTED]")
-    .replace(/gsk_[A-Za-z0-9-_]{8,}/g, "[REDACTED]")
-    .replace(/dsk[-_][A-Za-z0-9-_]{8,}/g, "[REDACTED]")
-    .replace(/AIza[A-Za-z0-9-_]{15,}/g, "[REDACTED]")
-    .replace(/AQ[A-Za-z0-9-_]{20,}/g, "[REDACTED]")
-    .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, "Bearer [REDACTED]")
-    .replace(/authorization:\s*[A-Za-z0-9._\-+/=]+/gi, "authorization: [REDACTED]")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 300);
-}
-
-async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout>;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`Request timed out after ${ms}ms`)), ms);
-  });
-  try {
-    const result = await Promise.race([promise, timeout]);
-    clearTimeout(timer!);
-    return result;
-  } catch (err) {
-    clearTimeout(timer!);
-    throw err;
-  }
-}
-
-async function testProvider(
-  provider: AiProviderName,
-  capability: "ping" | "analysis" | "generation"
-): Promise<ProviderTestResult> {
-  if (!isProviderConfigured(provider)) return { provider, capability, status: "not_configured", model: "", durationMs: 0 };
-  if (isProviderCooledDown(provider)) return { provider, capability, status: "skipped_cooldown", model: "", durationMs: 0 };
-
-  const start = Date.now();
-  let model = "";
-  let prompt = "";
-  let maxTokens = 10;
-
-  if (capability === "ping") {
-    prompt = "Reply with the single word: PING";
-    maxTokens = 10;
-  } else if (capability === "analysis") {
-    prompt = ANALYSIS_PROMPT;
-    maxTokens = 1000;
-  } else {
-    prompt = GENERATION_PROMPT;
-    maxTokens = 2000;
-  }
-
-  try {
-    let resultText = "";
-    if (provider === "gemini") {
-      model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
-      const { GoogleGenerativeAI } = require("@google/generative-ai");
-      const client = new GoogleGenerativeAI(getGeminiApiKey()!);
-      const m = client.getGenerativeModel({ model });
-      const res: any = await withTimeout(
-        m.generateContent({
-          contents: [{ role: "user", parts: [{ text: prompt }] }],
-          generationConfig: { maxOutputTokens: maxTokens }
-        }),
-        GEMINI_TIMEOUT_MS
-      );
-      resultText = res.response.text();
-    } else if (provider === "anthropic") {
-      model = process.env.ANTHROPIC_PROPOSAL_MODELS?.split(",")[0]?.trim() || "claude-3-5-haiku-latest";
-      const res: any = await withTimeout(
-        fetch("https://api.anthropic.com/v1/messages", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-api-key": getAnthropicApiKey()!,
-            "anthropic-version": "2023-06-01",
-          },
-          body: JSON.stringify({
-            model,
-            max_tokens: maxTokens,
-            messages: [{ role: "user", content: prompt }],
-          }),
-        }),
-        ANTHROPIC_TIMEOUT_MS
-      );
-      if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
-      const data = await res.json();
-      resultText = data.content[0].text;
-    } else {
-      // OpenAI-compatible providers (zai, cerebras, mistral, groq, openrouter,
-      // openai, together, deepseek) — all config derived from the registry.
-      const entry = getProviderEntry(provider);
-      const key = readProviderKey(provider);
-      const url = getProviderBaseUrl(provider);
-      model = getProviderModel(provider, capability === "analysis" ? "extraction" : "proposal");
-      const headers: Record<string, string> = { "Content-Type": "application/json", Authorization: `Bearer ${key}` };
-      if (provider === "openrouter") {
-        headers["HTTP-Referer"] = getOpenRouterSiteUrl();
-        headers["X-Title"] = getOpenRouterAppName();
-      }
-      // Cerebras requires max_completion_tokens instead of max_tokens.
-      const tokenParam = entry.requestFormat === "cerebras" ? "max_completion_tokens" : "max_tokens";
-      const res: any = await withTimeout(
-        fetch(`${url}/chat/completions`, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({
-            model,
-            messages: [{ role: "user", content: prompt }],
-            [tokenParam]: maxTokens,
-            temperature: 0,
-          }),
-        }),
-        PER_PROVIDER_TIMEOUT_MS
-      );
-      if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
-      const data = await res.json();
-      resultText = data.choices[0].message.content;
-    }
-
-    let structuredOutput: any = null;
-    if (capability === "analysis") {
-      try {
-        const jsonMatch = resultText.match(/\{.*\}/s);
-        if (jsonMatch) {
-          structuredOutput = JSON.parse(jsonMatch[0]);
-          // Verify required fields
-          const required = ["tenderType", "oneRequirement", "submissionInstruction"];
-          const hasAll = required.every(f => structuredOutput[f] !== undefined);
-          if (!hasAll) throw new Error("Structured output missing required fields");
-
-          const reqFields = ["title", "description", "requirementType", "priority", "sourcePage", "sourceQuote"];
-          const hasReqAll = reqFields.every(f => structuredOutput.oneRequirement[f] !== undefined);
-          if (!hasReqAll) throw new Error("oneRequirement missing required fields");
-
-          structuredOutput.providerUsed = provider;
-        } else {
-          throw new Error("No JSON found in response");
-        }
-      } catch (e) {
-        throw new Error(`Analysis failed validation: ${e instanceof Error ? e.message : String(e)}`);
-      }
-    }
-
-    if (capability === "ping") recordProviderPingSuccess(provider);
-    else if (capability === "analysis") recordProviderAnalysisSuccess(provider);
-    else recordProviderSuccess(provider);
-
+  if (provider) {
+    const report = await testProviderCapabilities(provider, { capabilities: [capability], deadlineAt });
     return {
-      provider,
-      capability,
-      status: "ok",
-      model,
-      durationMs: Date.now() - start,
-      structuredOutput
-    };
-  } catch (err) {
-    const category = recordProviderFailure(provider, err);
-    return {
-      provider,
-      capability,
-      status: "failed",
-      model,
-      durationMs: Date.now() - start,
-      errorCategory: category,
-      safeError: redactMessage(err instanceof Error ? err.message : String(err))
+      reports: [report],
+      results: toRows(report),
+      notTested: [],
+      deadlineExceeded: report.diagnosticState === "NOT_TESTED",
+      chainLength: 1,
     };
   }
+
+  const run = await testAutomaticChainCapabilities({ capabilities: [capability], deadlineAt });
+  return {
+    reports: run.reports,
+    results: run.reports.flatMap(toRows),
+    notTested: run.notTested,
+    deadlineExceeded: run.deadlineExceeded,
+    chainLength: run.chainLength,
+  };
+}
+
+function isKnownProvider(value: string): value is AiProviderName {
+  return (CANONICAL_AI_PROVIDER_ORDER as readonly string[]).includes(value);
 }
 
 export async function GET(req: Request) {
@@ -274,8 +158,7 @@ export async function GET(req: Request) {
   try { actor = await requireRole("ADMIN"); }
   catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
 
-  // Rate limit — this route makes one outbound API call per configured provider
-  // per request. A compromised admin session could run up large bills.
+  // Rate limit — this route makes one outbound API call per tested provider.
   const rl = await rateLimitPersistent(`provider-test:${actor.id}`, MUTATION_RATE_LIMIT);
   if (!rl.allowed) {
     const retryAfter = Math.max(1, Math.ceil((rl.resetAt - Date.now()) / 1000));
@@ -283,30 +166,30 @@ export async function GET(req: Request) {
   }
 
   const url = new URL(req.url);
-  const onlyProvider = url.searchParams.get("provider") as AiProviderName | null;
-  const capability = (url.searchParams.get("capability") || "ping") as "ping" | "analysis" | "generation";
+  const requestedProvider = url.searchParams.get("provider");
+  const provider = requestedProvider && isKnownProvider(requestedProvider) ? requestedProvider : null;
+  const capability = normalizeCapability(url.searchParams.get("capability"));
 
-  const PROVIDERS: readonly AiProviderName[] = CANONICAL_AI_PROVIDER_ORDER;
-  const testers = PROVIDERS.map(p => new ProviderTester(p, capability));
-  const results: ProviderTestResult[] = [];
-
-  for (const tester of testers) {
-    if (onlyProvider && tester.provider !== onlyProvider) continue;
-    results.push(await tester.run());
-  }
+  const { reports, results, notTested, deadlineExceeded, chainLength } = await runTests(provider, capability);
 
   await logAction({
     userId: actor.id,
     action: "CREATE",
     entityType: "AiProviderHealth",
-    entityId: "batch",
-    description: `Operator ran batch ${capability} test for ${onlyProvider || "all"} providers`,
+    entityId: provider ?? "batch",
+    description: `Operator ran batch ${capability} test for ${provider ?? "the active provider chain"}`
+      + (deadlineExceeded ? ` (partial: ${notTested.length} provider(s) not tested before the request deadline)` : ""),
   });
 
   return NextResponse.json({
     success: true,
     capability,
+    activeChain: automaticChainDisplay(),
+    analysisVerifiedProviders: verifiedAnalysisProviders(reports),
     results,
+    summary: summarizeResults(results, notTested, chainLength),
+    notTested,
+    partial: deadlineExceeded,
   });
 }
 
@@ -315,32 +198,36 @@ export async function POST(req: Request) {
   try { actor = await requireRole("ADMIN"); }
   catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
 
-  const body = await req.json().catch(() => ({}));
-  const provider = typeof body.provider === "string" ? (body.provider as AiProviderName) : null;
-  const capability = typeof body.capability === "string" ? (body.capability as "ping" | "analysis" | "generation") : "ping";
-
-  // "Test provider chain": with no specific provider, ping the full canonical
-  // chain (the AIHealthTestButton action). With a provider, test just that one.
-  // Both shapes return { results, summary } so the operator UI renders the grid
-  // and the per-instance "recorded a successful response" state is updated.
-  const providers: readonly AiProviderName[] = provider ? [provider] : CANONICAL_AI_PROVIDER_ORDER;
-  const results: ProviderTestResult[] = [];
-  for (const p of providers) {
-    results.push(await testProvider(p, capability));
+  const rl = await rateLimitPersistent(`provider-test:${actor.id}`, MUTATION_RATE_LIMIT);
+  if (!rl.allowed) {
+    const retryAfter = Math.max(1, Math.ceil((rl.resetAt - Date.now()) / 1000));
+    return NextResponse.json({ error: "Too many requests" }, { status: 429, headers: { "Retry-After": String(retryAfter) } });
   }
-  const summary = summarizeResults(results);
+
+  const body = await req.json().catch(() => ({}));
+  const requestedProvider = typeof body.provider === "string" ? body.provider : null;
+  const provider = requestedProvider && isKnownProvider(requestedProvider) ? requestedProvider : null;
+  const capability = normalizeCapability(typeof body.capability === "string" ? body.capability : null);
+
+  const { reports, results, notTested, deadlineExceeded, chainLength } = await runTests(provider, capability);
+  const summary = summarizeResults(results, notTested, chainLength);
 
   await logAction({
     userId: actor.id,
     action: provider ? "AI_PROVIDER_FAILOVER" : "CREATE",
     entityType: "AiProviderHealth",
     entityId: provider ?? "chain",
-    description: `Operator ran ${capability} test for ${provider ?? "full chain"}: ${summary.ok}/${summary.tested} ok`,
+    description: `Operator ran ${capability} test for ${provider ?? "the active provider chain"}: ${summary.ok}/${summary.tested} ok`
+      + (deadlineExceeded ? `, ${summary.notTested} not tested (request deadline)` : ""),
   });
 
   return NextResponse.json({
     success: true,
+    activeChain: automaticChainDisplay(),
+    analysisVerifiedProviders: verifiedAnalysisProviders(reports),
     results,
     summary,
+    notTested,
+    partial: deadlineExceeded,
   });
 }

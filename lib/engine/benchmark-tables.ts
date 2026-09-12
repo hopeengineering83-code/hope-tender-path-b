@@ -1,4 +1,10 @@
 import { safeParseJsonArray, safeParseJsonObject } from "../safe-json";
+import { extractProjectFacts, extractProjectAmounts, extractServicesProvided } from "./project-fact-extractor";
+import { recordFactsFor } from "./portfolio-card-repair";
+import { withoutSourceProvenance, factualCardOrEmpty } from "./vault-prose";
+import { inlineEvidenceValue } from "./proposal-intelligence";
+import { withoutPersonalCvFields, withoutCvDocumentFurniture, truncateAtWordBoundary } from "./proposal-intelligence";
+
 /**
  * Benchmark-quality tabular sections built deterministically from the
  * reviewed knowledge vault. These are appended to the proposal so that
@@ -106,7 +112,11 @@ function hasContractValue(value: number | null | undefined): boolean {
 function fmtProjectInline(project: Pick<ProjectRecord, "name" | "contractValue" | "currency" | "clientName">): string {
   const parts: string[] = [];
   if (hasContractValue(project.contractValue)) parts.push(fmtMoney(project.contractValue, project.currency));
-  if (project.clientName) parts.push(project.clientName);
+  // Trim the separator the sentence is about to supply. A vault client of
+  // "Gimba City, South Wollo Zone, Amhara Region," otherwise renders as
+  // "… (Gimba City, South Wollo Zone, Amhara Region,)".
+  const client = inlineEvidenceValue(project.clientName);
+  if (client) parts.push(client);
   return parts.length > 0 ? `${project.name} (${parts.join(", ")})` : project.name;
 }
 
@@ -149,7 +159,21 @@ export function buildProposedTeamTable(experts: ExpertRecord[], assignmentRoleHi
     const yearsLine = expert.yearsExperience ? `${expert.yearsExperience} yrs experience` : "";
     const qualParts = [disciplines, certs, yearsLine].filter(Boolean).join(" | ");
     const sectors = safeArr(expert.sectors).join(", ");
-    const profile = (expert.profile ?? "").replace(/\s+/g, " ").trim().slice(0, 280);
+    // Same defect as the Principal Qualifications bios: the CV file's own
+    // furniture reaching the client, and a hard slice stopping mid-word.
+    // Stripping named CV fields was not enough — run 34039741983 still put
+    // "— DR. ENG. KEMAL MOHAMMED ZEINU Senior Environmental & Electrical Expert
+    // (PhD) HOPE URBAN PLANNING ARCHITECTURAL AND ENGINEERING CONSULTANCY PLC …"
+    // in this table's sector-experience column. A stored value that is the
+    // source document's letterhead is not shown; the sectors beside it say what
+    // this column is for.
+    // This column lists facts rather than reading as a paragraph, so a short
+    // factual card is welcome here — what is not is the CV's letterhead or its
+    // habit of repeating the person's own name and title back at itself.
+    const profile = truncateAtWordBoundary(
+      factualCardOrEmpty(withoutCvDocumentFurniture(withoutPersonalCvFields(expert.profile ?? ""))),
+      280,
+    );
     const sectorExp = [sectors, profile].filter(Boolean).join(" — ");
     const role = position.toLowerCase().includes("lead") || position.toLowerCase().includes("principal")
       ? `${position} on this assignment. ${assignmentRoleHint}`
@@ -199,7 +223,11 @@ export function buildTeamToProjectMappingTable(experts: ExpertRecord[], projects
     const previousRole = expert.title?.toLowerCase().includes("lead") || expert.title?.toLowerCase().includes("principal")
       ? expert.title
       : `Senior ${expert.title || "Specialist"}`;
-    const contribution = (matchedProject.summary ?? "").replace(/\s+/g, " ").trim().slice(0, 200) ||
+    // The stored summary runs into the reference letter's own bookkeeping —
+    // "Ref: …/1591/18 Date: 19/01/2018 E.C. Author: Tariku Abebaw (Building
+    // Officer, Gimba…" reached a client-facing cell. That is provenance the app
+    // keeps to prove the record, not a technical contribution.
+    const contribution = truncateAtWordBoundary(withoutSourceProvenance(matchedProject.summary), 200) ||
       `${safeArr(expert.disciplines).join(", ") || "Discipline-led"} contribution covering ${safeArr(matchedProject.serviceAreas).join(", ") || matchedProject.sector || "scope-relevant works"}.`;
 
     return `| ${escCell(`${expert.fullName}, ${expert.title || "Specialist"}`)} | ${escCell(previousRole || "Specialist Lead")} | ${escCell(projectLabel)} | ${escCell(contribution)} |`;
@@ -207,7 +235,7 @@ export function buildTeamToProjectMappingTable(experts: ExpertRecord[], projects
 
   return [
     "## A.5 Team-to-Project Experience Mapping",
-    "Each lead expert proposed for this assignment has performed the same or directly comparable role on a previous reviewed project. The table below provides the direct mapping.",
+    "The table below maps reviewed specialist disciplines to relevant project records. It does not assert personnel continuity unless an individual record proves that relationship.",
     "",
     header,
     separator,
@@ -261,11 +289,64 @@ export function buildProjectPortfolioCards(projects: ProjectRecord[], tenderTitl
     // we actually have a value, so a project with no evidence still
     // gets a clean card without empty rows.
     const testimony = extractTestimonyFields(project.evidences ?? []);
+
+    // Read the record's own source text for anything its structured columns do
+    // not carry. The delivered proposal's single portfolio card — the most
+    // important evidence in the whole document — read:
+    //
+    //   Client            Gimba City, South Wollo Zone, Amhara Region,
+    //   Location & Scale  —
+    //   Duration          Dates on file
+    //
+    // while that record's source text says "(7,000 m²)", "2015-2018 E.C." and
+    // "Construction Cost: 550,074,678.02 ETB". The company authority these
+    // records came from declares the gap outright — projectSectorMissing: 114,
+    // projectServiceAreasEmpty: 114 — and states that "structured fields are an
+    // index only. rawText is the factual source".
+    //
+    // project-fact-extractor.ts was written for exactly this and is wired at
+    // IMPORT time, so a record whose source file carried nulls never benefits
+    // from it. Reading it here costs nothing, mutates no record, and disturbs no
+    // provenance hash: it is the same verified record's own words, rendered.
+    const derived = extractProjectFacts(project.summary ?? "", project.name);
+    // NOTE: derived.contractValue is deliberately NOT used for the value row —
+    // it keeps the largest amount, which is the construction cost. See below.
+    const scaleParts = [
+      project.country || derived.country || derived.location,
+      ...safeArr(project.serviceAreas).slice(0, 3),
+    ].map((part) => (part ?? "").trim()).filter((part) => part.length > 0);
+    const duration = fmtDateRange(project.startDate, project.endDate);
+    const derivedDuration = fmtDateRange(derived.startDate ?? null, derived.endDate ?? null);
+
     const rows: string[] = [];
-    rows.push(`| Client | ${escCell(project.clientName || "Client on file")} |`);
-    rows.push(`| Location & Scale | ${escCell([project.country, ...safeArr(project.serviceAreas).slice(0, 3)].filter(Boolean).join(" — ") || "Scale on file")} |`);
-    rows.push(`| Duration | ${escCell(fmtDateRange(project.startDate, project.endDate))} |`);
-    rows.push(`| Contract Value | ${escCell(hasContractValue(project.contractValue) ? fmtMoney(project.contractValue, project.currency) : "Value detail in Appendix B (project reference)")} |`);
+    rows.push(`| Client | ${escCell(project.clientName || derived.clientName || "Client on file")} |`);
+    rows.push(`| Location & Scale | ${escCell(scaleParts.join(" — ") || "Scale on file")} |`);
+    rows.push(`| Duration | ${escCell(duration === "Dates on file" ? derivedDuration : duration)} |`);
+    // Amounts are presented under the role the SOURCE gives them, never
+    // merged. The record behind this card states a construction cost of
+    // 550,074,678.02 ETB, a design fee of 1,100,000 ETB and a supervision rate
+    // of 110,000 ETB/month. Printing the first under "Contract Value" would
+    // overstate this firm's consultancy contract by about five hundred times,
+    // in a document an evaluator may check against the client's own records.
+    //
+    // The consultancy fee is the firm's contract. The construction cost is the
+    // scale of the asset it worked on, and says so. The monthly supervision
+    // rate is deliberately not printed: it is a rate rather than a track-record
+    // fact, and it reads as a price signal in a technical-only envelope.
+    const amounts = extractProjectAmounts(project.summary ?? "");
+    const consultancyFee = amounts.find((a) => a.role === "CONSULTANCY_FEE" && !a.perMonth);
+    const constructionValue = amounts.find((a) => a.role === "CONSTRUCTION" && !a.perMonth);
+
+    if (hasContractValue(project.contractValue)) {
+      rows.push(`| Contract Value | ${escCell(fmtMoney(project.contractValue, project.currency))} |`);
+    } else if (consultancyFee) {
+      rows.push(`| Consultancy Fee | ${escCell(`${fmtMoney(consultancyFee.value, consultancyFee.currency ?? project.currency)} (${consultancyFee.label})`)} |`);
+    } else {
+      rows.push(`| Contract Value | ${escCell("Value detail in Appendix B (project reference)")} |`);
+    }
+    if (constructionValue) {
+      rows.push(`| Construction Value of Works | ${escCell(fmtMoney(constructionValue.value, constructionValue.currency ?? project.currency))} |`);
+    }
 
     if (testimony.referenceNumber) rows.push(`| Testimony Reference | ${escCell(testimony.referenceNumber)} |`);
     if (testimony.date) rows.push(`| Testimony Date | ${escCell(testimony.date)} |`);
@@ -273,11 +354,21 @@ export function buildProjectPortfolioCards(projects: ProjectRecord[], tenderTitl
     if (testimony.contact) rows.push(`| Client Contact and Email | ${escCell(testimony.contact)} |`);
     if (project.funding) rows.push(`| Funding Source | ${escCell(project.funding)} |`);
 
-    const svcAreas = safeArr(project.serviceAreas);
-    const inferredServices = svcAreas.length > 0
-      ? svcAreas.join(", ")
-      : project.sector || (project.summary ? project.summary.split(".")[0].trim() : "") || "Service detail confirmed in knowledge vault";
-    rows.push(`| Services Provided | ${escCell(inferredServices)} |`);
+    // The fallback used to be the summary's FIRST SENTENCE, which for these
+    // records is the project name and reference number — so the delivered card
+    // read "Services Provided —". The services are named plainly in the same
+    // source text ("Feasibility study, Soil investigation, ... Construction
+    // supervision"); extractServicesProvided returns only the terms literally
+    // present there. Measured on the owner's authority: 114 of 114 records.
+    const svcAreas = safeArr(project.serviceAreas).filter((entry) => entry.trim().length > 0);
+    const derivedServices = svcAreas.length > 0 ? svcAreas : extractServicesProvided(project.summary ?? "");
+    const inferredServices = derivedServices.length > 0
+      ? derivedServices.join(", ")
+      : project.sector || "";
+    // An empty cell renders as a dash and reads as an unfinished document.
+    if (inferredServices.trim().length > 0) {
+      rows.push(`| Services Provided | ${escCell(inferredServices)} |`);
+    }
     rows.push(`| Relevance to This Assignment | ${escCell(buildRelevanceStatement(project, tenderTitle, primarySector))} |`);
 
     cards.push(`| Field | Detail |`, `|---|---|`, ...rows, "");
@@ -366,10 +457,10 @@ function buildRelevanceStatement(project: ProjectRecord, tenderTitle: string, pr
   const summary = (project.summary ?? "").replace(/\s+/g, " ").trim();
 
   if (summary && sectorMatch) {
-    return `Direct ${primarySector} relevance: ${summary.slice(0, 280)}`;
+    return `Direct ${primarySector} relevance: ${truncateAtWordBoundary(summary, 280)}`;
   }
   if (summary) {
-    return `Demonstrates transferable competency for ${tenderTitle}: ${summary.slice(0, 280)}`;
+    return `Demonstrates transferable competency for ${tenderTitle}: ${truncateAtWordBoundary(summary, 280)}`;
   }
   if (sectorMatch) {
     return `Direct ${primarySector} project — same team and methodology applicable to ${tenderTitle}.`;
@@ -484,7 +575,13 @@ export function buildThreeStageReviewTable(companyName: string, primarySector: s
 
   return [
     "## C.3 Quality Assurance: Three-Stage Review",
-    `Every deliverable package is reviewed through three mandatory stages before issue. This protocol is documented in ${companyName}'s Quality Management System (ISO 9001:2015-aligned where certified) and applied on all certified projects.`,
+    // This sentence used to assert that the protocol "is documented in
+    // <firm>'s Quality Management System (ISO 9001:2015-aligned where
+    // certified) and applied on all certified projects" — a claim about an
+    // existing documented QMS, an ISO alignment and a body of certified
+    // projects, none of which the company authority records. What is
+    // defensible is the commitment this proposal makes for this assignment.
+    `Every deliverable package is reviewed through three mandatory stages before issue. ${companyName} applies this review protocol to the deliverables of this assignment, and each stage carries the named review authority and written sign-off set out below.`,
     "",
     "| Stage | Milestone | Review Authority and Required Action |",
     "|---|---|---|",
@@ -849,6 +946,7 @@ export function buildSubmittedByToBlock(opts: {
   exactEmails: string[];
   exactSubject: string;
   deadline?: Date | string | null;
+  deadlineSourceQuote?: string | null;
 }): string {
   const submittedBy: string[] = [
     `**${opts.companyName}**`,
@@ -864,7 +962,7 @@ export function buildSubmittedByToBlock(opts: {
     opts.clientAddress ? opts.clientAddress : "",
     opts.exactEmails.length > 0 ? `Email recipients: ${opts.exactEmails.join("; ")}` : "Email recipients: see tender submission instructions",
     `Subject: ${opts.exactSubject}`,
-    opts.deadline ? `Deadline: ${new Date(opts.deadline).toLocaleString("en-US", { year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" })}` : "",
+    opts.deadline ? `Deadline: ${formatSubmissionDeadline(opts.deadline, opts.deadlineSourceQuote)}` : "",
   ].filter(Boolean);
 
   // Pad rows so both columns have equal length for a tidy table render
@@ -879,6 +977,16 @@ export function buildSubmittedByToBlock(opts: {
     "|---|---|",
     ...rows,
   ].join("\n");
+}
+
+export function formatSubmissionDeadline(deadline: Date | string, sourceQuote?: string | null): string {
+  const quote = sourceQuote?.replace(/\s+/g, " ").trim() ?? "";
+  const grounded = quote.match(/(?:deadline(?:\s+for\s+submission)?|submission\s+deadline)\s*[:\-]?\s*((?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday,?\s+)?\d{1,2}\s+[A-Za-z]+\s+\d{4}(?:\s+(?:at\s+)?\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)?(?:\s+(?:Addis Ababa time|EAT|UTC[+-]\d{1,2}(?::\d{2})?))?)?)/i)?.[1];
+  if (grounded) return grounded.replace(/\s+at\s+/i, " ").trim();
+  const monthFirst = quote.match(/(?:deadline(?:\s+for\s+submission)?|submission\s+deadline)\s*[:\-]?\s*([A-Za-z]+)\s+(\d{1,2}),\s*(\d{4}),?\s*(\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?))(?:\s+(Addis Ababa time|EAT|UTC[+-]\d{1,2}(?::\d{2})?))?/i);
+  if (monthFirst) return `${monthFirst[2]} ${monthFirst[1]} ${monthFirst[3]} ${monthFirst[4]}${monthFirst[5] ? ` ${monthFirst[5]}` : ""}`;
+  const parsed = deadline instanceof Date ? deadline : new Date(deadline);
+  return Number.isNaN(parsed.getTime()) ? String(deadline) : parsed.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
 }
 
 // ─── Portfolio Reading Guide (intro before B.2) ──────────────────────────────
@@ -941,7 +1049,7 @@ export function buildCoverLetterOpener(opts: {
 
   return [
     `${opts.companyName} is pleased to submit this Technical Proposal for ${opts.tenderTitle} in response to the request issued by ${opts.clientName}.`,
-    `${opts.companyName} brings to this assignment a directly comparable evidence base. The same project team that delivered ${projectFragment} is available for this engagement, with zero learning curve. Detailed credentials, contracts, and client testimony letters are provided in the appendices.`,
+    `${opts.companyName} has reviewed ${projectFragment} as relevant reference experience. The applicable delivery lessons inform the approach described in this proposal.`,
   ].join("\n\n");
 }
 
@@ -956,24 +1064,90 @@ export function buildExecutiveSummaryOpener(opts: {
   topExpertTitle?: string | null;
 }): string {
   const top = opts.projects.slice(0, 2);
-  const expertClause = opts.topExpertName
-    ? ` **${opts.topExpertName}**${opts.topExpertTitle ? `, ${opts.topExpertTitle},` : ""} who directed that assignment, leads the proposed team for this engagement.`
-    : opts.reviewedExpertCount > 0 ? ` ${opts.reviewedExpertCount} reviewed specialist(s) are confirmed for this assignment.` : "";
+  // The opener used to end on "The evidence inventory includes 3 reviewed
+  // specialist record(s)." An evaluator is not told how many rows the bidder's
+  // database holds; that is the app's own bookkeeping, and printing it in the
+  // first paragraph of the Executive Summary is what made the summary read as
+  // an inventory rather than as an argument. The sentence that follows this
+  // opener already names the lead expert and their recorded years of practice,
+  // which is what the count was standing in for and is something an evaluator
+  // can actually score.
+  const expertClause = "";
 
   if (top.length === 0) {
     const expertStr = opts.reviewedExpertCount > 0
-      ? `${opts.reviewedExpertCount} reviewed expert${opts.reviewedExpertCount !== 1 ? "s" : ""}${opts.topExpertName ? `, including **${opts.topExpertName}**${opts.topExpertTitle ? `, ${opts.topExpertTitle}` : ""}` : ""}`
+      ? `${opts.reviewedExpertCount} specialist${opts.reviewedExpertCount !== 1 ? "s" : ""}${opts.topExpertName ? `, including **${opts.topExpertName}**${opts.topExpertTitle ? `, ${opts.topExpertTitle}` : ""}` : ""}`
       : "a specialist technical team";
-    return `**${opts.companyName}** brings ${expertStr} to this assignment, each with prior comparable delivery experience confirmed through the firm's knowledge vault. The firm's sector expertise and evidence-mapped technical methodology — detailed in Sections A and C — directly address ${opts.clientName}'s evaluation criteria.`;
+    // "confirmed through the firm's knowledge vault" named this application's
+    // evidence store to the client. What the evaluator can act on is that the
+    // experience is documented and available, not where this app filed it.
+    return `**${opts.companyName}** brings ${expertStr} to this assignment, each with prior comparable delivery experience documented in the firm's records. The firm's sector expertise and evidence-mapped technical methodology — detailed in Sections A and C — directly address ${opts.clientName}'s evaluation criteria.`;
   }
 
-  if (top.length === 1) {
-    const p = top[0];
-    return `**${opts.companyName} has already delivered this assignment.** ${fmtProjectInline(p)} is the directly comparable reference — same scope, same sector, same delivery standards required by ${opts.clientName}.${expertClause}`.trim();
-  }
+  // THE SUMMARY MAKES THE CASE; IT DOES NOT INTRODUCE THE APPENDIX.
+  //
+  // This used to open:
+  //
+  //   "Hope ... brings relevant reviewed experience to this assignment.
+  //    G+6 General Hospital – Dr Abdul Seid (Gimba City, South Wollo Zone,
+  //    Amhara Region) provides a reference point for the proposed delivery
+  //    approach for Pharo Ventures."
+  //
+  // Every word of that is true and none of it argues anything. "Relevant
+  // experience" is what every bidder claims; "provides a reference point for
+  // the proposed delivery approach" says only that a later section exists. The
+  // first paragraph an evaluator reads spent itself saying nothing.
+  //
+  // The overlap between what the client is buying and what the firm has
+  // actually built is the argument, and it is already in hand: the record's own
+  // words give the scale, the location and the services performed, and the
+  // matcher already ranked which record is closest. Naming those is not a
+  // stronger claim than the old sentence — it is the same evidence, stated.
+  // The lead sentence asserts comparability — which the matcher computed and
+  // Section B evidences — and NOT identity of scope. "has delivered the scope
+  // the client is procuring" was the first phrasing here and it is false the
+  // moment the closest record is from a different sector, which is exactly the
+  // case this app must survive.
+  // No bold. Closing a bold run mid-sentence put the run boundary immediately
+  // before a comma, and the delivered PDF read "a 7,000 m² project in Ethiopia
+  // , on which the firm performed ...". The sentence carries its own weight.
+  const lead = projectEvidenceClause(top[0], `${opts.companyName}'s closest comparable assignment is`);
+  if (top.length === 1) return `${lead}${expertClause}`.trim();
+  return `${lead} ${projectEvidenceClause(top[1], "The firm also delivered")}${expertClause}`.trim();
+}
 
-  const [a, b] = top;
-  return `**${opts.companyName} has already delivered this assignment twice.** ${fmtProjectInline(a)} and ${fmtProjectInline(b)} are the directly comparable references — both confirm the firm's capacity for ${opts.clientName}'s scope.${expertClause}`.trim();
+/**
+ * One sentence of concrete, record-grounded evidence about a single project:
+ * what it was, how big, where, and what this firm did on it.
+ *
+ * Only facts the record itself states. Where the record is silent the clause
+ * simply gets shorter — it never fills a gap with a generality.
+ */
+function projectEvidenceClause(project: ProjectRecord, opener: string): string {
+  const facts = recordFactsFor({
+    name: project.name,
+    summary: project.summary ?? null,
+    clientName: project.clientName ?? null,
+    country: project.country ?? null,
+    sector: project.sector ?? null,
+    serviceAreas: (project.serviceAreas as string | null) ?? null,
+    contractValue: project.contractValue ?? null,
+    currency: project.currency ?? null,
+  });
+
+  const descriptors = [facts.scale, project.sector || undefined].filter(Boolean).join(" ");
+  const where = facts.location ? ` in ${facts.location}` : "";
+  const what = descriptors ? `, a ${descriptors} project${where}` : where ? `${where}` : "";
+
+  // Cap the service list: a summary sentence carrying eleven services stops
+  // being a sentence. The full list is on the card in Section B.
+  const services = (facts.services ?? "").split(", ").filter(Boolean);
+  const shown = services.slice(0, 5).join(", ");
+  const did = shown
+    ? `, on which the firm performed ${shown}${services.length > 5 ? " and further design and supervision services" : ""}`
+    : "";
+
+  return `${opener} ${project.name}${what}${did}.`;
 }
 
 // ─── D.4 Declaration with GM name + license ──────────────────────────────────
@@ -993,7 +1167,10 @@ export function buildDeclaration(opts: {
     "## D.4 Declaration of Eligibility",
     `We, ${opts.companyName}, hereby declare that this Technical Proposal has been prepared specifically in response to ${opts.tenderTitle} for ${opts.clientName}. All information provided is accurate and supported by documentary evidence available on request. The firm meets all eligibility requirements stated in the tender and confirms the absence of any debarment, conflict of interest, or compliance condition that would prevent the firm from participating in this procurement.`,
     "",
-    `This proposal has been prepared using reviewed evidence and senior bid-review controls. We commit to delivering the assigned scope with the proposed team, methodology, and schedule.`,
+    // "reviewed evidence and senior bid-review controls" is this application's
+    // description of its own pipeline, inside the bidder's signed declaration.
+    // The commitment is what the client is being asked to rely on.
+    `Every claim in this proposal is supported by the firm's own project and personnel records, which are available for verification on request. We commit to delivering the assigned scope with the proposed team, methodology, and schedule.`,
     "",
     signatureLine,
   ].join("\n");

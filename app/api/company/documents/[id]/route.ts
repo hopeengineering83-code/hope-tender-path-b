@@ -9,21 +9,45 @@ import {
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { logAction } from "../../../../../lib/audit";
 import { extractTextFromBuffer, getFileTypeLabel, isMeaningfulExtraction } from "../../../../../lib/extract-text";
-import { importCompanyKnowledgeFromDocuments } from "../../../../../lib/company-knowledge-import-safe";
-import { runCompanyKnowledgeSafetyImport } from "../../../../../lib/company-knowledge-safety-import";
+import { assessExtractionQuality, assessExtractionQualityPerPage } from "../../../../../lib/extraction-quality";
+import { enqueueJob } from "../../../../../lib/ai-jobs";
 import { getStorageAdapter } from "../../../../../lib/storage";
 import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import {
   deleteCompanyDocumentDurably,
   isCompanyDocumentPendingDeletion,
 } from "../../../../../lib/company-document-durable-deletion";
+import { inspectActualFileBytes } from "../../../../../lib/engine/persisted-byte-integrity";
+import { limitExtractedText } from "../../../../../lib/upload-security";
 
 async function companyForUser(userId: string) {
   return prisma.company.findUnique({ where: { userId } });
 }
 
-// maxDuration = 60 — extraction (especially OCR on scanned PDFs) can take
-// 30-40s. Without this, Vercel Hobby defaults to 10s and the route times out.
+function safeDocumentDownloadName(id: string, originalFileName: string): string {
+  const extensionMatch = originalFileName.match(/\.([a-zA-Z0-9]{1,12})$/);
+  const extension = extensionMatch ? `.${extensionMatch[1].toLowerCase()}` : "";
+  return `company-document-${id.slice(0, 8)}${extension}`;
+}
+
+function parseMetadata(value: string | null | undefined): Record<string, unknown> {
+  try {
+    return JSON.parse(value || "{}") as Record<string, unknown>;
+  } catch (e) {
+    // JSON parse failed — return {} so caller treats row as having no
+    // parsed payload. Surface the failure so corrupted rows are observable.
+    logger.warn("[company/documents] parseMetadata failed — returning {}", {
+      detail: e,
+    });
+    return {};
+  }
+}
+
+function nextExtractionRevision(metadata: Record<string, unknown>): number {
+  const current = Number(metadata.extractionRevision);
+  return Number.isInteger(current) && current > 0 ? current + 1 : 2;
+}
+
 export const maxDuration = 60;
 
 export async function GET(
@@ -52,7 +76,7 @@ export async function GET(
       fileContent: doc.fileContent,
       fileName: doc.originalFileName,
     });
-    const safeFileName = doc.originalFileName.replace(/[^a-zA-Z0-9._\- ()]/g, "_");
+    const safeFileName = safeDocumentDownloadName(doc.id, doc.originalFileName);
     return new Response(new Uint8Array(buffer), {
       headers: {
         "Content-Type": doc.mimeType || "application/octet-stream",
@@ -108,43 +132,93 @@ export async function POST(
     return NextResponse.json({ error: "File content could not be retrieved from storage" }, { status: 502 });
   }
 
-  const extractedText = await extractTextFromBuffer(buffer, doc.mimeType, doc.originalFileName);
-  const fileType = getFileTypeLabel(doc.mimeType, doc.originalFileName);
+  const metadata = parseMetadata(doc.metadata);
+  const extractionRevision = nextExtractionRevision(metadata);
+  const integrity = inspectActualFileBytes({
+    bytes: buffer,
+    filename: doc.originalFileName,
+    claimedMimeType: doc.mimeType,
+  });
+
+  if (integrity.integrityStatus !== "VERIFIED") {
+    await prisma.companyDocument.update({
+      where: { id },
+      data: {
+        ...integrity,
+        extractedText: null,
+        aiExtractionStatus: "FAILED",
+        aiExtractedAt: null,
+        aiExtractionError: "Source byte integrity verification failed.",
+        metadata: JSON.stringify({
+          ...metadata,
+          extractionRevision,
+          reExtractedAt: new Date().toISOString(),
+          extracted: false,
+          extractionStatus: "INTEGRITY_FAILED",
+          integrityFailureCode: integrity.integrityFailureCode,
+        }),
+      },
+    });
+    return NextResponse.json({
+      error: "Source byte integrity verification failed.",
+      code: integrity.integrityFailureCode ?? "FILE_INTEGRITY_NOT_VERIFIED",
+    }, { status: 422 });
+  }
+
+  const extracted = limitExtractedText(
+    await extractTextFromBuffer(buffer, integrity.contentMimeType ?? doc.mimeType, doc.originalFileName),
+  );
+  const extractedText = extracted.text;
+  const fileType = getFileTypeLabel(integrity.contentMimeType ?? doc.mimeType, doc.originalFileName);
   const meaningful = isMeaningfulExtraction(extractedText);
-  let details: Record<string, unknown> = {};
-  try { details = JSON.parse(doc.metadata || "{}"); } catch { details = {}; }
+  const quality = assessExtractionQuality(extractedText, doc.originalFileName);
+  const perPage = assessExtractionQualityPerPage(extractedText);
 
   await prisma.companyDocument.update({
     where: { id },
     data: {
+      ...integrity,
+      mimeType: integrity.contentMimeType ?? doc.mimeType,
+      size: buffer.byteLength,
       extractedText: extractedText || null,
       aiExtractionStatus: meaningful ? "PENDING" : "FAILED",
       aiExtractedAt: null,
       aiExtractionError: meaningful ? null : "No usable text extracted from document",
       metadata: JSON.stringify({
-        ...details,
+        ...metadata,
         fileType,
+        extractionRevision,
         reExtractedAt: new Date().toISOString(),
         extracted: meaningful,
         extractedChars: meaningful ? extractedText.length : 0,
-        extractionStatus: meaningful ? "EXTRACTED" : extractedText ? "WARNING" : "EMPTY",
+        extractionStatus: meaningful ? (extracted.truncated ? "TRUNCATED" : "EXTRACTED") : extractedText ? "WARNING" : "EMPTY",
+        extractionScore: quality.score,
+        pageStatus: perPage.pages,
+        totalPages: perPage.totalDetectedPages,
+        failedPages: perPage.failedPages,
+        ocrPages: perPage.ocrPages,
       }),
     },
   });
 
-  let knowledgeImport: (Awaited<ReturnType<typeof importCompanyKnowledgeFromDocuments>> & { safetyImport?: Awaited<ReturnType<typeof runCompanyKnowledgeSafetyImport>> }) | null = null;
+  // ingestCompanyVault can involve an AI extraction pass over every usable
+  // company document — moved into the VAULT_INGEST job queue rather than
+  // running inline. This single document's own extraction above stays
+  // synchronous (fast, single-file); only the company-wide ingestion pass
+  // is deferred to the worker.
+  let knowledgeImportJobId: string | null = null;
   let knowledgeImportError: string | null = null;
   if (meaningful) {
     try {
-      const primary = await importCompanyKnowledgeFromDocuments(company.id);
-      const aiSucceeded = primary.aiUsed && primary.aiFailures === 0 &&
-        (primary.expertsCreated > 0 || primary.projectsCreated > 0);
-      const emptyResult = { docsScanned: 0, expertsCreated: 0, projectsCreated: 0, expertNamesDetected: 0, projectNamesDetected: 0 };
-      const safetyImport = aiSucceeded ? emptyResult : await runCompanyKnowledgeSafetyImport(prisma, company.id);
-      knowledgeImport = { ...primary, safetyImport };
+      const job = await enqueueJob({
+        userId: actor.id,
+        jobType: "VAULT_INGEST",
+        input: { companyId: company.id },
+      });
+      knowledgeImportJobId = job.id;
     } catch (error) {
       knowledgeImportError = error instanceof Error ? error.constructor.name : "UnknownError";
-      logger.error("[document reextract] knowledge import failed", { errorClass: knowledgeImportError });
+      logger.error("[document reextract] canonical company ingestion enqueue failed", { errorClass: knowledgeImportError });
     }
   }
 
@@ -153,15 +227,26 @@ export async function POST(
     action: "COMPANY_DOCUMENT_REEXTRACT",
     entityType: "CompanyDocument",
     entityId: id,
-    description: `Re-extracted "${doc.originalFileName}"`,
-    metadata: { companyId: company.id, fileName: doc.originalFileName, fileType, extracted: meaningful, knowledgeImport, knowledgeImportError },
+    description: "Re-extracted and byte-verified a company source document.",
+    metadata: {
+      companyId: company.id,
+      fileName: doc.originalFileName,
+      fileType,
+      extracted: meaningful,
+      extractionRevision,
+      extractionScore: quality.score,
+      knowledgeImportJobId,
+      knowledgeImportError,
+    },
   });
 
   return NextResponse.json({
     success: true,
     extractedChars: meaningful ? extractedText.length : 0,
     extracted: meaningful,
-    knowledgeImport,
+    extractionRevision,
+    extractionScore: quality.score,
+    knowledgeImportJobId,
     knowledgeImportError,
   });
 }

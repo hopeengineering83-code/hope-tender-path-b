@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { logger } from "../../../../lib/observability";
 import { prismaReady } from "../../../../lib/prisma";
 import { findJobsDueForRetry, rearmJobForRetry, isAnyProviderEligible } from "../../../../lib/ai-analyze/retry-service";
 
@@ -65,7 +66,7 @@ export async function GET(req: NextRequest) {
       rearmedJobIds,
     });
   } catch (error) {
-    console.error("[ai-analyze-retry] failed", error);
+    logger.error("[ai-analyze-retry] failed", { detail: error instanceof Error ? error.message : String(error) });
     return NextResponse.json({ error: "Retry failed. Check server logs." }, { status: 500 });
   }
 }

@@ -1,9 +1,12 @@
 // Tests proving UI panels use the source-driven requiredForFinal field.
 //
 // PR #974 added requiredForFinal to CanonicalFieldState. This test suite
-// proves the 3 UI panels (metadata-completion, client-submission-details,
-// metadata-truth) read requiredForFinal instead of (or in addition to)
-// the legacy criticality === "always-critical" label.
+// proves client-submission-details-panel.tsx reads requiredForFinal instead
+// of (or in addition to) the legacy criticality === "always-critical" label.
+// (metadata-completion-panel.tsx and metadata-truth-panel.tsx, the other two
+// panels originally covered here, were deleted as superseded dead code --
+// both were read-only summaries of the same fields client-submission-details-panel.tsx
+// fully subsumes.)
 //
 // What these tests prove:
 //   1. Each panel reads requiredForFinal (with legacy fallback for safety)
@@ -19,40 +22,11 @@ import { readFileSync } from "node:fs";
 
 const read = (p: string) => readFileSync(p, "utf8");
 
-// ─── 1. metadata-completion-panel.tsx uses requiredForFinal ────────────────
-
-describe("UI panels — metadata-completion-panel uses requiredForFinal", () => {
-  it("reads field.requiredForFinal in the fieldsNeedingAction filter", () => {
-    const src = read("components/metadata-completion-panel.tsx");
-    assert.ok(
-      src.includes("f.requiredForFinal"),
-      "must read f.requiredForFinal in the filter",
-    );
-    assert.ok(
-      src.includes('?? (f.criticality === "always-critical")'),
-      "must fall back to legacy criticality for backward compat",
-    );
-  });
-
-  it("reads field.requiredForFinal in the badge render", () => {
-    const src = read("components/metadata-completion-panel.tsx");
-    // The badge render uses `field.requiredForFinal ?? (field.criticality === "always-critical")`
-    assert.ok(
-      src.includes("field.requiredForFinal"),
-      "must read field.requiredForFinal in the badge render",
-    );
-  });
-
-  it("does NOT use criticality === 'always-critical' as the sole driver", () => {
-    const src = read("components/metadata-completion-panel.tsx");
-    // The legacy pattern `const isCritical = field.criticality === "always-critical";`
-    // must NOT appear without the requiredForFinal fallback
-    assert.ok(
-      !src.includes('const isCritical = field.criticality === "always-critical";'),
-      "must not use criticality as the sole driver — requiredForFinal is the source of truth",
-    );
-  });
-});
+// "metadata-completion-panel.tsx uses requiredForFinal" removed --
+// components/metadata-completion-panel.tsx was deleted as superseded dead
+// code (a read-only summary of the same snapshot.metadata.fields data that
+// client-submission-details-panel.tsx's ClientSubmissionDetailsPanel fully
+// subsumes). Its requiredForFinal coverage lives on in section 2 below.
 
 // ─── 2. client-submission-details-panel.tsx uses requiredForFinal ──────────
 
@@ -78,29 +52,11 @@ describe("UI panels — client-submission-details-panel uses requiredForFinal", 
   });
 });
 
-// ─── 3. metadata-truth-panel.tsx uses requiredForFinal ─────────────────────
-
-describe("UI panels — metadata-truth-panel uses requiredForFinal", () => {
-  it("reads f.requiredForFinal in the Critical badge render", () => {
-    const src = read("components/metadata-truth-panel.tsx");
-    assert.ok(
-      src.includes("f.requiredForFinal"),
-      "must read f.requiredForFinal",
-    );
-    assert.ok(
-      src.includes('?? (f.criticality === "always-critical")'),
-      "must fall back to legacy criticality for backward compat",
-    );
-  });
-
-  it("does NOT use criticality === 'always-critical' as the sole driver for the Critical badge", () => {
-    const src = read("components/metadata-truth-panel.tsx");
-    assert.ok(
-      !src.includes('{f.criticality === "always-critical" && ('),
-      "must not use criticality as the sole driver for the Critical badge",
-    );
-  });
-});
+// "metadata-truth-panel.tsx uses requiredForFinal" removed --
+// components/metadata-truth-panel.tsx was deleted as superseded dead code
+// (a read-only summary of the same snapshot.metadata.fields data that
+// client-submission-details-panel.tsx's ClientSubmissionDetailsPanel fully
+// subsumes). Its requiredForFinal coverage lives on in section 2 above.
 
 // ─── 4. Source-driven requiredForFinal is tender-derived (not universal) ────
 

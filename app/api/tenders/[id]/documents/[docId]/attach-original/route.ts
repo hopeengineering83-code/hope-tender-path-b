@@ -1,196 +1,208 @@
+// Attach the official original for a tender-required file the app must not
+// invent.
+//
+// WHY THIS ROUTE EXISTS
+// ---------------------
+// Some tender-required files can only come from the owner: a priced financial
+// proposal, a tender-issued form that must be submitted on the issuer's own
+// template. The app deliberately refuses to fabricate those, plans the row as
+// PLANNED / REPLACE_WITH_ORIGINAL, and the export gate then blocks until the
+// file exists.
+//
+// Nothing could satisfy that block. Across the whole API, no route accepted a
+// file upload that wrote GeneratedDocument.fileContent — the only multipart
+// endpoints were login, company assets and the Plan-B import, none of which
+// touch generated documents. A two-envelope tender was therefore unfinishable
+// by construction: export required 02-Financial-Proposal.docx, generation
+// correctly declined to invent it, and the owner had nowhere to put the real
+// one.
+//
+// The upload is held to the same standards as anything else that reaches a
+// final package: tenant scoping, the plan's own file name, a real file
+// signature, a size cap, and recorded byte integrity. Attaching an original
+// never marks it approved — it lands validated-pending and review-pending, so
+// the existing validation and review gates still have to pass on the real
+// bytes.
+
 import { NextResponse } from "next/server";
-import { inspectActualFileBytes } from "../../../../../../../lib/engine/persisted-byte-integrity";
+import { logger } from "../../../../../../../lib/observability";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../../../lib/auth";
-import { logAction } from "../../../../../../../lib/audit";
 import { prisma, prismaReady } from "../../../../../../../lib/prisma";
-import { getStorageAdapter } from "../../../../../../../lib/storage";
+import { logAction } from "../../../../../../../lib/audit";
 import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "../../../../../../../lib/rate-limit";
-import { validateUploadFile } from "../../../../../../../lib/upload-security";
+import { validateFileSignature } from "../../../../../../../lib/engine/export-format-policy";
+import { verifiedIntegrityDataFromBase64 } from "../../../../../../../lib/engine/persisted-byte-integrity";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
 
-function extension(value: string): string {
-  return value.split(".").pop()?.toLowerCase() ?? "";
+/**
+ * Matches the final-ZIP input cap so a file that can be attached can be
+ * packaged. Not exported: Next.js route modules may only export route handlers
+ * and the framework's own config keys.
+ */
+const ATTACH_ORIGINAL_MAX_BYTES = 25 * 1024 * 1024;
+
+function err(message: string, status: number, extra: Record<string, unknown> = {}) {
+  return NextResponse.json({ success: false, ok: false, error: message, message, ...extra }, { status });
 }
 
-function formatForName(name: string): string {
-  const ext = extension(name);
-  if (ext === "pdf") return "PDF";
-  if (ext === "xlsx") return "XLSX";
-  return "DOCX";
-}
-
-function sameRequiredExtension(expected: string | null | undefined, actual: string): boolean {
-  const expectedExt = extension(expected ?? "");
-  const actualExt = extension(actual);
-  if (!expectedExt) return true;
-  if (expectedExt === actualExt) return true;
-  if (expectedExt === "doc" && actualExt === "docx") return true;
-  if (expectedExt === "xls" && actualExt === "xlsx") return true;
-  return false;
+function normalizeName(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string; docId: string }> }) {
   let actor;
-  try {
-    actor = await requireRole("ADMIN", "PROPOSAL_MANAGER");
-  } catch (error) {
-    return error instanceof Error && error.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse();
-  }
+  try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
+  catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
 
-  const rl = await rateLimitPersistent(`attach-original:${actor.id}`, MUTATION_RATE_LIMIT);
-  if (!rl.allowed) {
-    const retryAfter = Math.max(1, Math.ceil((rl.resetAt - Date.now()) / 1000));
+  const limit = await rateLimitPersistent(`attach-original:${actor.id}`, MUTATION_RATE_LIMIT);
+  if (!limit.allowed) {
+    const retryAfter = Math.ceil((limit.resetAt - Date.now()) / 1000);
     return NextResponse.json(
-      { error: "Too many requests", retryAfter },
+      { success: false, error: "Too many upload requests. Wait and retry.", retryAfter },
       { status: 429, headers: { "Retry-After": String(retryAfter) } },
     );
   }
 
-  const { id: tenderId, docId } = await params;
   await prismaReady;
-  const doc = await prisma.generatedDocument.findFirst({
-    where: { id: docId, tender: { id: tenderId, userId: actor.id } },
-    select: { id: true, name: true, exactFileName: true, documentType: true, format: true, reviewStatus: true, validationStatus: true, storagePath: true, fileContent: true },
+  const { id: tenderId, docId } = await params;
+
+  // Tenant scoping: the document is reached through a tender this actor owns,
+  // never by document id alone.
+  const tender = await prisma.tender.findFirst({ where: { id: tenderId, userId: actor.id }, select: { id: true, title: true } });
+  if (!tender) return err("Tender not found", 404, { code: "TENDER_NOT_FOUND" });
+
+  const document = await prisma.generatedDocument.findFirst({
+    where: { id: docId, tenderId },
+    select: {
+      id: true,
+      name: true,
+      exactFileName: true,
+      documentType: true,
+      generationStatus: true,
+      reviewStatus: true,
+    },
   });
-  if (!doc) return NextResponse.json({ success: false, ok: false, code: "DOCUMENT_NOT_FOUND", error: "Generated document not found" }, { status: 404 });
+  if (!document) return err("Document not found on this tender.", 404, { code: "DOCUMENT_NOT_FOUND" });
 
-  const formData = await req.formData();
-  const file = formData.get("file");
-  if (!(file instanceof File)) return NextResponse.json({ success: false, ok: false, code: "FILE_REQUIRED", error: "Original file is required" }, { status: 400 });
-
-  const buffer = Buffer.from(await file.arrayBuffer());
-  const validation = await validateUploadFile(file, buffer);
-  if (!validation.ok) {
-    return NextResponse.json(
-      { success: false, ok: false, code: "UNSAFE_OR_INVALID_ORIGINAL", error: validation.error },
-      { status: buffer.byteLength > 10 * 1024 * 1024 ? 413 : 422 },
+  // Only a row that is actually awaiting an original may be filled this way.
+  // Anything else would let an upload silently replace generated, validated
+  // bytes without going back through generation.
+  const awaitingOriginal = document.generationStatus === "PLANNED"
+    || document.reviewStatus === "REPLACE_WITH_ORIGINAL";
+  if (!awaitingOriginal) {
+    return err(
+      `"${document.exactFileName ?? document.name}" is not awaiting an official original (generationStatus=${document.generationStatus}, reviewStatus=${document.reviewStatus}). Only PLANNED or REPLACE_WITH_ORIGINAL rows accept an upload.`,
+      409,
+      { code: "DOCUMENT_NOT_AWAITING_ORIGINAL", generationStatus: document.generationStatus, reviewStatus: document.reviewStatus },
     );
   }
 
-  const uploadedName = validation.safeFileName;
-  if (!sameRequiredExtension(doc.exactFileName, uploadedName)) {
-    return NextResponse.json({
-      success: false,
-      ok: false,
-      code: "ORIGINAL_EXTENSION_MISMATCH",
-      error: `Uploaded original extension does not match the required file name (${doc.exactFileName ?? "unspecified"}).`,
-      expectedFileName: doc.exactFileName,
-      uploadedFileName: uploadedName,
-    }, { status: 409 });
+  let formData: FormData;
+  try { formData = await req.formData(); }
+  catch { return err("Request body must be multipart/form-data with a 'file' field.", 400, { code: "INVALID_FORM_DATA" }); }
+
+  const file = formData.get("file");
+  if (!file || typeof file === "string") {
+    return err("No file provided. Send the original as multipart/form-data field 'file'.", 400, { code: "NO_FILE" });
+  }
+  if (file.size === 0) return err("The uploaded file is empty.", 400, { code: "EMPTY_FILE" });
+  if (file.size > ATTACH_ORIGINAL_MAX_BYTES) {
+    return err(
+      `The original must not exceed ${Math.floor(ATTACH_ORIGINAL_MAX_BYTES / (1024 * 1024))} MB.`,
+      413,
+      { code: "FILE_TOO_LARGE", maxBytes: ATTACH_ORIGINAL_MAX_BYTES, actualBytes: file.size },
+    );
   }
 
-  const outputName = doc.exactFileName || uploadedName;
-  // Pin integrity from the actual bytes BEFORE any storage write. A row must
-  // never claim READY_FOR_EXPORT while its persisted integrity cannot verify:
-  // the final ZIP read gate (requireVerifiedIntegrity) would dead-end it later
-  // with a generic failure, so reject here with the specific reason instead.
-  const attachedIntegrity = inspectActualFileBytes({ bytes: buffer, filename: outputName, claimedMimeType: validation.normalizedMime });
-  if (attachedIntegrity.integrityStatus !== "VERIFIED") {
-    return NextResponse.json({
-      success: false,
-      ok: false,
-      code: attachedIntegrity.integrityFailureCode ?? "ORIGINAL_BYTES_NOT_VERIFIED",
-      error: `The uploaded original cannot be byte-verified against the required file name "${outputName}". Correct the required file name or upload a matching format so the final package can verify it.`,
-      expectedFileName: doc.exactFileName,
-      uploadedFileName: uploadedName,
-    }, { status: 422 });
+  // The plan's file name is authoritative. An original uploaded under a
+  // different name would be packaged under the plan name anyway, so a mismatch
+  // is reported rather than silently renamed.
+  const targetName = document.exactFileName ?? document.name ?? "";
+  const uploadedName = typeof (file as File).name === "string" ? (file as File).name : "";
+  if (targetName && uploadedName && normalizeName(uploadedName) !== normalizeName(targetName)) {
+    return err(
+      `This slot expects "${targetName}" but the uploaded file is named "${uploadedName}". Rename the file to the tender-required name before attaching it.`,
+      422,
+      { code: "FILE_NAME_MISMATCH", expected: targetName, received: uploadedName },
+    );
   }
-  const stored = await getStorageAdapter().putFile(buffer, {
-    fileName: outputName,
-    mimeType: validation.normalizedMime,
-    tenderId,
+
+  const fileContent = Buffer.from(await file.arrayBuffer()).toString("base64");
+
+  // The bytes must actually be what the name claims. A .docx that is not an
+  // Office package would otherwise reach the ZIP and fail in the buyer's hands.
+  const signature = validateFileSignature(targetName || uploadedName, fileContent);
+  if (!signature.ok) {
+    return err(`Uploaded file rejected: ${signature.reason}`, 422, { code: "FILE_SIGNATURE_INVALID" });
+  }
+
+  const integrity = verifiedIntegrityDataFromBase64({
+    fileContent,
+    filename: targetName || uploadedName,
+    claimedMimeType: (file as File).type || null,
   });
-  const priorStatus = doc.reviewStatus;
-  // Capture the prior storagePath so we can clean up the OLD blob after the
-  // transaction commits. Without this, each "attach original" call leaks the
-  // previous blob (was silently abandoned — cost leak + PII retention).
-  const priorStoragePath = doc.storagePath;
-  const priorFileContent = doc.fileContent;
 
-  try {
-    await prisma.$transaction(async (tx) => {
-      await tx.generatedDocument.update({
-        where: { id: doc.id },
-        data: {
-          name: doc.name || outputName.replace(/\.[a-z0-9]{2,5}$/i, ""),
-          exactFileName: outputName,
-          format: formatForName(outputName),
-          fileContent: stored.fileContent ?? null,
-          storagePath: stored.storagePath || null,
-          ...attachedIntegrity,
-          // Legacy final-ZIP digest columns must describe the same bytes.
-          sha256: attachedIntegrity.contentSha256,
-          byteSize: attachedIntegrity.contentByteLength,
-          generationStatus: "GENERATED",
-          validationStatus: "VALIDATED",
-          reviewStatus: "READY_FOR_EXPORT",
-          reviewedBy: actor.id,
-          reviewedAt: new Date(),
-          reviewNotes: `Official tender-issued original attached: ${uploadedName}.`,
-          contentSummary: `Official tender-issued original attached for ${outputName}. This file was uploaded by a reviewer and was not regenerated by AI.`,
-          updatedAt: new Date(),
-        },
-      });
-      await tx.documentReview.create({
-        data: {
-          documentId: doc.id,
-          reviewerId: actor.id,
-          action: "READY_FOR_EXPORT",
-          priorStatus,
-          newStatus: "READY_FOR_EXPORT",
-          notes: `Attached official tender-issued original file: ${uploadedName}.`,
-        },
-      });
-    });
+  // The placeholder row was created with format "CONTROL" — an internal
+  // control record, which downstream classifiers correctly refuse to package.
+  // Now that real bytes are attached the row is no longer a control record, so
+  // the format has to follow the bytes. Leaving it CONTROL kept the file out of
+  // the package and the export gate still reporting it missing, even though it
+  // was sitting right there.
+  const attachedFormat = signature.detected.toUpperCase();
 
-    // Best-effort cleanup of the OLD blob after the transaction commits.
-    if (priorStoragePath || priorFileContent) {
-      getStorageAdapter().deleteFile({
-        storagePath: priorStoragePath,
-        fileContent: priorFileContent,
-        fileName: doc.exactFileName ?? doc.name ?? "previous-file",
-      }).catch(() => {
-        // Non-fatal — the new file is already stored and the DB row is updated.
-      });
-    }
-  } catch (error) {
-    await getStorageAdapter().deleteFile({
-      storagePath: stored.storagePath,
-      fileContent: stored.fileContent,
-      fileName: outputName,
-    }).catch(() => {});
-    throw error;
-  }
+  const updated = await prisma.generatedDocument.update({
+    where: { id: document.id },
+    data: {
+      fileContent,
+      ...integrity,
+      format: attachedFormat,
+      generationStatus: "GENERATED",
+      // Deliberately NOT approved. The original still has to clear validation
+      // and reviewer approval on its real bytes, exactly like generated output.
+      validationStatus: "PENDING",
+      reviewStatus: "PENDING",
+      reviewedBy: null,
+      reviewedAt: null,
+      contentSummary: `Official original attached for tender-required file ${targetName || uploadedName}. Awaiting validation and reviewer approval.`,
+      integrityFailureCode: null,
+      updatedAt: new Date(),
+    },
+    select: { id: true, exactFileName: true, format: true, contentSha256: true, contentByteLength: true, detectedFormat: true },
+  });
 
   await logAction({
     userId: actor.id,
-    action: "DOCUMENT_REVIEW",
+    action: "UPDATE",
     entityType: "GeneratedDocument",
-    entityId: doc.id,
-    description: `${actor.email} attached official original "${uploadedName}" for final export file "${outputName}".`,
+    entityId: document.id,
+    description: `${actor.email} attached the official original for "${targetName || uploadedName}" on "${tender.title}" (${file.size} bytes).`,
     metadata: {
+      operation: "ATTACH_ORIGINAL",
       tenderId,
-      documentId: doc.id,
-      uploadedFileName: uploadedName,
-      exactFileName: outputName,
-      mimeType: validation.normalizedMime,
-      size: buffer.byteLength,
-      action: "ORIGINAL_REQUIRED_FILE_ATTACHED",
+      documentId: document.id,
+      exactFileName: targetName,
+      byteLength: updated.contentByteLength,
+      contentSha256: updated.contentSha256,
+      detectedFormat: updated.detectedFormat,
     },
-  });
+  }).catch((e) => logger.warn(`[attach-original] audit log failed: ${e instanceof Error ? e.message : String(e)}`));
 
   return NextResponse.json({
     success: true,
     ok: true,
     document: {
-      id: doc.id,
-      exactFileName: outputName,
-      format: formatForName(outputName),
+      id: updated.id,
+      exactFileName: updated.exactFileName,
+      contentSha256: updated.contentSha256,
+      contentByteLength: updated.contentByteLength,
+      format: updated.format,
+      detectedFormat: updated.detectedFormat,
       generationStatus: "GENERATED",
-      validationStatus: "VALIDATED",
-      reviewStatus: "READY_FOR_EXPORT",
+      validationStatus: "PENDING",
+      reviewStatus: "PENDING",
     },
+    nextAction: "VALIDATE_AND_REVIEW",
+    message: "Original attached. It must still pass validation and reviewer approval before export.",
   });
 }

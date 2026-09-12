@@ -16,7 +16,8 @@
 // Pure-regex extractor, same shape as company-fact-extractor. No AI
 // call, no network. Detects:
 //   • clientName    ← "client: …", "for …" entity-suffix line
-//   • country       ← detected city/region keywords (Ethiopia common)
+//   • country       ← one generic country reference, and only when the
+//                     text names exactly one country (lib/engine/country-reference)
 //   • contractValue ← "ETB 525,800,000", "USD 3.5M", "GBP 390,717"
 //   • currency      ← currency token alongside the value
 //   • startDate / endDate ← "2014-2015", "2023 to 2025", "Dec 2017 to Present"
@@ -24,6 +25,9 @@
 //
 // Idempotent: only suggests fields that aren't already populated.
 // Caller merges with `chooseIncomingOrExisting` semantics.
+
+import { findCountriesInText } from "./country-reference";
+import { CURRENCY_TOKEN_ALTERNATION, resolveCurrencyToken } from "./currency-reference";
 
 export interface ProjectFactExtraction {
   clientName?: string;
@@ -36,18 +40,6 @@ export interface ProjectFactExtraction {
   sector?: string;
 }
 
-const CURRENCY_TOKENS: Array<{ token: string; code: string }> = [
-  { token: "ETB", code: "ETB" },
-  { token: "Birr", code: "ETB" },
-  { token: "GBP", code: "GBP" },
-  { token: "£", code: "GBP" },
-  { token: "USD", code: "USD" },
-  { token: "$", code: "USD" },
-  { token: "EUR", code: "EUR" },
-  { token: "€", code: "EUR" },
-  { token: "KES", code: "KES" },
-  { token: "ZAR", code: "ZAR" },
-];
 
 // Currency-then-number OR number-then-currency.
 // Examples: "ETB 525,800,000" / "525,800,000 ETB" / "USD 3.5M" / "3.5M USD".
@@ -62,8 +54,21 @@ function parseValueAndCurrency(text: string): { value?: number; currency?: strin
   // short trailing reference like "50,000 ETB/month").
   let best: { value: number; currency: string } | undefined;
 
-  const before = /\b(ETB|Birr|GBP|USD|EUR|KES|ZAR|\$|£|€)[^\S\n]{0,3}([\d]{1,3}(?:[,.]?\d{3})*(?:\.\d+)?)\s*(M|B|million|billion)?\b/gi;
-  const after = /\b([\d]{1,3}(?:[,.]?\d{3})*(?:\.\d+)?)\s*(M|B|million|billion)?[^\S\n]{0,3}(ETB|Birr|GBP|USD|EUR|KES|ZAR)\b/gi;
+  // Currency knowledge comes from the one generic reference rather than the
+  // six-currency list this used to carry, which read an amount in NGN, RWF,
+  // VND, PEN or JOD as no amount at all. The alternation is case-SENSITIVE by
+  // construction (see currency-reference), so these patterns must not take the
+  // `i` flag; the magnitude suffix carries its own casing instead.
+  const NUMBER = "([\\d]{1,3}(?:[,.]?\\d{3})*(?:\\.\\d+)?)";
+  const MAGNITUDE = "([MmBb]|[Mm]illion|[Bb]illion)?";
+  const before = new RegExp(
+    `(?<![A-Za-z0-9])(${CURRENCY_TOKEN_ALTERNATION})[^\\S\\n]{0,3}${NUMBER}\\s*${MAGNITUDE}`,
+    "g",
+  );
+  const after = new RegExp(
+    `(?<![A-Za-z0-9])${NUMBER}\\s*${MAGNITUDE}[^\\S\\n]{0,3}(${CURRENCY_TOKEN_ALTERNATION})(?![A-Za-z])`,
+    "g",
+  );
 
   const consider = (numRaw: string, suffixRaw: string | undefined, tokenRaw: string) => {
     let value = Number(numRaw.replace(/,/g, ""));
@@ -74,7 +79,8 @@ function parseValueAndCurrency(text: string): { value?: number; currency?: strin
     // Reject implausibly small values that aren't M/B-suffixed (likely
     // a stray enumerator or page number).
     if (!sfx && value < 1000) return;
-    const code = CURRENCY_TOKENS.find((c) => c.token.toLowerCase() === tokenRaw.toLowerCase())?.code ?? tokenRaw.toUpperCase();
+    const code = resolveCurrencyToken(tokenRaw);
+    if (!code) return;
     if (!best || value > best.value) best = { value, currency: code };
   };
 
@@ -83,17 +89,6 @@ function parseValueAndCurrency(text: string): { value?: number; currency?: strin
 
   return best ?? {};
 }
-
-// Country: list of common targets. Surfacing nothing is preferred to a
-// bad guess.
-const COUNTRY_TOKENS = [
-  "Ethiopia", "Kenya", "Tanzania", "Uganda", "Rwanda", "Burundi",
-  "South Sudan", "Sudan", "Djibouti", "Eritrea", "Somalia",
-  "Nigeria", "Ghana", "South Africa", "Egypt", "Morocco", "Algeria",
-  "Senegal", "Cameroon", "Zambia", "Zimbabwe", "Mozambique",
-  "DRC", "Democratic Republic of Congo", "Congo",
-  "United Kingdom", "USA", "United States",
-];
 
 const CLIENT_LINE_PATTERNS = [
   /\bclient\s*[:\-]?\s*([A-Z][A-Za-z0-9.,'’()\-/& ]{2,90})/i,
@@ -150,6 +145,149 @@ const SECTOR_KEYWORDS: Array<{ rx: RegExp; sector: string }> = [
   { rx: /contract administration|variation order|interim payment|payment certificate|\bFIDIC\b|claims management|cost control.*contract|quantity survey/i, sector: "Contract Administration" },
 ];
 
+
+
+/**
+ * The professional services a project's own source text says were performed.
+ *
+ * The delivered portfolio card rendered "Services Provided —" because the
+ * structured serviceAreas column is empty on all 114 records of the owner's
+ * vault, and the fallback took the summary's FIRST SENTENCE — which for these
+ * records is the project name and reference number, not a service list.
+ *
+ * The services are stated plainly in the same text:
+ *
+ *   "Feasibility study, Soil investigation, Laboratory testing, New
+ *    Architectural design, New Structural design, Complete MEP Design
+ *    (Electrical, Sanitary, Mechanical), Material specification, Bill of
+ *    Quantity preparation, Tender document preparation, Construction
+ *    supervision"
+ *
+ * Each term below is matched against the record's own words and returned only
+ * when it is literally present, so nothing is inferred and nothing is invented.
+ * The vocabulary spans every sector the app serves — a road record yields
+ * pavement and drainage design, a water record yields hydraulic design and
+ * yield testing — so no sector is privileged by it.
+ */
+const SERVICE_VOCABULARY: ReadonlyArray<readonly [RegExp, string]> = [
+  [/\bfeasibility\s+stud(?:y|ies)\b/i, "Feasibility study"],
+  [/\bpre[-\s]?feasibility\b/i, "Pre-feasibility study"],
+  [/\b(?:soil|geotechnical|subsoil|ground)\s+investigation\b/i, "Geotechnical investigation"],
+  [/\blaboratory\s+testing\b/i, "Laboratory testing"],
+  [/\btopographic(?:al)?\s+survey\b/i, "Topographic survey"],
+  [/\bhydrolog(?:y|ical)\b/i, "Hydrological study"],
+  [/\byield\s+test(?:ing)?\b/i, "Yield testing"],
+  [/\barchitectural\s+design\b/i, "Architectural design"],
+  [/\bstructural\s+design\b/i, "Structural design"],
+  [/\bstructural\s+assessment\b/i, "Structural assessment"],
+  [/\bmodification\s+design\b/i, "Modification design"],
+  [/\brenovation\b/i, "Renovation design"],
+  [/\bmep\s+design\b|\bmechanical[,\s]+electrical\b/i, "MEP design"],
+  [/\belectrical\s+design\b/i, "Electrical design"],
+  [/\bsanitary\s+design\b|\bplumbing\s+design\b/i, "Sanitary design"],
+  [/\bhydraulic\s+design\b|\breticulation\b/i, "Hydraulic design"],
+  [/\bpavement\s+design\b/i, "Pavement design"],
+  [/\bdrainage\s+design\b/i, "Drainage design"],
+  [/\bmaster\s*plan(?:ning)?\b/i, "Master planning"],
+  [/\burban\s+design\b/i, "Urban design"],
+  [/\benvironmental\s+(?:and\s+social\s+)?(?:impact\s+)?(?:assessment|stud(?:y|ies))\b/i, "Environmental and social assessment"],
+  [/\bmaterial\s+specification\b/i, "Material specification"],
+  [/\bquantity\s+(?:schedule|surveying)\b|\bbill\s+of\s+quantit(?:y|ies)\b|\bboq\b/i, "Quantity schedules"],
+  [/\btender\s+document(?:ation|\s+preparation)?\b/i, "Tender documentation"],
+  [/\bcontract\s+administration\b/i, "Contract administration"],
+  [/\b(?:construction|site)\s+supervision\b/i, "Construction supervision"],
+  [/\bresident\s+engineer(?:ing)?\b/i, "Resident engineering"],
+  [/\bas[-\s]?built\b/i, "As-built documentation"],
+  [/\bcommissioning\b/i, "Commissioning"],
+  [/\bcondition\s+survey\b/i, "Condition survey"],
+  [/\bcapacity\s+building\b|\btraining\b/i, "Capacity building"],
+];
+
+/** Services literally named in the record's own source text, in vocabulary order. */
+export function extractServicesProvided(summary: string): string[] {
+  const text = (summary || "").replace(/\s+/g, " ");
+  if (!text.trim()) return [];
+  const found: string[] = [];
+  for (const [rx, label] of SERVICE_VOCABULARY) {
+    if (rx.test(text) && !found.includes(label)) found.push(label);
+  }
+  return found;
+}
+
+/**
+ * Amounts a project's source text states, each kept with the ROLE its own
+ * label gives it.
+ *
+ * WHY THE ROLE MATTERS MORE THAN THE NUMBER
+ * -----------------------------------------
+ * A real record reads:
+ *
+ *   1. Construction Cost: 550,074,678.02 ETB
+ *   2. Feasibility Study, Geotechnical & New Design Cost: 1,100,000 ETB
+ *   3. Contract Administration & Construction Supervision Cost: 110,000 ETB/month
+ *
+ * Three amounts, three different things. The first is what the BUILDING cost;
+ * the second is what the CONSULTANCY was paid; the third is a monthly rate.
+ * parseValueAndCurrency keeps the largest, which is the construction cost —
+ * so presenting it under "Contract Value" on a consultancy proposal would
+ * overstate the firm's contract by roughly five hundred times, in a document an
+ * evaluator may check against the client's own records.
+ *
+ * Each amount is therefore returned with its role, and the caller decides what
+ * a given row is entitled to say.
+ */
+export type ProjectAmountRole = "CONSTRUCTION" | "CONSULTANCY_FEE" | "SUPERVISION_RATE" | "UNLABELLED";
+
+export interface ProjectAmount {
+  readonly role: ProjectAmountRole;
+  readonly value: number;
+  readonly currency?: string;
+  /** True when the source states the amount per month rather than in total. */
+  readonly perMonth: boolean;
+  /** The source's own label, trimmed — so a card can quote it rather than invent one. */
+  readonly label: string;
+}
+
+const AMOUNT_LABEL_ROLES: ReadonlyArray<{ readonly rx: RegExp; readonly role: ProjectAmountRole }> = [
+  { rx: /\bsupervision\b|\bcontract\s+administration\b|\bresident\s+engineer\b/i, role: "SUPERVISION_RATE" },
+  { rx: /\bdesign\b|\bfeasibility\b|\bconsultanc(?:y|ies)\b|\bstudy\b|\bgeotechnical\b|\bmodification\b/i, role: "CONSULTANCY_FEE" },
+  { rx: /\bconstruction\b|\bworks?\b|\bproject\s+cost\b|\bcontract\s+(?:sum|amount)\b/i, role: "CONSTRUCTION" },
+];
+
+/**
+ * Scan for "<label> Cost: <amount> <CUR>" shapes and classify each by its own
+ * label. Deliberately conservative: an amount whose label says nothing useful
+ * is UNLABELLED, and an UNLABELLED amount is never promoted to a fee.
+ */
+export function extractProjectAmounts(summary: string): ProjectAmount[] {
+  const text = (summary || "").replace(/\s+/g, " ");
+  if (!text.trim()) return [];
+  const out: ProjectAmount[] = [];
+
+  // "<label words> Cost: 550,074,678.02 ETB" or "... 110,000 ETB/month"
+  const rx = new RegExp(
+    `([A-Za-z&,'()\\/ .-]{0,90}?)\\b(?:[Cc]ost|[Ff]ee|[Vv]alue|[Pp]rice|[Ss]um)\\b\\s*[:\\-]?\\s*([0-9][0-9,]*(?:\\.[0-9]+)?)\\s*(${CURRENCY_TOKEN_ALTERNATION})?\\s*(\\/\\s*month|per\\s+month)?`,
+    "g",
+  );
+  let m: RegExpExecArray | null;
+  while ((m = rx.exec(text)) !== null) {
+    const raw = Number((m[2] || "").replace(/,/g, ""));
+    if (!Number.isFinite(raw) || raw < 1000) continue;
+    const label = (m[1] || "").replace(/^[\s.,;:\-\d]+/, "").replace(/\s+/g, " ").trim();
+    const perMonth = Boolean(m[4]);
+    let role: ProjectAmountRole = "UNLABELLED";
+    for (const entry of AMOUNT_LABEL_ROLES) {
+      if (entry.rx.test(label)) { role = entry.role; break; }
+    }
+    // A per-month amount is a rate however it is labelled.
+    if (perMonth) role = "SUPERVISION_RATE";
+    const currencyToken = (m[3] || "").trim();
+    const currency = resolveCurrencyToken(currencyToken) ?? undefined;
+    out.push({ role, value: raw, currency, perMonth, label: label || "Stated amount" });
+  }
+  return out;
+}
+
 export function extractProjectFacts(summary: string, name?: string): ProjectFactExtraction {
   const text = `${name ?? ""}\n${summary || ""}`;
   if (!text.trim()) return {};
@@ -161,13 +299,15 @@ export function extractProjectFacts(summary: string, name?: string): ProjectFact
   if (cv.value) out.contractValue = cv.value;
   if (cv.currency) out.currency = cv.currency;
 
-  // Country
-  for (const token of COUNTRY_TOKENS) {
-    if (new RegExp(`\\b${token.replace(/ /g, "\\s+")}\\b`, "i").test(text)) {
-      out.country = token === "DRC" || token === "Democratic Republic of Congo" ? "DRC" : token;
-      break;
-    }
-  }
+  // Country. This used to walk a hand-written list of two dozen mostly East
+  // African names and take the FIRST one the list happened to contain, so
+  // list order decided the answer and a project in Nigeria whose text also
+  // mentioned an Ethiopian head office came out as Ethiopia. Country
+  // knowledge now lives in one generic reference module, and a text naming
+  // more than one country yields no country at all rather than the
+  // alphabetically luckiest one.
+  const countriesInText = findCountriesInText(text);
+  if (countriesInText.length === 1) out.country = countriesInText[0];
 
   // Client name (entity-suffix bias)
   for (const p of CLIENT_LINE_PATTERNS) {
@@ -191,14 +331,39 @@ export function extractProjectFacts(summary: string, name?: string): ProjectFact
     if (rx.test(text)) { out.sector = sector; break; }
   }
 
-  // Location: short freeform string captured from "in <Place>", "at <Place>", or
-  // a bracketed location with parentheses around an area number.
-  const locM = text.match(/\b(?:in|at|located\s+in|location\s*[:\-]?)\s+([A-Z][A-Za-z0-9,'\-/() ]{6,140})/);
+  // Location: a short place string captured from "in <Place>", "at <Place>" or
+  // "location: <Place>".
+  //
+  // The capture runs on until the regex stops, so it used to swallow whatever
+  // followed the place — "Bahir Dar, Ethiopia for the Ministry of Health",
+  // "Kajiado County, Kenya under a World Bank credit", "Accra, Ghana
+  // (7,000 m2)". That was tolerable while nothing read it: the portfolio card
+  // preferred `project.country`, which held a composite of its own. Now that
+  // the country column holds a plain country, the card composes its location
+  // from THIS value, so the value has to be a place and nothing else.
+  // The lower bound is 1 trailing character, not 6: "in Kigali." used to fail
+  // the pattern outright because a six-letter city name followed by a full stop
+  // was one character short, and the card then printed the bare country.
+  const locM = text.match(/\b(?:in|at|located\s+in|location\s*[:\-]?)\s+([A-Z][A-Za-z0-9,'\-/() ]{1,140})/);
   if (locM) {
     let loc = locM[1].replace(/\s+/g, " ").trim();
-    // Strip trailing common boilerplate.
-    loc = loc.replace(/\b(?:Ref(?:erence)?\s+(?:No\.?|#).*)$/i, "").trim();
-    if (loc.length >= 6 && loc.length <= 200) out.location = loc;
+    // Everything from the first connective onwards belongs to the sentence,
+    // not to the place.
+    loc = loc.replace(/\s+\b(?:for|under|with|by|on\s+behalf|funded|financed|financing|awarded|commissioned|through|as\s+part|comprising|including|and\s+its)\b.*$/i, "");
+    loc = loc.replace(/\b(?:Ref(?:erence)?\s+(?:No\.?|#).*)$/i, "");
+    // A trailing bracketed figure is scale, which has its own field.
+    loc = loc.replace(/\s*\([^)]*\)\s*$/, "");
+    loc = loc.replace(/[\s,;:.\-]+$/, "").trim();
+    // A place is at most a few comma-separated parts. More than that is a
+    // sentence that happened to start with one.
+    const parts = loc.split(",").map((part) => part.trim()).filter(Boolean).slice(0, 4);
+    loc = parts.join(", ");
+    // A date, a bare figure or a lone initial is not a place. "in March 2019"
+    // and "in 2021" both reach this pattern, and a wrong location on a project
+    // card is a claim the record does not support.
+    const isDate = /^(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b/i.test(loc);
+    const hasWord = /[A-Za-z]{3}/.test(loc);
+    if (!isDate && hasWord && loc.length >= 3 && loc.length <= 80) out.location = loc;
   }
 
   return out;

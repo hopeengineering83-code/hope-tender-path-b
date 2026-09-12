@@ -21,13 +21,33 @@ function requiredLimit(requirements: RequirementLite[], requirementType: "EXPERT
   return Math.min(12, Math.max(fallback, mandatoryCount));
 }
 
+/**
+ * Vault trust levels this promotion may draw on.
+ *
+ * SOURCE_VERIFIED belongs here. It is what POST /api/company/experts and
+ * /api/company/projects actually earn when a record's fields verify against an
+ * uploaded document but no human reviewer has signed it — the normal outcome
+ * of building a vault from documents. Every other consumer already treats the
+ * two as equally authoritative: company-ingestion-readiness, run-tender-engine,
+ * weak-match-classifier, export-readiness and the main engine's own selection
+ * policy all test REVIEWED || SOURCE_VERIFIED.
+ *
+ * This promotion tested trustLevel: "REVIEWED" alone, so the generation-time
+ * fallback could not promote the very records a document-built vault produces.
+ * A tender whose evidence was entirely source-verified reached
+ * NO_EXPERT_MATCHES_SELECTED with nothing able to clear it: the fallback
+ * skipped the records, and the nextAction it offered (REVIEW_MATCHES) had no
+ * route behind it.
+ */
+const AUTHORITATIVE_TRUST_LEVELS = ["REVIEWED", "SOURCE_VERIFIED"] as const;
+
 async function promoteReviewedExperts(tenderId: string, limit: number): Promise<number> {
   if (limit <= 0) return 0;
   const selectedCount = await prisma.tenderExpertMatch.count({ where: { tenderId, isSelected: true } });
   if (selectedCount > 0) return 0;
 
   const candidates = await prisma.tenderExpertMatch.findMany({
-    where: { tenderId, expert: { trustLevel: "REVIEWED" } },
+    where: { tenderId, expert: { trustLevel: { in: [...AUTHORITATIVE_TRUST_LEVELS] } } },
     orderBy: [{ score: "desc" }, { createdAt: "asc" }],
     take: limit,
     select: { id: true, score: true, expert: { select: { fullName: true } } },
@@ -45,7 +65,7 @@ async function promoteReviewedProjects(tenderId: string, limit: number): Promise
   if (selectedCount > 0) return 0;
 
   const candidates = await prisma.tenderProjectMatch.findMany({
-    where: { tenderId, project: { trustLevel: "REVIEWED" } },
+    where: { tenderId, project: { trustLevel: { in: [...AUTHORITATIVE_TRUST_LEVELS] } } },
     orderBy: [{ score: "desc" }, { createdAt: "asc" }],
     take: limit,
     select: { id: true, score: true, project: { select: { name: true } } },

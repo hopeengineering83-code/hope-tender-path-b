@@ -9,26 +9,34 @@ import {
   analyzeOneChunkWithRetry,
   NoAiProviderReadyError,
 } from "../lib/ai";
+import { isolateProviderEnv } from "./helpers/provider-env";
 import {
   resetProviderHealth,
   recordProviderFailure,
   getProviderHealth,
 } from "../lib/ai-provider-health";
 
-const KEYS = ["ZAI_API_KEY", "CEREBRAS_API_KEY", "MISTRAL_API_KEY", "GROQ_API_KEY", "OPENROUTER_API_KEY", "OPENROUTER_PROPOSAL_MODEL", "GEMINI_API_KEY", "OPENAI_API_KEY", "TOGETHER_API_KEY", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY"];
-let saved: Record<string, string | undefined> = {};
+// Every provider-scoped variable is cleared, not just keys and two model
+// names. The old list left the `_BASE_URL` suffixes behind, so a configured
+// Cerebras gateway on the machine running the suite changed the URL the
+// router contacted — and an assertion that matched the vendor's hostname
+// failed even though the provider had been contacted at its correct rank.
+let restoreProviderEnv: (() => void) | null = null;
 let realFetch: typeof globalThis.fetch;
 
 beforeEach(() => {
-  saved = {};
-  for (const k of KEYS) { saved[k] = process.env[k]; delete process.env[k]; }
+  restoreProviderEnv = isolateProviderEnv();
   realFetch = globalThis.fetch;
   resetProviderHealth();
 });
+
+function configureGroq(): void {
+  process.env.GROQ_API_KEY = "k";
+  process.env.GROQ_PROPOSAL_MODEL = "llama-3.1-8b-instant";
+}
 afterEach(() => {
-  for (const k of KEYS) {
-    if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k];
-  }
+  restoreProviderEnv?.();
+  restoreProviderEnv = null;
   globalThis.fetch = realFetch;
   resetProviderHealth();
 });
@@ -50,16 +58,16 @@ function mockFetch(handler: (url: string, init: RequestInit) => { status: number
 }
 
 describe("12. provider attempt budget caps actual outbound attempts", () => {
-  it("makes at most 5 outbound provider calls with default budget", async () => {
-    // Configure enough providers to exceed the default budget of 5.
-    // All return HTTP 500 so the chain keeps falling over.
-    process.env.OPENAI_API_KEY = "k";
-    process.env.GROQ_API_KEY = "k";
-    process.env.DEEPSEEK_API_KEY = "k";
-    process.env.TOGETHER_API_KEY = "k";
-    process.env.ANTHROPIC_API_KEY = "k";
+  it("tries every eligible provider in the zero-paid chain before declaring exhaustion", async () => {
+    // Configured with the FREE chain. This test previously configured OpenAI,
+    // DeepSeek, Together, Anthropic and Cerebras — all paid — and asserted the
+    // chain attempted them. Under zero-paid mode those providers are not merely
+    // deprioritised, they are unreachable, so the assertion had to change with
+    // the behaviour it describes.
+    process.env.GEMINI_API_KEY = "AIzaTestKey1234567890123456789012345";
+    configureGroq();
     process.env.MISTRAL_API_KEY = "k";
-    process.env.CEREBRAS_API_KEY = "k";
+    process.env.ZAI_API_KEY = "k";
 
     const m = mockFetch(() => ({ status: 500, body: { error: { message: "server error" } } }));
 
@@ -67,9 +75,48 @@ describe("12. provider attempt budget caps actual outbound attempts", () => {
       () => generateWithFallback("hello", { useCase: "proposal" }),
       (err: unknown) => err instanceof NoAiProviderReadyError,
     );
-    // Default budget is 5 — the chain must cap at 5 actual outbound attempts.
-    assert.ok(m.calls() <= 5, `expected at most 5 outbound attempts, got ${m.calls()}`);
-    assert.ok(m.calls() >= 3, `expected at least 3 outbound attempts (budget is 5), got ${m.calls()}`);
+    assert.ok(m.calls() <= 10, `expected at most 10 outbound attempts, got ${m.calls()}`);
+    // Gemini goes through the Google SDK rather than fetch, so it does not add
+    // to the fetch count; the three OpenAI-compatible free providers do.
+    assert.ok(m.calls() >= 3, `expected every eligible free provider to be tried, got ${m.calls()}`);
+  });
+
+  it("continues through configured later-chain providers when earlier providers fail", async () => {
+    process.env.OPENAI_API_KEY = "k";
+    process.env.DEEPSEEK_API_KEY = "k";
+    process.env.TOGETHER_API_KEY = "k";
+    process.env.ANTHROPIC_API_KEY = "k";
+    process.env.CEREBRAS_API_KEY = "k";
+    // The base URL is pinned rather than left to the default, so this case
+    // asserts a position in the chain and not a vendor's DNS name. An
+    // operator who routes Cerebras through a gateway is running the same
+    // chain; matching on the hostname would call that a routing failure.
+    process.env.CEREBRAS_BASE_URL = "https://cerebras-under-test.invalid/v1";
+
+    const contacted: string[] = [];
+    mockFetch((url) => {
+      contacted.push(url);
+      return { status: 500, body: { error: { message: "fail" } } };
+    });
+
+    await assert.rejects(() => generateWithFallback("hi", { useCase: "proposal" }));
+    assert.ok(
+      contacted.some((url) => url.startsWith("https://cerebras-under-test.invalid/")),
+      `Cerebras must be attempted at rank 5; contacted ${JSON.stringify(contacted)}`,
+    );
+    assert.ok(contacted.some((url) => url.includes("openai.com")), "OpenAI must be attempted after OpenRouter");
+    assert.ok(contacted.some((url) => url.includes("together")), "Together must remain in automatic fallback");
+    assert.ok(contacted.some((url) => url.includes("deepseek")), "DeepSeek must remain in automatic fallback");
+    assert.ok(contacted.some((url) => url.includes("anthropic")), "Anthropic must be the final AI-provider attempt");
+
+    // The contractual order itself, not merely presence: each configured
+    // provider is first contacted in canonical rank order.
+    const firstIndex = (needle: string) => contacted.findIndex((url) => url.includes(needle));
+    const cerebras = contacted.findIndex((url) => url.startsWith("https://cerebras-under-test.invalid/"));
+    assert.ok(cerebras < firstIndex("openai.com"), "Cerebras (rank 5) precedes OpenAI (rank 7)");
+    assert.ok(firstIndex("openai.com") < firstIndex("together"), "OpenAI (7) precedes Together (8)");
+    assert.ok(firstIndex("together") < firstIndex("deepseek"), "Together (8) precedes DeepSeek (9)");
+    assert.ok(firstIndex("deepseek") < firstIndex("anthropic"), "DeepSeek (9) precedes Anthropic (10)");
   });
 });
 
@@ -77,10 +124,9 @@ describe("11. cooldown providers are skipped without consuming the budget", () =
   it("skips a cooled-down provider and still tries live providers", async () => {
     process.env.OPENROUTER_API_KEY = "k";       // will be put in cooldown
     process.env.OPENROUTER_PROPOSAL_MODEL = "meta-llama/llama-3.3-70b-instruct:free";
-    process.env.OPENAI_API_KEY = "k";
-    process.env.GROQ_API_KEY = "k";
-    process.env.DEEPSEEK_API_KEY = "k";
-    process.env.TOGETHER_API_KEY = "k";
+    configureGroq();
+    process.env.MISTRAL_API_KEY = "k";
+    process.env.ZAI_API_KEY = "k";
 
     // Force openrouter into cooldown via a rate-limit failure.
     recordProviderFailure("openrouter", new Error("429 rate limit"));
@@ -89,39 +135,34 @@ describe("11. cooldown providers are skipped without consuming the budget", () =
     const seen: string[] = [];
     const m = mockFetch((url) => {
       if (url.includes("openrouter")) seen.push("openrouter");
-      else if (url.includes("openai") || url.includes("api.openai")) seen.push("openai");
       else if (url.includes("groq")) seen.push("groq");
-      else if (url.includes("deepseek")) seen.push("deepseek");
+      else if (url.includes("mistral")) seen.push("mistral");
+      else if (url.includes("z.ai")) seen.push("zai");
       return { status: 500, body: { error: { message: "fail" } } };
     });
 
     await assert.rejects(() => generateWithFallback("hi", { useCase: "proposal" }));
-    // openrouter is skipped (cooldown); live attempts among openai/groq/deepseek/together.
+    // openrouter is skipped (cooldown); live attempts among groq/mistral/zai.
     assert.ok(m.calls() >= 3, `expected at least 3 live attempts, got ${m.calls()}`);
-    assert.ok(m.calls() <= 5, `expected at most 5 attempts (budget), got ${m.calls()}`);
+    assert.ok(m.calls() <= 10, `expected at most 10 attempts (budget), got ${m.calls()}`);
     assert.ok(!seen.includes("openrouter"), "cooled-down openrouter must not be called");
   });
 });
 
 describe("13. ATTEMPT_BUDGET_EXHAUSTED distinct from all-providers-exhausted", () => {
-  it("reports ATTEMPT_BUDGET_EXHAUSTED when eligible providers remain untried", async () => {
-    // Use 6 providers with budget=3 so 3 remain untried after 3 failures.
-    process.env.OPENAI_API_KEY = "k";
-    process.env.GROQ_API_KEY = "k";
-    process.env.DEEPSEEK_API_KEY = "k";
-    process.env.TOGETHER_API_KEY = "k";
-    process.env.ANTHROPIC_API_KEY = "k";
+  it("returns a structured, recoverable error when the free chain is exhausted", async () => {
+    configureGroq();
     process.env.MISTRAL_API_KEY = "k";
+    process.env.ZAI_API_KEY = "k";
     mockFetch(() => ({ status: 500, body: { error: { message: "fail" } } }));
     try {
       await generateWithFallback("hi", { useCase: "proposal" });
       assert.fail("should have thrown");
     } catch (err) {
       assert.ok(err instanceof NoAiProviderReadyError);
-      // With 6+ configured providers and default budget 5, either
-      // ATTEMPT_BUDGET_EXHAUSTED (budget hit before all tried) or
-      // ALL_PROVIDERS_EXHAUSTED (all tried) is acceptable — the key
-      // assertion is that the error is structured and recoverable.
+      // Either kind is acceptable — the point is that the error is structured
+      // and tells a caller which recovery path applies, rather than being a
+      // bare "all providers exhausted" string.
       assert.ok(["ATTEMPT_BUDGET_EXHAUSTED", "ALL_PROVIDERS_EXHAUSTED"].includes((err as NoAiProviderReadyError).errorKind));
     }
   });
@@ -184,7 +225,7 @@ describe("15. invalid JSON from any provider cannot promote requirements", () =>
   it("analyzeOneChunkWithRetry throws on malformed JSON (no requirements returned)", async () => {
     process.env.OPENROUTER_API_KEY = "k";
     process.env.OPENAI_API_KEY = "k";
-    process.env.GROQ_API_KEY = "k";
+    configureGroq();
     // Provider returns prose, not JSON. Validation must reject it — no requirements.
     mockFetch(() => ({ status: 200, body: { choices: [{ message: { content: "Sure! Here is a friendly summary with no JSON at all." } }] } }));
     await assert.rejects(
@@ -196,7 +237,7 @@ describe("15. invalid JSON from any provider cannot promote requirements", () =>
   it("a result lacking valid structured fields cannot be promoted", async () => {
     process.env.OPENROUTER_API_KEY = "k";
     process.env.OPENAI_API_KEY = "k";
-    process.env.GROQ_API_KEY = "k";
+    configureGroq();
     // Returns JSON-looking but structurally invalid (requirements not an array).
     mockFetch(() => ({ status: 200, body: { choices: [{ message: { content: '{"summary": 123, "requirements": "nope"}' } }] } }));
     // Either it throws (malformed) or returns a sanitized empty requirements set —

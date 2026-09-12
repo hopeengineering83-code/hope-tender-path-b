@@ -5,28 +5,76 @@
  */
 import { getCurrentRequestId } from "./request-id";
 
-export function sanitizeError(input: unknown, maxLength = 200): string {
-  const raw = input instanceof Error ? input.message : String(input ?? "Unknown error");
-  const redacted = raw
-    // Redact database connection strings
-    .replace(/postgres(?:ql)?:\/\/[^\s"]+/gi, "postgresql://[redacted]")
-    .replace(/(mongodb(?:\+srv)?|mysql|redis):\/\/[^\s"]+/gi, "$1://[redacted]")
-    // Redact API keys and bearer tokens
-    .replace(/sk-[a-zA-Z0-9_-]{10,}/g, "[KEY_REDACTED]")
-    .replace(/AIza[a-zA-Z0-9_-]{30,}/g, "[KEY_REDACTED]")
-    .replace(/Bearer\s+[a-zA-Z0-9._-]{10,}/gi, "Bearer [REDACTED]")
-    // Redact Anthropic keys
+/**
+ * Redact only secret patterns (API keys, bearer tokens, connection strings)
+ * from a text string. Does NOT truncate, does NOT redact UUIDs/SQL/Prisma
+ * invocations — use `sanitizeError()` for full client-facing sanitization.
+ *
+ * This is the single source of truth for secret redaction regexes. Previous
+ * implementations had 5 different variants:
+ *   - lib/engine/analysis-state-resolver.ts: /sk-[a-zA-Z0-9-]+/g (weakest — no underscore, no min length)
+ *   - lib/engine/provider-health-store.ts: /sk-[a-zA-Z0-9_-]{8,}/g
+ *   - lib/ai-analyze-checkpoints.ts: /sk-[a-zA-Z0-9_-]{10,}/g
+ *   - app/api/tenders/[id]/ai-analyze/route.ts: /sk-[a-zA-Z0-9_-]{10,}/g + AIza + Bearer
+ *   - lib/sanitize-error.ts: (this file's sanitizeError inline)
+ *
+ * All callers should use this function instead of inline regexes so the
+ * redaction patterns cannot diverge.
+ */
+export function redactSecrets(text: string): string {
+  return text
+    // OpenAI / Anthropic / Groq sk- keys (min 10 chars after prefix)
+    .replace(/sk-[a-zA-Z0-9_-]{8,}/g, "[KEY_REDACTED]")
+    // Google AIza keys (min 30 chars)
+    .replace(/AIza[a-zA-Z0-9_-]{20,}/g, "[KEY_REDACTED]")
+    // Google's NEW-format Gemini keys (AQ...). This module's own comment says
+    // every caller must use it "so the redaction patterns cannot diverge" — and
+    // they had: lib/ai-provider-health.ts carried this pattern locally while the
+    // shared redactor did not, so a new-format Gemini key was redacted on one
+    // path and printed verbatim on the other.
+    .replace(/\bAQ[a-zA-Z0-9_-]{30,}\b/g, "[KEY_REDACTED]")
+    // Bearer tokens
+    .replace(/Bearer\s+[^\s,;]+/gi, "Bearer [REDACTED]")
+    // Anthropic ant- keys
     .replace(/ant-[a-zA-Z0-9_-]{20,}/g, "[KEY_REDACTED]")
-    // Redact OpenAI keys
+    // OpenAI org-/proj- keys
     .replace(/org-[a-zA-Z0-9]{20,}/g, "[KEY_REDACTED]")
     .replace(/proj-[a-zA-Z0-9_-]{20,}/g, "[KEY_REDACTED]")
-    // Redact GitHub PATs
+    // Groq / Cerebras / DeepSeek keys.
+    //
+    // Threshold is 8, not 30. These were written as {30,} to match the length
+    // of a real key, which quietly made this redactor WEAKER than the private
+    // copies it replaced — those used {8,}, so consolidating onto this one
+    // would have started leaking short or truncated keys that were previously
+    // caught. The prefixes are distinctive enough that over-matching is
+    // harmless: redacting something that merely looks like a key costs nothing,
+    // while missing one leaks a credential.
+    .replace(/gsk_[A-Za-z0-9_-]{8,}/g, "[KEY_REDACTED]")
+    .replace(/csk_[A-Za-z0-9_-]{8,}/g, "[KEY_REDACTED]")
+    // DeepSeek accepts either separator.
+    .replace(/dsk[-_][A-Za-z0-9_-]{8,}/g, "[KEY_REDACTED]")
+    // GitHub PATs
     .replace(/ghp_[a-zA-Z0-9]{36,}/g, "[KEY_REDACTED]")
     .replace(/github_pat_[a-zA-Z0-9_]{20,}/g, "[KEY_REDACTED]")
-    // Redact JWTs
+    // JWTs
     .replace(/eyJ[a-zA-Z0-9_-]{10,}\.eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]*/g, "[JWT_REDACTED]")
-    // Redact Vercel Blob tokens
+    // Vercel Blob tokens
     .replace(/vercel_blob_[a-zA-Z0-9_-]{20,}/gi, "[KEY_REDACTED]")
+    // Vercel deployment tokens (vcp_*)
+    .replace(/vcp_[a-zA-Z0-9_-]{30,}/g, "[KEY_REDACTED]")
+    // api_key= / key= query params. The bare `key=` form matters because that is
+    // how Google's generative-language API takes credentials, so any URL of
+    // theirs that reaches a message or a log carries the key in plain sight.
+    .replace(/(\bapi[_-]?key\s*[:=]\s*)[^\s&,;]+/gi, "$1[KEY_REDACTED]")
+    .replace(/([?&]key=)[^\s&,;"]+/gi, "$1[KEY_REDACTED]")
+    // Database connection strings
+    .replace(/postgres(?:ql)?:\/\/[^\s"]+/gi, "postgresql://[redacted]")
+    .replace(/(mongodb(?:\+srv)?|mysql|redis):\/\/[^\s"]+/gi, "$1://[redacted]");
+}
+
+export function sanitizeError(input: unknown, maxLength = 200): string {
+  const raw = input instanceof Error ? input.message : String(input ?? "Unknown error");
+  const redacted = redactSecrets(raw)
     // Redact Prisma invocation text
     .replace(/Invalid\s+`prisma\.[^`]+`\s+invocation:\s*\{[^]*?\}\s*$/s, "Database query failed")
     .replace(/Invalid\s+`prisma\.[^`]+`\s+invocation:/gi, "Database query failed:")

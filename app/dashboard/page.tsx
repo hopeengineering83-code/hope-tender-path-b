@@ -9,6 +9,8 @@ import {
   classifyTenderCurrentnessBatch,
   isCanonicalCurrentnessCritical,
 } from "../../lib/engine/tender-currentness";
+import { isClientNameContaminated } from "../../lib/engine/metadata-validators";
+import { SparklesIcon, AlertCircleIcon, CrossIcon } from "../../components/icons";
 
 export default async function DashboardPage() {
   const userId = await getSession();
@@ -16,7 +18,6 @@ export default async function DashboardPage() {
   await prismaReady;
 
   const now = new Date();
-  const in3days = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
   const in7days = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
 
   // Truthful workspace totals — use real COUNT / GROUP-BY queries so global
@@ -31,7 +32,6 @@ export default async function DashboardPage() {
   const [
     activeTenderCount,
     overdueCount,
-    dueSoon3Count,
     dueSoon7Count,
     criticalComplianceGapCount,
     extractionStateRows,
@@ -46,13 +46,6 @@ export default async function DashboardPage() {
       where: {
         userId,
         deadline: { lt: now },
-        status: { notIn: ["EXPORTED", "CLOSED"] },
-      },
-    }),
-    prisma.tender.count({
-      where: {
-        userId,
-        deadline: { gte: now, lte: in3days },
         status: { notIn: ["EXPORTED", "CLOSED"] },
       },
     }),
@@ -142,7 +135,6 @@ export default async function DashboardPage() {
       requirementsCount: r._count?.requirements ?? 0,
     })),
   );
-  const recentTenderIds = recentTenders.map((t) => t.id);
   const recentCurrentnessVerdicts = await classifyTenderCurrentnessBatch(
     prisma,
     recentTenders.map((t) => ({
@@ -207,7 +199,7 @@ export default async function DashboardPage() {
           <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Workspace Overview</h1>
           <p className="mt-1 text-slate-500 flex items-center gap-2">
             {aiEnabled
-              ? <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5" title="AI providers are configured. This does not mean analysis is complete or authoritative.">✦ AI providers configured</span>
+              ? <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5" title="AI providers are configured. This does not mean analysis is complete or authoritative."><SparklesIcon /> AI providers configured</span>
               : <span className="inline-flex items-center gap-1 text-xs font-medium text-slate-500 bg-slate-100 border border-slate-200 rounded-full px-2 py-0.5">AI offline — rule-based mode</span>
             }
           </p>
@@ -294,13 +286,13 @@ export default async function DashboardPage() {
         </div>
       )}
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,2fr),minmax(300px,1fr)]">
-        <div className="rounded-2xl border bg-white shadow-sm overflow-hidden">
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,2fr),minmax(300px,1fr)]">
+        <div className="min-w-0 rounded-2xl border bg-white shadow-sm overflow-hidden">
           <div className="flex items-center justify-between border-b px-6 py-4">
             <div>
               <h2 className="font-bold text-slate-900">Live Pipeline</h2>
               <p className="mt-0.5 text-[10px] text-slate-400">
-                Recent {recentTenders.length} tenders · Workspace projection (NOT canonical Clear).
+                Last {recentTenders.length} tender{recentTenders.length === 1 ? "" : "s"} · workspace projection — the canonical state lives in each tender&apos;s Workflow Control Center.
               </p>
             </div>
             <Link href="/dashboard/tenders" className="text-sm font-medium text-blue-600 hover:underline">View All</Link>
@@ -311,6 +303,7 @@ export default async function DashboardPage() {
               <Link href="/dashboard/tenders/new" className="mt-2 inline-block text-sm text-black underline">Create your first tender</Link>
             </div>
           ) : (
+            <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-slate-50 text-left text-slate-500">
                 <tr>
@@ -333,9 +326,13 @@ export default async function DashboardPage() {
 
                   return (
                     <tr key={tender.id} className="hover:bg-slate-50 group">
-                      <td className="px-6 py-4">
-                        <Link href={`/dashboard/tenders/${tender.id}`} className="font-semibold text-slate-900 group-hover:text-blue-600 transition-colors">{tender.title}</Link>
-                        {tender.clientName && <p className="text-xs text-slate-400 mt-0.5">{tender.clientName}</p>}
+                      <td className="max-w-[240px] px-6 py-4">
+                        <Link href={`/dashboard/tenders/${tender.id}`} className="break-words font-semibold text-slate-900 group-hover:text-blue-600 transition-colors">{tender.title}</Link>
+                        {tender.clientName && (
+                          isClientNameContaminated(tender.clientName)
+                            ? <p className="text-xs text-amber-600 mt-0.5">Client name needs review — the extracted value mixes several fields. Open the tender to correct it.</p>
+                            : <p className="text-xs text-slate-400 mt-0.5">{tender.clientName}</p>
+                        )}
                       </td>
                       <td className="px-6 py-4">
                         <span className={isLate ? "text-red-600 font-bold" : "text-slate-500"}>
@@ -346,17 +343,17 @@ export default async function DashboardPage() {
                       <td className="px-6 py-4">
                         {extractionState === "PROVISIONAL_NOT_BLOCKED" && (
                           <span className="inline-flex items-center gap-1 rounded-full bg-slate-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-600 border border-slate-200" title="No job-level blocker detected. NOT a canonical Clear verdict — per-tender resolver may still find chunk/content-hash blockers.">
-                            ◐ Provisional
+                            <AlertCircleIcon /> Provisional
                           </span>
                         )}
                         {extractionState === "BLOCKED" && (
                           <span className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-red-700 border border-red-200" title="Persisted status is BLOCKED, unknown, or stale (no promoted AI job, or latest job failed/superseded/unpromoted/empty-hash).">
-                            ✗ Blocked
+                            <CrossIcon /> Blocked
                           </span>
                         )}
                         {extractionState === "NOT_ANALYZED" && (
                           <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-500 border border-slate-200">
-                            ○ Not analyzed
+                            <span aria-hidden="true" className="inline-block h-2 w-2 rounded-full border border-slate-400" /> Not analyzed
                           </span>
                         )}
                       </td>
@@ -365,30 +362,11 @@ export default async function DashboardPage() {
                 })}
               </tbody>
             </table>
+            </div>
           )}
         </div>
 
         <div className="space-y-4">
-          <div className="rounded-2xl border bg-slate-900 p-6 text-white shadow-lg">
-            <h3 className="text-lg font-bold">Quick Engine Access</h3>
-            <p className="mt-1 text-xs text-slate-400">Jump directly to specialized engine views.</p>
-            <div className="mt-6 space-y-2">
-              {[
-                { href: "/dashboard/analysis", label: "Global Analysis", icon: "🧠" },
-                { href: "/dashboard/matching", label: "Global Matching", icon: "🧩" },
-                { href: "/dashboard/compliance", label: "Global Compliance", icon: "🛡️" },
-                { href: "/dashboard/company", label: "Knowledge Vault", icon: "🗄️" },
-                { href: "/dashboard/export", label: "Export Hub", icon: "📦" },
-              ].map((item) => (
-                <Link key={item.href} href={item.href}
-                  className="flex items-center gap-3 rounded-xl bg-slate-800/50 p-3 text-sm hover:bg-slate-800 transition-colors border border-slate-700/50">
-                  <span className="text-lg">{item.icon}</span>
-                  <span className="font-medium">{item.label}</span>
-                </Link>
-              ))}
-            </div>
-          </div>
-
           {recentActivity.length > 0 && (
             <div className="rounded-2xl border bg-white p-5 shadow-sm">
               <div className="flex items-center justify-between mb-4">

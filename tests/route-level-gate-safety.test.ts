@@ -49,7 +49,7 @@ describe("Route-level gate safety — zero GeneratedDocument.create before readi
 
   it("submission-plan/build route creates ZERO GeneratedDocument rows (BuildPlan is persisted instead)", () => {
     // Post-#914 design: PLANNED rows are virtual. The build route persists a
-    // BuildPlan via the canonical buildDraftBuildPlan service and must never
+    // BuildPlan via the canonical buildAndVerifyBuildPlan service and must never
     // create GeneratedDocument rows (PLANNED or otherwise).
     assert.ok(
       !buildRoute.includes('generationStatus: "PLANNED"'),
@@ -60,8 +60,8 @@ describe("Route-level gate safety — zero GeneratedDocument.create before readi
       "Build route must NOT create GeneratedDocument rows",
     );
     assert.ok(
-      buildRoute.includes("buildDraftBuildPlan"),
-      "Build route must delegate to the canonical buildDraftBuildPlan service",
+      buildRoute.includes("buildAndVerifyBuildPlan"),
+      "Build route must delegate to the canonical buildAndVerifyBuildPlan service",
     );
   });
 

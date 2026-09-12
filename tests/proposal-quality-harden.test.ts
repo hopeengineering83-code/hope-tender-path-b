@@ -173,11 +173,21 @@ describe("authority-review upgraded to shared detection patterns", () => {
     );
   });
 
-  it("uses PLACEHOLDER_PATTERNS.some() for detection (not local regex)", () => {
+  it("uses the shared placeholder authority for detection (not a local regex)", () => {
+    // Was `PLACEHOLDER_PATTERNS.some`. The shared authority is now
+    // documentPlaceholderMatches(), which applies the same unambiguous markers
+    // anywhere and the ambiguous ordinary-English ones only in value position,
+    // so every document-prose consumer reaches one verdict. The intent of this
+    // test — no module rolls its own placeholder regex — is unchanged and is
+    // now checked against that function.
     const src = readFileSync("lib/engine/authority-review.ts", "utf8");
     assert.ok(
-      src.includes("PLACEHOLDER_PATTERNS.some"),
-      "authority-review must use PLACEHOLDER_PATTERNS.some() for placeholder detection",
+      src.includes("documentPlaceholderMatches"),
+      "authority-review must use the shared documentPlaceholderMatches() authority",
+    );
+    assert.ok(
+      !/new RegExp\(|\/\^\?\[.*placeholder/i.test(src.split("documentPlaceholderMatches")[0].slice(-400)),
+      "authority-review must not reintroduce a local placeholder regex",
     );
   });
 

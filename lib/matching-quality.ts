@@ -1,21 +1,12 @@
+import { canUseVaultRecord, type ReviewRecordState } from "./vault-review-provenance";
+
 export type MatchingQualitySeverity = "GOOD" | "WARNING" | "POOR";
 
 /**
- * Structural state of matching for a tender — distinguishes the four
- * cases called out in the Gap 5 spec so the UI can render the right
- * message instead of always showing "0/100 POOR":
- *
- *   NO_VAULT              — no vault evidence exists (company hasn't
- *                           imported experts/projects yet)
- *   VAULT_AWAITS_ENGINE   — vault has reviewed evidence but Run Engine
- *                           hasn't been triggered yet for this tender
- *   MATCHES_WEAK          — matches exist but scores/coverage are weak
- *                           (engine ran, but knowledge didn't cover the
- *                           tender's domain)
- *   MATCHES_REVIEWED      — at least one reviewed match is available
- *                           and selectable/auto-promotable
- *   MATCHING_NOT_REQUIRED — tender has no EXPERT/PROJECT_EXPERIENCE
- *                           requirements (e.g. supply/goods tender)
+ * Structural state of matching for a tender. Historical enum member names are
+ * retained for API compatibility, but "reviewed" in those names now means
+ * runtime-authoritative Company Vault evidence: either authenticated REVIEWED
+ * or durable SOURCE_VERIFIED provenance.
  */
 export type MatchingState =
   | "NO_VAULT"
@@ -28,9 +19,18 @@ export type MatchLike = {
   id?: string;
   score?: number | null;
   isSelected?: boolean | null;
-  expert?: { trustLevel?: string | null; fullName?: string | null } | null;
-  project?: { trustLevel?: string | null; name?: string | null } | null;
+  expert?: (ReviewRecordState & { fullName?: string | null }) | null;
+  project?: (ReviewRecordState & { name?: string | null }) | null;
 };
+
+// GENERATION accepts either a durably human-REVIEWED record or a durably
+// machine-SOURCE_VERIFIED one (see canUseVaultRecord). All user-facing
+// messages below therefore say authoritative/source-backed rather than
+// implying that a person must review records before matching can proceed.
+function isUsableForGeneration(record: (ReviewRecordState & Record<string, unknown>) | null | undefined): boolean {
+  if (!record) return false;
+  return canUseVaultRecord(record, "GENERATION");
+}
 
 export type RequirementLikeForMatching = {
   requirementType?: string | null;
@@ -39,12 +39,12 @@ export type RequirementLikeForMatching = {
 export type MatchingQualityReport = {
   severity: MatchingQualitySeverity;
   score: number;
-  /** Gap 5 fix — structural state (see MatchingState doc). */
   state: MatchingState;
   expertRequirementExists: boolean;
   projectRequirementExists: boolean;
   expertMatches: number;
   projectMatches: number;
+  /** Backward-compatible field names: counts runtime-authoritative matches. */
   reviewedExpertMatches: number;
   reviewedProjectMatches: number;
   selectedExperts: number;
@@ -53,7 +53,7 @@ export type MatchingQualityReport = {
   reviewedSelectedProjects: number;
   highConfidenceExpertMatches: number;
   highConfidenceProjectMatches: number;
-  /** Gap 5 fix — vault counts so the UI can show "engine will use N vault experts". */
+  /** Backward-compatible field names: counts runtime-authoritative Vault records. */
   vaultReviewedExperts: number;
   vaultReviewedProjects: number;
   warnings: string[];
@@ -74,7 +74,7 @@ export function assessMatchingQuality(params: {
   requirements: RequirementLikeForMatching[];
   expertMatches: MatchLike[];
   projectMatches: MatchLike[];
-  /** Gap 5 fix — pass vault counts so we can distinguish "engine not run yet" from "no evidence at all". */
+  /** Historical parameter names; values are authoritative Vault counts. */
   vaultReviewedExperts?: number | null;
   vaultReviewedProjects?: number | null;
 }): MatchingQualityReport {
@@ -82,10 +82,10 @@ export function assessMatchingQuality(params: {
   const projectRequirementExists = params.requirements.some((req) => req.requirementType === "PROJECT_EXPERIENCE");
   const selectedExperts = params.expertMatches.filter((match) => Boolean(match.isSelected));
   const selectedProjects = params.projectMatches.filter((match) => Boolean(match.isSelected));
-  const reviewedExpertMatches = params.expertMatches.filter((match) => match.expert?.trustLevel === "REVIEWED");
-  const reviewedProjectMatches = params.projectMatches.filter((match) => match.project?.trustLevel === "REVIEWED");
-  const reviewedSelectedExperts = selectedExperts.filter((match) => match.expert?.trustLevel === "REVIEWED");
-  const reviewedSelectedProjects = selectedProjects.filter((match) => match.project?.trustLevel === "REVIEWED");
+  const reviewedExpertMatches = params.expertMatches.filter((match) => isUsableForGeneration(match.expert));
+  const reviewedProjectMatches = params.projectMatches.filter((match) => isUsableForGeneration(match.project));
+  const reviewedSelectedExperts = selectedExperts.filter((match) => isUsableForGeneration(match.expert));
+  const reviewedSelectedProjects = selectedProjects.filter((match) => isUsableForGeneration(match.project));
   const scoredExpertMatches = params.expertMatches.filter((match) => hasNumericScore(match.score));
   const scoredProjectMatches = params.projectMatches.filter((match) => hasNumericScore(match.score));
   const highConfidenceExpertMatches = scoredExpertMatches.filter((match) => numericScore(match.score) >= 0.7).length;
@@ -97,78 +97,68 @@ export function assessMatchingQuality(params: {
   const recommendations: string[] = [];
   let score = 100;
 
-  // ─── Gap 5 fix — soften the score when engine hasn't run yet ────────
-  // The previous logic flat-deducted 35 + 35 = 70 points whenever both
-  // expertMatches and projectMatches were 0, forcing the score to 0/100
-  // even when the company vault had reviewed experts/projects ready to
-  // be picked up by the next Run Engine click. Now: if vault has
-  // reviewed evidence, the missing-matches warning is softer (−18
-  // instead of −35) because the situation is "pending engine run", not
-  // "matching is broken". Once engine runs and the row count is still
-  // 0 (or scored 0), the harder penalties below kick in.
+  // Distinguish "Engine has not created tender-specific rows yet" from "the
+  // Vault has no authoritative evidence". SOURCE_VERIFIED and REVIEWED are
+  // equal inputs here, so neither state requires a promotion/approval click.
   if (expertRequirementExists && params.expertMatches.length === 0) {
     if (vaultReviewedExperts > 0) {
-      warnings.push(`Tender requires experts but no expert matches exist yet — ${vaultReviewedExperts} reviewed vault expert(s) await engine run.`);
-      recommendations.push("Click Run Engine to create tender-specific expert match rows from the vault.");
+      warnings.push(`Tender requires experts but no expert matches exist yet — ${vaultReviewedExperts} verified/source-backed Vault expert(s) await Run Engine.`);
+      recommendations.push("Run Engine to create tender-specific expert matches automatically from the Company Vault.");
       score -= 18;
     } else {
-      warnings.push("Tender requires experts but no expert matches exist and no reviewed vault experts are available.");
-      recommendations.push("Run the engine after reviewing/importing expert CVs.");
+      warnings.push("Tender requires experts but no verified/source-backed Vault expert is currently available.");
+      recommendations.push("Upload the missing expert CV source evidence; ingestion, source verification, and matching then run automatically.");
       score -= 35;
     }
   }
   if (projectRequirementExists && params.projectMatches.length === 0) {
     if (vaultReviewedProjects > 0) {
-      warnings.push(`Tender requires project references but no project matches exist yet — ${vaultReviewedProjects} reviewed vault project(s) await engine run.`);
-      recommendations.push("Click Run Engine to create tender-specific project match rows from the vault.");
+      warnings.push(`Tender requires project references but no project matches exist yet — ${vaultReviewedProjects} verified/source-backed Vault project(s) await Run Engine.`);
+      recommendations.push("Run Engine to create tender-specific project matches automatically from the Company Vault.");
       score -= 18;
     } else {
-      warnings.push("Tender requires project references but no project matches exist and no reviewed vault projects are available.");
-      recommendations.push("Run the engine after reviewing/importing project references.");
+      warnings.push("Tender requires project references but no verified/source-backed Vault project is currently available.");
+      recommendations.push("Upload the missing project-reference source evidence; ingestion, source verification, and matching then run automatically.");
       score -= 35;
     }
   }
-  // The "no reviewed match" branch only applies when matches EXIST at
-  // all — otherwise the previous "no matches yet" check already
-  // penalised the score (or correctly softened it for vault fallback).
-  // Double-counting here used to floor the score to 0/100 even when
-  // vault was ready, defeating the Gap 5 fix.
+
   if (expertRequirementExists && params.expertMatches.length > 0 && selectedExperts.length === 0 && reviewedExpertMatches.length === 0) {
-    warnings.push("Tender requires experts but no reviewed expert match is selected or available for auto-promotion.");
-    recommendations.push("Review/import expert CV evidence, then run matching again.");
+    warnings.push("Tender requires experts but none of the current expert matches has authoritative source-backed provenance.");
+    recommendations.push("Add genuine owned CV source evidence for the missing discipline; automatic verification will make provable records eligible.");
     score -= 20;
   } else if (expertRequirementExists && selectedExperts.length === 0 && reviewedExpertMatches.length > 0) {
-    warnings.push("No expert match is manually selected, but reviewed expert matches are available for generation auto-promotion.");
-    recommendations.push("Review matches manually for best quality, or allow generation to auto-promote reviewed matches.");
+    warnings.push("Authoritative expert matches exist but none is selected yet; the Engine can apply the best available grounded selection automatically.");
+    recommendations.push("Run or retry Engine; no separate Company Vault approval or promotion step is required.");
     score -= 5;
   }
   if (projectRequirementExists && params.projectMatches.length > 0 && selectedProjects.length === 0 && reviewedProjectMatches.length === 0) {
-    warnings.push("Tender requires project references but no reviewed project match is selected or available for auto-promotion.");
-    recommendations.push("Review/import project evidence, then run matching again.");
+    warnings.push("Tender requires project references but none of the current project matches has authoritative source-backed provenance.");
+    recommendations.push("Add genuine owned project-reference source evidence; automatic verification will make provable records eligible.");
     score -= 20;
   } else if (projectRequirementExists && selectedProjects.length === 0 && reviewedProjectMatches.length > 0) {
-    warnings.push("No project match is manually selected, but reviewed project matches are available for generation auto-promotion.");
-    recommendations.push("Review matches manually for best quality, or allow generation to auto-promote reviewed matches.");
+    warnings.push("Authoritative project matches exist but none is selected yet; the Engine can apply the best available grounded selection automatically.");
+    recommendations.push("Run or retry Engine; no separate Company Vault approval or promotion step is required.");
     score -= 5;
   }
   if (selectedExperts.length > 0 && reviewedSelectedExperts.length === 0) {
-    warnings.push("Selected expert matches are not reviewed.");
-    recommendations.push("Review selected experts before generation to prevent draft/unverified CV evidence from entering proposals.");
+    warnings.push("Selected expert matches do not have durable authoritative provenance.");
+    recommendations.push("Replace the unsupported selection with source-backed expert evidence before generation.");
     score -= 25;
   }
   if (selectedProjects.length > 0 && reviewedSelectedProjects.length === 0) {
-    warnings.push("Selected project matches are not reviewed.");
-    recommendations.push("Review selected projects before generation to prevent draft/unverified project evidence from entering proposals.");
+    warnings.push("Selected project matches do not have durable authoritative provenance.");
+    recommendations.push("Replace the unsupported selection with source-backed project evidence before generation.");
     score -= 25;
   }
   if (expertRequirementExists && scoredExpertMatches.length > 0 && highConfidenceExpertMatches === 0) {
     warnings.push("Expert matches exist, but none are high-confidence (≥70%).");
-    recommendations.push("Check whether tender discipline/role requirements were extracted correctly or import stronger CV evidence.");
+    recommendations.push("Check the extracted discipline/role requirements or add stronger source-backed CV evidence.");
     score -= 15;
   }
   if (projectRequirementExists && scoredProjectMatches.length > 0 && highConfidenceProjectMatches === 0) {
     warnings.push("Project matches exist, but none are high-confidence (≥70%).");
-    recommendations.push("Check whether tender sector/scope requirements were extracted correctly or import stronger project evidence.");
+    recommendations.push("Check the extracted sector/scope requirements or add stronger source-backed project evidence.");
     score -= 15;
   }
 
@@ -176,7 +166,6 @@ export function assessMatchingQuality(params: {
   const severity: MatchingQualitySeverity = score < 50 ? "POOR" : score < 75 ? "WARNING" : "GOOD";
   if (severity === "GOOD" && warnings.length === 0) recommendations.push("Matching appears usable for proposal generation.");
 
-  // ─── Derive structural state ──────────────────────────────────────
   const needsExperts = expertRequirementExists;
   const needsProjects = projectRequirementExists;
   const hasMatches = params.expertMatches.length > 0 || params.projectMatches.length > 0;

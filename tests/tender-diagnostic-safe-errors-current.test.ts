@@ -24,9 +24,16 @@ function assertSafeRuntimeErrors(source: string, code: string) {
 describe("tender diagnostic routes keep runtime failures server-side", () => {
   it("protects submission-plan runtime errors without changing owner scoping", () => {
     assertSafeRuntimeErrors(submissionPlan, "SUBMISSION_PLAN_RUNTIME_ERROR");
-    assert.match(submissionPlan, /where: \{ id, userId: actor\.id \}/);
-    assert.match(submissionPlan, /getCurrentConfirmedBuildPlan\(prisma, id, actor\.id\)/);
-    assert.match(submissionPlan, /generatedDocuments: tender\.generatedDocuments\.map/);
+    // Owner scoping moved into the shared loader when this route and the
+    // automatic finalize pipeline were collapsed onto one completeness
+    // authority. Tenant isolation is the guarantee, so assert both halves:
+    // the route must pass the acting user down, and the loader must scope
+    // every read by it — including the confirmed-plan lookup.
+    assert.match(submissionPlan, /loadSubmissionPlanCompleteness\(prisma, id, actor\.id\)/);
+    const loader = readFileSync(join(rootDir, "lib/engine/submission-plan-completeness.ts"), "utf8");
+    assert.match(loader, /where: \{ id: tenderId, userId \}/);
+    assert.match(loader, /getCurrentConfirmedBuildPlan\(client, tenderId, userId\)/);
+    assert.match(loader, /generatedDocuments: tender\.generatedDocuments\.map/);
   });
 
   it("protects both advisory lookup and mutation runtime errors", () => {

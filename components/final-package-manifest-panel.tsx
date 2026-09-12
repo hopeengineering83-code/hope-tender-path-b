@@ -55,7 +55,7 @@ function envelopeLabel(doc: DocRow): string {
 
 function statusBadge(state: string) {
   if (state === "READY_FOR_EXPORT") return <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">Ready</span>;
-  if (state === "VALIDATED" || state === "DOCX_GENERATED" || state === "PDF_GENERATED") return <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">Not approved</span>;
+  if (state === "VALIDATED" || state === "DOCX_GENERATED" || state === "PDF_GENERATED") return <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">Not approved</span>;
   if (state === "SUPERSEDED") return <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">Superseded</span>;
   if (state === "ORIGINAL_REQUIRED") return <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">Original required</span>;
   if (state === "NEEDS_REVALIDATION") return <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">Needs revalidation</span>;
@@ -215,7 +215,7 @@ export async function FinalPackageManifestPanel({ tenderId }: { tenderId: string
             </div>
             <div className="rounded-xl border bg-amber-50 px-4 py-2">
               <p className="text-xs text-amber-600">Blocked</p>
-              <p className="text-xl font-bold text-amber-700">{blockedRows.length}</p>
+              <p className="text-xl font-bold text-amber-800">{blockedRows.length}</p>
             </div>
             <div className="rounded-xl border bg-slate-50 px-4 py-2">
               <p className="text-xs text-slate-500">Excluded</p>
@@ -226,7 +226,7 @@ export async function FinalPackageManifestPanel({ tenderId }: { tenderId: string
 
         {blockedRows.length > 0 && (
           <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            <strong>{blockedRows.length} document(s) are not export-ready.</strong> Validate, review, and approve each before exporting. These rows stay visible.
+            <strong>{blockedRows.length} document(s) are not export-ready.</strong> The durable post-Engine workflow validates and finalizes safe outputs automatically; intervene only for the specific source, evidence, quality, authority, legal, or integrity blocker shown. These rows stay visible.
           </div>
         )}
 
@@ -260,7 +260,7 @@ export async function FinalPackageManifestPanel({ tenderId }: { tenderId: string
 
         {!hasExplicitPlan && (
           <p className="mt-3 text-xs text-slate-500">
-No final-package submission plan files are currently detected by the shared readiness model — the &quot;In plan&quot; column is not applicable. Build and confirm a submission plan to enable envelope separation and outside-plan exclusion.
+No final-package submission plan files are currently detected by the shared readiness model — the &quot;In plan&quot; column is not applicable. Run Engine to create and source-verify the Build Plan automatically; use recovery only if Engine reports a genuine source failure.
           </p>
         )}
       </section>

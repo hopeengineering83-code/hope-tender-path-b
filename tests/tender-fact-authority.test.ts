@@ -353,7 +353,7 @@ describe("tender-fact-authority — wired into metadata-override route", () => {
   it("route imports the authority model", () => {
     const src = readFileSync("app/api/tenders/[id]/metadata-override/route.ts", "utf8");
     assert.ok(src.includes("from \"../../../../../lib/engine/tender-fact-authority\""), "must import tender-fact-authority");
-    assert.ok(src.includes("classifyTenderFactAuthority"), "must import classifyTenderFactAuthority");
+    assert.ok(!src.includes("  classifyTenderFactAuthority,"), "must not retain an unused classifier import");
     assert.ok(src.includes("isMeaningfulReason"), "must import isMeaningfulReason");
     assert.ok(src.includes("isValidConfirmationBasis"), "must import isValidConfirmationBasis");
     assert.ok(src.includes("MIN_CRITICAL_REASON_LENGTH"), "must import MIN_CRITICAL_REASON_LENGTH");
@@ -400,8 +400,9 @@ describe("tender-fact-authority — wired into canonical resolver", () => {
 
   it("canonical resolver uses hasExportBlocker for final (not hasGenerationBlocker for draft)", () => {
     const src = readFileSync("lib/engine/canonical-field-state.ts", "utf8");
-    // The old valueDrivenUngroundedBlock must be disabled
-    assert.ok(src.includes("valueDrivenUngroundedBlock = false"), "must disable valueDrivenUngroundedBlock");
+    // The obsolete value-driven blocker must be absent; final authority is
+    // enforced by export eligibility and the audited override path.
+    assert.ok(!src.includes("valueDrivenUngroundedBlock"), "must remove the dead value-driven blocker marker");
     // The new draftHardBlockReasons must NOT include manual values
     assert.ok(src.includes("draftHardBlockReasons"), "must define draftHardBlockReasons");
     assert.ok(src.includes("isManualValuePresent"), "must compute isManualValuePresent");

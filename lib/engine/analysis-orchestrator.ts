@@ -19,8 +19,9 @@ import {
   type AnalysisWithMeta,
   type AIAnalysisResult,
 } from "../ai";
-import { createAnalysisJob, finalizeJob } from "../ai-jobs/analysis-job-service";
-import type { AnalysisJobCreateInput } from "../ai-jobs/analysis-job-service";
+// createAnalysisJob import removed — the orchestrator must NEVER create new AI_ANALYZE jobs.
+import { finalizeJob, verifyAnalysisSnapshot } from "../ai-jobs/analysis-job-service";
+import { ANALYSIS_SUPERSEDED_STATUS } from "../ai-analyze-promotion";
 import { buildTenderAnalysisContent, computeAnalysisContentHash } from "./tender-analysis-content";
 import { upsertAnalyzeChunkSucceeded, upsertAnalyzeChunkFailed, getCompletedChunkResults } from "../ai-analyze-checkpoints";
 import { getMinCooldownExpiryMs } from "../ai-provider-health";
@@ -35,7 +36,90 @@ export type AnalysisOrchestrationOptions = {
   onChunkStart?: (info: { chunkIndex: number; totalChunks: number }) => void | Promise<void>;
   onChunkComplete?: (info: { chunkIndex: number; totalChunks: number; result: AIAnalysisResult; provider?: string | null }) => void | Promise<void>;
   onChunkFailure?: (info: { chunkIndex: number; totalChunks: number; errorMessage: string; provider?: string | null }) => void | Promise<void>;
+  /**
+   * MANDATORY. The orchestrator loads THIS existing job and verifies its
+   * manual authority. It must NEVER call createAnalysisJob() — only the
+   * manual route POST /api/tenders/:id/manual-ai-analyze creates jobs.
+   */
+  existingJobId: string;
 };
+
+/**
+ * Thrown (and persisted as a terminal SUPERSEDED job) when the tender's
+ * canonical analysis input no longer matches the revision the manual AI Analyze
+ * click authorized. Callers must treat this as a non-success terminal outcome:
+ * no provider spend, no promotion, no Engine unlock.
+ */
+export const ANALYSIS_SOURCE_DRIFT_ERROR = "ANALYSIS_SOURCE_DRIFT" as const;
+
+/**
+ * Terminal status written for a run whose authorized source revision drifted.
+ * Deliberately NOT "SUCCEEDED"/"PARTIAL_SUCCESS": a superseded run never
+ * promoted canonical data, so it must never claim a success state. Re-exported
+ * from the promotion module, which owns the invariant.
+ */
+export { ANALYSIS_SUPERSEDED_STATUS };
+
+/**
+ * Compare the CURRENT canonical analysis input against the revision the job was
+ * authorized for. Returns a machine-readable drift reason, or null when the
+ * current sources are byte-identical to the authorized revision.
+ *
+ * Two independent checks, both fail-closed:
+ *  1. `analysisInputHash` equality — the exact bytes that will be sent to the
+ *     provider must hash to the value frozen at manual-click time.
+ *  2. Canonical snapshot verification — file set, per-file extracted-text
+ *     integrity, and stored hash. A missing/legacy/malformed snapshot is
+ *     drift, never a soft pass.
+ */
+async function resolvePreProviderDriftReason(params: {
+  jobId: string;
+  tenderId: string;
+  userId: string;
+  authorizedHash: string | null;
+  currentHash: string;
+}): Promise<string | null> {
+  const { jobId, tenderId, userId, authorizedHash, currentHash } = params;
+
+  // A job with no authorized hash was never bound to a source revision, so
+  // nothing proves the provider would receive what the user approved.
+  if (!authorizedHash) return "MISSING_AUTHORIZED_ANALYSIS_INPUT_HASH";
+  if (authorizedHash !== currentHash) return "ANALYSIS_INPUT_HASH_DRIFT";
+
+  const snapshotCheck = await verifyAnalysisSnapshot(jobId, tenderId, userId).catch(() => ({
+    valid: false,
+    superseded: true,
+    reason: "SNAPSHOT_VERIFY_ERROR",
+  }));
+  if (!snapshotCheck.valid || snapshotCheck.superseded) {
+    return snapshotCheck.reason ?? "SNAPSHOT_INVALID";
+  }
+
+  return null;
+}
+
+/**
+ * Persist the terminal superseded state for a drifted run. Best-effort by
+ * design: if this write fails the orchestrator still throws, so the worker's
+ * own error path marks the job FAILED — also fail-closed.
+ */
+async function markAnalysisSuperseded(jobId: string, reason: string): Promise<void> {
+  await prisma.aiJob
+    .update({
+      where: { id: jobId },
+      data: {
+        status: ANALYSIS_SUPERSEDED_STATUS,
+        finishedAt: new Date(),
+        errorMessage: `${ANALYSIS_SOURCE_DRIFT_ERROR}: ${reason} — tender sources changed after this analysis was authorized. Run AI Analyze again.`,
+      },
+    })
+    .catch((err) => {
+      logger.error("[orchestrator] Failed to persist SUPERSEDED status for drifted analysis", {
+        jobId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+}
 
 export type AnalysisProgressEvent = {
   phase: "preparing" | "analyzing" | "merging" | "promoting" | "complete";
@@ -77,7 +161,7 @@ export type AnalysisOrchestrationResult = {
 export async function executeAnalysis(
   tenderId: string,
   userId: string,
-  options: AnalysisOrchestrationOptions = {},
+  options: AnalysisOrchestrationOptions,
 ): Promise<AnalysisOrchestrationResult> {
   const {
     force = false,
@@ -86,14 +170,10 @@ export async function executeAnalysis(
     onChunkStart,
     onChunkComplete,
     onChunkFailure,
+    existingJobId,
   } = options;
 
-  // Content hash that keys the durable AiAnalyzeChunk rows. Assigned once the
-  // shared content is built below; the wrapped chunk callbacks persist each
-  // chunk under this hash so finalizeJob() can read SUCCEEDED chunk rows and
-  // promote canonical data. It is identical to the hash createAnalysisJob used
-  // (both call buildTenderAnalysisContent + computeAnalysisContentHash on the
-  // same tender/company), so the upserts UPDATE the existing rows in place.
+  // Content hash that keys the durable AiAnalyzeChunk rows.
   let checkpointHash: string | null = null;
 
   // Phase: Preparing
@@ -102,11 +182,39 @@ export async function executeAnalysis(
     message: "Preparing tender content for analysis…",
   });
 
-  // Create or resume job
-  const jobInput: AnalysisJobCreateInput = { tenderId, userId };
-  const jobResult = await createAnalysisJob(jobInput);
-  const jobId = jobResult.jobId;
-  const totalChunks = jobResult.totalChunks;
+  // DIRECTIVE 3: existingJobId is MANDATORY. The orchestrator must NEVER
+  // call createAnalysisJob() — only the manual route has that authority.
+  if (!existingJobId) {
+    throw new Error("EXISTING_JOB_ID_REQUIRED: executeAnalysis requires an existing manually-authorized jobId");
+  }
+
+  // Load the existing job — do NOT create a new one.
+  const existingJob = await prisma.aiJob.findFirst({
+    where: { id: existingJobId, tenderId, userId, jobType: "AI_ANALYZE" },
+    select: { id: true, analysisInputHash: true, input: true },
+  });
+  if (!existingJob) {
+    throw new Error("JOB_NOT_FOUND: executeAnalysis could not find the specified existing AI_ANALYZE job");
+  }
+  // Verify the existing job has valid manual authority.
+  let existingInput: Record<string, unknown> = {};
+  try {
+    const parsed = JSON.parse(existingJob.input ?? "{}");
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      existingInput = parsed as Record<string, unknown>;
+    }
+  } catch { /* treat as invalid */ }
+  if (
+    existingInput.manualRequested !== true ||
+    existingInput.source !== "manual-ai-analyze" ||
+    typeof existingInput.actorUserId !== "string" ||
+    existingInput.actorUserId !== userId
+  ) {
+    throw new Error("MANUAL_AUTHORITY_INVALID: existing job lacks valid manual authority for this user");
+  }
+  const jobId = existingJob.id;
+  const snapshot = (existingInput as any)?.snapshot;
+  const totalChunks = snapshot?.totalChunks ?? 0;
 
   // Load existing progress if resuming
   let startFromChunk = 0;
@@ -284,12 +392,54 @@ export async function executeAnalysis(
   // Use Stage 1 shared builder for deterministic content
   const tenderContent = buildTenderAnalysisContent(tender, company);
   const contentHash = computeAnalysisContentHash(tenderContent);
-  // Enable durable per-chunk checkpoint persistence now that the hash exists.
-  checkpointHash = contentHash;
 
+  // ─── PRE-PROVIDER SOURCE-DRIFT BLOCK ───────────────────────────────────
+  // The manual click froze an exact source revision onto the job:
+  // `analysisInputHash` plus the immutable CanonicalAnalysisSnapshot. Between
+  // that click and this worker invocation the sources can change — the tender
+  // title/description/intake notes, a file's extracted text, an added or
+  // deleted ACTIVE file, or a Company Vault document that feeds the canonical
+  // builder.
+  //
+  // Recompute the canonical input from the CURRENT sources with the SAME
+  // builder and require exact equality before ANY provider request. On drift we
+  // must not spend provider tokens, must not continue this job's checkpoints,
+  // must not promote, and must not unlock Engine. The run fails closed as
+  // superseded and the user has to issue a new explicit AI Analyze for the new
+  // revision.
+  //
+  // This runs BEFORE `checkpointHash` is armed so a drifted revision can never
+  // write AiAnalyzeChunk checkpoint rows under a hash the job was not
+  // authorized for.
+  const driftReason = await resolvePreProviderDriftReason({
+    jobId,
+    tenderId,
+    userId,
+    authorizedHash: existingJob.analysisInputHash,
+    currentHash: contentHash,
+  });
+  if (driftReason) {
+    await markAnalysisSuperseded(jobId, driftReason);
+    await onProgress?.({
+      phase: "complete",
+      status: "SUPERSEDED",
+      message: `Tender sources changed since AI Analyze was authorized (${driftReason}). Run AI Analyze again.`,
+    });
+    throw new Error(`${ANALYSIS_SOURCE_DRIFT_ERROR}: ${driftReason}`);
+  }
+
+  // Only once the revision is proven identical is a short/empty input a genuine
+  // extraction problem. Checked after the drift block so that deleting the last
+  // authorized source file is reported as drift (terminal, superseded) rather
+  // than as "extraction not ready" (which would leave the job resumable against
+  // a revision the user never authorized).
   if (!tenderContent || tenderContent.length < 100) {
     throw new Error("Tender extraction not ready or content too short");
   }
+
+  // Enable durable per-chunk checkpoint persistence only after the current
+  // sources are proven identical to the authorized revision.
+  checkpointHash = contentHash;
 
   // RESUME from the durable checkpoints — the source of truth for "where it
   // left off". A re-armed job (or even a fresh job row with the same content

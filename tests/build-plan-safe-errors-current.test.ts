@@ -13,45 +13,41 @@ function assertSafeRuntimeContract(source: string) {
   assert.match(source, /extractRequestId\(req\)/);
   assert.match(source, /requestId/);
   assert.match(source, /errorClass: error instanceof Error \? error\.constructor\.name : "UnknownError"/);
+  assert.match(source, /Build Plan could not be automatically derived and verified/);
 }
 
 describe("canonical and compatibility Build Plan routes", () => {
   it("return the same stable unexpected-runtime contract", () => {
     assertSafeRuntimeContract(canonical);
     assertSafeRuntimeContract(compatibility);
-    assert.match(canonical, /Build Plan could not be created/);
-    assert.match(compatibility, /Build Plan could not be created/);
   });
 
-  it("preserve exact typed preflight blockers from the canonical service", () => {
+  it("preserve exact typed preflight blockers from automatic verification", () => {
     for (const source of [canonical, compatibility]) {
-      assert.match(source, /buildDraftBuildPlan\(prisma, id, actor\.id\)/);
-      assert.match(source, /draftResult\.code/);
-      assert.match(source, /draftResult\.message/);
-      assert.match(source, /draftResult\.status/);
+      assert.match(source, /buildAndVerifyBuildPlan\(prisma, id, actor\.id, \{ reuseCurrent: false \}\)/);
+      assert.match(source, /result\.code/);
+      assert.match(source, /result\.message/);
+      assert.match(source, /result\.status/);
+      assert.match(source, /result\.blockers \?\? \[\]/);
+      assert.match(source, /automaticVerificationPending: true/);
     }
   });
 
-  it("preserve the zero GeneratedDocument authority invariant", () => {
+  it("preserves the zero GeneratedDocument authority invariant", () => {
     for (const source of [canonical, compatibility]) {
       assert.match(source, /generatedDocument\.count/);
-      assert.match(source, /authorizesGeneration: false/);
+      assert.match(source, /generatedDocumentsCreated: after(?:Docs)? - before(?:Docs)?/);
       assert.doesNotMatch(source, /generatedDocument\.(?:create|upsert|createMany)\(/);
+      assert.match(source, /authorizesGeneration: true/);
     }
-    // The compatibility route reports the measured delta (afterDocs - beforeDocs),
-    // which is 0 for Build Plan creation. Must NOT hardcode 0 — use the dynamic
-    // expression so the response is truthful even if the count changes.
-    assert.match(compatibility, /generatedDocumentsCreated: afterDocs - beforeDocs/);
-    assert.doesNotMatch(compatibility, /generatedDocumentsCreated: 0/,
-      "must NOT hardcode generatedDocumentsCreated to 0");
   });
 
-  it("keep mutation authorization restricted", () => {
+  it("keeps mutation authorization restricted", () => {
     assert.match(canonical, /requireRole\("ADMIN", "PROPOSAL_MANAGER"\)/);
     assert.match(compatibility, /requireRole\("ADMIN", "PROPOSAL_MANAGER"\)/);
   });
 
-  it("keeps Vercel Git deployment enabled (repo policy)", () => {
-    assert.equal(vercel.git?.deploymentEnabled?.["main"], true);
+  it("keeps Vercel Git deployment enabled by repository policy", () => {
+    assert.equal(vercel.git?.deploymentEnabled?.main, true);
   });
 });

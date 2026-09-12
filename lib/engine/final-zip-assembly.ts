@@ -1,6 +1,8 @@
 import JSZip from "jszip";
 import { createHash } from "node:crypto";
+import { resolveArtifactIdentity } from "./artifact-identity";
 import type { ZipEntry } from "./final-zip-scope";
+import type { SubmissionEnvelope, SubmissionPlanFormat } from "./submission-plan";
 
 export type FinalZipDocumentContent = {
   generatedDocId: string;
@@ -11,6 +13,8 @@ export type FinalZipManifestEntry = {
   generatedDocId: string;
   filename: string;
   order: number;
+  envelope: SubmissionEnvelope;
+  format: SubmissionPlanFormat;
   byteLength: number;
   sha256: string;
 };
@@ -65,12 +69,17 @@ export async function assembleFinalSubmissionZip(
   const contentById = new Map(contents.map((item) => [item.generatedDocId, item.bytes]));
   const seenNames = new Set<string>();
   const seenDocumentIds = new Set<string>();
+  const seenOrders = new Set<number>();
   const zip = new JSZip();
   const fileList: string[] = [];
   const manifest: FinalZipManifestEntry[] = [];
   let totalInputBytes = 0;
 
-  for (const entry of entries) {
+  const orderedEntries = [...entries].sort(
+    (left, right) => left.order - right.order || left.name.localeCompare(right.name),
+  );
+
+  for (const entry of orderedEntries) {
     const safeName = assertSafeEntryName(entry.name);
     const normalizedName = safeName.toLocaleLowerCase();
     if (seenNames.has(normalizedName)) {
@@ -86,9 +95,46 @@ export async function assembleFinalSubmissionZip(
     }
     seenDocumentIds.add(entry.generatedDocId);
 
+    if (!Number.isInteger(entry.order) || entry.order <= 0) {
+      throw new Error(`Final ZIP entry ${safeName} has an invalid plan order.`);
+    }
+    if (seenOrders.has(entry.order)) {
+      throw new Error(`Final ZIP contains a duplicate plan order: ${entry.order}.`);
+    }
+    seenOrders.add(entry.order);
+    if (!["TECHNICAL", "FINANCIAL", "ADMIN"].includes(entry.envelope)) {
+      throw new Error(`Final ZIP entry ${safeName} has an invalid submission envelope.`);
+    }
+    if (!["DOCX", "PDF", "ZIP", "XLSX", "OTHER"].includes(entry.format)) {
+      throw new Error(`Final ZIP entry ${safeName} has an invalid submission format.`);
+    }
+
     const bytes = contentById.get(entry.generatedDocId);
     if (!bytes || bytes.byteLength === 0) {
       throw new Error(`Final ZIP entry ${safeName} has no document bytes.`);
+    }
+
+    // LAST MILE: the bytes must actually be what the entry says they are.
+    //
+    // Everything above validates the entry's LABELS — that `format` is one of
+    // the allowed strings, that names and orders do not collide. Nothing
+    // compared the label to the content, so assembly would happily write
+    // "Technical-Proposal.pdf" holding PK.. DOCX bytes and record it in the
+    // manifest as format PDF. The archive would then ship a .pdf the procuring
+    // entity cannot open, which is a failed bid.
+    //
+    // export-readiness carried a comment claiming assembly "independently
+    // re-reads and verifies every file"; it re-reads and verifies the HASH
+    // round-trip, which cannot notice a mislabelled file. This is that missing
+    // verification, using the same authority the readiness and validation
+    // paths use.
+    const identity = resolveArtifactIdentity({
+      fileName: safeName,
+      format: entry.format,
+      bytes,
+    });
+    if (!identity.agrees) {
+      throw new Error(`Final ZIP entry ${safeName} is not what it claims to be — ${identity.code}: ${identity.reason}`);
     }
 
     // PERF-003: cap the total uncompressed input size before building the
@@ -109,7 +155,9 @@ export async function assembleFinalSubmissionZip(
     manifest.push({
       generatedDocId: entry.generatedDocId,
       filename: safeName,
-      order: manifest.length + 1,
+      order: entry.order,
+      envelope: entry.envelope,
+      format: entry.format,
       byteLength: exactBytes.length,
       sha256: sha256(exactBytes),
     });

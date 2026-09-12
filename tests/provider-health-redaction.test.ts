@@ -32,7 +32,12 @@ describe("Provider Health Redaction", () => {
       assert.ok(!lastMsg.includes("Bearer eyJ"), `Failed to redact Bearer in: ${lastMsg}`);
       assert.ok(!lastMsg.includes("authorization: sk-"), `Failed to redact Auth header in: ${lastMsg}`);
 
-      assert.match(lastMsg, /\[REDACTED\]|Bearer \[REDACTED\]|authorization: \[REDACTED\]/);
+      // Asserts that SOMETHING was redacted, not which placeholder was used.
+      // The shared redactor writes [KEY_REDACTED]; the private copy this
+      // replaced wrote [REDACTED]. Pinning the exact marker made a correct,
+      // strictly-broader redactor look like a regression — the assertions above
+      // are the ones that state the actual requirement.
+      assert.match(lastMsg, /REDACTED/);
     }
   });
 });

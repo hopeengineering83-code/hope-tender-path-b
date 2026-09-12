@@ -66,13 +66,70 @@ const HEADING_PATTERNS_ETHICS: RegExp[] = [
 
 // ─── Tender-specific obstacles ─────────────────────────────────────────
 
+/**
+ * All-caps runs that extraction produces but a tender never uses as a name.
+ *
+ * These fall into three families, all of which have been observed leaking
+ * into client-facing text as though they were the procuring entity's brand:
+ *
+ *   - the extractor's own structural markers (FILE, PAGE, METADATA, PARSED);
+ *   - table column labels and cell values (STATUS, MANDATORY, SCORED, YES);
+ *   - ordinary tender furniture set in capitals (ANNEX, TOR, LOT, RFP).
+ *
+ * Anything on this list is a label about the document, not an identity in it.
+ */
+const NON_BRAND_ALLCAPS_TOKENS = new Set([
+  "FILE", "FILES", "PAGE", "PAGES", "TEXT", "METADATA", "PARSED", "SOURCE", "DOCUMENT",
+  "TITLE", "STATUS", "TYPE", "NAME", "DATE", "NOTE", "NOTES", "REF", "REFERENCE",
+  "MANDATORY", "SCORED", "OPTIONAL", "REQUIRED", "YES", "NO", "N/A", "NIL", "TBD", "TBC",
+  "ANNEX", "APPENDIX", "SECTION", "PART", "ITEM", "LOT", "TOR", "RFP", "RFQ", "EOI", "ITB",
+  "TOTAL", "SUBTOTAL", "SUM", "QTY", "UNIT", "VAT", "TIN", "ETB", "USD", "EUR",
+  "PDF", "DOC", "DOCX", "XLS", "XLSX", "CSV", "ZIP",
+  "AND", "THE", "FOR", "ALL", "ANY", "NOT", "SHALL", "MUST",
+]);
+
+/**
+ * The client's name for the brand-alignment row, taken from the extracted,
+ * source-grounded client identity rather than guessed from the tender text.
+ *
+ * WHY THIS IS NOT A CAPITALISATION HEURISTIC ANY MORE
+ * ---------------------------------------------------
+ * This used to return the first all-caps run in the parsed tender, filtered
+ * against a list of known non-brand tokens. A shipped proposal told the client
+ * "Client identity (FILE) implies brand-alignment requirements" because FILE
+ * was the first such run; the list grew a FILE entry, and the very next run
+ * shipped "Client identity (CLIENT)" instead. That is the whole problem with
+ * the approach: CLIENT, CONSULTANT, EMPLOYER, CONTRACTOR and PROCURING ENTITY
+ * are the standard capitalised defined terms of a construction tender, so the
+ * heuristic's most likely answer is always a defined term, and no blacklist
+ * finishes. Capitalisation simply does not distinguish an organisation's name
+ * from a word a drafter chose to capitalise.
+ *
+ * The application already knows the answer: clientName is extracted, grounded
+ * to a source page and quote, and gated as an always-critical field. Using it
+ * means the row either names the real client or is not built at all.
+ */
+function brandAlignmentClientName(clientName?: string | null): string | null {
+  const trimmed = (clientName ?? "").trim();
+  if (trimmed.length < 2) return null;
+  // The extractor can hand back a run-on of several labelled fields; the
+  // client's name is the part before the first embedded label.
+  const firstField = trimmed.split(/\s*(?:Procuring Entity|Legal Client Name|Project Name|Client Name)\s*[:\-]/i)[0].trim();
+  const candidate = (firstField.length >= 2 ? firstField : trimmed).replace(/[\s,;:]+$/, "");
+  if (candidate.length < 2 || candidate.length > 80) return null;
+  // A bare defined term is a role, not an identity.
+  if (NON_BRAND_ALLCAPS_TOKENS.has(candidate.toUpperCase())) return null;
+  if (/^(?:client|consultant|employer|contractor|procuring entity|bidder|supplier|purchaser)$/i.test(candidate)) return null;
+  return candidate;
+}
+
 interface ObstacleRow {
   category: string;
   obstacle: string;
   mitigation: string;
 }
 
-function detectObstacles(tenderText: string): ObstacleRow[] {
+function detectObstacles(tenderText: string, clientName?: string | null): ObstacleRow[] {
   if (!tenderText || tenderText.length < 200) return [];
   const out: ObstacleRow[] = [];
   const text = tenderText.replace(/\s+/g, " ").slice(0, 12_000);
@@ -103,14 +160,28 @@ function detectObstacles(tenderText: string): ObstacleRow[] {
   }
 
   // 3. Brand / website mention — implies brand-alignment work
+  //
+  // The brand pattern is /\b[A-Z][A-Z]{2,}.../ — any run of three or more
+  // capitals in the extracted tender text. Extracted text is full of such
+  // runs that are not brands: the extractor's own structural markers (FILE,
+  // PAGE, METADATA, TEXT), table column labels (STATUS, MANDATORY, SCORED),
+  // and document furniture (ANNEX, TOR, LOT). A real shipped proposal told
+  // the client that "Client identity (FILE) implies brand-alignment
+  // requirements", because "FILE" was the first all-caps run in the parsed
+  // document. Anything that is a source label rather than a name is rejected
+  // here; when nothing brand-like survives, the row is built from the
+  // website (a real fact) or skipped entirely rather than naming a token the
+  // tender never used as an identity.
   const websiteMatch = text.match(/\b(?:https?:\/\/|www\.)\S+/i);
-  const brandMatch = text.match(/\b[A-Z][A-Z]{2,}(?:\s+(?:Ethiopia|Foundation|International))?/);
-  if (websiteMatch || brandMatch) {
-    const brandLabel = (brandMatch?.[0] || websiteMatch?.[0] || "client brand").trim();
+  const brandLabel = brandAlignmentClientName(clientName);
+  if (websiteMatch || brandLabel) {
+    const identityClause = brandLabel
+      ? `The client's identity (${brandLabel.slice(0, 40)}) implies brand-alignment requirements.`
+      : `The tender references the client's own web presence, which implies brand-alignment requirements.`;
     out.push({
       category: "Brand alignment",
-      obstacle: `Client identity (${brandLabel.slice(0, 40)}) implies brand-alignment requirements. Designs that ignore the client's visual standard are routinely rejected at design-review.`,
-      mitigation: `Brand guidelines will be downloaded from the client website / requested at inception. Concept design at 30% gate carries an explicit brand-alignment review item. Revision rounds budgeted into fee for any brand-driven adjustments.`,
+      obstacle: `${identityClause} Designs that ignore the client's visual standard are routinely rejected at design-review.`,
+      mitigation: `Brand guidelines will be downloaded from the client website / requested at inception. Concept design at 30% gate carries an explicit brand-alignment review item. Revision rounds for brand-driven adjustments are planned into the engagement programme.`,
     });
   }
 
@@ -148,8 +219,8 @@ function detectObstacles(tenderText: string): ObstacleRow[] {
   return out;
 }
 
-export function buildTenderObstaclesBlock(tenderText: string): string {
-  const rows = detectObstacles(tenderText);
+export function buildTenderObstaclesBlock(tenderText: string, clientName?: string | null): string {
+  const rows = detectObstacles(tenderText, clientName);
   if (rows.length === 0) return "";
 
   const head = "| # | Category | Tender-Specific Obstacle | Mitigation |";
@@ -177,7 +248,23 @@ interface CommercialDetail {
   acknowledgement: string;
 }
 
-function detectCommercialDetails(tenderText: string): CommercialDetail[] {
+/**
+ * Turn a required file name or extension into the label a reader expects
+ * ("Technical Proposal.pdf" -> "PDF"). Returns null when nothing usable is
+ * supplied, so the caller falls back to the tender-text detection.
+ */
+function normalizeFormatLabel(value?: string | null): string | null {
+  const raw = (value ?? "").trim();
+  if (!raw) return null;
+  const ext = raw.includes(".") ? raw.slice(raw.lastIndexOf(".") + 1) : raw;
+  const cleaned = ext.replace(/[^A-Za-z0-9/]/g, "").toUpperCase();
+  return cleaned.length >= 2 && cleaned.length <= 8 ? cleaned : null;
+}
+
+function detectCommercialDetails(
+  tenderText: string,
+  authoritativeDeliverableFormat?: string | null,
+): CommercialDetail[] {
   if (!tenderText || tenderText.length < 200) return [];
   const out: CommercialDetail[] = [];
   const text = tenderText.replace(/\s+/g, " ").slice(0, 12_000);
@@ -230,13 +317,35 @@ function detectCommercialDetails(tenderText: string): CommercialDetail[] {
     out.push({
       field: "Revision Rounds",
       detected: revisions[1] + " rounds",
-      acknowledgement: `The fixed fee includes the deliverable plus up to ${revisions[1]} revision rounds based on consolidated client feedback. Out-of-scope revisions are flagged in writing before any work commences.`,
+      // The technical envelope acknowledges the scope rule, not its price: a
+      // "fixed fee" sentence beside a number is commercial content, and the
+      // price-leakage guard removes it — taking the acknowledgement with it.
+      acknowledgement: `The proposed scope includes the deliverable plus up to ${revisions[1]} revision rounds based on consolidated client feedback. Out-of-scope revisions are flagged in writing before any work commences.`,
     });
   }
 
   // File format
+  //
+  // This row states, in the client's copy, what format the bidder will submit
+  // in. That is a fact the confirmed Build Plan owns — it is the authority for
+  // which files are actually produced and delivered. The regex below reads the
+  // extracted tender text, which also contains the source document's own file
+  // name ("pharo tender document.docx") and any format mentioned in passing, so
+  // on a real tender it announced "Deliverable Format | docx" and promised
+  // "Final deliverables are issued in DOCX format" while the confirmed Build
+  // Plan required exactly one file: Technical Proposal.pdf. A row that
+  // contradicts the deliverable actually being submitted is worse than no row,
+  // so when an authoritative format is known it wins, and a detected format
+  // that disagrees with it is dropped rather than printed.
   const fileFmt = text.match(/\b(AutoCAD|DWG|Revit|PDF\/A|MS\s+Word|DOCX|XLSX)\b/i);
-  if (fileFmt) {
+  const authoritative = normalizeFormatLabel(authoritativeDeliverableFormat);
+  if (authoritative) {
+    out.push({
+      field: "Deliverable Format",
+      detected: authoritative,
+      acknowledgement: `Final deliverables are issued in ${authoritative} format per the tender's submission instructions. File-naming convention is followed verbatim.`,
+    });
+  } else if (fileFmt) {
     out.push({
       field: "Deliverable Format",
       detected: fileFmt[0],
@@ -247,19 +356,47 @@ function detectCommercialDetails(tenderText: string): CommercialDetail[] {
   return out;
 }
 
-export function buildCommercialUnderstandingBlock(tenderText: string): string {
-  const rows = detectCommercialDetails(tenderText);
+export interface CommercialUnderstandingOptions {
+  /**
+   * The format the submission is actually delivered in, derived from the
+   * confirmed Build Plan (e.g. "PDF"). When set it overrides any format
+   * mentioned in the tender text, because the Build Plan — not a regex over
+   * extracted prose — is the authority for what is submitted.
+   */
+  authoritativeDeliverableFormat?: string | null;
+  /**
+   * False when the tender requires no financial proposal at this stage. The
+   * closing paragraph must then not tell the client that commercial clauses
+   * are "built into the technical and financial submission", because no
+   * financial submission exists.
+   */
+  financialProposalRequired?: boolean;
+}
+
+export function buildCommercialUnderstandingBlock(
+  tenderText: string,
+  opts: CommercialUnderstandingOptions = {},
+): string {
+  const rows = detectCommercialDetails(tenderText, opts.authoritativeDeliverableFormat);
   if (rows.length === 0) return "";
 
   const head = "| Commercial Field | Tender Says | Bidder's Acknowledgement |";
   const sep = "|------------------|-------------|--------------------------|";
   const body = rows.map((r) => `| ${r.field} | ${r.detected} | ${r.acknowledgement} |`);
 
+  // When the tender asks for no financial proposal at this stage, saying the
+  // clauses are built into "the technical and financial submission" tells the
+  // evaluator a financial submission is enclosed. Nothing about the
+  // two-envelope handling changes for tenders that do require one.
+  const submissionPhrase = opts.financialProposalRequired === false
+    ? "built into this technical submission"
+    : "built into the technical and financial submission";
+
   return [
     MARKER_COMMERCIAL,
     "## Commercial Understanding and Compliance",
     "",
-    "The bidder has examined the commercial clauses in the tender and confirms acknowledgement on each below. This is not a separate offer — it is the bidder's written confirmation that every commercial clause is read, understood, and built into the technical and financial submission.",
+    `The bidder has examined the commercial clauses in the tender and confirms acknowledgement on each below. This is not a separate offer — it is the bidder's written confirmation that every commercial clause is read, understood, and ${submissionPhrase}.`,
     "",
     head,
     sep,
@@ -282,11 +419,15 @@ export interface EthicsVault {
 
 export function buildEthicsDeclarationBlock(vault: EthicsVault): string {
   const company = vault.legalName?.trim() || vault.companyName;
-  const codeRef = vault.codeOfEthicsRef?.trim() || "the firm's internal Code of Ethics document";
+  // An identified Code of Ethics is a recorded fact; an unidentified one is not.
+  // codeOfEthicsRef is null on every production call today, so the old default
+  // ("the firm's internal Code of Ethics document") cited a document nothing in
+  // the vault names.
+  const identifiedCodeRef = vault.codeOfEthicsRef?.trim() || null;
   const law = vault.countryLegalCitation?.trim() || "Federal Ethics and Anti-Corruption Commission Establishment Proclamation No. 433/2005 and Federal Anti-Corruption Special Procedure and Rules of Evidence Proclamation No. 657/2009";
   const gmLine = vault.gmName
     ? `${vault.gmName}${vault.gmTitle ? `, ${vault.gmTitle}` : ", General Manager"}${vault.gmLicense ? ` (${vault.gmLicense})` : ""}`
-    : "General Manager (signed copy in submission pack)";
+    : "General Manager";
 
   return [
     MARKER_ETHICS,
@@ -302,11 +443,27 @@ export function buildEthicsDeclarationBlock(vault: EthicsVault): string {
     "",
     `4. **No use of confidential information** — The Bidder has not obtained or used confidential information from the Procuring Entity in preparing this submission. Any information supplied during the bid window has been treated as restricted and shared only with personnel directly involved in this submission.`,
     "",
-    `5. **Compliance with the firm's ethics framework** — All personnel proposed for this engagement have signed the Bidder's Code of Ethics (${codeRef}). Breach of the Code is grounds for immediate removal from the engagement.`,
+    // Clause 5 used to read: "All personnel proposed for this engagement have
+    // signed the Bidder's Code of Ethics (...)". That is a completed act by
+    // each named individual, asserted as fact. The company authority records
+    // that an ethics framework exists; it holds no per-person signature
+    // evidence, and on every production call the cited reference was the
+    // generic phrase "the firm's internal Code of Ethics document" — a
+    // signature against a document nothing in the vault identifies. A firm
+    // policy and a forward commitment are both true and both defensible; a
+    // historical claim about individuals is neither.
+    identifiedCodeRef
+      ? `5. **Compliance with the firm's ethics framework** — Personnel assigned to this engagement work under the Bidder's Code of Ethics (${identifiedCodeRef}). Acceptance of the Code is a condition of assignment, and breach of it is grounds for immediate removal from the engagement.`
+      : `5. **Compliance with the firm's ethics framework** — Personnel assigned to this engagement work under the Bidder's ethics and anti-corruption framework. Acceptance of that framework is a condition of assignment, and breach of it is grounds for immediate removal from the engagement.`,
     "",
     `6. **Compliance with applicable law** — The Bidder is subject to ${law} and any other applicable national, regional, or international anti-corruption framework. The Bidder cooperates with any lawful investigation arising from this engagement.`,
     "",
-    `7. **Whistleblowing channel** — The Bidder maintains an internal whistleblowing channel that any team member, sub-contractor, or client representative can use to raise an integrity concern. The channel is confidential and protected.`,
+    // Clause 7 used to assert an existing operational control — "The Bidder
+    // maintains an internal whistleblowing channel ... confidential and
+    // protected" — with nothing in the vault recording one. What the Bidder
+    // can commit to for this engagement is a route for raising an integrity
+    // concern, so that is what it now says.
+    `7. **Raising an integrity concern** — For the duration of this engagement, any team member, sub-contractor, or client representative may raise an integrity concern in confidence with the signatory below, and the Bidder undertakes to investigate it and to protect the person who raises it from retaliation.`,
     "",
     `8. **Right of audit** — The Bidder accepts the Procuring Entity's right to audit any aspect of contract performance relevant to integrity, including expenses, sub-contractor relationships, and on-site practices, on reasonable notice.`,
     "",
@@ -331,6 +488,12 @@ export function injectTenderClosers(
   opts: {
     tenderText: string;
     ethicsVault: EthicsVault;
+    /** Format the submission is actually delivered in, from the confirmed Build Plan. */
+    authoritativeDeliverableFormat?: string | null;
+    /** False when the tender requires no financial proposal at this stage. */
+    financialProposalRequired?: boolean;
+    /** Extracted, source-grounded client identity. Names the brand-alignment row. */
+    clientName?: string | null;
   },
 ): ClosersResult {
   const blocks: string[] = [];
@@ -341,14 +504,17 @@ export function injectTenderClosers(
   const hasEthics = markdown.includes(MARKER_ETHICS) || HEADING_PATTERNS_ETHICS.some((p) => p.test(markdown));
 
   if (!hasObstacles) {
-    const block = buildTenderObstaclesBlock(opts.tenderText);
+    const block = buildTenderObstaclesBlock(opts.tenderText, opts.clientName);
     if (block) {
       blocks.push(block);
       injected.obstacles = true;
     }
   }
   if (!hasCommercial) {
-    const block = buildCommercialUnderstandingBlock(opts.tenderText);
+    const block = buildCommercialUnderstandingBlock(opts.tenderText, {
+      authoritativeDeliverableFormat: opts.authoritativeDeliverableFormat,
+      financialProposalRequired: opts.financialProposalRequired,
+    });
     if (block) {
       blocks.push(block);
       injected.commercial = true;

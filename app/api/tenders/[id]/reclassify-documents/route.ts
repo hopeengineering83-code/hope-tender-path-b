@@ -9,6 +9,7 @@ import { logAction } from "../../../../../lib/audit";
 import { normalizeDocumentType, requiresOfficialOriginal, isControlDocument } from "../../../../../lib/engine/document-type-normalizer";
 import { MUTATION_RATE_LIMIT, rateLimit } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
+import { getCanonicalReadinessSummary } from "../../../../../lib/canonical-tender-readiness";
 
 export const dynamic = "force-dynamic";
 
@@ -120,5 +121,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     });
   }
 
-  return NextResponse.json({ success: true, dryRun, changed: changes.length, changes });
+  // Gap 4: re-query the canonical final-export authority after the mutation.
+  // Only re-query when actual changes were applied (not on dryRun or no-op).
+  const canonicalReadiness = (!dryRun && changes.length > 0)
+    ? await getCanonicalReadinessSummary(prisma, actorId, tenderId)
+    : null;
+  return NextResponse.json({ success: true, dryRun, changed: changes.length, changes, canonicalReadiness });
 }

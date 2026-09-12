@@ -4,7 +4,8 @@
 //   4. Zero GeneratedDocument/PDF/ZIP rows before all prerequisites
 //      (PostgreSQL behavioral test, gated on RUN_DB_INTEGRATION).
 //   5. Migration verification: new tender currency is null; sourced currency
-//      remains; migration is idempotent (PostgreSQL, gated).
+//      remains (PostgreSQL, gated). Migration deploy/idempotency execution is
+//      owned by serialized CI steps before the parallel test runner starts.
 //   1 (server-side). Download/ZIP API denies when canonical readiness fails,
 //      returning the same blocker codes the UI consumes.
 
@@ -236,22 +237,6 @@ dbDescribe("[SCREENSHOT-EXPORT-003] Gap 5 — migration verification (PostgreSQL
     }
   });
 
-  it("migration is idempotent (running migrate deploy twice is a no-op)", async () => {
-    // This test verifies that prisma migrate deploy is idempotent — running
-    // it on a DB that already has the migration is a no-op. This is a Prisma
-    // guarantee, but we assert it explicitly per REVISION_REQUIRED item 5.
-    const { execSync } = await import("node:child_process");
-    const env = {
-      ...process.env,
-      DATABASE_URL: process.env.DATABASE_URL,
-    };
-    // First run (applies if not already applied)
-    execSync("npx prisma migrate deploy", { env, stdio: "pipe" });
-    // Second run (must be a no-op — no error, no new migration)
-    execSync("npx prisma migrate deploy", { env, stdio: "pipe" });
-    // If we reach here, the migration is idempotent
-    assert.ok(true, "prisma migrate deploy is idempotent (two runs succeed)");
-  });
 });
 
 // ─── Gap 5 (source-inspection): migration safety ───────────────────────────

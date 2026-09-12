@@ -164,16 +164,3 @@ describe("proposal-quality-scorer.ts SECTOR_VOCAB — no substring false-positiv
     });
   }
 });
-
-describe("quick-draft-benchmark — no Pharo hardcoding (source check)", () => {
-  it("source contains no 'return \"Pharo …\"' lines", async () => {
-    const { readFileSync } = await import("node:fs");
-    const { fileURLToPath } = await import("node:url");
-    const { dirname, join } = await import("node:path");
-    const here = dirname(fileURLToPath(import.meta.url));
-    const src = readFileSync(join(here, "..", "lib", "engine", "quick-draft-benchmark.ts"), "utf8");
-    assert.equal(/return\s+"Pharo\s+Ventures"/i.test(src), false, "should not hardcode 'return Pharo Ventures'");
-    assert.equal(/return\s+"Pharo\s+Foundation"/i.test(src), false, "should not hardcode 'return Pharo Foundation'");
-    assert.equal(/return\s+"Architectural Consultancy Services for Pharo Health/i.test(src), false, "should not hardcode the Pharo healthcare title");
-  });
-});

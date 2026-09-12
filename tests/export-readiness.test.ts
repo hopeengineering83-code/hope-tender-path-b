@@ -28,8 +28,15 @@ describe("isReadyForFinalExport", () => {
   it("returns true when all three statuses are correct", () => {
     assert.equal(isReadyForFinalExport(READY), true);
   });
-  it("returns false when reviewStatus is PENDING", () => {
-    assert.equal(isReadyForFinalExport({ ...READY, reviewStatus: "PENDING" }), false);
+  it("returns true when reviewStatus is PENDING but validationStatus is VALIDATED (Gap C: VALIDATED is sufficient)", () => {
+    // Gap C: per Gap 5, VALIDATED is sufficient for the automatic path.
+    // A document with VALIDATED validationStatus and PENDING reviewStatus
+    // passes isReadyForFinalExport — the canonical validator is the
+    // machine-safe authority, not the human reviewStatus.
+    assert.equal(isReadyForFinalExport({ ...READY, reviewStatus: "PENDING" }), true);
+  });
+  it("returns false when both validationStatus and reviewStatus are PENDING", () => {
+    assert.equal(isReadyForFinalExport({ ...READY, validationStatus: "PENDING", reviewStatus: "PENDING" }), false);
   });
 });
 
@@ -48,7 +55,10 @@ describe("checkExportReadiness", () => {
   });
 
   it("flags every wrong status with a clear reason", () => {
-    const bad = { ...READY, generationStatus: "FAILED", reviewStatus: "PENDING" };
+    // Gap C: VALIDATED is sufficient for the automatic path — reviewStatus
+    // is not required when validationStatus is VALIDATED. Use PENDING
+    // validationStatus so the reviewStatus reason is still flagged.
+    const bad = { ...READY, generationStatus: "FAILED", reviewStatus: "PENDING", validationStatus: "PENDING" };
     const res = checkExportReadiness([bad]);
     assert.equal(res.ok, false);
     assert.equal(res.failures.length, 1);
@@ -168,6 +178,14 @@ describe("exportReadinessError", () => {
 });
 
 describe("filePlanBlockersFromLists", () => {
+  it("does not treat a retained editable DOCX as an extra attachment after its required PDF exists", () => {
+    const blockers = filePlanBlockersFromLists([
+      { ...READY, exactOrder: 1, exactFileName: "Technical Proposal.docx", format: "DOCX" },
+      { ...READY, id: "pdf", exactOrder: 1, exactFileName: "Technical Proposal.pdf", format: "PDF" },
+    ], JSON.stringify(["Technical Proposal.pdf"]), JSON.stringify(["Technical Proposal.pdf"]));
+    assert.deepEqual(blockers, []);
+  });
+
   it("blocks extra generated files when tender exact naming is explicit", () => {
     const blockers = filePlanBlockersFromLists([
       { ...READY, exactFileName: "Technical-Proposal.docx" },

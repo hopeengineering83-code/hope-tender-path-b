@@ -29,6 +29,8 @@
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
+import { extractEvaluationMethodologyFromSource } from "./evaluation-methodology-source-extractor";
+
 export type TenderType =
   | "Expression of Interest"
   | "Request for Proposal"
@@ -88,6 +90,12 @@ export type RequiredTenderDocument = {
   required: boolean;
   envelope: "technical" | "financial" | "common" | "unknown";
   note?: string | null;
+  /**
+   * Verbatim clause the obligation was read from. Present for documents the
+   * source named itself (which have no catalogue entry to describe them), so
+   * an unrecognised requirement still carries its own evidence.
+   */
+  sourceQuote?: string | null;
 };
 
 export type TenderCriterion = {
@@ -161,6 +169,13 @@ export type TenderDocumentIntelligence = {
   formsAndAnnexes: TenderFormOrAnnex[];
   generationPlan: TenderGenerationPlan;
   financialProposalRequired: boolean;
+  /**
+   * Three-state source answer: true / false / null (source silent).
+   * `financialProposalRequired` above is `state === true`, kept so existing
+   * consumers are unchanged; anything that must distinguish "the source said
+   * no" from "the source said nothing" reads this.
+   */
+  financialProposalRequiredState: boolean | null;
   proposalValidity: string | null;
   budget: string | null;
   bidBond: string | null;
@@ -371,12 +386,93 @@ function classifyServiceStreams(text: string): ServiceStream[] {
 
 // ─── Submission-instruction extractor ────────────────────────────────────────
 
+/**
+ * The submission deadline as amended by the source's own addenda.
+ *
+ * Precedence is taken from what the documents SAY, never from the order their
+ * files happen to sit in. A file appended later is not procurement authority —
+ * a clarification uploaded after a corrigendum does not outrank it, and an
+ * original re-uploaded last does not undo an extension. Two signals are used,
+ * both of them statements of the issuer:
+ *
+ *   1. explicit amending language — "extended to", "revised to", "postponed to";
+ *   2. an addendum number, where more than one amendment exists.
+ *
+ * When several amendments exist and their numbers cannot order them, nothing is
+ * chosen. A guessed deadline is worse than a missing one: it is acted on.
+ */
+type AmendedDeadline =
+  | { status: "NONE" }
+  | { status: "AMENDED"; iso: string; display: string }
+  | { status: "UNRESOLVED_CONFLICT" }
+  | { status: "UNPARSEABLE_AMENDMENT" };
+
+// The clause must be about the SUBMISSION deadline. A tender amends many dates
+// and only this one is the closing date — see NOT_THE_SUBMISSION_DEADLINE.
+const DEADLINE_AMENDMENT =
+  /[^\n\r]{0,140}?\b(?:deadline|closing\s+date|closing\s+time)\b[^\n\r]{0,80}?\b(?:extended|revised|amended|changed|postponed|deferred|moved|rescheduled|shifted)\b\s*(?:to|until|till)\s*([^\n\r]{4,90})/gi;
+
+// Other things a tender postpones. None of them is the closing date, and each
+// carries its own date, so a clause naming one is not an amendment of this fact.
+const NOT_THE_SUBMISSION_DEADLINE =
+  /\b(?:clarification|question|quer(?:y|ies)|pre[-\s]?bid|site\s+visit|validity|bid\s+security|bid\s+bond|contract\s+(?:start|commencement|signature)|interview|opening|award|evaluation|inception|mobilis|mobiliz)\w*/i;
+
+const ADDENDUM_ORDINAL = /\b(?:addendum|addenda|amendment|corrigendum)\s*(?:no\.?|number|#)?\s*(\d{1,3})\b/gi;
+
+/** The number of the last numbered addendum heading before this position. */
+function addendumOrdinalBefore(text: string, index: number): number | null {
+  let ordinal: number | null = null;
+  const scan = new RegExp(ADDENDUM_ORDINAL.source, "gi");
+  for (const m of text.slice(0, index).matchAll(scan)) ordinal = Number(m[1]);
+  return ordinal;
+}
+
+function resolveAmendedDeadline(text: string): AmendedDeadline {
+  const found: Array<{ iso: string; display: string; ordinal: number | null }> = [];
+  let sawUnparseable = false;
+
+  for (const match of text.matchAll(DEADLINE_AMENDMENT)) {
+    const clause = match[0];
+    if (NOT_THE_SUBMISSION_DEADLINE.test(clause)) continue;
+    const display = match[1].trim();
+    const iso = tryParseDateToIso(display);
+    if (!iso) {
+      // The issuer amended the deadline but did not state a complete date.
+      // Completing it would invent one; discarding the known deadline would
+      // lose one. Report it and keep what the source already established.
+      sawUnparseable = true;
+      continue;
+    }
+    found.push({ iso, display, ordinal: addendumOrdinalBefore(text, match.index ?? 0) });
+  }
+
+  if (found.length === 0) return sawUnparseable ? { status: "UNPARSEABLE_AMENDMENT" } : { status: "NONE" };
+  if (found.length === 1) return { status: "AMENDED", iso: found[0].iso, display: found[0].display };
+
+  // Several amendments. Distinct addendum numbers order them; the highest is
+  // the operative one. Identical dates need no ordering — they agree.
+  const distinctIso = new Set(found.map((f) => f.iso));
+  if (distinctIso.size === 1) return { status: "AMENDED", iso: found[0].iso, display: found[0].display };
+
+  const ordinals = found.map((f) => f.ordinal);
+  if (ordinals.some((o) => o === null) || new Set(ordinals).size !== ordinals.length) {
+    return { status: "UNRESOLVED_CONFLICT" };
+  }
+  const latest = found.reduce((a, b) => ((b.ordinal ?? 0) > (a.ordinal ?? 0) ? b : a));
+  return { status: "AMENDED", iso: latest.iso, display: latest.display };
+}
+
 function extractSubmissionInstructions(
   text: string,
   fallbacks: ParseTenderDocumentIntelligenceOptions,
+  // The caller's array, not a local one. This function used to collect warnings
+  // into a private list and return only the instruction set, so every warning it
+  // raised was discarded at the return — including "submission deadline not
+  // detected". A missing deadline is a missing CRITICAL field, and it was
+  // reported to nobody.
+  warnings: string[] = [],
 ): SubmissionInstructionSet {
   const lower = text.toLowerCase();
-  const warnings: string[] = [];
 
   // Method
   let method: SubmissionMethod = "Unknown";
@@ -406,18 +502,57 @@ function extractSubmissionInstructions(
   // Deadline
   let deadlineDisplay: string | null = null;
   let deadlineIso: string | null = null;
-  const deadlineMatch = text.match(/(?:submission\s+)?deadline:?\s*([^\n\r]{5,80})/i)
-    || text.match(/submit(?:ted)?\s+(?:by|before)\s*([^\n\r]{5,80})/i)
-    || text.match(/\b(?:by|before)\s+((?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s*\d{4}[^\n\r]{0,40})/i);
-  if (deadlineMatch) {
-    deadlineDisplay = deadlineMatch[1].trim();
-    deadlineIso = tryParseDateToIso(deadlineDisplay);
-    // If the regex matched but the parsed date is invalid (e.g. "deadline in text"
-    // captured non-date words), clear the display and fall through to the fallback.
-    if (!deadlineIso) {
-      deadlineDisplay = null;
+  // EVERY candidate is considered, not just the first.
+  //
+  // A tender states its deadline more than once: a summary row near the front
+  // and the full instruction later. Those two are not always equally complete —
+  // the summary row is exactly where a day goes missing. Taking the first match
+  // and giving up when it failed to parse meant a document whose later text
+  // spelled the deadline out in full still ended up with no deadline, or with
+  // one invented from the incomplete row. The first candidate that yields a
+  // real date wins; the rest are evidence that a date exists, not that this one
+  // is it.
+  const deadlinePatterns = [
+    /(?:submission\s+)?deadline:?\s*([^\n\r]{5,80})/gi,
+    /submit(?:ted)?\s+(?:by|before)\s*([^\n\r]{5,80})/gi,
+    new RegExp(String.raw`\b(?:by|before)\s+(${MONTH_NAME}\s+\d{1,2},?\s*\d{4}[^\n\r]{0,40})`, "gi"),
+  ];
+  outer: for (const pattern of deadlinePatterns) {
+    for (const match of text.matchAll(pattern)) {
+      const candidate = match[1].trim();
+      const iso = tryParseDateToIso(candidate);
+      if (iso) {
+        deadlineDisplay = candidate;
+        deadlineIso = iso;
+        break outer;
+      }
     }
   }
+  // A later authoritative addendum supersedes the deadline it explicitly
+  // changes. Everything above reads the ORIGINAL notice: the source text is a
+  // flat concatenation of every active file, and the first complete date in it
+  // belongs to the tender as first issued. A tender extended by three weeks was
+  // therefore still worked to its superseded date, and one already past its
+  // original deadline still read as expired after being extended.
+  const amendment = resolveAmendedDeadline(text);
+  if (amendment.status === "AMENDED") {
+    deadlineDisplay = amendment.display;
+    deadlineIso = amendment.iso;
+  } else if (amendment.status === "UNRESOLVED_CONFLICT") {
+    // Two amendments and nothing in the source to order them. Upload order is
+    // not procurement authority, so no date is chosen: a confidently wrong
+    // deadline is worse than a reported absence.
+    deadlineDisplay = null;
+    deadlineIso = null;
+    warnings.push(
+      "Conflicting submission-deadline amendments were found and their order could not be established from the source. Confirm the current deadline before generating or exporting.",
+    );
+  } else if (amendment.status === "UNPARSEABLE_AMENDMENT") {
+    warnings.push(
+      "A submission-deadline amendment was found but states no complete date. The previous deadline is retained; confirm the current deadline before generating or exporting.",
+    );
+  }
+
   if (!deadlineDisplay && fallbacks.tenderDeadline) {
     const d = typeof fallbacks.tenderDeadline === "string"
       ? new Date(fallbacks.tenderDeadline)
@@ -496,10 +631,42 @@ function extractSubmissionInstructions(
   };
 }
 
+const MONTH_NAME = String.raw`(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*`;
+
+/**
+ * Does this text actually state a day of the month?
+ *
+ * `new Date("August, 2026, 5:00 PM")` is not an error — it silently returns
+ * August 1st. A tender whose summary row omits the day therefore acquired a
+ * deadline that no sentence of it contains, and the benchmark's real deadline
+ * of the 25th became the 1st: twenty-four days early, which reads as an expired
+ * or nearly expired tender.
+ *
+ * The day must be adjacent to a month name, or the date must be in a numeric
+ * form. A bare `\d{1,2}` anywhere is not enough — the "5" of "5:00 PM" would
+ * satisfy it, and the dayless string would pass as though it named a day.
+ */
+function statesDayOfMonth(display: string): boolean {
+  if (new RegExp(`${MONTH_NAME}\\.?,?\\s+\\d{1,2}(?:st|nd|rd|th)?\\b`, "i").test(display)) return true;
+  if (new RegExp(`\\b\\d{1,2}(?:st|nd|rd|th)?\\s+${MONTH_NAME}`, "i").test(display)) return true;
+  if (/\b\d{4}-\d{1,2}-\d{1,2}\b/.test(display)) return true;
+  if (/\b\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}\b/.test(display)) return true;
+  return false;
+}
+
 function tryParseDateToIso(display: string): string | null {
   // Try parsing common date formats. Returns ISO string with timezone if possible.
   // Handles: "August 25, 2026, 5:00 PM Addis Ababa Time"
   const cleaned = display.replace(/\s+/g, " ").trim();
+  // A month and a year without a day is not a date this reader may complete.
+  // Refusing it here lets the caller keep looking for a complete one.
+  if (new RegExp(MONTH_NAME, "i").test(cleaned) && !statesDayOfMonth(cleaned)) return null;
+  // 05/11/2027 is the 5th of November to most of the world and the 11th of May
+  // to the rest, and Date silently picks the second. Only a reading the source
+  // settles is used: a component above 12 can only be the day, so those parse
+  // normally, and a genuinely ambiguous pair is refused rather than guessed.
+  const numeric = cleaned.match(/\b(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})\b/);
+  if (numeric && Number(numeric[1]) <= 12 && Number(numeric[2]) <= 12) return null;
   // Map common timezone names to offsets
   const tzMap: Record<string, string> = {
     "addis ababa time": "+03:00",
@@ -516,7 +683,31 @@ function tryParseDateToIso(display: string): string | null {
     }
   }
   // Strip the timezone name for Date parsing
-  const stripped = cleaned.replace(/addis\s+ababa\s+time|eastafrica\s+time|\beat\b|\butc\b|\bgmt\b/i, "").trim();
+  const stripped = cleaned
+    .replace(/addis\s+ababa\s+time|eastafrica\s+time|\beat\b|\butc\b|\bgmt\b/i, "")
+    // "…at 14:00 local time." names no offset — it only says the deadline is
+    // stated in the client's own clock, which is already the assumption. Date
+    // cannot parse the phrase and rejected the whole string, so a deadline
+    // written this ordinary way produced no deadline at all. Two of this
+    // repository's own tender fixtures are written exactly like that.
+    .replace(/\b(?:local|standard|official)\s+time\b/i, "")
+    // "18 November 2027 at 14:00" is how most of the world writes a deadline,
+    // and the connector alone made it unparseable — the date and the time each
+    // parse, the word between them does not, so such a tender previously
+    // carried NO deadline at all. Dropping the connector keeps both halves.
+    .replace(/\s+at\s+(?=\d)/i, " ")
+    // Sentence-form deadlines ("...must be submitted by 18 November 2027.")
+    // end in punctuation that Date rejects.
+    .replace(/[.,;]+\s*$/, "")
+    .trim()
+    // Day-first numeric dates are the ordinary form outside the United States,
+    // and Date rejects them outright — "18/11/2027" is not month 18, it is
+    // simply unparseable, so such a tender carried no deadline at all. Where
+    // the first component is above 12 the reading is settled by the source
+    // itself, so it is reordered rather than guessed; the genuinely ambiguous
+    // pair was already refused above.
+    .replace(/\b(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})\b/, (whole, a: string, b: string, y: string) =>
+      Number(a) > 12 && Number(b) <= 12 ? `${b}/${a}/${y}` : whole);
   const d = new Date(stripped);
   if (isNaN(d.getTime())) return null;
   // Apply timezone offset if we have one
@@ -526,6 +717,77 @@ function tryParseDateToIso(display: string): string | null {
     return iso;
   }
   return d.toISOString();
+}
+
+// ─── Denial detection ────────────────────────────────────────────────────────
+//
+// A tender that MENTIONS a document is not necessarily a tender that REQUIRES
+// it. "No bid security is required", "a cover letter is not required at this
+// stage", "financial proposal: not applicable" all name the thing in order to
+// rule it out. Reading the mention as an obligation invents work the client
+// never asked for, and on the export side it becomes a blocker for a document
+// the tender explicitly said to omit.
+//
+// One rule, used by every consumer below, so the negation logic cannot diverge
+// between the bid-security reader and the required-documents extractor.
+
+/** The one bid-security pattern, shared by both readers below. */
+const BID_SECURITY_PATTERN = /bid\s+bond|bid\s+security/i;
+
+/** True when this clause names something in order to say it is NOT needed. */
+function clauseDeniesRequirement(clause: string): boolean {
+  const text = clause.trim();
+  return (
+    /\b(?:not|no longer|neither)\s+(?:be\s+)?(?:required|applicable|requested|needed|necessary|expected|submitted)\b/i.test(text) ||
+    /\b(?:no|without)\s+(?:[a-z-]+\s+){0,3}(?:bond|security|proposal|letter|certificate|document|form|annex|schedule|submission)\b/i.test(text) ||
+    /:\s*(?:none|nil|no|n\/a|not\s+applicable|not\s+required)\b/i.test(text) ||
+    /\bexempt(?:ed)?\s+from\b/i.test(text) ||
+    /\bwaived\b/i.test(text) ||
+    // Prohibition stated as an instruction rather than a description:
+    // "Do not generate a financial proposal", "Bidders shall not submit a bid
+    // security". The obligation verbs are the same ones the open-ended document
+    // reader keys on, negated.
+    /\b(?:do|does|shall|must|should|will|may)\s+not\s+(?:be\s+)?(?:generate|include|submit|provide|furnish|attach|enclose|send|prepare|produce|supply|present)\b/i.test(text) ||
+    // Addenda and revisions cancel obligations rather than negating them. An
+    // addendum says a requirement is "withdrawn", "deleted" or "shall not
+    // apply" — it does not say "not required". Without these, an addendum that
+    // removed an obligation read as one that imposed it, which is the worse of
+    // the two errors: the bidder is sent to buy a bid security the client
+    // already withdrew. Scoping keeps this safe — a clause like "bids may be
+    // withdrawn before the deadline" denies only itself, and any genuine
+    // obligation stated in another clause still wins.
+    /\b(?:withdrawn|withdraws|rescinded|revoked|cancell?ed|deleted|struck\s+out)\b/i.test(text) ||
+    /\b(?:shall|will|does|do|is|are)\s+not\s+apply\b/i.test(text) ||
+    /\bno\s+longer\s+(?:applies|apply)\b/i.test(text)
+  );
+}
+
+/**
+ * Clause-sized units. Obligation and denial live at sentence/line scale — and
+ * also on either side of a contrast.
+ *
+ * "Bid security is not required at EOI stage, but shortlisted firms shall
+ * provide bid security with the RFP submission" is ONE sentence carrying a
+ * scoped denial AND a real obligation. Judging it as a single unit let the
+ * denial cancel the obligation, so a shortlisted firm would have submitted with
+ * no bid security. Splitting on the contrast keeps each half answerable on its
+ * own terms.
+ */
+function clausesOf(text: string): string[] {
+  return text
+    .split(/(?<=[.;!?])\s+|[\n\r]+|,?\s+(?:but|however|although|though|whereas|except\s+that)\s+/i)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+/**
+ * True when at least one occurrence of `pattern` sits in a clause that is NOT a
+ * denial. A document mentioned only inside denials is mentioned, not required.
+ */
+function hasAffirmativeMention(text: string, pattern: RegExp): boolean {
+  const matching = clausesOf(text).filter((clause) => pattern.test(clause));
+  if (matching.length === 0) return pattern.test(text) ? !clauseDeniesRequirement(text) : false;
+  return matching.some((clause) => !clauseDeniesRequirement(clause));
 }
 
 // ─── Required-documents extractor ────────────────────────────────────────────
@@ -551,23 +813,219 @@ const DOCUMENT_PATTERNS: Array<{ name: string; patterns: RegExp[]; envelope: "te
   { name: "Quotation", patterns: [/\bquotation\b|price\s+quote/i], envelope: "financial" },
 ];
 
+/**
+ * Is a financial submission required? — the single source-driven answer.
+ *
+ * Three states, because a tender has three things it can do: require one, rule
+ * one out, or say nothing. The last is not the first. Two readers used to
+ * decide this independently — this one and detectFinancialProposalRequired() in
+ * tender-document-context.ts — with different denial vocabularies and a shared
+ * habit of returning true when in doubt. They disagreed on real wording in both
+ * directions ("Technical proposal only." → this said required, that said not;
+ * "Financial Proposal: No" → the reverse), and on silence both invented an
+ * obligation the source never stated.
+ *
+ * Evidence decides it in both directions now, and UNKNOWN (null) is a real
+ * answer that callers must handle rather than a synonym for yes.
+ */
+const FINANCIAL_CONCEPT =
+  /financial\s+proposal|financial\s+offer|financial\s+bid|financial\s+submission|financial\s+envelope|fee\s+proposal|fee\s+schedule|fee\s+breakdown|price\s+schedule|priced\s+schedule|schedule\s+of\s+(?:prices|rates)|price\s+proposal|price\s+breakdown|price\s+quote|commercial\s+proposal|commercial\s+offer|commercial\s+submission|\bquotation\b|bill\s+of\s+quantities|cost\s+breakdown|cost\s+proposal|lump\s+sum\s+(?:price|fee)|remuneration/i;
+
+const TECHNICAL_ONLY = /technical\s+(?:proposal|submission|offer)\s+only|only\s+a\s+technical\s+(?:proposal|submission)/i;
+
+const TWO_ENVELOPE = /two[-\s]envelopes?|separate\s+envelopes?|second\s+envelope|envelope\s+(?:1|2|i|ii|one|two)\b/i;
+
+/**
+ * true  — the source requires a financial submission.
+ * false — the source rules one out.
+ * null  — the source is silent. NOT an obligation, and not a denial either.
+ */
+export function readFinancialProposalRequirement(text: string): boolean | null {
+  if (!text || !text.trim()) return null;
+
+  // An explicit scope statement settles it even when no financial noun appears.
+  if (TECHNICAL_ONLY.test(text)) return false;
+
+  const clauses = clausesOf(text);
+  const mentioning = clauses.filter((clause) => FINANCIAL_CONCEPT.test(clause));
+
+  if (mentioning.length === 0) {
+    // A two-envelope structure implies a financial envelope even when the
+    // source never names one, but only structure says so — not a default.
+    if (TWO_ENVELOPE.test(text)) return true;
+    return null;
+  }
+
+  // Same rule as every other obligation: a mention is not an obligation, and a
+  // denial rules out only its own clause.
+  if (mentioning.some((clause) => !clauseDeniesRequirement(clause))) return true;
+  return false;
+}
+
+/**
+ * Documents the SOURCE names, which no catalogue can enumerate in advance.
+ *
+ * DOCUMENT_PATTERNS above recognises eighteen common types. That is useful for
+ * normalising them into canonical categories, and useless for the thing tenders
+ * actually do: name their own instruments. "Power of Attorney", "Declaration of
+ * Independent Bid Determination", "Manufacturer's Authorization", "Beneficial
+ * Ownership Form" and any client-invented schedule are all explicitly required
+ * by their tenders and all absent from the list. Growing the list to thirty or
+ * a hundred names does not fix that — the next tender writes a name that is not
+ * on it either.
+ *
+ * So this reads the OBLIGATION rather than the noun: a submission verb governing
+ * a document-like object. The name is whatever the source called it. The
+ * envelope is "unknown" because guessing it would be inventing a fact the
+ * source did not state, and the clause is kept verbatim as its evidence.
+ *
+ * Denial is decided by the same shared predicate every other reader uses, so
+ * "a Power of Attorney is not required" cannot become an obligation here while
+ * meaning the opposite three lines away.
+ */
+
+// Adjectives a tender puts in front of an instrument's name. They qualify the
+// document; they are not part of what it is called.
+const DOCUMENT_QUALIFIERS =
+  /^(?:(?:a|an|the|its|their|his|her|one|two|three|duly|completed|signed|notarized|notarised|certified|original|valid|current|sealed|stamped|attested|legalized|legalised|authenticated|scanned|recent|separate|complete|full)\s+|copies?\s+of\s+(?:the\s+)?)+/i;
+
+// Nouns that make a phrase a document rather than an action or an abstraction.
+const DOCUMENT_NOUN =
+  /\b(?:form|forms|declaration|declarations|certificate|certificates|letter|letters|statement|statements|agreement|agreements|authoriz(?:ation|ations)|authoris(?:ation|ations)|undertaking|undertakings|attorney|affidavit|affidavits|guarantee|guarantees|bond|bonds|licen[cs]e|licen[cs]es|profile|profiles|schedule|schedules|annex|annexe|annexes|appendix|appendices|questionnaire|questionnaires|matrix|register|registration|mandate|deed|deeds|resolution|resolutions|charter|policy|proposal|proposals|report|reports|plan|plans|list|lists|statement\s+of\s+\w+|power\s+of\s+attorney)\b/i;
+
+// Where a document's name stops and the sentence's explanation begins.
+const NAME_TERMINATORS =
+  // Verb forms only. Matching the stem "authoriz" would also truncate a real
+  // name — "Manufacturer's Authorization Letter" — down to "Manufacturer's",
+  // which then fails to read as a document and is dropped entirely.
+  /\s+(?:authoris(?:ing|ed|es)|authoriz(?:ing|ed|es)|confirming|stating|certifying|declaring|issued|signed\s+by|which|who|that\s+|to\s+the\s+effect|in\s+the\s+form|as\s+per|in\s+accordance|together\s+with|along\s+with|and\s+a\b|and\s+an\b|and\s+the\b|from\s+the\b|for\s+the\b|of\s+not\s+less|valid\s+for|dated\b|no\s+later|before\b|by\s+the\s+closing).*/i;
+
+const OBLIGATION_ACTIVE =
+  /\b(?:shall|must|should|will|is\s+required\s+to|are\s+required\s+to|is\s+expected\s+to|are\s+expected\s+to|is\s+requested\s+to|are\s+requested\s+to)\s+(?:also\s+)?(?:submit|provide|furnish|include|attach|enclose|present|produce|supply)\s+(.{3,160})/i;
+
+const OBLIGATION_PASSIVE =
+  /\b(.{3,120}?)\s+(?:shall|must|is|are)\s+(?:also\s+)?be\s+(?:submitted|provided|furnished|attached|enclosed|included|presented)\b/i;
+
+/** Normalise a name for duplicate detection only — never for display. */
+function documentNameKey(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+/** Turn a captured object phrase into the document name the source used. */
+function documentNameFrom(phrase: string): string | null {
+  let name = phrase.trim()
+    .replace(/^[\s"\u2018\u2019\u201c\u201d(\[-]+/, "")
+    .replace(NAME_TERMINATORS, "")
+    .replace(DOCUMENT_QUALIFIERS, "")
+    .replace(/[)\].,;:"\u2018\u2019\u201c\u201d\s]+$/, "")
+    .trim();
+
+  // A trailing conjunction means we captured into the next item; cut it.
+  name = name.replace(/\s+(?:and|or)$/i, "").trim();
+
+  if (name.length < 3 || name.length > 90) return null;
+  if (/^(?:the|a|an|it|them|this|these|those|all|any|such|following)$/i.test(name)) return null;
+
+  // It must read as a document: either it carries a document noun, or the
+  // source Title-Cased it, which is how tenders name their bespoke instruments.
+  const titleCased = /^(?:[A-Z][\w'&./-]*)(?:\s+(?:of|for|and|the|to|in|on|de|du)?\s*[A-Z][\w'&./-]*)+$/.test(name);
+  if (!DOCUMENT_NOUN.test(name) && !titleCased) return null;
+
+  return name;
+}
+
+/**
+ * Read every document obligation the source states in its own words. Catalogue
+ * hits are excluded by the caller so a recognised type is reported once, under
+ * its canonical name.
+ */
+function extractSourceNamedDocuments(text: string, alreadyNamed: Set<string>): RequiredTenderDocument[] {
+  const found: RequiredTenderDocument[] = [];
+  const seen = new Set<string>(alreadyNamed);
+
+  for (const clause of clausesOf(text)) {
+    // The shared denial predicate. A clause that rules a document out must not
+    // produce one here either.
+    if (clauseDeniesRequirement(clause)) continue;
+
+    const candidates: string[] = [];
+    const active = clause.match(OBLIGATION_ACTIVE);
+    if (active?.[1]) candidates.push(active[1]);
+    const passive = clause.match(OBLIGATION_PASSIVE);
+    if (passive?.[1]) candidates.push(passive[1]);
+
+    for (const candidate of candidates) {
+      // One clause can list several instruments: "... a Power of Attorney and a
+      // Declaration of Undertaking". Split on list separators and read each.
+      for (const part of candidate.split(/\s*(?:,|;|\band\b|\bas\s+well\s+as\b|\btogether\s+with\b|\balong\s+with\b)\s*/i)) {
+        const name = documentNameFrom(part);
+        if (!name) continue;
+        const key = documentNameKey(name);
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        found.push({
+          name,
+          required: true,
+          // Not stated by the source. Guessing it would invent a fact.
+          envelope: "unknown",
+          sourceQuote: clause.trim().slice(0, 300),
+        });
+      }
+    }
+  }
+
+  return found;
+}
+
+/**
+ * Does this text state a document obligation?
+ *
+ * Exported for consumers that hold canonical requirement rows rather than raw
+ * tender text and need to know which of them are required-document
+ * requirements. Reading the obligation beats keyword-matching the name: a
+ * filter for /document|annex|attachment|form/ drops "Power of Attorney" and
+ * "Declaration of Independent Bid Determination", which are exactly the kind of
+ * instrument a tender names itself.
+ */
+export function statesDocumentObligation(text: string): boolean {
+  if (!text || !text.trim()) return false;
+  return extractSourceNamedDocuments(text, new Set<string>()).length > 0;
+}
+
 function extractRequiredDocuments(text: string, financialProposalRequired: boolean): RequiredTenderDocument[] {
   const docs: RequiredTenderDocument[] = [];
   const seen = new Set<string>();
   for (const { name, patterns, envelope } of DOCUMENT_PATTERNS) {
     if (seen.has(name)) continue;
-    if (patterns.some((p) => p.test(text))) {
-      seen.add(name);
-      // Skip Financial Proposal if not required
-      if (name === "Financial Proposal" && !financialProposalRequired) {
-        docs.push({ name, required: false, envelope, note: "Not required at this stage" });
-      } else if (name === "Quotation" && !financialProposalRequired) {
-        docs.push({ name, required: false, envelope, note: "Not required at this stage" });
-      } else {
-        docs.push({ name, required: true, envelope });
-      }
+    if (!patterns.some((p) => p.test(text))) continue;
+    seen.add(name);
+
+    // Mentioned only to be ruled out. Previously ANY mention became
+    // `required: true`, so "No bid security is required" produced a required
+    // Bid Bond. The two hard-coded exceptions below show the authors already
+    // knew a mention is not an obligation — this applies that same truth to
+    // every document type instead of two named ones.
+    if (!patterns.some((p) => hasAffirmativeMention(text, p))) {
+      docs.push({ name, required: false, envelope, note: "Source states this is not required" });
+      continue;
+    }
+
+    // Skip Financial Proposal if not required
+    if (name === "Financial Proposal" && !financialProposalRequired) {
+      docs.push({ name, required: false, envelope, note: "Not required at this stage" });
+    } else if (name === "Quotation" && !financialProposalRequired) {
+      docs.push({ name, required: false, envelope, note: "Not required at this stage" });
+    } else {
+      docs.push({ name, required: true, envelope });
     }
   }
+
+  // The catalogue has now said everything it can. Whatever the source required
+  // under a name the catalogue does not know is read next, so an obligation is
+  // not lost merely because nobody anticipated its name.
+  const canonicalKeys = new Set(docs.map((d) => documentNameKey(d.name)));
+  docs.push(...extractSourceNamedDocuments(text, canonicalKeys));
+
   return docs;
 }
 
@@ -681,7 +1139,8 @@ export function parseTenderDocumentIntelligence(
       requiredFinancialDocuments: [],
       formsAndAnnexes: [],
       generationPlan: { generate: [], exclude: [], notes: ["Empty source text"] },
-      financialProposalRequired: true,
+      financialProposalRequired: false,
+      financialProposalRequiredState: null,
       proposalValidity: null,
       budget: null,
       bidBond: null,
@@ -720,40 +1179,91 @@ export function parseTenderDocumentIntelligence(
   // Client / procuring entity
   let clientOrProcuringEntity: string | null = options.tenderClientName ?? null;
   // Try specific patterns first (avoid bare "for" which matches "Request for...")
-  const clientMatch = text.match(/(?:client|procuring\s+entity)\s*:?\s*([^\n\r]{3,100})/i)
+  //
+  // The label is frequently COMPOUND — "Procuring Entity / Client Name" is the
+  // ordinary way a tender data sheet writes this row. Matching only the first
+  // word of it and then accepting an optional colon captured the REST OF THE
+  // LABEL as the value: the row above yielded the client name "/ Client Name",
+  // and its colon form yielded "/ Client Name: Northern Roads Authority".
+  // Client identity is a critical field — it prints on the cover letter's "To:"
+  // line and gates final export — so this produced either a hard block or a
+  // bid-disqualifying cover letter on any tender using that ordinary label.
+  //
+  // So the optional tail is consumed as part of the LABEL, and a separator is
+  // now required. The tail must end in "name" rather than being free text,
+  // because a permissive tail crosses into the NEXT field: "Client Contact
+  // Email:" would otherwise return an email address as the client's name.
+  const CLIENT_LABEL = String.raw`(?:procuring\s+entity|contracting\s+authority|employer|client)(?:\s*[/&|,-]\s*[A-Za-z ]{0,30}?name)?`;
+  const clientMatch = text.match(new RegExp(`${CLIENT_LABEL}\\s*:\\s*([^\\n\\r]{3,100})`, "i"))
+    // Data sheets also lay the value out as the next row of a two-column table,
+    // with no colon anywhere.
+    || text.match(new RegExp(`${CLIENT_LABEL}\\s*\\r?\\n\\s*([^\\n\\r]{3,100})`, "i"))
     || text.match(/Technical\s+Proposal\s+for\s+([A-Z][^\n\r]{3,100})/i)
     || text.match(/Proposal\s+for\s+([A-Z][^\n\r]{3,100})/i);
   if (clientMatch) {
-    clientOrProcuringEntity = clientMatch[1].trim();
-    sourceExcerpts.clientOrProcuringEntity = clientMatch[0];
+    const candidate = clientMatch[1].trim();
+    // A value that opens on a separator is a label fragment the patterns above
+    // failed to consume, and an address is a different field: neither is a name.
+    const looksLikeLabelTail = /^[/&|,:;-]/.test(candidate) || candidate.includes("@");
+    if (!looksLikeLabelTail) {
+      clientOrProcuringEntity = candidate;
+      sourceExcerpts.clientOrProcuringEntity = clientMatch[0];
+    }
   }
 
-  // Financial proposal required?
-  const financialNotRequired = /financial\s+proposal\s+not\s+required|do\s+not\s+generate\s+a\s+financial\s+proposal|technical\s+proposal\s+only\s+at\s+this\s+stage|financial\s+proposal\s*:\s*no/i.test(text);
-  const financialProposalRequired = !financialNotRequired;
-  if (!financialProposalRequired) {
+  // Financial proposal required? One reader, three states. Silence is UNKNOWN
+  // and must not become an obligation — see readFinancialProposalRequirement().
+  const financialProposalRequiredState = readFinancialProposalRequirement(text);
+  const financialProposalRequired = financialProposalRequiredState === true;
+  if (financialProposalRequiredState === false) {
     sourceExcerpts.financialProposalRequired = "Financial proposal not required at this stage";
+  } else if (financialProposalRequiredState === null) {
+    // Surfaced, not silently resolved. A reviewer needs to know the source did
+    // not answer this rather than be shown a confident "no".
+    warnings.push(
+      "Source does not state whether a financial proposal is required — treated as UNKNOWN. No financial document is generated on an unstated obligation; confirm before final submission.",
+    );
   }
 
   // Submission instructions
-  const submissionInstructions = extractSubmissionInstructions(text, options);
+  const submissionInstructions = extractSubmissionInstructions(text, options, warnings);
 
   // Required documents
   const requiredDocuments = extractRequiredDocuments(text, financialProposalRequired);
 
-  // Evaluation methodology
+  // Evaluation methodology. Reuse the source-grounded extractor rather than
+  // equating "criteria present" with "numeric weights present". Qualitative
+  // award/selection criteria remain canonical even when no weights are stated.
   let evaluationMethodology: TenderEvaluationMethodology | null = null;
-  // Match "Technical weight: 70%" or "Technical 70%" or "Technical weightage 70%"
-  const techWeightMatch = text.match(/technical\s+(?:weight(?:age)?\s*:?)?\s*(\d{1,3})\s*%/i)
-    || text.match(/technical\s+(\d{1,3})\s*%/i);
-  const finWeightMatch = text.match(/financial\s+(?:weight(?:age)?\s*:?)?\s*(\d{1,3})\s*%/i)
-    || text.match(/financial\s+(\d{1,3})\s*%/i);
-  if (techWeightMatch || finWeightMatch || /evaluation\s+methodology/i.test(text)) {
+  // Match "Technical weight: 70%", "Technical 70%", "Technical weightage 70%",
+  // and the two forms those missed:
+  //
+  //   - the word instead of the sign — "the technical evaluation weight is
+  //     70 percent". Only /%/ was accepted, so a tender that spells the unit
+  //     out reported no weights at all. Spelling it out is ordinary drafting in
+  //     donor and government procurement, not an edge case.
+  //   - words between the label and the number — the old pattern allowed only
+  //     an optional "weight"/"weightage", so "technical evaluation weight is 70"
+  //     did not match even with a % sign.
+  //
+  // The filler run is bounded to three words so the number stays attached to
+  // its own label and cannot be picked up from a distant sentence.
+  const PERCENT = "(?:%|per\\s?cent(?:age)?|percent)";
+  const techWeightMatch = text.match(new RegExp(`technical\\s*:?\\s*(?:[a-z]+\\s*:?\\s*){0,3}(\\d{1,3})\\s*${PERCENT}`, "i"));
+  const finWeightMatch = text.match(new RegExp(`financial\\s*:?\\s*(?:[a-z]+\\s*:?\\s*){0,3}(\\d{1,3})\\s*${PERCENT}`, "i"));
+  const extractedEvaluation = extractEvaluationMethodologyFromSource({
+    files: [{ fileName: null, extractedText: text }],
+  });
+  if (techWeightMatch || finWeightMatch || extractedEvaluation.found) {
     evaluationMethodology = {
       technicalWeight: techWeightMatch ? parseInt(techWeightMatch[1], 10) : null,
       financialWeight: finWeightMatch ? parseInt(finWeightMatch[1], 10) : null,
-      methodology: "Detected evaluation methodology section",
-      passFail: /pass\/fail|pass-fail|compliance\s+only/i.test(text),
+      methodology: extractedEvaluation.found
+        ? extractedEvaluation.methodologyText
+        : "Detected weighted evaluation methodology section",
+      passFail: extractedEvaluation.found
+        ? extractedEvaluation.items.some((item) => item.isPassFail)
+        : /pass\/fail|pass-fail|compliance\s+only/i.test(text),
     };
   }
 
@@ -772,9 +1282,36 @@ export function parseTenderDocumentIntelligence(
   if (budgetMatch) budget = budgetMatch[1].trim();
 
   // Bid bond
+  //
+  // A DENIAL is not an obligation. The previous pattern matched the phrase
+  // anywhere and captured the rest of the line with no awareness of what came
+  // before it, so a tender that explicitly ruled bid security out was recorded
+  // as requiring one, with the negation stripped off:
+  //
+  //   "No bid security is required at this stage."  ->  "is required at this stage."
+  //   "No bid bond shall be required."              ->  "shall be required."
+  //
+  // Tenders that state no bid security is needed are common — most EOIs and
+  // many consultancy RFPs say exactly that — so this turned an explicit absence
+  // into a phantom commercial obligation on an ordinary class of tender.
+  // Presence and absence must both survive parsing.
+  //
+  // Scanned over the SAME clause units the required-documents extractor uses.
+  // Reading only the first regex match in the document made the two disagree:
+  // a source that denied bid security in one sentence and required it in the
+  // next produced bidBond=null alongside a required "Bid Bond" document. One
+  // clause set, one denial rule, so the two readers cannot diverge.
   let bidBond: string | null = null;
-  const bidBondMatch = text.match(/(?:bid\s+bond|bid\s+security):?\s*([^\n\r]{3,100})/i);
-  if (bidBondMatch) bidBond = bidBondMatch[1].trim();
+  for (const clause of clausesOf(text)) {
+    if (!BID_SECURITY_PATTERN.test(clause)) continue;
+    if (clauseDeniesRequirement(clause)) continue;
+    const detail = clause.match(/(?:bid\s+bond|bid\s+security)\b:?\s*(.{0,100})/i);
+    const after = (detail?.[1] ?? "").trim();
+    if (after.length >= 3) {
+      bidBond = after;
+      break;
+    }
+  }
 
   // Mandatory site visit
   const mandatorySiteVisit = /mandatory\s+site\s+visit|site\s+visit\s+(?:is\s+)?mandatory|pre-bid\s+site\s+visit\s+(?:is\s+)?mandatory/i.test(text);
@@ -893,6 +1430,7 @@ export function parseTenderDocumentIntelligence(
     formsAndAnnexes,
     generationPlan,
     financialProposalRequired,
+    financialProposalRequiredState,
     proposalValidity,
     budget,
     bidBond,

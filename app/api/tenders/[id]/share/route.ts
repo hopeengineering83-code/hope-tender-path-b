@@ -4,6 +4,7 @@ import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import {
   createTenderShareToken,
+  generateTenderShareToken,
   parseTenderShareCreateInput,
 } from "../../../../../lib/tender-share-security";
 import { logAction } from "../../../../../lib/audit";
@@ -49,19 +50,26 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const parsed = parseTenderShareCreateInput(body);
   if (!parsed.ok) return privateJson({ error: parsed.error }, { status: 400 });
 
-  const token = createTenderShareToken();
+  // SECURITY (audit C-4): generate a token + its SHA-256 hash. Store ONLY the
+  // hash in the DB (tokenHash column). The raw token is returned to the caller
+  // ONCE in the response body so they can construct the share URL — it is
+  // never persisted in plaintext. The token column is set to NULL for new
+  // shares; legacy shares (created before this fix) still have plaintext
+  // tokens and are looked up via the fallback path in app/share/[token]/page.tsx.
+  const { token: rawToken, tokenHash } = generateTenderShareToken();
   const share = await prisma.tenderShare.create({
     data: {
       tenderId,
       createdById: auth.actor.id,
-      token,
+      token: null,        // New shares do not store the plaintext token.
+      tokenHash,          // Only the hash is persisted.
       label: parsed.value.label,
       expiresAt: parsed.value.expiresAt,
       maxDownloads: parsed.value.maxDownloads,
     },
     select: {
       id: true,
-      token: true,
+      tokenHash: true,
       label: true,
       createdAt: true,
       expiresAt: true,
@@ -84,7 +92,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     },
   });
 
-  return privateJson({ share, shareUrl: `/share/${share.token}` }, { status: 201 });
+  // Return the raw token ONCE so the caller can construct the share URL.
+  // Future GET requests will NOT include the raw token — only the hash.
+  return privateJson({ share, shareUrl: `/share/${rawToken}` }, { status: 201 });
 }
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -102,6 +112,11 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     take: 100,
     select: {
       id: true,
+      // SECURITY (audit C-4): never return the plaintext token. The hash is
+      // safe to return — it cannot be used to construct a share URL. The
+      // presence of tokenHash (non-null) indicates a new-style share; a
+      // null tokenHash with non-null token indicates a legacy share.
+      tokenHash: true,
       token: true,
       label: true,
       createdAt: true,

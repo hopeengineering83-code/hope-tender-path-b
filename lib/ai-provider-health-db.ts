@@ -22,11 +22,11 @@ import {
 } from "./ai-provider-health";
 import { CANONICAL_AI_PROVIDER_ORDER } from "./ai-provider-registry";
 
-// Persistence iteration is in the canonical runtime chain order, derived from
-// the authoritative registry (zai → cerebras → mistral → groq → openrouter →
-// gemini → openai → together → deepseek → anthropic) so that operator-facing
-// artifacts (DB rows, logs, snapshots) read in the same canonical order. This
-// list is NOT a fallback chain by itself — it only governs read/write order of
+// Persistence iteration follows the canonical registry order so operator-facing
+// artifacts (DB rows, logs, snapshots) read in that same order. The order is
+// NOT restated here — it is imported. The comment that used to spell it out had
+// gone stale, which is the whole reason the order lives in exactly one file.
+// This list is not a fallback chain: it only governs read/write order of
 // ProviderHealthSnapshot rows.
 const ALL_PROVIDERS: readonly AiProviderName[] = CANONICAL_AI_PROVIDER_ORDER;
 
@@ -48,25 +48,47 @@ export async function restoreHealthFromDb(): Promise<ProviderHealthRestoreResult
   try {
     const snapshots = await prisma.providerHealthSnapshot.findMany();
     for (const snap of snapshots) {
-      const cooldownUntilMs = snap.cooldownUntil ? snap.cooldownUntil.getTime() : null;
-      // Skip expired cooldowns — nothing to restore
-      if (cooldownUntilMs && cooldownUntilMs <= now) continue;
-      // Skip very stale records (> 10 min since last failure) to avoid
-      // carrying forward state from a much earlier run
-      if (snap.lastFailureAt && now - snap.lastFailureAt.getTime() > 10 * 60_000 && !cooldownUntilMs) continue;
-
       if (!ALL_PROVIDERS.includes(snap.provider as AiProviderName)) continue;
+
+      const storedCooldownMs = snap.cooldownUntil ? snap.cooldownUntil.getTime() : null;
+      // An expired cooldown means "the cooldown is over", not "forget this
+      // provider". The previous code did `continue` here, discarding the whole
+      // row — including the capability timestamps that record what the provider
+      // was proven able to do. A provider that had completed a real AI Analyze
+      // and later hit one transient rate limit therefore came back from every
+      // cold start as never-verified, and health under-reported a working
+      // provider for as long as the deployment lived.
+      //
+      // Drop the expired cooldown; keep everything else.
+      const cooldownUntilMs = storedCooldownMs && storedCooldownMs > now ? storedCooldownMs : null;
+
+      // Staleness applies to FAILURE state only. A recorded success does not go
+      // stale in a way that makes it wrong to remember — the provider really did
+      // answer — so a proven capability is always restored.
+      const hasVerifiedCapability = Boolean(
+        snap.lastPingSucceededAt || snap.lastAnalysisSucceededAt || snap.lastGenerationSucceededAt,
+      );
+      const failureIsStale = Boolean(
+        snap.lastFailureAt && now - snap.lastFailureAt.getTime() > 10 * 60_000 && !cooldownUntilMs,
+      );
+      if (failureIsStale && !hasVerifiedCapability) continue;
 
       restoreProviderState(snap.provider as AiProviderName, {
         lastSuccessAt: snap.lastSuccessAt ? snap.lastSuccessAt.getTime() : null,
         lastPingSucceededAt: snap.lastPingSucceededAt ? snap.lastPingSucceededAt.getTime() : null,
         lastGenerationSucceededAt: snap.lastGenerationSucceededAt ? snap.lastGenerationSucceededAt.getTime() : null,
         lastAnalysisSucceededAt: snap.lastAnalysisSucceededAt ? snap.lastAnalysisSucceededAt.getTime() : null,
-        lastFailureAt: snap.lastFailureAt ? snap.lastFailureAt.getTime() : null,
-        lastFailureCategory: (snap.lastFailureCategory as AiProviderFailureCategory | null) ?? null,
-        lastFailureMessage: snap.lastSafeErrorMessage ?? null,
-        consecutiveFailures: snap.consecutiveFailures,
+        lastFailureAt: failureIsStale ? null : snap.lastFailureAt ? snap.lastFailureAt.getTime() : null,
+        lastFailureCategory: failureIsStale ? null : ((snap.lastFailureCategory as AiProviderFailureCategory | null) ?? null),
+        lastFailureMessage: failureIsStale ? null : (snap.lastSafeErrorMessage ?? null),
+        consecutiveFailures: failureIsStale ? 0 : snap.consecutiveFailures,
         cooldownUntil: cooldownUntilMs,
+        // Capability-result detail was introduced without a schema migration:
+        // cold starts retain the existing durable success timestamps, while a
+        // result's model/category detail is truthfully "not observed on this
+        // instance" until the next real workload. Never synthesize it.
+        latestAnalysisResult: null,
+        latestGenerationResult: null,
       });
     }
     restoredAt = now;
@@ -119,8 +141,19 @@ export async function persistAllHealthToDb(): Promise<void> {
   try {
     for (const provider of ALL_PROVIDERS) {
       const s = getProviderStateSnapshot(provider); if (!s) continue;
-      // Skip providers with no recorded state (avoids unnecessary writes)
-      if (!s.lastSuccessAt && !s.lastFailureAt) continue;
+      // Skip providers with no recorded state (avoids unnecessary writes).
+      //
+      // The capability timestamps have to be part of "has state". This tested
+      // only lastSuccessAt and lastFailureAt, but recordProviderPingSuccess sets
+      // lastPingSucceededAt alone — so a connectivity-verified provider matched
+      // neither and was never written. CONNECTIVITY_VERIFIED could not survive a
+      // cold start, and the diagnostic that established it was forgotten the
+      // moment the instance was recycled.
+      const hasState = Boolean(
+        s.lastSuccessAt || s.lastFailureAt || s.lastPingSucceededAt
+        || s.lastAnalysisSucceededAt || s.lastGenerationSucceededAt,
+      );
+      if (!hasState) continue;
 
       const fields = {
         lastSuccessAt: s.lastSuccessAt ? new Date(s.lastSuccessAt) : null,

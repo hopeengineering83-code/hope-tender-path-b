@@ -42,7 +42,12 @@ describe("admin reassess endpoint — safety contract", () => {
 describe("submission-plan endpoint contract", () => {
   it("uses canonical resolveSubmissionPlanCompleteness + isFinalExportCandidateDocument under the hood", () => {
     const src = readFileSync("app/api/tenders/[id]/submission-plan/route.ts", "utf8");
-    assert.match(src, /resolveSubmissionPlanCompleteness/);
+    // The route reaches the canonical resolver through the shared loader that
+    // the automatic finalize pipeline also uses, so the panel and the pipeline
+    // cannot disagree about completeness.
+    assert.match(src, /loadSubmissionPlanCompleteness/);
+    const loader = readFileSync("lib/engine/submission-plan-completeness.ts", "utf8");
+    assert.match(loader, /resolveSubmissionPlanCompleteness\(\{/);
     assert.match(src, /requireRole\(\s*"ADMIN",\s*"PROPOSAL_MANAGER",\s*"REVIEWER"\s*\)/);
   });
 });

@@ -19,7 +19,7 @@ describe("release integrity upgrade", () => {
   it("uses one package-owned Vercel build command", () => {
     const vercel = JSON.parse(read("vercel.json")) as { buildCommand?: string; installCommand?: string };
     assert.equal(vercel.buildCommand, "npm run vercel-build");
-    assert.equal(vercel.installCommand, "npm ci");
+    assert.equal(vercel.installCommand, "npm ci --no-audit --no-fund");
   });
 
   it("limits automatic migration recovery to the exact failed init with strict preconditions", () => {
@@ -81,7 +81,7 @@ describe("release integrity upgrade", () => {
     assert.match(seed, /44444444-4444-4444-8444-444444444444/);
     assert.match(isolation, /SECONDARY_DOCUMENT_ID/);
     assert.match(isolation, /SECONDARY_FILE_ID/);
-    assert.match(isolation, /attach-original/);
+    // attach-original route deleted — no longer in release-integrity isolation list
     assert.match(isolation, /finalize-pdf/);
     assert.match(isolation, /files\/\$\{SECONDARY_FILE_ID\}/);
     assert.match(isolation, /Secondary Owner Private Tender/);
@@ -99,7 +99,7 @@ describe("release integrity upgrade", () => {
   });
 
   it("includes specific missing TenderFile columns in critical schema check", () => {
-    const check = read("scripts/check-critical-schema.mjs");
+    const check = read("scripts/critical-schema-contract.mjs");
     assert.match(check, /"lastDeletionError"/);
     assert.match(check, /"deletedAt"/);
   });

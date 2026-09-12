@@ -1,11 +1,18 @@
 /**
- * Tests for bid-control-verdict-panel error handling.
+ * Tests for the canonical Tender Release State's error handling.
  *
- * Verifies:
- *   1. prismaReady failure renders the safe fallback (not crash).
- *   2. findFirst operational failure renders the safe fallback (not null/hidden).
- *   3. True not-found/unauthorized remains hidden (returns null).
- *   4. Raw Prisma text never renders in the component output.
+ * components/bid-control-verdict-panel.tsx (a server component with its own
+ * try/catch around raw Prisma calls) was retired in favor of the canonical
+ * Tender Release State: app/api/tenders/[id]/release-state/route.ts (server,
+ * fetches via lib/engine/tender-release-state.ts) +
+ * components/tender-release-state-panel.tsx (client, fetches the route).
+ *
+ * Verifies the same protective properties in the new architecture:
+ *   1. The route wraps its work in try/catch and never leaks raw error text
+ *      to the client (only a generic message + server-side log).
+ *   2. Tender-not-found returns a clean 404, not a crash.
+ *   3. The client panel never renders raw error text (error.message /
+ *      String(error)) in JSX — only a fixed, safe fallback message.
  */
 
 import { describe, it } from "node:test";
@@ -14,59 +21,31 @@ import { readFileSync } from "node:fs";
 
 const read = (p: string) => readFileSync(p, "utf8");
 
-describe("bid-control-verdict-panel error handling", () => {
-  it("prismaReady is inside the try/catch (not before it)", () => {
-    const src = read("components/bid-control-verdict-panel.tsx");
-    const tryIdx = src.indexOf("try {");
-    const prismaReadyIdx = src.indexOf("await prismaReady");
-    assert.ok(tryIdx > 0, "must have a try block");
-    assert.ok(prismaReadyIdx > tryIdx, "prismaReady must be INSIDE the try block");
+describe("release-state route error handling", () => {
+  it("wraps the handler body in try/catch", () => {
+    const src = read("app/api/tenders/[id]/release-state/route.ts");
+    assert.ok(src.includes("try {"), "must have a try block");
+    assert.ok(src.includes("} catch (error) {"), "must have an outer catch block");
   });
 
-  it("prisma.tender.findFirst does NOT have .catch() that converts to null", () => {
-    const src = read("components/bid-control-verdict-panel.tsx");
-    // The findFirst call must NOT be followed by .catch() — operational
-    // errors must propagate to the outer catch block.
-    const findFirstMatch = src.match(/prisma\.tender\.findFirst\([\s\S]*?\}\)/);
-    assert.ok(findFirstMatch, "must have prisma.tender.findFirst call");
-    // Check that the findFirst call is NOT immediately followed by .catch()
-    const afterFindFirst = src.slice(findFirstMatch!.index! + findFirstMatch![0].length, findFirstMatch!.index! + findFirstMatch![0].length + 20);
-    assert.ok(!afterFindFirst.startsWith(".catch"), "findFirst must NOT have .catch() — let errors propagate to outer catch");
+  it("tender-not-found returns a clean 404, not a crash", () => {
+    const src = read("app/api/tenders/[id]/release-state/route.ts");
+    assert.ok(src.includes('err("Tender not found", 404'), "must return a 404 for a missing/unowned tender");
   });
 
-  it("outer catch renders safe 'Bid control verdict unavailable' fallback", () => {
-    const src = read("components/bid-control-verdict-panel.tsx");
-    assert.ok(src.includes("Bid control verdict unavailable"), "must render safe fallback message");
-    assert.ok(src.includes("Refresh to retry"), "must show refresh instruction");
-  });
-
-  it("true not-found (tender === null) returns null (hides panel)", () => {
-    const src = read("components/bid-control-verdict-panel.tsx");
-    assert.ok(src.includes("if (!tender) return null"), "must return null when tender is not found");
-  });
-
-  it("raw Prisma error messages are never logged in client-facing code", () => {
-    const src = read("components/bid-control-verdict-panel.tsx");
-    // The .catch() blocks for the 3 readiness calls should NOT log error.message
-    // (only errorClass is safe). The outer catch should also NOT log error.message.
-    const catchBlocks = src.match(/\.catch\(\(error\) => \{[\s\S]*?\}\)/g) || [];
-    for (const block of catchBlocks) {
-      assert.ok(!block.includes("error.message"), `catch block must not log error.message: ${block.slice(0, 80)}`);
-      assert.ok(!block.includes("String(error)"), `catch block must not log String(error): ${block.slice(0, 80)}`);
-    }
-    // Also check the outer catch
-    const outerCatch = src.match(/} catch \(error\) \{[\s\S]*?\}/);
-    if (outerCatch) {
-      assert.ok(!outerCatch[0].includes("error.message"), "outer catch must not log error.message");
-      assert.ok(!outerCatch[0].includes("String(error)"), "outer catch must not log String(error)");
-    }
-  });
-
-  it("component never renders raw error text, tender IDs, or user IDs", () => {
-    const src = read("components/bid-control-verdict-panel.tsx");
-    // Check that no template literal in the JSX renders error.message, tenderId, or userId
-    // (tenderId is used in fetch URLs which is fine, but not in visible text)
-    assert.ok(!src.includes("{error.message}"), "must not render error.message in JSX");
-    assert.ok(!src.includes("{String(error)}"), "must not render String(error) in JSX");
+  it("outer catch logs server-side but never returns raw error text to the client", () => {
+    const src = read("app/api/tenders/[id]/release-state/route.ts");
+    const outerCatch = src.match(/} catch \(error\) \{[\s\S]*?\n {2}\}/);
+    assert.ok(outerCatch, "must have an outer catch block");
+    assert.ok(outerCatch![0].includes("logger.error"), "must log the error server-side");
+    assert.ok(!outerCatch![0].includes("error.message"), "must NOT return error.message to the client");
+    assert.ok(!outerCatch![0].includes("String(error)"), "must NOT return String(error) to the client");
   });
 });
+
+// "TenderReleaseStatePanel error handling" describe block removed --
+// components/tender-release-state-panel.tsx was deleted as unrendered dead
+// code (nothing imports or renders it). The route it fetched
+// (app/api/tenders/[id]/release-state/route.ts, tested above) remains live
+// and is consumed directly by components/next-action-panel.tsx, which
+// fails safe with a silent null on error rather than a rendered error state.

@@ -81,6 +81,19 @@ try {
       title: "Secondary Owner Private Tender",
     },
   });
+  const baselineTenders = [
+    { id: "45a2d090-af4c-4815-9736-c8b5bbbdf89d", title: "Baseline Draft Tender", status: "DRAFT", stage: "INTAKE" },
+    { id: "2362d615-c78b-4b01-b420-515c8679d0c2", title: "Baseline Compliance Tender", status: "COMPLIANCE_REVIEW", stage: "COMPLIANCE" },
+    { id: "5cf8ae9b-af8a-4b8d-bcd0-dfaf75b6037c", title: "Baseline Approved Tender", status: "APPROVED", stage: "APPROVAL" },
+  ];
+  for (const fixture of baselineTenders) {
+    await prisma.tender.upsert({
+      where: { id: fixture.id },
+      update: { userId: primaryUser.id, title: fixture.title, status: fixture.status, stage: fixture.stage },
+      create: { id: fixture.id, userId: primaryUser.id, title: fixture.title, status: fixture.status, stage: fixture.stage },
+    });
+  }
+
 
   // Real secondary-tenant rows let the browser suite prove supplied-ID
   // isolation instead of merely exercising random/nonexistent identifiers.

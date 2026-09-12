@@ -293,9 +293,9 @@ function innovationRows(sector: string): InnovationRow[] {
   const s = sector.toLowerCase();
   const generic: InnovationRow[] = [
     { proposal: "Live decision-log shared workspace (e.g., Notion / SharePoint) accessible to client throughout engagement", clientValue: "Client sees decisions and pending items in real-time; reduces email volume; defensible audit trail at handover", effort: "Low", optInOptOut: "Included" },
-    { proposal: "Independent technical peer reviewer (not on team) for 100% gate", clientValue: "Catches design blind-spots that the team has stopped seeing; raises deliverable confidence at no extra fee", effort: "Low", optInOptOut: "Included" },
-    { proposal: "Lessons-learned capture session at engagement close + written memo handed to client", clientValue: "Client retains organisational knowledge for next phase; reduces ramp-up cost on follow-on engagements", effort: "Low", optInOptOut: "Included" },
-    { proposal: "Post-handover advisory call (60 min, within 6 months of close-out) at no fee", clientValue: "Client gets continuity support during early implementation phase; reduces cost of returning to designer for clarifications", effort: "Low", optInOptOut: "Included" },
+    { proposal: "Independent technical peer reviewer (not on team) for 100% gate", clientValue: "Catches design blind-spots that the team has stopped seeing; raises deliverable confidence, and is included in the proposed scope", effort: "Low", optInOptOut: "Included" },
+    { proposal: "Lessons-learned capture session at engagement close + written memo handed to client", clientValue: "Client retains organisational knowledge for the next phase, shortening ramp-up on follow-on engagements", effort: "Low", optInOptOut: "Included" },
+    { proposal: "Post-handover advisory call (60 min, within 6 months of close-out), included in the proposed scope", clientValue: "Client gets continuity support during early implementation without re-engaging the designer for clarifications", effort: "Low", optInOptOut: "Included" },
   ];
   if (/health|hospital|medical/.test(s)) {
     return [
@@ -511,7 +511,10 @@ function buildInnovationTable(sector: string): string {
     `<!-- beyond-spec-table:innovation -->`,
     `## Innovation and Value Engineering Proposals`,
     "",
-    `Beyond-specification proposals offered to the client at no additional fee unless flagged as Optional or Subject to client agreement. Each carries a stated client-value rationale so the client can evaluate inclusion.`,
+    // A technical proposal in a two-envelope tender must not price anything, and
+    // "at no additional fee" is a price. The point being made is that these are
+    // included in the proposed scope, which is a technical statement.
+    `Beyond-specification proposals are included within the proposed delivery approach unless flagged as Optional or Subject to client agreement. Each carries a stated client-value rationale so the client can evaluate inclusion.`,
     "",
     head,
     sep,

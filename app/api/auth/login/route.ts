@@ -18,42 +18,137 @@ const DUMMY_PASSWORD_HASH = bcrypt.hashSync(
   12,
 );
 
-const INVALID_CREDENTIALS = {
-  error: "Invalid credentials",
-  code: "INVALID_CREDENTIALS",
-};
+const PUBLIC_LOGIN_MESSAGES = {
+  INVALID_CREDENTIALS: "The email or password is incorrect.",
+  MISSING_CREDENTIALS: "Enter both email and password.",
+  INVALID_LOGIN_REQUEST: "The sign-in request was invalid. Please try again.",
+  AUTH_SERVICE_UNAVAILABLE: "Authentication is temporarily unavailable. Please try again shortly.",
+  AUTH_DATABASE_SCHEMA_OUTDATED: "Sign-in is unavailable because the database is behind this deployment. The pending database migrations must be applied \u2014 retrying will not clear this.",
+  LOGIN_RATE_LIMITED: "Too many sign-in attempts. Wait briefly, then try again.",
+} as const;
 
-function authenticationUnavailable(requestId: string) {
-  return NextResponse.json(
-    {
-      error: "Authentication is temporarily unavailable. Please try again.",
-      code: "AUTH_SERVICE_UNAVAILABLE",
-      requestId,
-    },
-    { status: 503 },
-  );
+type PublicLoginCode = keyof typeof PUBLIC_LOGIN_MESSAGES;
+type ParsedLogin = { ok: true; email: string; password: string; nativeForm: boolean } | { ok: false; nativeForm: boolean };
+
+function withPrivateAuthHeaders<T extends NextResponse>(response: T): T {
+  response.headers.set("Cache-Control", "no-store, max-age=0");
+  response.headers.set("Pragma", "no-cache");
+  response.headers.set("Expires", "0");
+  response.headers.set("Referrer-Policy", "no-referrer");
+  return response;
 }
 
-function tooManyAttempts(resetAt: number) {
+function isNativeFormRequest(req: Request): boolean {
+  const contentType = (req.headers.get("content-type") ?? "").toLowerCase();
+  return contentType.includes("application/x-www-form-urlencoded") || contentType.includes("multipart/form-data");
+}
+
+async function parseLoginRequest(req: Request): Promise<ParsedLogin> {
+  const nativeForm = isNativeFormRequest(req);
+  const contentType = (req.headers.get("content-type") ?? "").toLowerCase();
+
+  try {
+    let emailValue: unknown;
+    let passwordValue: unknown;
+
+    if (nativeForm) {
+      const form = await req.formData();
+      emailValue = form.get("email");
+      passwordValue = form.get("password");
+    } else if (contentType.includes("application/json")) {
+      const body = await req.json() as { email?: unknown; password?: unknown };
+      emailValue = body.email;
+      passwordValue = body.password;
+    } else {
+      return { ok: false, nativeForm };
+    }
+
+    return {
+      ok: true,
+      nativeForm,
+      email: typeof emailValue === "string" ? emailValue.trim().toLowerCase() : "",
+      password: typeof passwordValue === "string" ? passwordValue : "",
+    };
+  } catch (e) {
+    // Login form parse failure — could indicate malformed request body or
+    // attack attempt. Surface the failure so silent form-parse failures
+    // are observable. Previously bare `catch {}`.
+    logger.warn("[auth/login] parseLoginForm failed — returning ok:false", {
+      detail: e,
+    });
+    return { ok: false, nativeForm };
+  }
+}
+
+function redirectTo(req: Request, pathname: string, errorCode?: PublicLoginCode): NextResponse {
+  const target = new URL(pathname, req.url);
+  target.search = "";
+  if (errorCode) target.searchParams.set("error", errorCode);
+  return withPrivateAuthHeaders(NextResponse.redirect(target, 303));
+}
+
+function loginResult(
+  req: Request,
+  nativeForm: boolean,
+  code: PublicLoginCode,
+  status: number,
+  extraHeaders?: HeadersInit,
+  requestId?: string,
+): NextResponse {
+  if (nativeForm) {
+    const response = redirectTo(req, "/login", code);
+    if (extraHeaders) {
+      new Headers(extraHeaders).forEach((value, key) => response.headers.set(key, value));
+    }
+    return response;
+  }
+
+  return withPrivateAuthHeaders(NextResponse.json(
+    {
+      error: PUBLIC_LOGIN_MESSAGES[code],
+      code,
+      ...(requestId ? { requestId } : {}),
+    },
+    { status, headers: extraHeaders },
+  ));
+}
+
+/**
+ * Prisma codes meaning the database does not match the deployed client:
+ * P2021 a table is missing, P2022 a column is missing.
+ *
+ * Separated from a transient outage because the advice is the opposite. "Try
+ * again shortly" tells the operator to wait, and waiting never fixes a missing
+ * column. A real deployment sat in exactly this state after its DATABASE_URL
+ * was repointed at a database that had the tables but not the latest
+ * migrations: /api/health reported healthy, every sign-in returned 503, and
+ * the message invited an endless retry against an error only a migration could
+ * clear.
+ */
+const SCHEMA_DRIFT_PRISMA_CODES = new Set(["P2021", "P2022"]);
+
+function isSchemaDrift(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === "string" && SCHEMA_DRIFT_PRISMA_CODES.has(code);
+}
+
+function authenticationUnavailable(req: Request, nativeForm: boolean, requestId: string, error?: unknown): NextResponse {
+  const code = isSchemaDrift(error) ? "AUTH_DATABASE_SCHEMA_OUTDATED" : "AUTH_SERVICE_UNAVAILABLE";
+  return loginResult(req, nativeForm, code, 503, undefined, requestId);
+}
+
+function tooManyAttempts(req: Request, nativeForm: boolean, resetAt: number): NextResponse {
   const retryAfter = Math.max(1, Math.ceil((resetAt - Date.now()) / 1000));
-  return NextResponse.json(
-    {
-      error: "Too many login attempts",
-      code: "LOGIN_RATE_LIMITED",
-    },
-    {
-      status: 429,
-      headers: { "Retry-After": String(retryAfter) },
-    },
+  return loginResult(
+    req,
+    nativeForm,
+    "LOGIN_RATE_LIMITED",
+    429,
+    { "Retry-After": String(retryAfter) },
   );
 }
 
 async function recordFailedLogin(userId: string | undefined, email: string) {
-  // Do NOT log the plaintext email — it is PII and could expose user accounts
-  // if audit logs are accessed by an attacker enumerating accounts. Use a
-  // non-reversible SHA-256 hash prefix so security investigations can still
-  // correlate repeated attempts against the same account without storing the
-  // account identifier itself.
   const crypto = require("node:crypto");
   const emailCorrelationHash = crypto
     .createHash("sha256")
@@ -75,40 +170,20 @@ async function recordFailedLogin(userId: string | undefined, email: string) {
 
 export async function POST(req: Request) {
   const requestId = extractRequestId(req);
+  const parsed = await parseLoginRequest(req);
+
+  if (!parsed.ok) {
+    return loginResult(req, parsed.nativeForm, "INVALID_LOGIN_REQUEST", 400);
+  }
+
+  const { email, password, nativeForm } = parsed;
+  if (!email || !password) {
+    return loginResult(req, nativeForm, "MISSING_CREDENTIALS", 400);
+  }
 
   try {
-    let body: { email?: string; password?: string };
-    try {
-      body = await req.json();
-    } catch {
-      return NextResponse.json(
-        {
-          error: "Invalid login request",
-          code: "INVALID_LOGIN_REQUEST",
-          detail: "Request body must be valid JSON.",
-        },
-        { status: 400 },
-      );
-    }
-
-    const email = String(body.email || "").trim().toLowerCase();
-    const password = String(body.password || "");
-
-    if (!email || !password) {
-      return NextResponse.json(
-        {
-          error: "Missing credentials",
-          code: "MISSING_CREDENTIALS",
-          detail: "Enter both email and password.",
-        },
-        { status: 400 },
-      );
-    }
-
     const clientIp = getClientIp(req);
 
-    // Apply separate local buckets before any database work. A combined
-    // IP+email key can be bypassed by rotating either dimension.
     const localIpLimit = rateLimit(
       `login:local:ip:${clientIp}`,
       AUTH_RATE_LIMIT,
@@ -119,6 +194,8 @@ export async function POST(req: Request) {
     );
     if (!localIpLimit.allowed || !localAccountLimit.allowed) {
       return tooManyAttempts(
+        req,
+        nativeForm,
         Math.max(localIpLimit.resetAt, localAccountLimit.resetAt),
       );
     }
@@ -130,13 +207,11 @@ export async function POST(req: Request) {
       logger.error("[login] database readiness failed", {
         requestId,
         errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+        prismaCode: (error as { code?: unknown } | null)?.code ?? null,
       });
-      return authenticationUnavailable(requestId);
+      return authenticationUnavailable(req, nativeForm, requestId, error);
     }
 
-    // Persistent buckets enforce the same two dimensions across serverless
-    // instances. They run only after database readiness succeeds, while the
-    // local buckets above protect the readiness path itself.
     let persistentIpLimit;
     let persistentAccountLimit;
     try {
@@ -148,11 +223,14 @@ export async function POST(req: Request) {
       logger.error("[login] persistent rate limiter failed", {
         requestId,
         errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+        prismaCode: (error as { code?: unknown } | null)?.code ?? null,
       });
-      return authenticationUnavailable(requestId);
+      return authenticationUnavailable(req, nativeForm, requestId, error);
     }
     if (!persistentIpLimit.allowed || !persistentAccountLimit.allowed) {
       return tooManyAttempts(
+        req,
+        nativeForm,
         Math.max(persistentIpLimit.resetAt, persistentAccountLimit.resetAt),
       );
     }
@@ -161,16 +239,11 @@ export async function POST(req: Request) {
       where: { email },
     });
 
-    // Always perform a bcrypt comparison. Missing users and users with a
-    // missing hash use a valid dummy hash so response shape and work factor do
-    // not reveal whether the account exists or how it is configured.
     const comparisonHash = user?.passwordHash || DUMMY_PASSWORD_HASH;
     let passwordOk = false;
     try {
       passwordOk = await bcrypt.compare(password, comparisonHash);
     } catch (error) {
-      // An invalid stored hash must not expose account state. Perform the dummy
-      // comparison before returning the same generic invalid-credentials result.
       await bcrypt.compare(password, DUMMY_PASSWORD_HASH).catch(() => false);
       logger.error("[login] stored password hash could not be verified", {
         requestId,
@@ -180,9 +253,19 @@ export async function POST(req: Request) {
       passwordOk = false;
     }
 
-    if (!user || !user.passwordHash || !passwordOk) {
+    // Audit C-5: a soft-deleted user must not be able to re-authenticate.
+    // Deactivation revokes existing sessions atomically (app/api/users/[id]),
+    // but that only removes the sessions the account already had — without this
+    // check a deactivated user who still knows their password simply logs in
+    // again and receives a brand-new session.
+    //
+    // Deliberately folded into the same branch as a wrong password: the
+    // response, status and failure accounting are identical, so this cannot be
+    // used to discover which accounts exist or which have been deactivated. The
+    // bcrypt comparison above has already run, so the timing shape is unchanged.
+    if (!user || !user.passwordHash || !passwordOk || user.deletedAt) {
       void recordFailedLogin(user?.id, email);
-      return NextResponse.json(INVALID_CREDENTIALS, { status: 401 });
+      return loginResult(req, nativeForm, "INVALID_CREDENTIALS", 401);
     }
 
     try {
@@ -192,16 +275,17 @@ export async function POST(req: Request) {
         requestId,
         userId: user.id,
         errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+        prismaCode: (error as { code?: unknown } | null)?.code ?? null,
       });
-      return authenticationUnavailable(requestId);
+      return authenticationUnavailable(req, nativeForm, requestId, error);
     }
 
-    // A post-authentication audit failure must not report login failure after a
-    // valid session cookie has already been created.
     void logAction({
       userId: user.id,
       action: "LOGIN",
-      description: `User ${user.email} logged in`,
+      entityType: "User",
+      entityId: user.id,
+      description: "User signed in successfully.",
     }).catch((error) => {
       logger.warn("[login] success audit was not persisted", {
         requestId,
@@ -210,12 +294,14 @@ export async function POST(req: Request) {
       });
     });
 
-    return NextResponse.json({ success: true });
+    if (nativeForm) return redirectTo(req, "/dashboard");
+    return withPrivateAuthHeaders(NextResponse.json({ success: true }));
   } catch (error) {
     logger.error("[login] unexpected failure", {
       requestId,
       errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+      prismaCode: (error as { code?: unknown } | null)?.code ?? null,
     });
-    return authenticationUnavailable(requestId);
+    return authenticationUnavailable(req, nativeForm, requestId, error);
   }
 }

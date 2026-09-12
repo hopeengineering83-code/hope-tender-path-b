@@ -2,35 +2,18 @@ import { NextResponse } from "next/server";
 import { forbiddenResponse, requireRole, unauthorizedResponse } from "../../../../../lib/auth";
 import { logAction } from "../../../../../lib/audit";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { getCurrentConfirmedBuildPlan, type BuildPlanItem } from "../../../../../lib/engine/build-plan";
+import { findOutsidePlanDocumentIds, supersedeOutsidePlanDocuments } from "../../../../../lib/engine/outside-plan-documents";
 import { MUTATION_RATE_LIMIT, rateLimit } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
 
 export const dynamic = "force-dynamic";
 
-const normalizeExactFileName = (value: string) => value.trim().toLowerCase().replace(/\s+/g, " ");
-
-async function getOutsidePlanDocIds(tenderId: string, userId: string): Promise<{ ids: string[]; planEmpty: boolean }> {
-  const tender = await prisma.tender.findFirst({
-    where: { id: tenderId, userId },
-    include: {
-      requirements: true,
-      generatedDocuments: {
-        where: { generationStatus: { not: "SUPERSEDED" } },
-        select: { id: true, name: true, exactFileName: true },
-      },
-    },
-  });
-  if (!tender) return { ids: [], planEmpty: false };
-  const confirmedPlan = await getCurrentConfirmedBuildPlan(prisma, tenderId, userId);
-  const planItems: BuildPlanItem[] = confirmedPlan.ok ? confirmedPlan.items : [];
-  const plan = { files: planItems, warnings: confirmedPlan.ok ? [] : [confirmedPlan.blocker] } as any;
-  if (plan.files.length === 0) return { ids: [], planEmpty: true };
-  const required = new Set(plan.files.map((f: any) => normalizeExactFileName(f.exactFileName)).filter(Boolean));
-  const ids = tender.generatedDocuments
-    .filter((d) => !required.has(normalizeExactFileName(d.exactFileName ?? d.name)))
-    .map((d) => d.id);
-  return { ids, planEmpty: false };
+// The rule lives in lib/engine/outside-plan-documents.ts so this manual control
+// and the automatic AUTO_FINALIZE stage cannot decide "outside the plan"
+// differently. It was inline here, which is why the automatic path had no way
+// to reach it at all.
+async function getOutsidePlanDocIds(tenderId: string, userId: string) {
+  return findOutsidePlanDocumentIds(prisma, { tenderId, userId });
 }
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -73,15 +56,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   if (selectedIds.length === 0) return NextResponse.json({ success: false, error: "No selected documents are outside the submission plan." }, { status: 400 });
 
-  await prisma.generatedDocument.updateMany({
-    where: { id: { in: selectedIds }, tenderId: id },
-    data: {
-      generationStatus: "SUPERSEDED",
-      validationStatus: "SUPERSEDED",
-      reviewStatus: "NOT_EXPORTABLE",
-      reviewNotes: "Superseded as outside submission plan.",
-    },
-  });
+  await supersedeOutsidePlanDocuments(prisma, { tenderId: id, documentIds: selectedIds });
 
   await logAction({ userId: actor.id, action: "OUTSIDE_PLAN_SUPERSEDED", entityType: "Tender", entityId: id, description: `${actor.email} superseded ${selectedIds.length} outside-plan document(s).`, metadata: { tenderId: id, supersededCount: selectedIds.length, supersededIds: selectedIds }, requestId });
 

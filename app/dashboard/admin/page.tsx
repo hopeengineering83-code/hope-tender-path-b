@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { UsersIcon, SparklesIcon, ShieldIcon, GaugeIcon } from "../../../components/icons";
 
 // SCREENSHOT-R2: Fix 404 on /dashboard/admin
 // The directory app/dashboard/admin/ existed with sub-pages (ai-readiness,
@@ -14,25 +15,25 @@ export default async function AdminIndexPage() {
       href: "/dashboard/users",
       label: "User Management",
       description: "Manage team access, roles, and invitations",
-      icon: "👥",
+      icon: <UsersIcon />,
     },
     {
       href: "/dashboard/admin/ai-readiness",
       label: "AI Readiness",
       description: "Check AI provider configuration and environment readiness",
-      icon: "🤖",
+      icon: <SparklesIcon />,
     },
     {
       href: "/dashboard/admin/safety-center",
       label: "System Safety Center",
       description: "Release guardian report and critical blocker checks",
-      icon: "🛡️",
+      icon: <ShieldIcon />,
     },
     {
       href: "/dashboard/system",
       label: "System Status",
       description: "Production gap analysis, database, and provider health",
-      icon: "🌡️",
+      icon: <GaugeIcon />,
     },
   ];
 

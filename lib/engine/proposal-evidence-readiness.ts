@@ -1,5 +1,6 @@
 import { prisma } from "../prisma";
 import { checkHighValueClaimEvidence } from "./claim-evidence-coverage";
+import { canUseVaultRecord, VAULT_REVIEW_CONSUMER_SELECT, type ReviewRecordState } from "../vault-review-provenance";
 
 type Severity = "HIGH" | "MEDIUM" | "LOW";
 
@@ -28,6 +29,7 @@ export type ProposalEvidenceReadiness = {
     tenderFilesWithExtractedText: number;
     companyDocuments: number;
     companyDocumentsExtracted: number;
+    /** Backward-compatible field names: counts runtime-authoritative selected evidence. */
     reviewedExpertsSelected: number;
     draftExpertsSelected: number;
     reviewedProjectsSelected: number;
@@ -65,8 +67,31 @@ export async function checkProposalEvidenceReadiness(tenderId: string, userId: s
     include: {
       files: { select: { id: true, extractedText: true } },
       requirements: true,
-      expertMatches: { where: { isSelected: true }, include: { expert: { select: { id: true, fullName: true, trustLevel: true, profile: true, sourceDocumentId: true } } } },
-      projectMatches: { where: { isSelected: true }, include: { project: { select: { id: true, name: true, trustLevel: true, summary: true, sourceDocumentId: true, evidences: { select: { id: true } } } } } },
+      expertMatches: {
+        where: { isSelected: true },
+        include: {
+          expert: {
+            select: {
+              ...VAULT_REVIEW_CONSUMER_SELECT.EXPERT,
+              id: true,
+              profile: true,
+            },
+          },
+        },
+      },
+      projectMatches: {
+        where: { isSelected: true },
+        include: {
+          project: {
+            select: {
+              ...VAULT_REVIEW_CONSUMER_SELECT.PROJECT,
+              id: true,
+              summary: true,
+              evidences: { select: { id: true } },
+            },
+          },
+        },
+      },
     },
   });
   if (!tender) return null;
@@ -100,12 +125,17 @@ export async function checkProposalEvidenceReadiness(tenderId: string, userId: s
   const tenderFilesWithExtractedText = tender.files.filter((f) => (f.extractedText ?? "").trim().length > 100).length;
   const companyDocuments = company?.documents ?? [];
   const companyDocumentsExtracted = companyDocuments.filter((d) => (d.extractedText ?? "").trim().length > 100 || d.aiExtractionStatus === "EXTRACTED").length;
-  const reviewedExperts = tender.expertMatches.filter((m) => m.expert.trustLevel === "REVIEWED");
-  const draftExperts = tender.expertMatches.filter((m) => m.expert.trustLevel !== "REVIEWED");
-  const reviewedProjects = tender.projectMatches.filter((m) => m.project.trustLevel === "REVIEWED");
-  const draftProjects = tender.projectMatches.filter((m) => m.project.trustLevel !== "REVIEWED");
-  const selectedExpertsWithSourceEvidence = reviewedExperts.filter((m) => Boolean(m.expert.sourceDocumentId) || (m.expert.profile ?? "").trim().length > 80).length;
-  const selectedProjectsWithSourceEvidence = reviewedProjects.filter((m) => Boolean(m.project.sourceDocumentId) || m.project.evidences.length > 0 || (m.project.summary ?? "").trim().length > 80).length;
+
+  // Runtime authority is canonical here. A durable SOURCE_VERIFIED record is
+  // equally eligible with an authenticated human REVIEWED record; neither path
+  // may be reduced to a raw trustLevel string check. This is the generation
+  // counterpart of the Engine's matching eligibility rule.
+  const authoritativeExperts = tender.expertMatches.filter((m) => canUseVaultRecord(m.expert as ReviewRecordState, "GENERATION"));
+  const draftExperts = tender.expertMatches.filter((m) => !canUseVaultRecord(m.expert as ReviewRecordState, "GENERATION"));
+  const authoritativeProjects = tender.projectMatches.filter((m) => canUseVaultRecord(m.project as ReviewRecordState, "GENERATION"));
+  const draftProjects = tender.projectMatches.filter((m) => !canUseVaultRecord(m.project as ReviewRecordState, "GENERATION"));
+  const selectedExpertsWithSourceEvidence = authoritativeExperts.filter((m) => Boolean(m.expert.sourceDocumentId) || (m.expert.profile ?? "").trim().length > 80).length;
+  const selectedProjectsWithSourceEvidence = authoritativeProjects.filter((m) => Boolean(m.project.sourceDocumentId) || m.project.evidences.length > 0 || (m.project.summary ?? "").trim().length > 80).length;
   const pricingWorkbookReady = Boolean(pricingWorkbook && pricingWorkbook.lines.length > 0 && pricingWorkbook.noPriceLeakage);
 
   const evidenceSummary = {
@@ -113,9 +143,9 @@ export async function checkProposalEvidenceReadiness(tenderId: string, userId: s
     tenderFilesWithExtractedText,
     companyDocuments: companyDocuments.length,
     companyDocumentsExtracted,
-    reviewedExpertsSelected: reviewedExperts.length,
+    reviewedExpertsSelected: authoritativeExperts.length,
     draftExpertsSelected: draftExperts.length,
-    reviewedProjectsSelected: reviewedProjects.length,
+    reviewedProjectsSelected: authoritativeProjects.length,
     draftProjectsSelected: draftProjects.length,
     selectedExpertsWithSourceEvidence,
     selectedProjectsWithSourceEvidence,
@@ -126,44 +156,46 @@ export async function checkProposalEvidenceReadiness(tenderId: string, userId: s
   else if (tenderFilesWithExtractedText === 0) blockers.push({ severity: "HIGH", category: "TENDER_EXTRACTION", title: "Tender files have no usable extracted text", detail: "Uploaded tender files exist, but extracted text is missing or too thin.", nextAction: "Re-extract tender files or upload machine-readable PDF/DOCX files." });
   else strengths.push(`${tenderFilesWithExtractedText} tender file(s) have usable extracted text.`);
 
-  if (requirements.length === 0) blockers.push({ severity: "HIGH", category: "CRITERIA_EXTRACTION", title: "No tender requirements extracted", detail: "No structured requirements exist, so proposal sections cannot map to exact criteria.", nextAction: "Run tender analysis and review the extracted requirements." });
+  if (requirements.length === 0) blockers.push({ severity: "HIGH", category: "CRITERIA_EXTRACTION", title: "No tender requirements extracted", detail: "No structured requirements exist, so proposal sections cannot map to exact criteria.", nextAction: "Run AI Analyze against the current tender sources." });
   else {
     strengths.push(`${requirements.length} tender requirement(s) are structured.`);
     const traceRatio = requirementSummary.withSourceTrace / Math.max(1, requirements.length);
-    if (traceRatio < 0.6) warnings.push({ severity: "MEDIUM", category: "SOURCE_TRACEABILITY", title: "Weak requirement source traceability", detail: `${requirementSummary.withSourceTrace}/${requirements.length} requirements have page/file/quote references.`, nextAction: "Re-run analysis or manually add source references so proposal claims cite exact tender sections." });
+    if (traceRatio < 0.6) warnings.push({ severity: "MEDIUM", category: "SOURCE_TRACEABILITY", title: "Weak requirement source traceability", detail: `${requirementSummary.withSourceTrace}/${requirements.length} requirements have page/file/quote references.`, nextAction: "Re-run AI Analyze after correcting the tender source/extraction if the current source grounding is incomplete." });
     else strengths.push("Most requirements have source traceability.");
   }
 
   if (!company) blockers.push({ severity: "HIGH", category: "COMPANY_KNOWLEDGE", title: "Company profile is missing", detail: "The proposal cannot be grounded in company capability without company knowledge.", nextAction: "Complete company setup and upload company documents." });
   else {
-    if (companyDocuments.length === 0) blockers.push({ severity: "HIGH", category: "COMPANY_DOCUMENTS", title: "No company documents uploaded", detail: "The engine needs company profile, CVs, project references, legal, financial, and compliance documents.", nextAction: "Upload and extract company documents before proposal generation." });
-    else if (companyDocumentsExtracted === 0) blockers.push({ severity: "HIGH", category: "COMPANY_DOCUMENTS", title: "Company documents are not extracted", detail: "Company documents exist, but no usable extracted content is available.", nextAction: "Run company knowledge extraction/re-extraction." });
+    if (companyDocuments.length === 0) blockers.push({ severity: "HIGH", category: "COMPANY_DOCUMENTS", title: "No company documents uploaded", detail: "The Engine needs genuine company profile, CV, project-reference, legal, financial, and compliance source evidence.", nextAction: "Upload the missing company source documents; ingestion and verification are automatic." });
+    else if (companyDocumentsExtracted === 0) blockers.push({ severity: "HIGH", category: "COMPANY_DOCUMENTS", title: "Company documents are not extracted", detail: "Company documents exist, but no usable extracted content is available.", nextAction: "Allow automatic Vault ingestion to retry; replace the source only if extraction remains unusable." });
     else strengths.push(`${companyDocumentsExtracted} company document(s) have extracted evidence.`);
 
-    if (!company.profileSummary || company.profileSummary.trim().length < 80) warnings.push({ severity: "MEDIUM", category: "COMPANY_PROFILE", title: "Company profile summary is weak", detail: "The company profile summary is missing or too short for strong positioning.", nextAction: "Review the company profile and add a source-grounded capability summary." });
-    if (company.legalRecords.length === 0) warnings.push({ severity: "MEDIUM", category: "LEGAL_EVIDENCE", title: "No legal records found", detail: "Legal eligibility evidence is not structured in the knowledge base.", nextAction: "Add registration, tax, licence, and eligibility records when required." });
-    if (company.financialRecords.length === 0) warnings.push({ severity: "LOW", category: "FINANCIAL_EVIDENCE", title: "No financial records found", detail: "Financial capacity evidence is not structured in the knowledge base.", nextAction: "Add audited turnover or capacity records if required by the tender." });
-    if (company.complianceRecords.length === 0) warnings.push({ severity: "LOW", category: "COMPLIANCE_EVIDENCE", title: "No compliance records found", detail: "Compliance certifications are not structured in the knowledge base.", nextAction: "Add ISO, authority, or sector compliance records when applicable." });
+    if (!company.profileSummary || company.profileSummary.trim().length < 80) warnings.push({ severity: "MEDIUM", category: "COMPANY_PROFILE", title: "Company profile summary is weak", detail: "The company profile summary is missing or too short for strong positioning.", nextAction: "Add genuine company-profile source evidence if stronger positioning is needed." });
+    if (company.legalRecords.length === 0) warnings.push({ severity: "MEDIUM", category: "LEGAL_EVIDENCE", title: "No legal records found", detail: "Legal eligibility evidence is not structured in the knowledge base.", nextAction: "Upload registration, tax, licence, and eligibility source documents when required." });
+    if (company.financialRecords.length === 0) warnings.push({ severity: "LOW", category: "FINANCIAL_EVIDENCE", title: "No financial records found", detail: "Financial capacity evidence is not structured in the knowledge base.", nextAction: "Upload audited turnover/capacity source evidence if required by the tender." });
+    if (company.complianceRecords.length === 0) warnings.push({ severity: "LOW", category: "COMPLIANCE_EVIDENCE", title: "No compliance records found", detail: "Compliance certifications are not structured in the knowledge base.", nextAction: "Upload authority/sector compliance source evidence when applicable." });
   }
 
   if (requirementSummary.expert > 0) {
-    if (tender.expertMatches.length === 0) blockers.push({ severity: "HIGH", category: "EXPERT_SELECTION", title: "No experts selected", detail: "The tender has expert/personnel criteria but no selected experts.", nextAction: "Run matching/rematch and select reviewed experts for each required role." });
-    else if (reviewedExperts.length === 0) blockers.push({ severity: "HIGH", category: "EXPERT_REVIEW", title: "Selected experts are not reviewed", detail: "Experts are selected, but none are marked REVIEWED.", nextAction: "Review selected expert records against source CVs before generation." });
-    else if (selectedExpertsWithSourceEvidence < reviewedExperts.length) warnings.push({ severity: "MEDIUM", category: "EXPERT_EVIDENCE", title: "Some reviewed experts lack source evidence", detail: `${selectedExpertsWithSourceEvidence}/${reviewedExperts.length} reviewed selected experts have source evidence or substantial profile.`, nextAction: "Attach source CV documents or strengthen reviewed expert profiles." });
-    else strengths.push("Selected experts are reviewed and evidence-backed.");
+    if (tender.expertMatches.length === 0) blockers.push({ severity: "HIGH", category: "EXPERT_SELECTION", title: "No experts selected", detail: "The tender has expert/personnel criteria but no selected experts.", nextAction: "Run Engine; it reconciles the Vault and selects the strongest eligible source-backed experts automatically." });
+    else if (authoritativeExperts.length === 0) blockers.push({ severity: "HIGH", category: "EXPERT_EVIDENCE", title: "Selected experts lack authoritative source evidence", detail: "Experts are selected, but none has durable REVIEWED or SOURCE_VERIFIED provenance.", nextAction: "Upload the missing genuine CV source evidence; no approval or promotion click is required after automatic verification." });
+    else if (selectedExpertsWithSourceEvidence < authoritativeExperts.length) warnings.push({ severity: "MEDIUM", category: "EXPERT_EVIDENCE", title: "Some authoritative experts have weak source payloads", detail: `${selectedExpertsWithSourceEvidence}/${authoritativeExperts.length} authoritative selected experts have a bound source document or substantial profile.`, nextAction: "Add stronger genuine CV source evidence for the affected records." });
+    else strengths.push("Selected experts have authoritative source-backed provenance.");
   }
 
   if (requirementSummary.projectExperience > 0) {
-    if (tender.projectMatches.length === 0) blockers.push({ severity: "HIGH", category: "PROJECT_SELECTION", title: "No project references selected", detail: "The tender has project-experience criteria but no selected project references.", nextAction: "Run matching/rematch and select reviewed projects that match the scope." });
-    else if (reviewedProjects.length === 0) blockers.push({ severity: "HIGH", category: "PROJECT_REVIEW", title: "Selected projects are not reviewed", detail: "Projects are selected, but none are marked REVIEWED.", nextAction: "Review selected project references against source documents before generation." });
-    else if (selectedProjectsWithSourceEvidence < reviewedProjects.length) warnings.push({ severity: "MEDIUM", category: "PROJECT_EVIDENCE", title: "Some reviewed projects lack source evidence", detail: `${selectedProjectsWithSourceEvidence}/${reviewedProjects.length} reviewed selected projects have source evidence or substantial summary.`, nextAction: "Attach completion certificates, testimonials, contracts, or strengthen project summaries." });
-    else strengths.push("Selected projects are reviewed and evidence-backed.");
+    if (tender.projectMatches.length === 0) blockers.push({ severity: "HIGH", category: "PROJECT_SELECTION", title: "No project references selected", detail: "The tender has project-experience criteria but no selected project references.", nextAction: "Run Engine; it reconciles the Vault and selects the strongest eligible source-backed projects automatically." });
+    else if (authoritativeProjects.length === 0) blockers.push({ severity: "HIGH", category: "PROJECT_EVIDENCE", title: "Selected projects lack authoritative source evidence", detail: "Projects are selected, but none has durable REVIEWED or SOURCE_VERIFIED provenance.", nextAction: "Upload the missing genuine project-reference source evidence; no approval or promotion click is required after automatic verification." });
+    else if (selectedProjectsWithSourceEvidence < authoritativeProjects.length) warnings.push({ severity: "MEDIUM", category: "PROJECT_EVIDENCE", title: "Some authoritative projects have weak source payloads", detail: `${selectedProjectsWithSourceEvidence}/${authoritativeProjects.length} authoritative selected projects have a bound source document, evidence row, or substantial summary.`, nextAction: "Add stronger genuine contract/reference/completion source evidence for the affected records." });
+    else strengths.push("Selected projects have authoritative source-backed provenance.");
   }
 
   const claimEvidenceFindings = checkHighValueClaimEvidence({
     company,
-    selectedReviewedExperts: reviewedExperts.map((m) => m.expert),
-    selectedReviewedProjects: reviewedProjects.map((m) => m.project),
+    // These argument names are historical. The arrays now contain every
+    // runtime-authoritative selected record, including SOURCE_VERIFIED.
+    selectedReviewedExperts: authoritativeExperts.map((m) => m.expert),
+    selectedReviewedProjects: authoritativeProjects.map((m) => m.project),
     tenderText: `${tender.title}\n${tender.description ?? ""}\n${tender.analysisSummary ?? ""}\n${requirements.map((r) => `${r.title}\n${r.description}`).join("\n")}`,
   });
   for (const finding of claimEvidenceFindings) {

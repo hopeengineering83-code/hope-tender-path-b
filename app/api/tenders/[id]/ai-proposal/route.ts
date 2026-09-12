@@ -19,6 +19,7 @@ import { resolveTenderOperationGate } from "../../../../../lib/engine/tender-ope
 import { logAction } from "../../../../../lib/audit";
 import { sanitizeError } from "../../../../../lib/sanitize-error";
 import { extractRequestId } from "../../../../../lib/request-id";
+import { loadDurableCompanySupportRecords } from "../../../../../lib/prisma-schema-compatibility";
 
 // Vercel route timeout — Claude proposal generation needs >10s default.
 // 60 = Hobby max; Pro applies its own plan limit when this is exceeded.
@@ -178,7 +179,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
   }
 
-  const [tender, company] = await Promise.all([
+  const [tender, companyBase] = await Promise.all([
     prisma.tender.findFirst({
       where: { id, userId },
       include: {
@@ -186,12 +187,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         files: { select: { originalFileName: true, extractedText: true } },
         expertMatches: {
           where: { isSelected: true },
-          include: { expert: true },
+          include: { expert: { include: { sourceDocument: true } } },
           orderBy: { score: "desc" },
         },
         projectMatches: {
           where: { isSelected: true },
-          include: { project: { include: { evidences: { orderBy: { createdAt: "desc" }, take: 5 } } } },
+          include: { project: { include: { evidences: { orderBy: { createdAt: "desc" }, take: 5 }, sourceDocument: true } } },
           orderBy: { score: "desc" },
         },
         complianceMatrix: { include: { requirement: { select: { title: true, description: true } } } },
@@ -202,28 +203,37 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       where: { userId },
       include: {
         documents: { orderBy: { updatedAt: "desc" }, take: 24 },
-        legalRecords: { orderBy: { updatedAt: "desc" }, take: 12 },
-        financialRecords: { orderBy: { fiscalYear: "desc" }, take: 12 },
-        complianceRecords: { orderBy: { updatedAt: "desc" }, take: 12 },
         // Vault fallback — mirrors generate-elite.ts: when selected
         // records are all unreviewed we substitute the firm's reviewed
         // vault so the AI proposal still has real names + evidence.
+        // Prefilter to the two trust levels that can possibly be usable, then
+        // let selectReviewedEvidenceForAIDraft apply the real authority
+        // (canUseVaultRecord). Filtering to trustLevel:"REVIEWED" here dropped
+        // every durably SOURCE_VERIFIED record before the resolver ever saw
+        // it, so a company whose evidence comes only from its own uploaded
+        // documents had an empty vault fallback and got a proposal with no
+        // expert or project evidence at all.
         experts: {
-          where: { trustLevel: "REVIEWED", deletedAt: null },
+          where: { trustLevel: { in: ["REVIEWED", "SOURCE_VERIFIED"] }, deletedAt: null },
           orderBy: [{ yearsExperience: "desc" }, { updatedAt: "desc" }],
           take: 12,
+          include: { sourceDocument: true },
         },
         projects: {
-          where: { trustLevel: "REVIEWED", deletedAt: null },
+          where: { trustLevel: { in: ["REVIEWED", "SOURCE_VERIFIED"] }, deletedAt: null },
           orderBy: [{ contractValue: "desc" }, { updatedAt: "desc" }],
           take: 8,
-          include: { evidences: { orderBy: { createdAt: "desc" }, take: 5 } },
+          include: { evidences: { orderBy: { createdAt: "desc" }, take: 5 }, sourceDocument: true },
         },
       },
     }),
   ]);
 
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
+  const supportRecords = companyBase
+    ? await loadDurableCompanySupportRecords(prisma, companyBase.id, 12)
+    : { legalRecords: [], financialRecords: [], complianceRecords: [], schemaCompatible: true };
+  const company = companyBase ? { ...companyBase, ...supportRecords } : null;
 
   // ── Operation gate (DRAFT_GENERATION) — non-blocking observability ────
   // AI proposal generation is a DRAFT_GENERATION operation. The gate
@@ -315,28 +325,28 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ success: true, proposal, fallback: true });
   }
 
-  let experts = tender.expertMatches.map((m) => m.expert).filter((e) => e.trustLevel === "REVIEWED");
-  let projects = tender.projectMatches.map((m) => m.project).filter((p) => p.trustLevel === "REVIEWED");
-
-  // Vault fallback: if selected matches are all unreviewed (AI_DRAFT /
-  // REGEX_DRAFT), use the company's reviewed vault.
-  // Do NOT include unreviewed evidence in AI draft context. Unreviewed
-  // records remain visible in dashboards but are excluded from factual
-  // proposal evidence generation.
-  const vaultExperts = (company as unknown as { experts?: typeof experts }).experts ?? [];
-  const vaultProjects = (company as unknown as { projects?: typeof projects }).projects ?? [];
-  const expertSelection = selectReviewedEvidenceForAIDraft(
-    tender.expertMatches.map((m) => m.expert),
-    vaultExperts,
-  );
+  // Vault fallback: if no selected match carries usable evidence, fall back to
+  // the company's own usable vault records.
+  // Eligibility is decided once, inside selectReviewedEvidenceForAIDraft, by
+  // canUseVaultRecord(..., "GENERATION") — the same authority the rest of
+  // generation uses. Draft records (and records whose provenance no longer
+  // verifies) stay visible in dashboards but are excluded from factual
+  // proposal evidence. Two naive raw-trustLevel prefilters used to run here
+  // first; they were both wrong and, since their results were immediately
+  // overwritten by the selection below, dead as well.
+  const selectedExperts = tender.expertMatches.map((m) => m.expert);
+  const selectedProjects = tender.projectMatches.map((m) => m.project);
+  const vaultExperts = (company as unknown as { experts?: typeof selectedExperts }).experts ?? [];
+  const vaultProjects = (company as unknown as { projects?: typeof selectedProjects }).projects ?? [];
+  const expertSelection = selectReviewedEvidenceForAIDraft(selectedExperts, vaultExperts);
   const projectSelection = selectReviewedEvidenceForAIDraft(
-    tender.projectMatches.map((m) => m.project),
-    vaultProjects as typeof projects,
+    selectedProjects,
+    vaultProjects as typeof selectedProjects,
   );
-  experts = expertSelection.evidence;
-  projects = projectSelection.evidence;
-  if (expertSelection.usedReviewedVaultFallback) logger.warn(`[ai-proposal] No REVIEWED selected experts — using ${experts.length} reviewed vault expert(s).`);
-  if (projectSelection.usedReviewedVaultFallback) logger.warn(`[ai-proposal] No REVIEWED selected projects — using ${projects.length} reviewed vault project(s).`);
+  const experts = expertSelection.evidence;
+  const projects = projectSelection.evidence;
+  if (expertSelection.usedReviewedVaultFallback) logger.warn(`[ai-proposal] No usable selected experts — using ${experts.length} usable vault expert(s).`);
+  if (projectSelection.usedReviewedVaultFallback) logger.warn(`[ai-proposal] No usable selected projects — using ${projects.length} usable vault project(s).`);
   if (experts.length === 0 && tender.expertMatches.length > 0) logger.warn("[ai-proposal] No reviewed expert evidence available — expert claims will be omitted from AI draft evidence context.");
   if (projects.length === 0 && tender.projectMatches.length > 0) logger.warn("[ai-proposal] No reviewed project evidence available — project claims will be omitted from AI draft evidence context.");
 
@@ -680,14 +690,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             generationStatus: "GENERATED",
             validationStatus: "PENDING",
             reviewStatus: "NOT_EXPORTABLE",
-            contentSummary: `Quick AI draft generated ${new Date().toLocaleString()}. Run Generate Docs for the full submission-ready package.`,
+            contentSummary: `Quick AI draft generated ${new Date().toLocaleString()}. Run Engine to produce the full submission-ready package; generation continues automatically after it succeeds.`,
           },
         })
             },
           }),
         );;
-      } catch {
-        // Non-blocking — draft already returned to UI
+      } catch (e) {
+        // Non-blocking — draft already returned to UI — but log a warn so
+        // side-effect persistence failures (e.g. AiJob state update didn't
+        // land) are visible to operators. Previously bare `catch {}`.
+        logger.warn("[ai-proposal] quick-draft persistence side-effect failed — draft already returned to UI", {
+          detail: e,
+          tenderId,
+        });
       }
       } // end else (central gate passed)
     }

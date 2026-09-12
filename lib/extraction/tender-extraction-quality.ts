@@ -28,8 +28,19 @@ export type TenderExtractionQualityResult = {
 
 /**
  * Assess extraction quality from extracted source files.
+ *
+ * Renamed from `assessExtractionQuality` to `assessTenderExtractionQuality`
+ * to disambiguate from the text-level `assessExtractionQuality` in
+ * lib/extraction-quality.ts. This variant takes structured per-file args
+ * (fileId, fileName, extractionStatus, pages, tables) and returns a
+ * TenderExtractionQualityResult with status / blockers / warnings /
+ * nextActions. The text-level variant takes (text, fileName?) and returns
+ * an ExtractionQualityReport with a quality score.
+ *
+ * Backward-compat alias `assessExtractionQuality` is preserved below so
+ * existing imports continue to work.
  */
-export function assessExtractionQuality(args: {
+export function assessTenderExtractionQuality(args: {
   tenderId: string;
   files: Array<{
     fileId: string;

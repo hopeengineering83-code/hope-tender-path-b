@@ -65,11 +65,11 @@ describe("submission-plan completeness — 6 of 19 case", () => {
 });
 
 describe("submission-plan completeness — official originals", () => {
-  it("marks Bid Bond / Tax Clearance / Bid Form rows as OFFICIAL_ORIGINAL_REQUIRED", () => {
+  it("marks Bid Bond / Tax Clearance / Bid Form rows as MISSING_TENDER_SOURCE_FORM", () => {
     const required = ["Technical-Proposal.docx", "Bid-Bond.pdf", "Tax-Clearance.pdf", "Bid-Form.docx"];
     const report = resolveSubmissionPlanCompleteness({ tender: planTender(required), generatedDocuments: [] });
     const labels = new Set(report.rows.filter((r) => r.officialOriginal).map((r) => r.status));
-    assert.ok(labels.has("OFFICIAL_ORIGINAL_REQUIRED"));
+    assert.ok(labels.has("MISSING_TENDER_SOURCE_FORM"));
   });
 });
 
@@ -152,7 +152,13 @@ describe("submission-plan completeness — plan provenance", () => {
     // PLAN_NOT_BUILT was renamed to REQUIREMENTS_FOUND_PLAN_NOT_BUILT to distinguish
     // "requirements exist but no plan built" from legacy PLAN_NOT_BUILT (backward compat kept in type).
     assert.equal(report.planState, "REQUIREMENTS_FOUND_PLAN_NOT_BUILT");
-    assert.ok(report.warnings.some((w) => /Build Submission Plan/i.test(w)));
+    // The warning used to read "Build Submission Plan before Generate Docs".
+    // There is no Generate Docs action and no separate manual plan build: Run
+    // Engine uses the verified source and current analysis to create and verify
+    // the Build Plan. The warning must name
+    // that action, and must not name either removed one.
+    assert.ok(report.warnings.some((w) => /Run Engine uses the verified source and current AI analysis to create and verify the Build Plan/i.test(w)));
+    assert.ok(!report.warnings.some((w) => /Generate Docs/i.test(w)));
   });
 
   it("marks requirement-derived file rows as an unconfirmed draft plan", () => {
@@ -180,8 +186,9 @@ describe("submission-plan completeness — plan provenance", () => {
     assert.equal(report.totalRequired, 1);
     assert.equal(report.hasExplicitScope, false);
     assert.equal(report.planState, "DERIVED_DRAFT_UNCONFIRMED");
-    assert.equal(report.requiresUserConfirmation, true);
+    assert.equal(report.requiresUserConfirmation, false);
     assert.ok(report.warnings.some((w) => /derived draft/i.test(w)));
+    assert.ok(report.warnings.some((w) => /Run Engine must verify/i.test(w)));
   });
 });
 

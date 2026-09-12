@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
+import { canUseVaultRecord, VAULT_REVIEW_CONSUMER_SELECT, type ReviewRecordState } from "../../../../../lib/vault-review-provenance";
 
 export const dynamic = "force-dynamic";
 
@@ -48,8 +49,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       files: { select: { id: true, originalFileName: true, classification: true, extractedText: true, extractionMethod: true } },
       requirements: true,
       complianceMatrix: true,
-      expertMatches: { include: { expert: { select: { id: true, fullName: true, title: true, trustLevel: true, sourceDocumentId: true, profile: true } } }, orderBy: { score: "desc" } },
-      projectMatches: { include: { project: { select: { id: true, name: true, clientName: true, sector: true, trustLevel: true, sourceDocumentId: true, summary: true } } }, orderBy: { score: "desc" } },
+      expertMatches: { include: { expert: { select: { ...VAULT_REVIEW_CONSUMER_SELECT.EXPERT, id: true, profile: true } } }, orderBy: { score: "desc" } },
+      projectMatches: { include: { project: { select: { ...VAULT_REVIEW_CONSUMER_SELECT.PROJECT, id: true, summary: true } } }, orderBy: { score: "desc" } },
     },
   });
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
@@ -102,6 +103,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     score: match.score,
     isSelected: match.isSelected,
     trustLevel: match.expert.trustLevel,
+    usableAsEvidence: canUseVaultRecord(match.expert as ReviewRecordState, "GENERATION"),
     sourceDocumentId: match.expert.sourceDocumentId,
     evidenceConfidence: evidenceConfidence(`${match.rationale ?? ""} ${match.expert.profile ?? ""}`),
     rationale: short(match.rationale),
@@ -116,6 +118,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     score: match.score,
     isSelected: match.isSelected,
     trustLevel: match.project.trustLevel,
+    usableAsEvidence: canUseVaultRecord(match.project as ReviewRecordState, "GENERATION"),
     sourceDocumentId: match.project.sourceDocumentId,
     evidenceConfidence: evidenceConfidence(`${match.rationale ?? ""} ${match.project.summary ?? ""}`),
     rationale: short(match.rationale),
@@ -123,8 +126,13 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
   const weakRequirements = requirementTrace.filter((r) => r.sourceFiles.length === 0 || r.supportRows.length === 0);
   const weakMandatoryCritical = weakRequirements.filter((r) => r.priority === "MANDATORY" || r.priority === "CRITICAL");
-  const weakSelectedExperts = expertEvidence.filter((e) => e.isSelected && (e.trustLevel !== "REVIEWED" || ["NONE", "LOW"].includes(e.evidenceConfidence)));
-  const weakSelectedProjects = projectEvidence.filter((p) => p.isSelected && (p.trustLevel !== "REVIEWED" || ["NONE", "LOW"].includes(p.evidenceConfidence)));
+  // "Weak" means generation genuinely cannot use the record, not that its
+  // label is not literally "REVIEWED". Testing the raw trustLevel flagged
+  // every durably SOURCE_VERIFIED record as weak, so a company whose evidence
+  // comes only from its own uploaded documents saw this panel report all of
+  // its evidence as weak while generation and export used it without issue.
+  const weakSelectedExperts = expertEvidence.filter((e) => e.isSelected && (!e.usableAsEvidence || ["NONE", "LOW"].includes(e.evidenceConfidence)));
+  const weakSelectedProjects = projectEvidence.filter((p) => p.isSelected && (!p.usableAsEvidence || ["NONE", "LOW"].includes(p.evidenceConfidence)));
 
   return NextResponse.json({
     success: true,

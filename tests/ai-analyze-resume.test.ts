@@ -135,35 +135,34 @@ describe("buildResumeState — extracts previousChunkResults from saved job outp
   });
 });
 
-// ── Source-level checks: streaming path ──────────────────────────────────────
+// ── Source-level checks: DIRECTIVE 2 — streaming path removed ───────────────
+// The streaming path (handleStreamingAnalyze) was removed. The legacy /ai-analyze
+// route now returns 422 MANUAL_AI_ANALYZE_REQUIRED. Resume is handled by the
+// durable worker (runNextChunk) which loads existing job checkpoints.
 
 const routeSource = readFileSync(
   path.join(process.cwd(), "app/api/tenders/[id]/ai-analyze/route.ts"),
   "utf-8",
 );
 
-describe("ai-analyze/route (streaming) — resume fixes", () => {
-  it("continueJobId is declared as let (mutable) in streaming path", () => {
-    // Must be let, not const, so auto-resume can assign the discovered job id.
-    const streamingSection = routeSource.slice(0, routeSource.indexOf("async function handleStreamingAnalyze") + 10_000);
-    assert.ok(
-      streamingSection.includes("let continueJobId"),
-      "streaming path must declare continueJobId as let so auto-resume can assign it",
-    );
+describe("ai-analyze/route — DIRECTIVE 2: streaming removed, resume via durable worker", () => {
+  it("route returns MANUAL_AI_ANALYZE_REQUIRED (no streaming path)", () => {
+    assert.ok(routeSource.includes("MANUAL_AI_ANALYZE_REQUIRED"),
+      "route must return MANUAL_AI_ANALYZE_REQUIRED for fresh job creation");
   });
 
-  it("streaming path passes previousChunkResults to analyzeWithAI", () => {
-    assert.ok(
-      /analyzeWithAI\(tenderContent, \{[^}]*deadlineAt[^}]*startFromChunk[^}]*previousChunkResults[^}]*onChunkComplete/.test(routeSource),
-      "streaming path must pass previousChunkResults and onChunkComplete to analyzeWithAI",
-    );
+  it("route returns MANUAL_AI_ANALYZE_REQUIRED (no streaming)", () => {
+    assert.ok(routeSource.includes("MANUAL_AI_ANALYZE_REQUIRED"),
+      "route must return MANUAL_AI_ANALYZE_REQUIRED instead of creating fresh jobs");
   });
 
-  it("streaming path uses buildResumeState to extract chunkResults from job output", () => {
-    assert.ok(
-      routeSource.includes("buildResumeState(parseJobOutput("),
-      "streaming path must use buildResumeState(parseJobOutput(...)) to load resume state",
+  it("durable worker handles resume via runNextChunk checkpoints", () => {
+    const serviceSource = readFileSync(
+      path.join(process.cwd(), "lib/ai-jobs/analysis-job-service.ts"),
+      "utf-8",
     );
+    assert.ok(serviceSource.includes("runNextChunk"),
+      "analysis-job-service must have runNextChunk for durable resume");
   });
 
   it("streaming path detects resumable PARTIAL_SUCCESS or FAILED jobs for auto-resume when no continueJobId", () => {

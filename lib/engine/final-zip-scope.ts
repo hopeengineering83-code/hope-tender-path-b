@@ -1,4 +1,10 @@
 import { safeParseJsonArray } from "../safe-json";
+import {
+  inferEnvelope,
+  inferSubmissionPlanFormat,
+  type SubmissionEnvelope,
+  type SubmissionPlanFormat,
+} from "./submission-plan";
 /**
  * Strict final-ZIP scope resolver.
  *
@@ -40,6 +46,12 @@ export type ZipEntry = {
   source: ZipEntrySource;
   /** ID of the GeneratedDocument that produced this entry. Null only for synthesised entries. */
   generatedDocId: string | null;
+  /** Exact submission-plan position persisted into the package manifest. */
+  order: number;
+  /** Physical tender envelope this file belongs to. */
+  envelope: SubmissionEnvelope;
+  /** Required output format persisted into the package manifest. */
+  format: SubmissionPlanFormat;
 };
 
 export type FinalZipScopeInput = {
@@ -55,6 +67,7 @@ export type FinalZipScopeInput = {
     exactFileName: string | null;
     exactOrder: number | null;
     documentType: string | null;
+    format?: string | null;
   }>;
 };
 
@@ -169,17 +182,37 @@ export function buildFinalZipEntries(input: FinalZipScopeInput): FinalZipScopeRe
   // Use MAX_SAFE_INTEGER as sentinel so that null-order docs sort LAST,
   // not at position 99 (which would misplace docs with exactOrder >= 100).
   const docsSorted = [...input.generatedDocs].sort((a, b) => (a.exactOrder ?? Number.MAX_SAFE_INTEGER) - (b.exactOrder ?? Number.MAX_SAFE_INTEGER));
+  const maxExplicitOrder = docsSorted.reduce(
+    (maximum, doc) => (
+      Number.isInteger(doc.exactOrder) && (doc.exactOrder ?? 0) > 0
+        ? Math.max(maximum, doc.exactOrder!)
+        : maximum
+    ),
+    0,
+  );
+  let fallbackOrder = maxExplicitOrder;
 
   for (const doc of docsSorted) {
     const baseName = doc.exactFileName ?? doc.name;
     const isCv = isCvGeneratedDocument(doc);
+    const order = Number.isInteger(doc.exactOrder) && (doc.exactOrder ?? 0) > 0
+      ? doc.exactOrder!
+      : ++fallbackOrder;
+    const envelope = inferEnvelope(doc.documentType ?? "TECHNICAL", baseName);
+    const format = inferSubmissionPlanFormat(baseName, doc.format);
+    const entryAuthority = { order, envelope, format };
 
     // Drop the legacy unconditional Win-Probability-Report.docx if it
     // somehow shows up as a generated doc — the route synthesises it
     // separately, but defence-in-depth.
     if (WIN_PROBABILITY_NAME_RE.test(baseName.replace(/^.*\//, ""))) {
       if (requireWinProb) {
-        entries.push({ name: baseName, source: "WIN_PROBABILITY", generatedDocId: doc.id });
+        entries.push({
+          name: baseName,
+          source: "WIN_PROBABILITY",
+          generatedDocId: doc.id,
+          ...entryAuthority,
+        });
       } else {
         exclusions.push({
           docId: doc.id,
@@ -197,6 +230,7 @@ export function buildFinalZipEntries(input: FinalZipScopeInput): FinalZipScopeRe
         name: `CVs/${baseNameNoPath}`,
         source: "CV_FOLDER",
         generatedDocId: doc.id,
+        ...entryAuthority,
       });
     } else {
       // Default placement: root. Matches legacy behaviour when no
@@ -205,6 +239,7 @@ export function buildFinalZipEntries(input: FinalZipScopeInput): FinalZipScopeRe
         name: baseName,
         source: "GENERATED_DOC",
         generatedDocId: doc.id,
+        ...entryAuthority,
       });
     }
   }

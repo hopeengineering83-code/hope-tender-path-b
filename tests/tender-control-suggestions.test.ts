@@ -91,7 +91,7 @@ describe("deriveControlSuggestions — every blocker category from the audit tas
     const out = deriveControlSuggestions(baseInput({ officialOriginalStatus: { required: 3, attached: 1 } }));
     const s = out.find((x) => x.code === "MISSING_OFFICIAL_ORIGINALS");
     assert.ok(s);
-    assert.match(s!.title, /2 official original/);
+    assert.match(s!.title, /2 tender-issued form/);
   });
 
   it("QUALITY_FAILED_DOCS when qualityFailedCandidates > 0", () => {

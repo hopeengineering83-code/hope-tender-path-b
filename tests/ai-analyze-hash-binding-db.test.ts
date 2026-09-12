@@ -61,18 +61,18 @@ const EXTRACTED = [
   "and CVs of key personnel. Ministry of Test Infrastructure, Capital City.",
 ].join(" ");
 
-// Recompute the canonical hash the way the release snapshot + generation gate do:
-// active tender files (id/originalFileName/extractedText/classification/createdAt)
-// plus the company vault-document digest.
+// Recompute the terminal currentness hash the way the release snapshot +
+// generation gate do: active tender source files only. Company Vault material
+// remains in the immutable provider snapshot and is revision-bound separately;
+// automatic Vault verification during Engine must not stale tender analysis.
 function canonicalHashFor(
   files: AnalysisContentFile[],
-  companyDocs: AnalysisContentCompanyDocument[],
+  _companyDocs: AnalysisContentCompanyDocument[],
   tender: { title: string | null; description: string | null; intakeSummary: string | null },
 ): string {
   return computeAnalysisContentHash(
     buildTenderAnalysisContent(
       { title: tender.title, description: tender.description, intakeSummary: tender.intakeSummary, files },
-      companyDocs.length ? { documents: companyDocs } : undefined,
     ),
   );
 }
@@ -349,30 +349,45 @@ dbDescribe("AI Analyze analysisInputHash binding (PostgreSQL behavioral)", () =>
   // mode) against Postgres and proves the persisted analysisInputHash is exactly
   // what the snapshot recomputes — even with a soft-deleted file present and > the
   // old 5-doc vault cap. This is the end-to-end guard for the second P1.
-  it("createAnalysisJob persists an analysisInputHash the snapshot reproduces (ACTIVE files + full vault)", async () => {
+  it("createAnalysisJob preserves the full authorized provider hash until promotion", async () => {
     const tenderId = await seedTenderWithFile(); // 1 active + 1 DELETED file; company has 7 vault docs
     const { tender, files, companyDocs } = await loadCanonicalInputs(prisma, tenderId, user.id);
-    const canonical = canonicalHashFor(files, companyDocs, tender);
+    const terminalCanonical = canonicalHashFor(files, companyDocs, tender);
+    const providerCanonical = computeAnalysisContentHash(buildTenderAnalysisContent(
+      { title: tender.title, description: tender.description, intakeSummary: tender.intakeSummary, files },
+      { documents: companyDocs },
+    ));
 
-    const result = await createAnalysisJob({ tenderId, userId: user.id });
+    const result = await createAnalysisJob({
+      tenderId,
+      userId: user.id,
+      manualAuthority: {
+        source: "manual-ai-analyze",
+        actorUserId: user.id,
+        authorizedAt: new Date().toISOString(),
+      },
+    });
     const job = await prisma.aiJob.findUniqueOrThrow({
       where: { id: result.jobId },
       select: { analysisInputHash: true },
     });
 
-    // The durable path must persist the SAME canonical hash (active files + full vault).
+    // Before provider execution/promotion, this field protects the immutable
+    // authorized input (tender source + full Vault). Successful promotion
+    // rebinds it to terminalCanonical for public currentness checks.
     assert.equal(
       job.analysisInputHash,
-      canonical,
-      "createAnalysisJob must persist the canonical hash built from ACTIVE files + the full vault set",
+      providerCanonical,
+      "createAnalysisJob must persist the full authorized provider-input hash",
     );
 
-    // And the snapshot must reproduce it — no ANALYSIS_HASH_MISMATCH from the background path.
+    // A queued job is not a terminal current analysis and therefore must not
+    // match the public source-only terminal binding yet.
     const snapshot = await getTenderReleaseSnapshot(prisma, tenderId, user.id);
     assert.ok(snapshot, "snapshot must resolve");
-    assert.equal(snapshot!.analysis.latestJobHash, canonical, "persisted background hash must equal canonical");
-    assert.equal(snapshot!.analysis.currentContentHash, canonical, "snapshot must recompute the identical canonical hash");
-    assert.equal(snapshot!.analysis.contentHashMatch, true, "background-path hash must be reproducible (contentHashMatch=true)");
+    assert.equal(snapshot!.analysis.latestJobHash, providerCanonical, "queued job retains the provider-input hash");
+    assert.equal(snapshot!.analysis.currentContentHash, terminalCanonical, "snapshot recomputes the tender-source terminal binding");
+    assert.equal(snapshot!.analysis.contentHashMatch, false, "queued provider input cannot authorize terminal currentness");
   });
 
   // ── Deterministic Company-Vault ordering: hash is order-independent ──

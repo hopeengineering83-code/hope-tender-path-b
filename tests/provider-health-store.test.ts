@@ -190,7 +190,11 @@ describe("provider-health-store module contract (file-level checks)", () => {
     const { readFileSync } = await import("node:fs");
     const source = readFileSync("lib/engine/provider-health-store.ts", "utf8");
     assert.match(source, /redactError/);
-    assert.match(source, /KEY_REDACTED/);
+    // redactError delegates to canonical redactSecrets() from sanitize-error.ts.
+    // Previously this checked for inline KEY_REDACTED — consolidated so patterns
+    // cannot diverge across the 5 call sites.
+    assert.match(source, /redactSecrets/);
+    assert.match(source, /from "\.\.\/sanitize-error"/);
   });
 
   it("app/api/admin/provider-health/route.ts is protected by ADMIN_SECRET", async () => {

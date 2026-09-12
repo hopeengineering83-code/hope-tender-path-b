@@ -42,13 +42,13 @@ describe("final-submission-readiness — severityForReasons", () => {
 });
 
 describe("final-submission-readiness — nextActionForReason", () => {
-  it("guides users to attach original for tender-issued forms", () => {
-    assert.match(nextActionForReason("ORIGINAL_REQUIRED"), /Attach.*original/i);
-    assert.match(nextActionForReason("REPLACE_WITH_ORIGINAL"), /Attach.*original/i);
+  it("guides users to upload tender package for tender-issued forms", () => {
+    assert.match(nextActionForReason("ORIGINAL_REQUIRED"), /upload.*tender|tender.*Intake/i);
+    assert.match(nextActionForReason("REPLACE_WITH_ORIGINAL"), /upload.*tender|tender.*Intake/i);
   });
   it("guides users to generate when planned/control", () => {
-    assert.match(nextActionForReason("[CONTROL_RECORD_ONLY] x"), /Generate.*final file|attach.*original/i);
-    assert.match(nextActionForReason("PLANNED"), /Generate.*final file|attach.*original/i);
+    assert.match(nextActionForReason("[CONTROL_RECORD_ONLY] x"), /Generate.*final file/i);
+    assert.match(nextActionForReason("PLANNED"), /Generate.*final file/i);
   });
   it("guides users to fix missing content", () => {
     assert.match(nextActionForReason("fileContent is missing"), /Regenerate.*upload.*missing/i);
@@ -202,6 +202,48 @@ describe("final-submission-readiness — CLIENT_NAME_MISSING blocker (source-lev
     const blockIndex = source.indexOf("CLIENT_NAME_MISSING");
     const blockContext = source.slice(blockIndex, blockIndex + 200);
     assert.ok(blockContext.includes("HIGH"), "CLIENT_NAME_MISSING blocker must use HIGH severity");
+  });
+
+  it("does not push CLIENT_NAME_MISSING when checkFullExportReadiness's own CLIENT_NAME_REQUIRED already covers it", () => {
+    // Confirmed by a real Playwright screenshot: checkFullExportReadiness
+    // (export-readiness.ts) seeds tenderLevelBlockers with CLIENT_NAME_REQUIRED
+    // for the same empty-clientName condition this later check independently
+    // re-flagged as CLIENT_NAME_MISSING — both landed in the same
+    // tenderLevelBlockers array and rendered as two unrelated red warnings for
+    // one real issue. Guarded here at the source so every consumer (not just
+    // the Tender Release State wrapper) gets the deduped list.
+    assert.match(source, /!tenderLevelBlockers\.some\(\(b\) => b\.category === "CLIENT_NAME_REQUIRED"\)/);
+  });
+
+  it("does not emit the synthetic __tender__ document blocker when NO_ACTIVE_GENERATED_DOCUMENTS already covers it", () => {
+    // Confirmed by a real cross-page comparison against a live seeded
+    // tender: app/dashboard/documents/page.tsx (which calls
+    // getFinalSubmissionReadiness via /export-readiness directly, not
+    // through the Tender Release State wrapper) showed 10 blockers, while
+    // the tender workspace/command-center/report (which go through
+    // lib/engine/tender-release-state.ts's reconcileBlockers) showed 9 for
+    // the exact same tender at the exact same moment. checkExportReadiness's
+    // synthetic __tender__ document failure and
+    // checkFullExportReadiness's own NO_ACTIVE_GENERATED_DOCUMENTS
+    // tenderLevelBlocker both fire from the identical docs.length === 0
+    // condition. Guarded here at the source so every direct consumer
+    // agrees, not just the wrapper.
+    assert.match(source, /hasNoActiveDocumentsTenderBlocker/);
+    assert.match(source, /failure\.documentId === "__tender__"/);
+  });
+
+  it("does not push SOURCE_TRACEABILITY_MISSING when checkFullExportReadiness's own SOURCE_REFERENCES_MISSING already covers it", () => {
+    // lib/engine/export-readiness.ts's ungroundedMandatory filter (seeded
+    // into tenderLevelBlockers above, producing SOURCE_REFERENCES_MISSING)
+    // uses the identical untraced-mandatory-requirement predicate as
+    // missingTraceability here (sourceConfidence <= 0, no
+    // sourceTenderFileId/sourcePageNumber/sourceExactQuote/sectionReference).
+    // SOURCE_REFERENCES_MISSING fires whenever any such requirement exists at
+    // all, so it always also fires once this function's own 10%-ratio
+    // SOURCE_TRACEABILITY_MISSING condition is met -- the same untraced-
+    // requirements fact would otherwise render as two separate blockers.
+    // Guarded here at the source so every consumer agrees.
+    assert.match(source, /!tenderLevelBlockers\.some\(\(b\) => b\.category === "SOURCE_REFERENCES_MISSING"\)/);
   });
 });
 

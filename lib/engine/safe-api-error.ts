@@ -34,7 +34,7 @@ export function safeApiError(
 ): NextResponse {
   const diagnosticId = newDiagnosticId(routeName);
   const status = opts.status ?? 500;
-  const message = opts.message ?? `${routeName.replace(/-/g, " ")} check failed. Refresh to retry. Diagnostic ID: ${diagnosticId}`;
+  const message = opts.message ?? `${routeName.replace(/-/g, " ")} check failed. Diagnostic ID: ${diagnosticId}`;
 
   // Log the raw error server-side only — never in the response body.
   const rawDetail = error instanceof Error ? error.constructor.name : typeof error;

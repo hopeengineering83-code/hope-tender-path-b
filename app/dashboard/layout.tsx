@@ -8,56 +8,14 @@ import { MobileSidebarToggle } from "../../components/mobile-sidebar-toggle";
 import type { ReactNode } from "react";
 import { NotificationBell } from "../components/notification-bell";
 import { BuildVersionBadge } from "../../components/build-version-badge";
-
-const NAV_GROUPS_BASE = [
-  {
-    title: "Workspace",
-    roles: null as string[] | null,
-    links: [
-      { href: "/dashboard", label: "Overview", icon: "🏠" },
-      { href: "/dashboard/tenders", label: "Active Tenders", icon: "📋" },
-      { href: "/dashboard/history", label: "Tender History", icon: "🕘" },
-      { href: "/dashboard/calendar", label: "Deadline Calendar", icon: "📅" },
-    ],
-  },
-  {
-    title: "Knowledge",
-    roles: ["ADMIN", "PROPOSAL_MANAGER"] as string[] | null,
-    links: [
-      { href: "/dashboard/company", label: "Knowledge Vault", icon: "🗄️" },
-      { href: "/dashboard/company/readiness", label: "Profile Readiness", icon: "📈" },
-      { href: "/dashboard/company/plan-b-import", label: "Legacy Data Import", icon: "📥" },
-      { href: "/dashboard/company/review-board", label: "Review Board", icon: "⚖️" },
-      { href: "/dashboard/company/review", label: "Data Diagnostics", icon: "🩺" },
-      { href: "/dashboard/assets", label: "Brand Assets", icon: "🖼️" },
-      { href: "/dashboard/setup", label: "Setup Wizard", icon: "✨" },
-      { href: "/dashboard/settings", label: "Settings", icon: "⚙️" },
-    ],
-  },
-  {
-    title: "Engine",
-    roles: null as string[] | null,
-    links: [
-      { href: "/dashboard/analysis", label: "Global Analysis", icon: "🧠" },
-      { href: "/dashboard/matching", label: "Global Matching", icon: "🧩" },
-      { href: "/dashboard/compliance", label: "Global Compliance", icon: "🛡️" },
-      { href: "/dashboard/documents", label: "Document Archive", icon: "📄" },
-      { href: "/dashboard/export", label: "Export Hub", icon: "📦" },
-      { href: "/dashboard/activity", label: "Activity Logs", icon: "📜" },
-      { href: "/dashboard/analytics", label: "System Analytics", icon: "📊" },
-      { href: "/dashboard/search", label: "Global Search", icon: "🔭" },
-    ],
-  },
-  {
-    title: "Admin",
-    roles: ["ADMIN"] as string[] | null,
-    links: [
-      { href: "/dashboard/users", label: "User Management", icon: "👥" },
-      { href: "/dashboard/admin/ai-readiness", label: "AI Readiness", icon: "🤖" },
-      { href: "/dashboard/system", label: "System Status", icon: "🌡️" },
-    ],
-  },
-];
+import { HeaderPageTitle } from "../../components/header-page-title";
+import { SearchIcon } from "../../components/icons";
+import { DashboardGroupSubnav } from "../../components/dashboard-group-subnav";
+import { TenderDetailDeleteControl } from "../../components/tender-detail-delete-control";
+import {
+  DASHBOARD_NAV_GROUPS,
+  filterDashboardNavGroupsByRole,
+} from "../../lib/dashboard-navigation";
 
 export default async function DashboardLayout({ children }: { children: ReactNode }) {
   const userId = await getSession();
@@ -71,9 +29,8 @@ export default async function DashboardLayout({ children }: { children: ReactNod
   ]);
   if (!user) redirect("/login");
 
-  const groups = NAV_GROUPS_BASE
-    .filter((group) => !group.roles || group.roles.includes(user.role))
-    .map((group) => ({ title: group.title, links: group.links }));
+  const groups = filterDashboardNavGroupsByRole(DASHBOARD_NAV_GROUPS, user.role);
+  const canDeleteTenders = user.role === "ADMIN" || user.role === "PROPOSAL_MANAGER";
 
   return (
     <div className="min-h-screen min-w-0 bg-slate-50 xl:flex">
@@ -117,10 +74,23 @@ export default async function DashboardLayout({ children }: { children: ReactNod
       </aside>
 
       <main id="main-content" className="min-w-0 flex-1" tabIndex={-1}>
-        <div className="sticky top-0 z-30 flex min-w-0 justify-end border-b bg-white/90 px-4 py-2 backdrop-blur-sm xl:px-8">
-          <NotificationBell initialUnread={unreadCount} />
+        <div className="sticky top-0 z-30 flex min-w-0 items-center justify-between border-b bg-white/90 px-4 py-2 backdrop-blur-sm xl:px-8">
+          <HeaderPageTitle />
+          <div className="flex items-center gap-2">
+            <TenderDetailDeleteControl canDelete={canDeleteTenders} />
+            <Link
+              href="/dashboard/search"
+              aria-label="Global Search"
+              title="Global Search"
+              className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+            >
+              <SearchIcon />
+            </Link>
+            <NotificationBell initialUnread={unreadCount} />
+          </div>
         </div>
         <div className="mx-auto w-full min-w-0 max-w-7xl p-4 sm:p-6 xl:p-8">
+          <DashboardGroupSubnav setupComplete={Boolean(company?.setupCompletedAt)} />
           {children}
         </div>
       </main>

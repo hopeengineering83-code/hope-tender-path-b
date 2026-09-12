@@ -5,7 +5,14 @@ export type ReleaseSnapshotEligibilityInput = {
   metadataFinalBlocker: string | null;
   requirementsBlocker: string | null;
   buildPlanGateBlocker: string | null;
-  vaultBlocker: string | null;
+  /** Matching/draft blocker: neither current SOURCE_VERIFIED nor human REVIEWED evidence is selected. */
+  matchingVaultBlocker: string | null;
+  /**
+   * Deprecated compatibility input. Vault evidence authority is already
+   * enforced by matchingVaultBlocker and the safe runtime-authority resolver.
+   * This value must not create a second human-only approval gate.
+   */
+  finalApprovalVaultBlocker: string | null;
   mandatoryRequirementCount: number;
   evidenceCoveragePercent: number;
   allMandatoryGrounded: boolean;
@@ -25,12 +32,10 @@ function compactUnique(values: Array<string | null | undefined>): string[] {
 }
 
 /**
- * Pure release-snapshot eligibility resolver.
- *
- * Draft generation and final output deliberately have different Tender Facts
- * authority rules. Drafts may proceed with a sufficiently safe manual value;
- * export and Final ZIP additionally require source grounding or sufficient
- * final audit. Every downstream list inherits every upstream blocker.
+ * Sole tier-inheritance owner. Current, source-backed Company Vault evidence
+ * has one authority contract across all tiers: durable SOURCE_VERIFIED and
+ * durable human REVIEWED evidence are equally eligible. Human review remains
+ * an optional audit action, not an additional export prerequisite.
  */
 export function buildReleaseSnapshotEligibility(
   input: ReleaseSnapshotEligibilityInput,
@@ -41,7 +46,7 @@ export function buildReleaseSnapshotEligibility(
     input.metadataGenerationBlocker,
     input.requirementsBlocker,
     input.buildPlanGateBlocker,
-    input.vaultBlocker,
+    input.matchingVaultBlocker,
   ]);
 
   const evidenceBlocker =

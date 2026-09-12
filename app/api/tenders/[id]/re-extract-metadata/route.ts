@@ -36,6 +36,7 @@ import {
 } from "../../../../../lib/engine/source-grounded-metadata-repair";
 import { logAction } from "../../../../../lib/audit";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
+import { invalidateTenderForSourceRevision } from "../../../../../lib/engine/source-revision-invalidation";
 
 // ─── Root-cause fix for "Re-extract from PDF" doesn't clean corruption ──
 // PRIOR BUG: tryFill used "fill-empty-only" semantics, treating any
@@ -351,7 +352,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // persisted below; only the source-evidence columns are skipped.
   }
 
-  await prisma.tender.update({ where: { id }, data: update });
+  // A metadata correction here can change the exact tender-identifying
+  // values (client name, reference, deadline, submission details, ...)
+  // that an already-generated document, confirmed BuildPlan, or in-flight
+  // AI job baked in — those must not silently keep looking valid against
+  // corrected data. Reusing the same invalidation the byte-level
+  // re-extract/upload routes already run keeps every source-derived
+  // artifact consistent regardless of whether the correction came from new
+  // bytes or from re-running inference over the same bytes.
+  await prisma.$transaction(async (tx) => {
+    await tx.tender.update({ where: { id }, data: update });
+    await invalidateTenderForSourceRevision(tx, id, "TENDER_METADATA_CORRECTED");
+  });
   await logAction({
     userId: actor.id,
     action: "TENDER_UPDATE",

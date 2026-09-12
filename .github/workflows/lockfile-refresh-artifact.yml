@@ -8,6 +8,70 @@ on:
     branches:
       - release/production-engine-2026-06
   workflow_dispatch:
+    inputs:
+      confirm:
+        description: >-
+          TEMPORARY, owner-authorized. Type "accept" to run the one final
+          hosted AI-Analyze -> Run-Engine -> ZIP acceptance against the
+          Preview deployment. Type "inspect" to run the READ-ONLY vault and
+          selection inspection instead (no generation, no writes). Type
+          "provision" to migrate a freshly created Preview database and create
+          the owner account on it. Type "export" to verify a package the OWNER
+          has already generated: it runs the same export, ZIP download and
+          artifact inspection as "accept" but SKIPS AI Analyze and Run Engine,
+          so it neither supersedes the owner's package nor spends provider
+          quota. Type "health" to read /api/health and print BOTH database
+          fingerprints (the pooled one the Preview reports and the direct one
+          the migration URL resolves to) without touching anything — run this
+          first after any database swap. Type "ready" to check whether the
+          owner's re-upload has finished: it reports vault documents, brand
+          assets, projects, experts, tender files and extraction progress, and
+          it always succeeds, so it can be polled without painting a failed
+          check on the PR. Type "enrich" to bring already-stored Project rows
+          up to the behaviour the ingestion paths now have — portfolio numbers
+          derived from each record's own reference text, and a country column
+          that actually holds a country. It DRY-RUNS by default and prints the
+          full before/after census; it writes only when apply_enrichment is
+          "yes". Any other value (including blank) runs only the ordinary
+          lockfile-refresh job.
+        required: false
+        default: ""
+      expected_fingerprint:
+        description: >-
+          TEMPORARY, required with confirm=provision. The fingerprint of the
+          database being rebuilt, AS THE MIGRATION URL SEES IT. The rebuild
+          re-checks it and refuses to run against anything else, so the target
+          can never be implicit or inherited from a stale secret.
+
+          NOT necessarily the number /api/health prints. The fingerprint is
+          sha256(host/dbname), Vercel holds the pooled host and the migration
+          secret holds the direct one, so the same database hashes two ways and
+          the 2026-09-07 rebuild refused on exactly that mismatch. Run
+          confirm=health first: it prints both and labels which one belongs
+          here.
+        required: false
+        default: ""
+      tender_id:
+        description: >-
+          TEMPORARY, paired with confirm=accept. The Preview tender ID
+          (already uploaded, canonical files and vault already in place).
+          Leave blank with confirm=inspect and the read-only inspection
+          discovers the tender from /api/tenders — the ID is created by the
+          owner's own upload, so it cannot be known before that upload, and a
+          default carried over from a previous database would inspect a tender
+          that no longer exists.
+        required: false
+        default: ""
+      apply_enrichment:
+        description: >-
+          Paired with confirm=enrich. Leave blank (or anything but "yes") and
+          the enrichment is a true dry run: it reads every Project row, prints
+          exactly what it would change and writes nothing. Set it to "yes" to
+          apply those changes to the Preview database. The dry run is printed
+          either way, so an applied run still shows what it decided and which
+          rows it refused to decide.
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -45,3 +109,1132 @@ jobs:
             package-lock.json
           if-no-files-found: error
           retention-days: 1
+
+  # ─── TEMPORARY — owner-authorized, single-use ──────────────────────────────
+  #
+  # Drives the real hosted acceptance walkthrough (AI Analyze -> Run Engine ->
+  # automatic ENGINE_RUN -> PROPOSAL_GENERATION -> AUTO_FINALIZE -> ZIP)
+  # against the Preview deployment, using the tender and canonical vault
+  # already uploaded there. Every mutating route it calls
+  # (manual-ai-analyze, engine, export) requires a real authenticated owner
+  # session — this sandbox cannot authenticate as the owner and cannot POST to
+  # the Preview host at all (its egress proxy rejects it by policy), so this
+  # job runs the walkthrough from a GitHub-hosted runner instead, using:
+  #   - PREVIEW_OWNER_EMAIL / PREVIEW_OWNER_PASSWORD — signed in through the
+  #     real /api/auth/login endpoint exactly as e2e/global-setup.ts does
+  #     (same Origin and Referer a same-origin browser form would send, so
+  #     strict CSRF stays enabled). The password is never printed, and the
+  #     returned hope_session value is registered with ::add-mask:: before it
+  #     is used, so it cannot appear in any log line either.
+  #   - AI_JOBS_WORKER_SECRET — the secret drain-ai-job-queue.yml already
+  #     uses to drain this same Preview's AiJob queue via X-Worker-Secret.
+  #
+  # Runs ONLY on workflow_dispatch with confirm=accept. Uploads the final ZIP
+  # and the readiness/export-readiness responses as a workflow artifact for
+  # inspection; makes no other write beyond the normal application actions a
+  # signed-in owner clicking through the UI would make. Remove this job, the
+  # confirm=accept branch, and the tender_id input once acceptance is done.
+  # Two modes share this job because the verification after generation is
+  # identical and duplicating ~200 lines of it would let the two drift.
+  # "accept" clicks the owner's two manual gates itself; "export" starts from a
+  # package the owner already generated, so only the gate-clicking steps below
+  # are conditional. Everything from the export snapshot onwards runs in both.
+  temporary-preview-hosted-acceptance:
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      && (inputs.confirm == 'accept' || inputs.confirm == 'export')
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    permissions:
+      contents: read
+    env:
+      OWNER_EMAIL: ${{ secrets.PREVIEW_OWNER_EMAIL }}
+      OWNER_PASSWORD: ${{ secrets.PREVIEW_OWNER_PASSWORD }}
+      WORKER_SECRET: ${{ secrets.AI_JOBS_WORKER_SECRET }}
+      BASE_URL: https://hope-tender-path-b-git-0db72a-hopeengineering83-codes-projects.vercel.app
+      TENDER_ID: ${{ inputs.tender_id }}
+    steps:
+      - name: Stamp the moment this run began
+        run: echo "RUN_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" >> "$GITHUB_ENV"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify secrets and inputs are present
+        run: |
+          if [ -z "$OWNER_EMAIL" ]; then
+            echo "::error::PREVIEW_OWNER_EMAIL secret is not set."
+            exit 1
+          fi
+          if [ -z "$OWNER_PASSWORD" ]; then
+            echo "::error::PREVIEW_OWNER_PASSWORD secret is not set."
+            exit 1
+          fi
+          if [ -z "$WORKER_SECRET" ]; then
+            echo "::error::AI_JOBS_WORKER_SECRET secret is not set."
+            exit 1
+          fi
+          if [ -z "$TENDER_ID" ]; then
+            echo "::error::tender_id input is required."
+            exit 1
+          fi
+
+      - name: Sign in through the real /api/auth/login endpoint
+        run: |
+          # Same request shape e2e/global-setup.ts uses: JSON credentials with
+          # the Origin and Referer a same-origin browser form would send, so
+          # strict CSRF stays enabled. Credentials go in a --data-binary file
+          # rather than argv so they never reach the process table.
+          umask 077
+          printf '{"email":%s,"password":%s}' \
+            "$(printf '%s' "$OWNER_EMAIL" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" \
+            "$(printf '%s' "$OWNER_PASSWORD" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" \
+            > /tmp/login-body.json
+          status=$(curl -sS --connect-timeout 15 --max-time 45 \
+            -o /tmp/login-body-response.json -D /tmp/login-headers.txt \
+            -w "%{http_code}" \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json" \
+            -H "Origin: $BASE_URL" \
+            -H "Referer: $BASE_URL/login" \
+            --data-binary @/tmp/login-body.json \
+            "$BASE_URL/api/auth/login")
+          rm -f /tmp/login-body.json
+          echo "login status: $status"
+          if [ "$status" != "200" ]; then
+            echo "::error::Login against the Preview app failed (HTTP $status). Check PREVIEW_OWNER_EMAIL / PREVIEW_OWNER_PASSWORD."
+            rm -f /tmp/login-headers.txt /tmp/login-body-response.json
+            exit 1
+          fi
+          cookie=$(grep -i '^set-cookie:' /tmp/login-headers.txt \
+            | grep -o 'hope_session=[^;]*' \
+            | head -1 \
+            | cut -d= -f2-)
+          rm -f /tmp/login-headers.txt /tmp/login-body-response.json
+          if [ -z "$cookie" ]; then
+            echo "::error::Login succeeded but no hope_session cookie was returned."
+            exit 1
+          fi
+          # Register the session value as a masked secret BEFORE it is used, so
+          # it can never surface in a later log line.
+          echo "::add-mask::$cookie"
+          echo "SESSION_COOKIE=$cookie" >> "$GITHUB_ENV"
+          echo "Signed in; session captured and masked."
+
+      - name: Verify the session authenticates against the target tender
+        run: |
+          resp=$(curl -sS --connect-timeout 15 --max-time 30 -w "\n---STATUS:%{http_code}---" \
+            -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/tenders/$TENDER_ID")
+          status=$(echo "$resp" | grep -oE "STATUS:[0-9]+" | cut -d: -f2)
+          echo "GET tender status: $status"
+          if [ "$status" != "200" ]; then
+            echo "::error::The signed-in session could not read tender $TENDER_ID (HTTP $status). Confirm the tender belongs to PREVIEW_OWNER_EMAIL's account."
+            exit 1
+          fi
+          echo "Session verified against tender $TENDER_ID."
+
+      - name: Trigger AI Analyze (manual, owner-authorized)
+        if: inputs.confirm == 'accept'
+        run: |
+          resp=$(curl -sS --connect-timeout 15 --max-time 60 -X POST -w "\n---STATUS:%{http_code}---" \
+            -H "Cookie: hope_session=$SESSION_COOKIE" -H "Origin: $BASE_URL" \
+            "$BASE_URL/api/tenders/$TENDER_ID/manual-ai-analyze")
+          echo "$resp"
+          status=$(echo "$resp" | grep -oE "STATUS:[0-9]+" | cut -d: -f2)
+          if [ "$status" != "200" ] && [ "$status" != "202" ]; then
+            echo "::error::manual-ai-analyze failed (HTTP $status)."
+            exit 1
+          fi
+
+      - name: Wait for AI Analyze to reach a terminal state
+        if: inputs.confirm == 'accept'
+        run: bash scripts/tmp-await-tender-jobs.sh 40
+
+      - name: Snapshot readiness after AI Analyze
+        if: inputs.confirm == 'accept'
+        run: |
+          curl -sS --connect-timeout 15 --max-time 30 -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/tenders/$TENDER_ID/workflow-center" | tee /tmp/workflow-center-after-analyze.json
+
+      - name: Record the artifact this run starts from
+        if: inputs.confirm == 'accept'
+        run: |
+          # Run 33996268451 passed every gate below while regenerating nothing:
+          # it delivered a ZIP whose contentSha256, byte size and defect counts
+          # were identical to the run before it. Run Engine is idempotent
+          # against an unchanged analysis revision, so re-triggering it enqueued
+          # no job at all — the newest ENGINE_RUN/PROPOSAL_GENERATION/
+          # AUTO_FINALIZE rows were two runs old and the document's updatedAt
+          # had not moved. A green result like that says nothing about whether a
+          # generation-path code change reached the client's document.
+          #
+          # So the hash of the artifact this run starts from is recorded here,
+          # and compared after the chain settles.
+          curl -sS --connect-timeout 15 --max-time 90 -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/admin/generated-proposals/audit?tenderId=$TENDER_ID&includeReady=true" > /tmp/audit-before.json
+          python3 - <<'PYEOF'
+          import json
+          audit = json.load(open('/tmp/audit-before.json', encoding='utf-8'))
+          rows = [r for r in audit.get('documents', []) if r.get('finalExportCandidate')]
+          sha = (rows[0].get('contentSha256') or '') if rows else ''
+          print(f"baseline artifact sha256: {sha[:16] or '(none)'}")
+          open('/tmp/baseline-sha.txt', 'w').write(sha)
+          PYEOF
+
+      - name: Trigger Run Engine (manual, owner-authorized)
+        if: inputs.confirm == 'accept'
+        run: |
+          resp=$(curl -sS --connect-timeout 15 --max-time 60 -X POST -w "\n---STATUS:%{http_code}---" \
+            -H "Cookie: hope_session=$SESSION_COOKIE" -H "Origin: $BASE_URL" -H "Content-Type: application/json" \
+            -d '{"action":"run"}' \
+            "$BASE_URL/api/tenders/$TENDER_ID/engine")
+          echo "$resp"
+          status=$(echo "$resp" | grep -oE "STATUS:[0-9]+" | cut -d: -f2)
+          # 202 is the normal success shape: the route enqueues a durable
+          # ENGINE_RUN job and returns Accepted, exactly as manual-ai-analyze does.
+          if [ "$status" != "200" ] && [ "$status" != "202" ]; then
+            echo "::error::Run Engine failed (HTTP $status)."
+            exit 1
+          fi
+          # reusedActiveJob and the returned jobId are the route's own account of
+          # whether this enqueued work or handed back an earlier job.
+          echo "$resp" | grep -oE '"(jobId|reusedActiveJob|sourceRevision)":[^,}]*' || true
+
+      - name: Wait for ENGINE_RUN -> PROPOSAL_GENERATION -> AUTO_FINALIZE to settle
+        if: inputs.confirm == 'accept'
+        run: bash scripts/tmp-await-tender-jobs.sh 120
+
+      - name: Fail if any job in this run's chain failed
+        if: inputs.confirm == 'accept'
+        run: |
+          # The settle loop exits when nothing is QUEUED or RUNNING. A FAILED
+          # job is terminal, so it satisfies that condition perfectly — and the
+          # old, still-valid document then goes on satisfying every gate below.
+          # That is how run 33996268451 reported a fully green walkthrough while
+          # PROPOSAL_GENERATION had failed 1.3 seconds after ENGINE_RUN handed
+          # off to it. The failure has to be read out explicitly.
+          curl -sS --connect-timeout 15 --max-time 45 -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/ai-jobs?tenderId=$TENDER_ID&take=12" > /tmp/jobs-final.json
+          python3 - <<'PYEOF'
+          import json, os, datetime
+          started = os.environ['RUN_STARTED_AT']
+          payload = json.load(open('/tmp/jobs-final.json', encoding='utf-8'))
+          jobs = payload.get('jobs') or payload.get('data') or (payload if isinstance(payload, list) else [])
+          failed = []
+          for job in jobs:
+              created = str(job.get('createdAt') or '')
+              status = str(job.get('status') or '')
+              if created >= started and status in ('FAILED', 'CANCELED'):
+                  failed.append(f"{job.get('jobType')} {status} id={job.get('id')} created={created} error={job.get('errorMessage')}")
+          for line in failed:
+              print(line)
+          if failed:
+              raise SystemExit(
+                  f"{len(failed)} job(s) in this run's chain did not succeed. The pipeline did not "
+                  "complete, and any readiness or export result below refers to a document an "
+                  "earlier run produced."
+              )
+          print("every job created by this run reached a successful terminal state")
+          PYEOF
+
+      - name: Read what letterhead actually did on this run
+        if: inputs.confirm == 'accept'
+        run: |
+          # Live proof for the storage-backed-letterhead fix (3e41c502), and it
+          # has to sit HERE rather than with the PDF audit further down.
+          #
+          # Reproduced problem: run 34625093741 ran the whole chain green and
+          # then stopped at "Require real final readiness with zero blockers".
+          # Every branding check in this workflow lives after that gate, so a
+          # single unrelated readiness blocker means the letterhead question
+          # goes unanswered for another full hosted run. The generation job
+          # already knows the answer the moment it finishes — read it there.
+          #
+          # PROPOSAL_GENERATION's output carries letterheadAppliedCount and
+          # letterheadSkipReason, and /api/ai-jobs/{id} exposes both. Zero is
+          # never reported bare: the reason names which of the exits was taken.
+          python3 - <<'PYEOF'
+          import json, os, subprocess
+          started = os.environ['RUN_STARTED_AT']
+          base, cookie = os.environ['BASE_URL'], os.environ['SESSION_COOKIE']
+          jobs = json.load(open('/tmp/jobs-final.json', encoding='utf-8')).get('jobs') or []
+          gen = [j for j in jobs
+                 if j.get('jobType') == 'PROPOSAL_GENERATION' and str(j.get('createdAt') or '') >= started]
+          if not gen:
+              raise SystemExit('This run created no PROPOSAL_GENERATION job, so nothing generated documents to brand.')
+          job = sorted(gen, key=lambda j: str(j.get('createdAt')))[-1]
+          detail = json.loads(subprocess.run(
+              ['curl', '-sS', '--connect-timeout', '15', '--max-time', '45',
+               '-H', f'Cookie: hope_session={cookie}',
+               f"{base}/api/ai-jobs/{job['id']}"],
+              capture_output=True, text=True, check=True).stdout).get('job') or {}
+          output = detail.get('output') or {}
+          applied = output.get('letterheadAppliedCount')
+          reason = output.get('letterheadSkipReason')
+          for step in detail.get('steps') or []:
+              if step.get('stepName') == 'proposal.complete':
+                  print(f"proposal.complete: {step.get('message')}")
+          print(f"letterheadAppliedCount={applied!r}")
+          print(f"letterheadSkipReason={reason!r}")
+          if not applied:
+              raise SystemExit(
+                  'Letterhead reached 0 generated documents on this run. '
+                  f'The generation job gives the cause: {reason or "(no reason recorded)"}'
+              )
+          print(f'letterhead applied to {applied} generated document(s)')
+          PYEOF
+
+      - name: Setup Node for artifact inspection
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies for artifact inspection
+        run: npm ci --no-audit --no-fund --ignore-scripts
+
+      - name: Audit the delivered PDF for branding, before the export gate
+        run: |
+          # "letterhead applied to 1 file(s)" says the DOCX was branded. It
+          # does NOT say the client's PDF carries that branding: letterhead is
+          # applied after generateTenderDocuments, the PDF is finalized
+          # separately, and the surface that would catch a disagreement (the
+          # ZIP audit) sits behind the export gate.
+          #
+          # GET /download?type=pdf serves the finalized PDF itself without
+          # assembling a ZIP, so this reads the real delivered bytes even while
+          # an unrelated readiness blocker holds the package back.
+          status=$(curl -sS --connect-timeout 15 --max-time 120 \
+            -o /tmp/delivered-technical-proposal.pdf -w "%{http_code}" \
+            -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/tenders/$TENDER_ID/download?type=pdf")
+          size=$(wc -c < /tmp/delivered-technical-proposal.pdf)
+          echo "PDF HTTP:$status SIZE:$size"
+          if [ "$status" != "200" ]; then
+            # Observed on run 34627029199: HTTP 409
+            # MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE. proposalPdf() runs the
+            # same assertTenderReadyForGenerationAndExport gate as the ZIP, so
+            # there is NO route to the delivered bytes that skips it. That is
+            # the gate working; it is not a reason to add a bypass.
+            #
+            # This step is an observation, not an acceptance criterion, so it
+            # must not be the thing that fails the job — the canonical
+            # readiness step below says the same thing in the right place.
+            # It records NOT MEASURED explicitly, because a missing branding
+            # line must never be mistaken for a passing one.
+            echo "::warning::BRANDING IN THE DELIVERED PDF: NOT MEASURED — the finalized PDF is gate-refused (HTTP $status)."
+            {
+              echo "BRANDING IN THE DELIVERED PDF: NOT MEASURED"
+              echo "reason: GET /download?type=pdf returned HTTP $status"
+              head -c 2000 /tmp/delivered-technical-proposal.pdf
+              echo
+            } | tee /tmp/pdf-branding-pre-gate.txt
+            rm -f /tmp/delivered-technical-proposal.pdf
+            exit 0
+          fi
+          node scripts/tmp-inspect-pdf-typography-and-assets.mjs \
+            /tmp/delivered-technical-proposal.pdf 2>&1 | tee /tmp/pdf-branding-pre-gate.txt
+
+      - name: Snapshot final workflow-center and export-readiness state
+        run: |
+          curl -sS --connect-timeout 15 --max-time 30 -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/tenders/$TENDER_ID/workflow-center" | tee /tmp/workflow-center-final.json
+          echo
+          curl -sS --connect-timeout 15 --max-time 90 -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/tenders/$TENDER_ID/export-readiness" | tee /tmp/export-readiness-final.json
+          echo
+          curl -sS --connect-timeout 15 --max-time 90 -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/admin/generated-proposals/audit?tenderId=$TENDER_ID&includeReady=true" | tee /tmp/generated-proposal-audit.json
+
+      # accept-only: it compares against a baseline hash that only the
+      # accept path records. In export mode this run deliberately regenerates
+      # NOTHING — it verifies a package the owner already produced — so
+      # demanding a changed hash would fail by design. The export-mode
+      # equivalent is the step after it.
+      - name: Prove this run actually regenerated the artifact
+        if: inputs.confirm == 'accept'
+        run: |
+          # Guards the trap described in "Record the artifact this run starts
+          # from". If the hash has not moved, the pipeline handed back the
+          # document an earlier run produced, and nothing below can tell you
+          # anything about a generation-path change in this commit.
+          python3 - <<'PYEOF'
+          import json, sys
+          baseline = open('/tmp/baseline-sha.txt', encoding='utf-8').read().strip()
+          audit = json.load(open('/tmp/generated-proposal-audit.json', encoding='utf-8'))
+          rows = [r for r in audit.get('documents', []) if r.get('finalExportCandidate')]
+          if not rows:
+              raise SystemExit('Audit returned no final-export candidate rows')
+          current = (rows[0].get('contentSha256') or '').strip()
+          print(f"baseline sha256: {baseline[:16] or '(none)'}")
+          print(f"current  sha256: {current[:16] or '(none)'}")
+          if not current:
+              raise SystemExit('The final artifact has no contentSha256 to compare')
+          if baseline and baseline == current:
+              raise SystemExit(
+                  'This run regenerated nothing: the final artifact is byte-identical to the one '
+                  'it started from. Run Engine is idempotent against an unchanged analysis revision, '
+                  'so a green result here would prove nothing about generation-path changes in this '
+                  'commit. Change the source revision (or the analysis) before re-running.'
+              )
+          print('regeneration confirmed: the delivered artifact is new')
+          PYEOF
+
+      - name: Require a real package to verify (export mode)
+        if: inputs.confirm == 'export'
+        run: |
+          # Export mode must not silently "verify" an empty package. On
+          # 2026-09-11T10:29Z this tender had currentOutputs 0 and every rule
+          # read PENDING_PACKAGE — a state in which the export gate is
+          # correctly closed and there is nothing to inspect. Fail loudly here
+          # rather than produce an inspection report about nothing.
+          python3 - <<'PYEOF'
+          import json
+          audit = json.load(open('/tmp/generated-proposal-audit.json', encoding='utf-8'))
+          rows = [r for r in audit.get('documents', []) if r.get('finalExportCandidate')]
+          summary = audit.get('summary') or {}
+          print(f"currentOutputs={summary.get('currentOutputs')} "
+                f"finalExportCandidates={summary.get('finalExportCandidates')} "
+                f"readyForExport={summary.get('readyForExport')} "
+                f"staleOutputs={summary.get('staleOutputs')}")
+          if not rows:
+              raise SystemExit(
+                  'No final-export candidate documents exist. There is no package to verify — '
+                  'the owner gates (Run Engine, then generation) have not produced current '
+                  'outputs for this tender.'
+              )
+          for r in rows:
+              print(f"  {r.get('exactFileName') or r.get('documentName')} "
+                    f"sha256={(r.get('contentSha256') or '(none)')[:16]} "
+                    f"updatedAt={r.get('updatedAt')} "
+                    f"quality={r.get('qualityScore')}/{r.get('qualityRecommendedStatus')}")
+              if not (r.get('contentSha256') or '').strip():
+                  raise SystemExit(f"{r.get('exactFileName')} has no contentSha256 — its bytes are not verifiable")
+          print(f"package present: {len(rows)} final-export candidate document(s)")
+          PYEOF
+
+      - name: Require real final readiness with zero blockers
+        run: |
+          python3 - <<'PYEOF'
+          import json
+          with open('/tmp/export-readiness-final.json', encoding='utf-8') as stream:
+              result = json.load(stream)
+          blockers = result.get('blockers') or []
+          if result.get('ok') is not True or blockers:
+              raise SystemExit(f"Hosted readiness did not pass: ok={result.get('ok')!r}, blockers={len(blockers)}")
+          print(f"export-readiness: ok={result.get('ok')} status={result.get('status')} blockers={len(blockers)}")
+          PYEOF
+
+      - name: Require the audit surface to agree with export-readiness
+        run: |
+          # Defect 6: these two surfaces previously disagreed about the same
+          # bytes because the audit could not read a PDF at all. It reported
+          # qualityScore 0 / DRAFT_ONLY while export-readiness reported READY.
+          # They must now reach the same verdict on the same artifact.
+          python3 - <<'PYEOF'
+          import json
+          audit = json.load(open('/tmp/generated-proposal-audit.json', encoding='utf-8'))
+          rows = [r for r in audit.get('documents', []) if r.get('finalExportCandidate')]
+          if not rows:
+              raise SystemExit('Audit returned no final-export candidate rows')
+          for r in rows:
+              print(f"audit: {r.get('exactFileName')} score={r.get('qualityScore')} "
+                    f"status={r.get('qualityRecommendedStatus')} readyForExport={r.get('readyForExport')} "
+                    f"zipEligible={r.get('zipEligible')} visibleTextInspectable={r.get('visibleTextInspectable')} "
+                    f"sha256={(r.get('contentSha256') or '')[:16]}")
+              if not r.get('visibleTextInspectable'):
+                  raise SystemExit(f"Audit could not read the artifact text of {r.get('exactFileName')!r} "
+                                   "- the surface is judging bytes it never opened")
+              if r.get('qualityRecommendedStatus') == 'DRAFT_ONLY':
+                  raise SystemExit(f"Audit still reports DRAFT_ONLY for {r.get('exactFileName')!r}")
+              if not r.get('readyForExport') or not r.get('zipEligible'):
+                  raise SystemExit(f"Audit says not exportable while export-readiness said READY: {r.get('recommendedAction')}")
+              for issue in r.get('qualityIssues', []):
+                  print(f"   quality issue: {issue.get('severity')} {issue.get('code')}: {issue.get('message')}")
+          PYEOF
+
+      - name: Trigger export readiness build (POST /export)
+        run: |
+          resp=$(curl -sS --connect-timeout 15 --max-time 60 -X POST -w "\n---STATUS:%{http_code}---" \
+            -H "Cookie: hope_session=$SESSION_COOKIE" -H "Origin: $BASE_URL" \
+            "$BASE_URL/api/tenders/$TENDER_ID/export")
+          echo "$resp" | tee /tmp/export-response.json
+          status=$(echo "$resp" | grep -oE "STATUS:[0-9]+" | cut -d: -f2)
+          if [ "$status" != "200" ]; then
+            echo "::error::POST /export did not return 200 (HTTP $status)."
+            exit 1
+          fi
+
+      - name: Download the final ZIP
+        run: |
+          curl -sS --connect-timeout 15 --max-time 120 -o /tmp/preview-final.zip \
+            -w "%{http_code}" \
+            -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/tenders/$TENDER_ID/download?type=zip" > /tmp/zip-status.txt
+          status=$(cat /tmp/zip-status.txt)
+          size=$(wc -c < /tmp/preview-final.zip)
+          echo "ZIP HTTP:$status SIZE:$size"
+          if [ "$status" != "200" ] || [ "$size" -le 0 ]; then
+            echo "::error::Final ZIP download failed (HTTP $status, $size bytes)."
+            exit 1
+          fi
+          unzip -t /tmp/preview-final.zip
+          # Run 34161170459 lost a whole acceptance cycle here to
+          # "curl: (35) SSL_ERROR_SYSCALL" — a dropped TLS handshake on this one
+          # request, after the ZIP had already downloaded and verified. A
+          # transport hiccup must not read as a product failure, so this is
+          # retried; a genuinely unreachable endpoint still fails the step.
+          for attempt in 1 2 3 4; do
+            if curl -sS --connect-timeout 15 --max-time 90 --retry 2 --retry-connrefused \
+              -H "Cookie: hope_session=$SESSION_COOKIE" \
+              "$BASE_URL/api/admin/generated-proposals/audit?tenderId=$TENDER_ID&includeReady=true" \
+              > /tmp/generated-proposal-audit-post-export.json; then
+              break
+            fi
+            if [ "$attempt" = "4" ]; then
+              echo "::error::Post-export audit fetch failed after 4 attempts."
+              exit 1
+            fi
+            echo "Post-export audit fetch attempt $attempt failed; retrying."
+            sleep $((attempt * 5))
+          done
+          python3 - <<'PYEOF'
+          # Every delivered file must be a current generated document, and its
+          # bytes must match the identity the database persisted for it.
+          #
+          # This used to assert `names != ['Technical Proposal.pdf']` — one
+          # file, by that exact name. That was true of the tender the harness
+          # was written against and is not a property of the product. The
+          # owner's re-uploaded tender plans three deliverables:
+          #
+          #   Technical Proposal.pdf
+          #   Renovation Planning and Implementation Oversight.docx
+          #   Project Close-Out and Operational Readiness.docx
+          #
+          # All three downloaded and passed `unzip -t`, and export readiness
+          # had already passed with zero blockers — so a correct package failed
+          # acceptance on a hardcoded expectation about a different tender.
+          #
+          # The replacement is STRICTER, not looser. Before, exactly one file
+          # was hash-checked and any second file would have been rejected
+          # without ever being examined. Now every entry must resolve to
+          # exactly one current GENERATED audit row and every entry's bytes are
+          # hashed against it, so a package of three is verified three times
+          # over. An empty ZIP is still a failure.
+          import hashlib, json, zipfile
+
+          audit = json.load(open('/tmp/generated-proposal-audit-post-export.json', encoding='utf-8'))
+          documents = audit.get('documents', [])
+
+          with zipfile.ZipFile('/tmp/preview-final.zip') as archive:
+              names = archive.namelist()
+              if not names:
+                  raise SystemExit('The delivered ZIP is empty.')
+              print(f'ZIP contains {len(names)} file(s):')
+              for name in names:
+                  payload = archive.read(name)
+                  rows = [
+                      row for row in documents
+                      if row.get('generationStatus') == 'GENERATED'
+                      and row.get('exactFileName') == name
+                  ]
+                  if len(rows) != 1:
+                      raise SystemExit(
+                          f'Expected exactly one current GENERATED audit row for {name!r}, got {len(rows)}. '
+                          'A file in the delivered package that the database does not recognise as a current '
+                          'generated document is an integrity failure, not a naming quibble.'
+                      )
+                  expected = rows[0].get('contentSha256')
+                  actual = hashlib.sha256(payload).hexdigest()
+                  if not expected or expected != actual:
+                      raise SystemExit(
+                          f'{name}: downloaded bytes do not match the persisted generated-document identity '
+                          f'(expected {expected!r}, got {actual!r}).'
+                      )
+                  print(f'  OK  {name}  {len(payload)} bytes  sha256 {actual[:16]}')
+          print(f'All {len(names)} delivered file(s) match their persisted identity.')
+          PYEOF
+
+      - name: Render every page of the final PDF and check the layout
+        run: |
+          # "Do not accept a PDF from text extraction alone." Every page is
+          # rasterised with poppler and inspected for clipping, overflow,
+          # footer collision and pagination.
+          sudo apt-get update -qq >/dev/null 2>&1 || true
+          sudo apt-get install -y -qq poppler-utils >/dev/null 2>&1 || true
+          mkdir -p /tmp/pdf-pages /tmp/zip-extract
+          python3 -m zipfile -e /tmp/preview-final.zip /tmp/zip-extract/
+          ls -la /tmp/zip-extract/
+          node scripts/tmp-render-pdf-pages.mjs "/tmp/zip-extract/Technical Proposal.pdf" /tmp/pdf-pages 2>&1 | tee /tmp/pdf-page-report.txt
+
+      - name: Audit the delivered PDF for embedded brand-asset bytes
+        run: |
+          # ACTIVE metadata in the asset store is not proof the bytes reached
+          # the client. This reads the PDF's own object graph, because text
+          # extraction cannot see an image and has already produced three false
+          # findings in this workstream.
+          node scripts/tmp-inspect-pdf-typography-and-assets.mjs "/tmp/zip-extract/Technical Proposal.pdf" 2>&1 | tee /tmp/pdf-asset-audit.txt
+
+          # The audit above says whether the bytes ARRIVED. This says what the
+          # store holds, so a zero above can be attributed rather than guessed:
+          # an asset the applier skips because it has no inline bytes looks
+          # identical, in the delivered PDF, to one blocked by tender policy.
+          curl -sS --connect-timeout 15 --max-time 60 --retry 2 \
+            -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/company/assets" > /tmp/company-assets.json || true
+          python3 - <<'PYEOF' | tee -a /tmp/pdf-asset-audit.txt
+          import json
+          try:
+              data = json.load(open("/tmp/company-assets.json", encoding="utf-8"))
+          except Exception as exc:
+              print(f"ASSET STORE: unreadable ({exc})")
+              raise SystemExit(0)
+          rows = None
+          if isinstance(data, dict):
+              for key in ("assets", "items", "data", "results"):
+                  if isinstance(data.get(key), list):
+                      rows = data[key]
+                      break
+          elif isinstance(data, list):
+              rows = data
+          if rows is None:
+              print(f"ASSET STORE: unexpected payload; keys={list(data)[:10] if isinstance(data, dict) else type(data)}")
+              raise SystemExit(0)
+          print(f"\nASSET STORE: {len(rows)} row(s)")
+          for a in rows:
+              # hasInlineFileContent / hasPrivateStorage are what the route
+              # returns. It strips storagePath and never sends
+              # fileContentLength, so asking for those printed "no" and "NOT
+              # RETURNED BY API" for assets that may well have bytes — and the
+              # letterhead question turns on exactly this.
+              inline = a.get("hasInlineFileContent")
+              print(
+                  f"  type={a.get('assetType')} active={a.get('isActive')} "
+                  f"mime={a.get('mimeType')} size={a.get('size')} "
+                  f"inlineBytes={inline if inline is not None else 'NOT RETURNED BY API'} "
+                  f"privateStorage={a.get('hasPrivateStorage')} "
+                  f"integrity={a.get('integrityStatus')}"
+              )
+          PYEOF
+
+      - name: Dump the final PDF's visible text for claim-by-claim review
+        run: |
+          # The 17-dimension assessment and the factual/compliance review have
+          # to be made against what the client actually reads, so the extracted
+          # text is emitted here in full rather than summarised.
+          node scripts/tmp-dump-pdf-text.mjs "/tmp/zip-extract/Technical Proposal.pdf" > /tmp/final-pdf-text.txt
+          echo "=== FINAL PDF TEXT ($(wc -c < /tmp/final-pdf-text.txt) chars) ==="
+          cat /tmp/final-pdf-text.txt
+          echo "=== END FINAL PDF TEXT ==="
+
+      - name: Upload acceptance artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: preview-hosted-acceptance
+          path: |
+            /tmp/workflow-center-after-analyze.json
+            /tmp/workflow-center-final.json
+            /tmp/export-readiness-final.json
+            /tmp/generated-proposal-audit.json
+            /tmp/generated-proposal-audit-post-export.json
+            /tmp/export-response.json
+            /tmp/preview-final.zip
+            /tmp/pdf-page-report.txt
+            /tmp/pdf-asset-audit.txt
+            /tmp/pdf-branding-pre-gate.txt
+            /tmp/delivered-technical-proposal.pdf
+            /tmp/company-assets.json
+            /tmp/final-pdf-text.txt
+            /tmp/pdf-pages/
+          if-no-files-found: warn
+          retention-days: 3
+
+  # ─── TEMPORARY — owner-authorized, read-only ───────────────────────────────
+  #
+  # Answers "what does the live Preview vault actually contain, and what did
+  # the selection pipeline do with it?" without generating anything. Every
+  # call is a GET. No AiJob is created, no document is written, and the
+  # provider section reads the DURABLE usage snapshot rather than probing a
+  # provider, so it costs no quota.
+  #
+  # This exists because the vault counts were previously inferred from the
+  # generated PDF's own summary line rather than read from the database.
+  # Remove it with the acceptance job.
+  temporary-preview-vault-inspection:
+    if: github.event_name == 'workflow_dispatch' && inputs.confirm == 'inspect'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      OWNER_EMAIL: ${{ secrets.PREVIEW_OWNER_EMAIL }}
+      OWNER_PASSWORD: ${{ secrets.PREVIEW_OWNER_PASSWORD }}
+      BASE_URL: https://hope-tender-path-b-git-0db72a-hopeengineering83-codes-projects.vercel.app
+      TENDER_ID: ${{ inputs.tender_id }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify secrets and inputs are present
+        run: |
+          if [ -z "$OWNER_EMAIL" ] || [ -z "$OWNER_PASSWORD" ]; then
+            echo "::error::PREVIEW_OWNER_EMAIL / PREVIEW_OWNER_PASSWORD secrets are not set."
+            exit 1
+          fi
+          if [ -z "$TENDER_ID" ]; then
+            echo "tender_id not supplied — the inspection will discover the tender from /api/tenders."
+          fi
+
+      - name: Sign in through the real /api/auth/login endpoint
+        run: |
+          # Same request shape e2e/global-setup.ts uses: JSON credentials with
+          # the Origin and Referer a same-origin browser form would send, so
+          # strict CSRF stays enabled. Credentials go in a --data-binary file
+          # rather than argv so they never reach the process table.
+          umask 077
+          printf '{"email":%s,"password":%s}' \
+            "$(printf '%s' "$OWNER_EMAIL" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" \
+            "$(printf '%s' "$OWNER_PASSWORD" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" \
+            > /tmp/login-body.json
+          status=$(curl -sS --connect-timeout 15 --max-time 45 \
+            -o /tmp/login-body-response.json -D /tmp/login-headers.txt \
+            -w "%{http_code}" \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json" \
+            -H "Origin: $BASE_URL" \
+            -H "Referer: $BASE_URL/login" \
+            --data-binary @/tmp/login-body.json \
+            "$BASE_URL/api/auth/login")
+          rm -f /tmp/login-body.json
+          echo "login status: $status"
+          if [ "$status" != "200" ]; then
+            echo "::error::Login against the Preview app failed (HTTP $status). Check PREVIEW_OWNER_EMAIL / PREVIEW_OWNER_PASSWORD."
+            rm -f /tmp/login-headers.txt /tmp/login-body-response.json
+            exit 1
+          fi
+          cookie=$(grep -i '^set-cookie:' /tmp/login-headers.txt \
+            | grep -o 'hope_session=[^;]*' \
+            | head -1 \
+            | cut -d= -f2-)
+          rm -f /tmp/login-headers.txt /tmp/login-body-response.json
+          if [ -z "$cookie" ]; then
+            echo "::error::Login succeeded but no hope_session cookie was returned."
+            exit 1
+          fi
+          # Register the session value as a masked secret BEFORE it is used, so
+          # it can never surface in a later log line.
+          echo "::add-mask::$cookie"
+          echo "SESSION_COOKIE=$cookie" >> "$GITHUB_ENV"
+          echo "Signed in; session captured and masked."
+
+      - name: Read the live vault, the selection pipeline and provider state
+        run: python3 scripts/tmp-inspect-vault-and-selection.py 2>&1 | tee /tmp/vault-inspection.txt
+
+      - name: Upload inspection report
+        uses: actions/upload-artifact@v4
+        with:
+          name: preview-vault-inspection
+          path: /tmp/vault-inspection.txt
+          if-no-files-found: error
+          retention-days: 3
+
+  # ─── TEMPORARY — owner-authorized, runs only on a NEW empty database ────────
+  #
+  # A new Neon database arrives with no tables and no accounts. The Preview
+  # build cannot fix that: scripts/migrate-deploy-safe.mjs deliberately skips
+  # migrations on every non-production Vercel environment, so a Preview deploy
+  # leaves the schema uncreated. And with no owner account there is no way to
+  # sign in, so neither the vault upload nor the acceptance harness can run.
+  #
+  # This job applies the committed migrations and creates exactly one owner. It
+  # inserts no tender, project or expert — evidence is uploaded through the real
+  # UI so every record carries genuine source provenance.
+  #
+  # prisma migrate deploy is additive: it applies the migrations already in
+  # prisma/migrations and never drops or resets. Remove this job once the
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # TEMPORARY. The first thing to run after a Neon database swap.
+  #
+  # A swap has now happened three times (2026-09-03, 2026-09-07, 2026-09-11).
+  # Each time the same two questions decide everything that follows, and each
+  # time they were answered slowly:
+  #
+  #   1. Did a Preview process touch the new database before the migrations
+  #      did? lib/prisma.ts's legacy bootstrap builds the schema ad-hoc
+  #      whenever NODE_ENV != "production", leaving 54 tables, no
+  #      _prisma_migrations history and hundreds of drift statements, which is
+  #      why `prisma migrate deploy` then refuses with P3005.
+  #
+  #   2. Which fingerprint does the rebuild expect? sha256(host/dbname), and
+  #      Vercel holds the POOLED host while the migration secret holds the
+  #      DIRECT one, so one database hashes two ways. The 2026-09-07 rebuild
+  #      refused on precisely that mismatch and the run was wasted.
+  #
+  # This job answers both, changes nothing, and prints the two fingerprints
+  # side by side with the one provision needs labelled. Read-only: it issues a
+  # GET and computes two hashes. Remove it with the other temporary jobs.
+  # ───────────────────────────────────────────────────────────────────────────
+  temporary-preview-health:
+    if: github.event_name == 'workflow_dispatch' && inputs.confirm == 'health'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      BASE_URL: https://hope-tender-path-b-git-0db72a-hopeengineering83-codes-projects.vercel.app
+      MIGRATION_URL: ${{ secrets.PREVIEW_DATABASE_URL_MIGRATION }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read /api/health on the Preview
+        run: |
+          echo "BASE_URL: $BASE_URL"
+          code=$(curl -sS -o /tmp/health.json -w '%{http_code}' \
+            --connect-timeout 15 --max-time 60 "$BASE_URL/api/health" || echo 000)
+          echo "HTTP $code"
+          echo "--- /api/health ---"
+          cat /tmp/health.json || true
+          echo
+          echo "--- end ---"
+
+      - name: Summarise what the health payload decides
+        run: |
+          python3 - <<'PYEOF'
+          import json
+          try:
+              h = json.load(open('/tmp/health.json'))
+          except Exception as e:
+              print(f"  !! health payload unreadable: {e}")
+              print("  A 503 with every database probe false is the signature of a")
+              print("  DATABASE_URL the runtime cannot reach. That is an environment")
+              print("  fact, not a code regression.")
+              raise SystemExit(0)
+          print(f"  ok                      = {h.get('ok')}")
+          print(f"  status                  = {h.get('status')}")
+          print(f"  databaseFingerprint     = {h.get('databaseFingerprint')}   <-- POOLED (what Vercel uses)")
+          print(f"  schemaMatchesDeployedCode = {h.get('schemaMatchesDeployedCode')}")
+          tables = h.get('tables') or h.get('database') or {}
+          if isinstance(tables, dict):
+              missing = [k for k, v in tables.items() if v is not True]
+              print(f"  tables present          = {len(tables) - len(missing)}/{len(tables)}")
+              if missing:
+                  print(f"  tables NOT present      = {missing}")
+          print("")
+          if h.get('schemaMatchesDeployedCode') is True and h.get('ok') is True:
+              print("  => Schema is up to date and reachable. No rebuild needed.")
+              print("     The vault will still be EMPTY on a new database; the owner")
+              print("     must re-upload Company Vault + Brand Assets, then the tender.")
+          else:
+              print("  => Something is off. If migrate deploy refused with P3005, the")
+              print("     runtime bootstrap created the schema first; run confirm=provision")
+              print("     with the DIRECT fingerprint printed in the next step.")
+          PYEOF
+
+      - name: Print both fingerprints, and say which one provision needs
+        run: |
+          node -e '
+            const { createHash } = require("node:crypto");
+            const raw = (process.env.MIGRATION_URL || "").trim();
+            if (!raw) { console.log("  !! PREVIEW_DATABASE_URL_MIGRATION is not set"); process.exit(0); }
+            const fp = (u) => { const p = new URL(u); return createHash("sha256").update(`${p.hostname}/${p.pathname.replace(/^\//, "")}`).digest("hex").slice(0, 12); };
+            const direct = new URL(raw);
+            const pooledHost = direct.hostname.includes("-pooler.") ? direct.hostname : direct.hostname.replace(/^([^.]+)\./, "$1-pooler.");
+            const pooled = new URL(raw); pooled.hostname = pooledHost;
+            const bare = new URL(raw); bare.hostname = direct.hostname.replace("-pooler.", ".");
+            console.log("  migration secret host   =", direct.hostname);
+            console.log("  fingerprint (as stored) =", fp(direct.toString()));
+            console.log("  fingerprint (direct)    =", fp(bare.toString()), "  <-- pass THIS as expected_fingerprint");
+            console.log("  fingerprint (pooled)    =", fp(pooled.toString()), "  <-- what /api/health prints");
+            console.log("");
+            console.log("  The two differ because the fingerprint is sha256(host/dbname)");
+            console.log("  and the pooled host carries a -pooler. marker. Passing the");
+            console.log("  health one is what made the 2026-09-07 rebuild refuse.");
+          '
+
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # TEMPORARY. Poll this while the owner re-uploads after a database swap.
+  #
+  # The acceptance run costs provider quota and produces the benchmark artifact.
+  # Starting it while the vault is half-uploaded measures the upload, not the
+  # app: unextracted vault documents cannot be matched as evidence, so every
+  # requirement is under-evidenced through no fault of the code.
+  #
+  # Read-only, and it ALWAYS exits 0. "Not ready" is a valid answer rather than
+  # a failure — a red X on the PR every time somebody checks is noise that
+  # teaches people to ignore red Xs.
+  # ───────────────────────────────────────────────────────────────────────────
+  temporary-preview-upload-readiness:
+    if: github.event_name == 'workflow_dispatch' && inputs.confirm == 'ready'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      OWNER_EMAIL: ${{ secrets.PREVIEW_OWNER_EMAIL }}
+      OWNER_PASSWORD: ${{ secrets.PREVIEW_OWNER_PASSWORD }}
+      BASE_URL: https://hope-tender-path-b-git-0db72a-hopeengineering83-codes-projects.vercel.app
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Sign in through the real /api/auth/login endpoint
+        run: |
+          # Byte-for-byte the step the inspection job uses. My first attempt
+          # wrote a fresh one that omitted the Origin and Referer headers and
+          # got a flat HTTP 403: the login route enforces strict CSRF and wants
+          # the headers a same-origin browser form would send. Credentials go
+          # through a --data-binary file rather than argv so they never reach
+          # the process table.
+          umask 077
+          printf '{"email":%s,"password":%s}' \
+            "$(printf '%s' "$OWNER_EMAIL" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" \
+            "$(printf '%s' "$OWNER_PASSWORD" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" \
+            > /tmp/login-body.json
+          status=$(curl -sS --connect-timeout 15 --max-time 45 \
+            -o /tmp/login-body-response.json -D /tmp/login-headers.txt \
+            -w "%{http_code}" \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json" \
+            -H "Origin: $BASE_URL" \
+            -H "Referer: $BASE_URL/login" \
+            --data-binary @/tmp/login-body.json \
+            "$BASE_URL/api/auth/login")
+          rm -f /tmp/login-body.json
+          echo "login status: $status"
+          if [ "$status" != "200" ]; then
+            # Say what was observed, not what it might mean. A 403 is CSRF or
+            # deployment protection; a 401 is credentials; a 5xx is the app. The
+            # first version of this message asserted "the owner account is
+            # missing" for all of them, which was an inference with nothing
+            # behind it and would have sent the next reader to rebuild a
+            # database that was perfectly fine.
+            echo "::error::Login against the Preview app failed (HTTP $status). 401 means the credentials are wrong; 403 means CSRF/deployment protection rejected the request shape; 5xx means the app or its database is unwell — run confirm=health."
+            rm -f /tmp/login-headers.txt /tmp/login-body-response.json
+            exit 1
+          fi
+          cookie=$(grep -i '^set-cookie:' /tmp/login-headers.txt \
+            | grep -o 'hope_session=[^;]*' \
+            | head -1 \
+            | cut -d= -f2-)
+          rm -f /tmp/login-headers.txt /tmp/login-body-response.json
+          if [ -z "$cookie" ]; then
+            echo "::error::Login succeeded but no hope_session cookie was returned."
+            exit 1
+          fi
+          echo "::add-mask::$cookie"
+          echo "SESSION_COOKIE=$cookie" >> "$GITHUB_ENV"
+          echo "Signed in; session captured and masked."
+
+      - name: Report what has been uploaded so far
+        run: python3 scripts/tmp-upload-readiness.py
+
+  # database swap is done.
+  temporary-preview-db-provision:
+    if: github.event_name == 'workflow_dispatch' && inputs.confirm == 'provision'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      # The migration URL, not the pooled one. Migrations serialise themselves
+      # with a SESSION-scoped advisory lock and a transaction pooler answers
+      # consecutive statements from different backends, so the lock is never
+      # observed and Prisma fails P1002. resolve-migration-url.mjs also strips a
+      # "-pooler." marker if one is present, so either form works here.
+      DATABASE_URL: ${{ secrets.PREVIEW_DATABASE_URL_MIGRATION }}
+      OWNER_EMAIL: ${{ secrets.PREVIEW_OWNER_EMAIL }}
+      OWNER_PASSWORD: ${{ secrets.PREVIEW_OWNER_PASSWORD }}
+      OWNER_COMPANY_NAME: Hope Urban Planning Architectural and Engineering Consultancy PLC
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify secrets are present
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::PREVIEW_DATABASE_URL_MIGRATION is not set. Update it to the new Neon URL before running this job."
+            exit 1
+          fi
+          if [ -z "$OWNER_EMAIL" ] || [ -z "$OWNER_PASSWORD" ]; then
+            echo "::error::PREVIEW_OWNER_EMAIL / PREVIEW_OWNER_PASSWORD must be set so the seeded owner matches the account the acceptance harness signs in as."
+            exit 1
+          fi
+          if [ -z "${{ inputs.expected_fingerprint }}" ]; then
+            echo "::error::expected_fingerprint is required. Read it from /api/health on the Preview being rebuilt. Without it the rebuild has no way to prove which database it is about to change."
+            exit 1
+          fi
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund --ignore-scripts
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Inspect what the target database already contains
+        # P3005 ("schema is not empty") covers two opposite situations: a fresh
+        # database carrying stray objects, which should be cleared, and one
+        # holding real records, which must be baselined and never cleared. This
+        # read-only listing is what tells them apart.
+        run: node scripts/tmp-inspect-target-database.mjs
+
+      - name: Show migration status before applying
+        run: npx prisma migrate status || true
+
+      - name: Does the live schema already match prisma/schema.prisma?
+        # Decides between baselining and rebuilding without touching anything.
+        # An empty diff means the schema the database has is exactly the schema
+        # the migrations produce, so marking them applied is safe. A non-empty
+        # diff means baselining would leave silent drift, and the schema must be
+        # rebuilt instead. Read-only: --script only prints SQL.
+        run: |
+          echo "--- SQL that would be needed to bring the DATABASE up to schema.prisma ---"
+          npx prisma migrate diff \
+            --from-schema-datasource prisma/schema.prisma \
+            --to-schema-datamodel prisma/schema.prisma \
+            --script | tee /tmp/schema-drift.sql
+          echo "--- end ---"
+          # Comments and blank lines do not count as drift.
+          drift=$(grep -vE '^\s*(--.*)?$' /tmp/schema-drift.sql | wc -l)
+          echo "drift statements: $drift"
+          if [ "$drift" -eq 0 ]; then
+            echo "SCHEMA_MATCHES=true" >> "$GITHUB_ENV"
+            echo "The live schema already matches. Baselining is safe."
+          else
+            echo "SCHEMA_MATCHES=false" >> "$GITHUB_ENV"
+            echo "::warning::The live schema does NOT match prisma/schema.prisma; baselining would leave drift."
+          fi
+
+      - name: Install PostgreSQL 18 client tools (matches the Neon server version)
+        # pg_dump refuses to read from a server newer than itself, and Ubuntu
+        # ships v16 while Neon runs 18. The schema-only backup taken as rollback
+        # evidence in the next step depends on this.
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc --fail https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends postgresql-client-18
+          echo "/usr/lib/postgresql/18/bin" >> "$GITHUB_PATH"
+
+      # This repeats the procedure used for the first Neon switch on
+      # 2026-09-03 (commit 25de5cc7), because the new database reproduced that
+      # switch's signature exactly. Root cause then and now: lib/prisma.ts's
+      # legacy isRuntimeSchemaBootstrapEnabled()/bootstrap() path builds the
+      # schema ad-hoc rather than from prisma/migrations, so it carries no
+      # _prisma_migrations history and drifts from schema.prisma, and it seeds
+      # the 4 canonical Role rows that are this database's only data. That path
+      # runs whenever NODE_ENV is not "production", which is how a Preview
+      # process touching a brand-new database creates its schema.
+      #
+      # The rebuild is gated rather than blind. The script re-verifies the
+      # fingerprint against EXPECTED_FINGERPRINT, requires every business table
+      # to be empty, requires any Role rows to match the repository's canonical
+      # set exactly, and takes a schema-only pg_dump as rollback evidence before
+      # it changes anything — exiting 1 if any gate fails.
+      - name: Gated verified rebuild (proceeds only if every gate passes)
+        env:
+          EXPECTED_FINGERPRINT: ${{ inputs.expected_fingerprint }}
+        run: node scripts/tmp-verified-clean-rebuild.mjs
+
+      - name: Apply the full repository migration history from empty
+        run: npm run prisma:migrate:safe
+
+      - name: Restore the 4 canonical Role rows and verify migration history
+        run: node scripts/tmp-restore-canonical-roles-and-verify.mjs
+
+      - name: Confirm every migration is applied
+        run: npx prisma migrate status
+
+      - name: Provision the owner account
+        run: node scripts/tmp-provision-preview-owner.mjs
+
+  # ---------------------------------------------------------------------------
+  # TEMPORARY, owner-authorized: portfolio enrichment against the Preview
+  # database.
+  #
+  # Two write-path defects were fixed in the app: the bulk import never derived
+  # the portfolio numbers sitting verbatim in each record's own reference text,
+  # and neither ingestion path checked that the value going into
+  # `Project.country` was a country. Neither fix reaches a row that was already
+  # written, and the rows already written are the ones the proposal writer
+  # reads — on the owner's portfolio that meant 0 of 114 rows held a plain
+  # country and none held a contract value.
+  #
+  # This job runs the same service the ingestion paths use, against the
+  # Preview database, through the MIGRATION url (the pooled one is fine for
+  # row updates, but reusing the migration secret keeps the target explicit
+  # rather than inherited). It is a dry run unless apply_enrichment is "yes",
+  # it never blanks a column, it never overwrites a populated one except a
+  # country value proven not to be a country, and it lists every row whose own
+  # evidence cannot settle its country instead of guessing.
+  # ---------------------------------------------------------------------------
+  temporary-preview-portfolio-enrichment:
+    if: github.event_name == 'workflow_dispatch' && inputs.confirm == 'enrich'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      DATABASE_URL: ${{ secrets.PREVIEW_DATABASE_URL_MIGRATION }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify the target is named, not inherited
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::PREVIEW_DATABASE_URL_MIGRATION is not set. This job has no database to read."
+            exit 1
+          fi
+          node -e '
+            const url = new URL(process.env.DATABASE_URL);
+            const crypto = require("node:crypto");
+            const fingerprint = crypto
+              .createHash("sha256")
+              .update(`${url.host}${url.pathname}`)
+              .digest("hex")
+              .slice(0, 16);
+            console.log(`target host: ${url.host.replace(/^[^.]*/, "***")}`);
+            console.log(`target fingerprint (sha256 of host/dbname, first 16): ${fingerprint}`);
+          '
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund --ignore-scripts
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Dry run — what would change, and what would be refused
+        run: npx tsx scripts/enrich-project-portfolio-facts.ts
+
+      - name: Apply
+        if: inputs.apply_enrichment == 'yes'
+        run: npx tsx scripts/enrich-project-portfolio-facts.ts --apply
+
+      - name: Re-read after applying, so the census is measured and not predicted
+        if: inputs.apply_enrichment == 'yes'
+        # A second dry run over the written rows. Every "rows modified" count
+        # must now be zero and the country/value populations must match what the
+        # applied run reported: that is what distinguishes a write that landed
+        # from a write that was only planned.
+        run: npx tsx scripts/enrich-project-portfolio-facts.ts

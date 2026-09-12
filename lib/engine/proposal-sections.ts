@@ -40,6 +40,11 @@
 // because the source data is already structured.
 
 import type { AIBidWriterInput } from "../ai";
+import {
+  selectTenderContext,
+  TENDER_FOCUS_METHODOLOGY,
+  TENDER_FOCUS_EVALUATION,
+} from "./tender-context-selection";
 
 // ─── Section-specific system prompts ─────────────────────────────────────────
 // Each persona is the EXACT senior bid-team specialist who would write
@@ -109,41 +114,151 @@ Your operating principles for Section A and Section B:
 
 10. LANGUAGE FIDELITY. Match the tender's primary language — if the tender text is in Arabic, French, or Amharic, write the entire proposal in that language (technical acronyms and table headers may remain in English). Default to English only when the tender is in English.`;
 
-export const TECHNICAL_APPROACH_SYSTEM_PROMPT = `You are a senior sector technical lead writing Section C — the Technical Approach — of a competitive technical proposal. Section C is where the proposal demonstrates HOW the firm will deliver. You have led the Technical Approach drafting for 800+ winning bids across every major sector — healthcare, water/sanitation, road/bridge, building, urban planning, environmental and social safeguards, ICT/digital systems, education, agriculture, energy/power, mining, telecoms, transportation, port/logistics, oil & gas, financial services, and public-sector institutional reform. You handle ANY sector — your job is to read the tender text, identify the sector and its conventions, and write methodology in that sector's vocabulary.
+// ─── Sector methodology guidance — selected, never shipped whole ──────────────
+//
+// Section C's system prompt used to carry the entire sector catalogue on every
+// tender — 25 bullets, ~1,690 estimated input tokens, of which at most two or
+// three ever described the assignment in hand. That fixed cost pushed the
+// technical-approach request past the throughput budget of providers early in
+// the canonical chain, so preflight skipped them and the section fell through
+// toward the deterministic writer.
+//
+// The bullets below are the catalogue verbatim. Only the selection is new, and
+// it is made by scoring each bullet's OWN vocabulary against the tender text:
+// no sector is named in the selector, so a road tender retrieves the road
+// bullet by the same rule that gives a healthcare tender the healthcare one,
+// and a bullet added later is matched by the words it already contains.
+
+export type SectorGuidanceBullet = { label: string; bullet: string };
+
+export const SECTOR_METHODOLOGY_GUIDANCE: ReadonlyArray<SectorGuidanceBullet> = [
+  { label: "Healthcare", bullet: "   - Healthcare → clinical zone segregation, IPC, medical gas, radiation shielding, biomedical engineering integration." },
+  { label: "Water/sanitation", bullet: "   - Water/sanitation → hydraulic modelling (WaterCAD/EPANET), source investigation, pipe sizing, pump station design, water quality." },
+  { label: "Road/bridge", bullet: "   - Road/bridge → alignment survey, geotechnical (CBR, Proctor), pavement design, drainage, road safety audit." },
+  { label: "Building/architecture", bullet: "   - Building/architecture → functional brief, MEP coordination, fire safety, accessibility, building permit documentation." },
+  { label: "Urban/master planning", bullet: "   - Urban/master planning → GIS-based land use mapping, demographic analysis, infrastructure demand assessment, phased implementation roadmap." },
+  { label: "Environmental/social", bullet: "   - Environmental/social → ESIA baseline, impact identification matrices, mitigation hierarchy, ESMP, stakeholder engagement, donor safeguard alignment." },
+  { label: "ICT/digital", bullet: "   - ICT/digital → requirements analysis, architecture (app/database/network), data security, integration plan, UAT, training, go-live cutover." },
+  { label: "Education facilities", bullet: "   - Education facilities → space schedule, climate-responsive design, pupil-to-toilet ratio compliance, fire detection." },
+  { label: "Energy/power", bullet: "   - Energy/power → load forecast, generation/transmission/distribution design, grid integration, environmental compliance." },
+  { label: "Agriculture/irrigation", bullet: "   - Agriculture/irrigation → agronomic baseline (FAO Penman-Monteith crop water), yield modelling, irrigation network design (canal/pressurised pipe), WUA governance, post-harvest handling, value-chain analysis." },
+  { label: "Mining/extractive", bullet: "   - Mining/extractive → JORC-compliant resource reporting, block-model resource estimation, slope-stability analysis (three methods), TSF design per MAC/ANCOLD, geotechnical investigation, closure-cost estimation." },
+  { label: "Port/maritime", bullet: "   - Port/maritime → met-ocean analysis, bathymetric/geotechnical survey, fast-time nautical simulation, berth structural design, dredge volume and disposal, ISPS compliance, nautical safety pre-opening review." },
+  { label: "Oil & gas/pipeline", bullet: "   - Oil & gas/pipeline → process flow diagram, P&ID development, HAZOP study (all action items tracked), LOPA for high-severity nodes, pipeline stress analysis (Caesar II), cathodic-protection design, ILI programme specification." },
+  { label: "Financial services/banking", bullet: "   - Financial services/banking → regulatory-gap analysis (KYC/AML/Basel/IFRS), business process mapping, target operating model, core-banking or fintech system architecture, parallel-run cutover, RBAC/encryption/audit-log configuration." },
+  { label: "Telecoms/broadband", bullet: "   - Telecoms/broadband → traffic demand modelling, coverage simulation, RF planning (LTE/5G), base-station siting, backhaul design (fibre/microwave), spectrum licensing pathway, site-acceptance test (SAT) protocol." },
+  { label: "Architecture & interior design", bullet: "   - Architecture & interior design → space programming, concept design, schematic design, FF&E specification, reflected ceiling plan, finishes schedule, joinery, partition, fit-out, shop drawing review, sample approval, snagging, as-built drawings" },
+  { label: "Construction supervision / resident engineer", bullet: "   - Construction supervision / resident engineer → hold-point, witness point, ITP, NCR, interim payment certificate (IPC), progress report, quality assurance, material approval, site diary, commissioning, punch list, DLP, snag list" },
+  { label: "Contract administration / FIDIC", bullet: "   - Contract administration / FIDIC → variation order, Engineer's Instruction, extension of time (EOT), time-impact analysis, final account, payment certificate, retention, performance bond, claims determination, FIDIC Clause references" },
+  { label: "Heritage conservation / adaptive reuse", bullet: "   - Heritage conservation / adaptive reuse → ICOMOS reversibility principle, condition survey, significance assessment, conservation plan, lime mortar compatibility, XRF/petrographic testing, heritage authority approval, photogrammetric survey, historic fabric, minimum-intervention doctrine, conservation philosophy statement, reversible materials specification" },
+  { label: "Industrial & manufacturing", bullet: "   - Industrial & manufacturing → process flow diagram, value-stream mapping (VSM), lean layout design, industrial flooring specification, HVAC/exhaust ventilation, fire suppression, effluent treatment plant, FAT (factory acceptance test), EHS management plan, cleaner production assessment, commissioning sequencing plan, occupational safety assessment" },
+  { label: "High-rise / multi-storey buildings", bullet: "   - High-rise / multi-storey buildings → ETABS/SAP2000 structural analysis, shear wall, core-frame system, seismic design per EBCS/ES EN 1998, wind load analysis, independent structural peer review, AA City Authority structural approval, curtain wall specification, post-tensioned slab, BIM LOD 300+, pile/mat foundation, lift/car-lift system design, BMS architecture, generator/UPS sizing" },
+  { label: "Hospitality & tourism", bullet: "   - Hospitality & tourism → FF&E (furniture, fixtures and equipment), brand standard compliance matrix, RevPAR benchmarking, development programme (room mix, F&B, BOH), guestroom HVAC (VRF/fan-coil), kitchen ventilation, pool/spa mechanical, mock room prototype, pre-opening punch list, GSTC criteria, Green Globe audit, brand-operator sign-off" },
+  { label: "Feasibility studies / pre-feasibility / options analysis / business case", bullet: "   - Feasibility studies / pre-feasibility / options analysis / business case → options comparison matrix (at least three alternatives + do-nothing), technical feasibility (site, engineering, capacity), financial viability (CAPEX/OPEX estimation, NPV, IRR, payback period, sensitivity analysis on key assumptions), economic analysis (cost-benefit ratio, economic rate of return), social and environmental screening, demand/traffic/uptake projections, implementation roadmap with milestones, recommended preferred option with rationale, ToR compliance matrix." },
+  { label: "Government / public procurement (ministry tenders, national procurement board, public tender announcement)", bullet: "   - Government / public procurement (ministry tenders, national procurement board, public tender announcement) → cite applicable public procurement proclamation/regulation by number; address local content and domestic preference rules; acknowledge bid security (amount and form) and performance bond requirements; include government-issued form numbers and annex references by exact name; confirm format restrictions (single/two-envelope, sealed, numbered pages); reference GoE/Ministry standard BOQ or schedule of rates where applicable; address PPPA/PPSD/comparable authority submission portal requirements." },
+  { label: "NGO / donor-funded tenders (World Bank, AfDB, EU, USAID, DFID/FCDO, UN agencies, GFATM, GIZ)", bullet: "   - NGO / donor-funded tenders (World Bank, AfDB, EU, USAID, DFID/FCDO, UN agencies, GFATM, GIZ) → identify the donor procurement framework (ICB, NCB, QCBS, LCS, FBS, CQS, DC) and confirm methodology compliance; include logical framework (logframe) with outputs, outcomes, impact indicators; M&E plan with baseline, midline, endline data collection methods; disbursement-linked indicators where required; align with donor environmental and social safeguard policies (World Bank ESF, IFC Performance Standards, AfDB ISS, EU EIA Directive); include a procurement plan with activity schedule; reference donor anti-corruption and conflict-of-interest requirements; address community engagement and beneficiary feedback mechanisms." },
+];
+
+/**
+ * How weak a match may be, relative to the tender's strongest match, and still
+ * be worth a slot. Purely relative, so no sector is tuned for in code.
+ */
+const SECTOR_GUIDANCE_RELATIVE_FLOOR = 0.4;
+
+/** How many catalogue bullets a single tender may carry. */
+export const MAX_SECTOR_GUIDANCE_BULLETS = 4;
+
+// Words that appear in professional-services prose regardless of sector. They
+// carry no discriminating signal, so scoring on them would rank the longest
+// bullet first on every tender.
+const SECTOR_GUIDANCE_STOP_TERMS = new Set([
+  "analysis", "assessment", "other", "sectors", "listed", "above", "design", "plan",
+  "planning", "management", "study", "studies", "services", "service", "system",
+  "systems", "tender", "tenders", "project", "projects", "review", "report",
+  "reporting", "requirements", "programme", "program", "specification", "standard",
+  "standards", "compliance", "development", "delivery", "technical", "where",
+  "with", "from", "that", "this", "their", "they", "each", "also", "including",
+  "include", "includes", "address", "confirm", "reference", "references",
+]);
+
+function guidanceTerms(text: string): string[] {
+  const terms = text
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((term) => term.length >= 4 && !SECTOR_GUIDANCE_STOP_TERMS.has(term));
+  return Array.from(new Set(terms));
+}
+
+/**
+ * Score one catalogue bullet against the tender text.
+ *
+ * Label terms count double because the label names the sector, while the body
+ * terms are the professional vocabulary that identifies it when the tender
+ * never uses the label word itself — a hospital tender says "clinical" and
+ * "medical" long before it says "healthcare". The divisor normalises for bullet
+ * length so the longest entry does not win every tender on volume alone.
+ */
+function scoreSectorGuidance(entry: SectorGuidanceBullet, haystack: string): number {
+  const labelTerms = guidanceTerms(entry.label);
+  const bodyTerms = guidanceTerms(entry.bullet).filter((term) => !labelTerms.includes(term));
+  const total = labelTerms.length + bodyTerms.length;
+  if (total === 0) return 0;
+  const hits = (terms: string[]) =>
+    terms.filter((term) => new RegExp(`(?<![a-z0-9])${term}(?![a-z0-9])`).test(haystack)).length;
+  const weighted = 2 * hits(labelTerms) + hits(bodyTerms);
+  return weighted / Math.sqrt(total);
+}
+
+/**
+ * Choose the catalogue bullets this tender actually needs.
+ *
+ * When nothing in the catalogue matches the tender at all, the whole catalogue
+ * is returned rather than none of it: an unrecognised sector is exactly the
+ * case where the writer has least to go on, and paying the full prompt cost on
+ * a rare tender is preferable to writing that tender with no guidance.
+ */
+export function selectSectorGuidance(
+  tenderText: string,
+  opts?: { max?: number; catalogue?: ReadonlyArray<SectorGuidanceBullet> },
+): SectorGuidanceBullet[] {
+  const catalogue = opts?.catalogue ?? SECTOR_METHODOLOGY_GUIDANCE;
+  const max = opts?.max ?? MAX_SECTOR_GUIDANCE_BULLETS;
+  const haystack = tenderText.toLowerCase();
+  const scored = catalogue
+    .map((entry, order) => ({ entry, order, score: scoreSectorGuidance(entry, haystack) }))
+    .filter((row) => row.score > 0);
+  if (scored.length === 0) return catalogue.slice();
+  scored.sort((a, b) => (b.score - a.score) || (a.order - b.order));
+  // A bullet that matched on one incidental word — "JORC-compliant" against a
+  // tender that says "compliant", "target operating model" against "operating
+  // theatres" — is a coincidence, not a sector. Keeping it would spend one of
+  // the few slots on guidance for the wrong discipline, which is worse than
+  // sending fewer bullets. The floor is relative to the best match so it needs
+  // no per-sector tuning: whatever the tender is, guidance far weaker than the
+  // strongest signal in the catalogue is noise.
+  const floor = scored[0].score * SECTOR_GUIDANCE_RELATIVE_FLOOR;
+  const chosen = scored.filter((row) => row.score >= floor).slice(0, Math.max(1, max));
+  chosen.sort((a, b) => a.order - b.order);
+  return chosen.map((row) => row.entry);
+}
+
+/** The guidance block as it appears inside the Section C system prompt. */
+export function buildSectorGuidanceBlock(tenderText: string, opts?: { max?: number }): string {
+  return selectSectorGuidance(tenderText, opts).map((entry) => entry.bullet).join("\n");
+}
+
+export function technicalApproachSystemPrompt(sectorGuidanceBlock: string): string {
+  return `You are a senior sector technical lead writing Section C — the Technical Approach — of a competitive technical proposal. Section C is where the proposal demonstrates HOW the firm will deliver. You have led the Technical Approach drafting for 800+ winning bids across every major sector — healthcare, water/sanitation, road/bridge, building, urban planning, environmental and social safeguards, ICT/digital systems, education, agriculture, energy/power, mining, telecoms, transportation, port/logistics, oil & gas, financial services, and public-sector institutional reform. You handle ANY sector — your job is to read the tender text, identify the sector and its conventions, and write methodology in that sector's vocabulary.
 
 Your operating principles for Section C:
 
 1. SECTOR-NEUTRAL THEN SECTOR-SPECIFIC. Read the TENDER TEXT first. Identify the dominant sector(s) and their professional conventions. Then write methodology in those conventions:
-   - Healthcare → clinical zone segregation, IPC, medical gas, radiation shielding, biomedical engineering integration.
-   - Water/sanitation → hydraulic modelling (WaterCAD/EPANET), source investigation, pipe sizing, pump station design, water quality.
-   - Road/bridge → alignment survey, geotechnical (CBR, Proctor), pavement design, drainage, road safety audit.
-   - Building/architecture → functional brief, MEP coordination, fire safety, accessibility, building permit documentation.
-   - Urban/master planning → GIS-based land use mapping, demographic analysis, infrastructure demand assessment, phased implementation roadmap.
-   - Environmental/social → ESIA baseline, impact identification matrices, mitigation hierarchy, ESMP, stakeholder engagement, donor safeguard alignment.
-   - ICT/digital → requirements analysis, architecture (app/database/network), data security, integration plan, UAT, training, go-live cutover.
-   - Education facilities → space schedule, climate-responsive design, pupil-to-toilet ratio compliance, fire detection.
-   - Energy/power → load forecast, generation/transmission/distribution design, grid integration, environmental compliance.
-   - Agriculture/irrigation → agronomic baseline (FAO Penman-Monteith crop water), yield modelling, irrigation network design (canal/pressurised pipe), WUA governance, post-harvest handling, value-chain analysis.
-   - Mining/extractive → JORC-compliant resource reporting, block-model resource estimation, slope-stability analysis (three methods), TSF design per MAC/ANCOLD, geotechnical investigation, closure-cost estimation.
-   - Port/maritime → met-ocean analysis, bathymetric/geotechnical survey, fast-time nautical simulation, berth structural design, dredge volume and disposal, ISPS compliance, nautical safety pre-opening review.
-   - Oil & gas/pipeline → process flow diagram, P&ID development, HAZOP study (all action items tracked), LOPA for high-severity nodes, pipeline stress analysis (Caesar II), cathodic-protection design, ILI programme specification.
-   - Financial services/banking → regulatory-gap analysis (KYC/AML/Basel/IFRS), business process mapping, target operating model, core-banking or fintech system architecture, parallel-run cutover, RBAC/encryption/audit-log configuration.
-   - Telecoms/broadband → traffic demand modelling, coverage simulation, RF planning (LTE/5G), base-station siting, backhaul design (fibre/microwave), spectrum licensing pathway, site-acceptance test (SAT) protocol.
-   - Architecture & interior design → space programming, concept design, schematic design, FF&E specification, reflected ceiling plan, finishes schedule, joinery, partition, fit-out, shop drawing review, sample approval, snagging, as-built drawings
-   - Construction supervision / resident engineer → hold-point, witness point, ITP, NCR, interim payment certificate (IPC), progress report, quality assurance, material approval, site diary, commissioning, punch list, DLP, snag list
-   - Contract administration / FIDIC → variation order, Engineer's Instruction, extension of time (EOT), time-impact analysis, final account, payment certificate, retention, performance bond, claims determination, FIDIC Clause references
-   - Heritage conservation / adaptive reuse → ICOMOS reversibility principle, condition survey, significance assessment, conservation plan, lime mortar compatibility, XRF/petrographic testing, heritage authority approval, photogrammetric survey, historic fabric, minimum-intervention doctrine, conservation philosophy statement, reversible materials specification
-   - Industrial & manufacturing → process flow diagram, value-stream mapping (VSM), lean layout design, industrial flooring specification, HVAC/exhaust ventilation, fire suppression, effluent treatment plant, FAT (factory acceptance test), EHS management plan, cleaner production assessment, commissioning sequencing plan, occupational safety assessment
-   - High-rise / multi-storey buildings → ETABS/SAP2000 structural analysis, shear wall, core-frame system, seismic design per EBCS/ES EN 1998, wind load analysis, independent structural peer review, AA City Authority structural approval, curtain wall specification, post-tensioned slab, BIM LOD 300+, pile/mat foundation, lift/car-lift system design, BMS architecture, generator/UPS sizing
-   - Hospitality & tourism → FF&E (furniture, fixtures and equipment), brand standard compliance matrix, RevPAR benchmarking, development programme (room mix, F&B, BOH), guestroom HVAC (VRF/fan-coil), kitchen ventilation, pool/spa mechanical, mock room prototype, pre-opening punch list, GSTC criteria, Green Globe audit, brand-operator sign-off
-   - Feasibility studies / pre-feasibility / options analysis / business case → options comparison matrix (at least three alternatives + do-nothing), technical feasibility (site, engineering, capacity), financial viability (CAPEX/OPEX estimation, NPV, IRR, payback period, sensitivity analysis on key assumptions), economic analysis (cost-benefit ratio, economic rate of return), social and environmental screening, demand/traffic/uptake projections, implementation roadmap with milestones, recommended preferred option with rationale, ToR compliance matrix.
-   - Government / public procurement (ministry tenders, national procurement board, public tender announcement) → cite applicable public procurement proclamation/regulation by number; address local content and domestic preference rules; acknowledge bid security (amount and form) and performance bond requirements; include government-issued form numbers and annex references by exact name; confirm format restrictions (single/two-envelope, sealed, numbered pages); reference GoE/Ministry standard BOQ or schedule of rates where applicable; address PPPA/PPSD/comparable authority submission portal requirements.
-   - NGO / donor-funded tenders (World Bank, AfDB, EU, USAID, DFID/FCDO, UN agencies, GFATM, GIZ) → identify the donor procurement framework (ICB, NCB, QCBS, LCS, FBS, CQS, DC) and confirm methodology compliance; include logical framework (logframe) with outputs, outcomes, impact indicators; M&E plan with baseline, midline, endline data collection methods; disbursement-linked indicators where required; align with donor environmental and social safeguard policies (World Bank ESF, IFC Performance Standards, AfDB ISS, EU EIA Directive); include a procurement plan with activity schedule; reference donor anti-corruption and conflict-of-interest requirements; address community engagement and beneficiary feedback mechanisms.
+${sectorGuidanceBlock}
    - Other sectors not listed above → use the sector's professional conventions as best you can identify them from the tender text. Do NOT default to generic engineering language.
 
 2. DELIVERABLE-DRIVEN WORK PLAN. Each scope item maps to a deliverable, a responsible expert (named from the proposed team), a quality-review gate, and a timeline. Generic methodology steps like "Stage 1: Planning, Stage 2: Execution" are forbidden.
 
-3. UNDERSTANDING SHOWS DEPTH. Open Section C with an Understanding of the Assignment sub-section — what the client needs, what the key technical challenges are, what the winning proposal must demonstrate. This is the part that distinguishes a thoughtful bidder from a templated one.
+3. UNDERSTANDING SHOWS DEPTH. Open Section C with an Understanding of the Assignment sub-section — what the client needs, what the key technical challenges are, and what this proposal demonstrates in response. Write it for the client, never about how the bid will be scored. This is the part that distinguishes a thoughtful bidder from a templated one.
 
 4. QUALITY ASSURANCE WITH GATES. Include a structured Quality Review gates table — three or four formal review milestones (e.g., 30% Schematic / 60% Design Development / 100% Pre-Issue) with named review authority and required action.
 
@@ -160,6 +275,7 @@ Your operating principles for Section C:
 10. OUTPUT SHAPE. Output Section C only — as a single top-level Markdown heading (# Section C: Technical Approach) followed by sub-sections (## C.1 Understanding…, ## C.2 Methodology with ### C.2.1–C.2.6+ numbered sub-sections, ## C.3 Work Plan…, ## C.4 Quality Assurance…). Do not output any other top-level sections. Do not output cover letter, executive summary, Section A, B, or D. Start directly with # Section C.
 
 11. LANGUAGE FIDELITY. Match the tender's primary language — if the tender text is in Arabic, French, or Amharic, write the entire Section C in that language (technical standards, acronyms, and table headers may remain in English). Default to English only when the tender is in English.`;
+}
 
 export const ADDITIONAL_AND_DECLARATION_SYSTEM_PROMPT = `You are a senior bid reviewer writing the closing artefacts of a competitive technical proposal — Section D (Additional Information & Value), the Appendix Register, and the formal Declaration. These sections are the bid's final impression on the evaluator. You have drafted closing sections for 700+ winning bids.
 
@@ -280,13 +396,16 @@ ${input.differentiators.slice(0, 1_500)}
 ${input.companyProfile.slice(0, 3_500)}
 
 ## STRONGEST PROJECTS (pick top 1–2 by direct comparability — name them in the cover letter and the executive summary opening)
-${input.projects.slice(0, 4_000)}
+${structuredEvidenceOnly(input.projects).slice(0, 4_000)}
 
 ## STRONGEST EXPERTS (pick the 1–2 lead names — link them to the named projects)
-${input.experts.slice(0, 3_500)}
+${structuredEvidenceOnly(input.experts).slice(0, 3_500)}
 
-## TENDER TEXT EXCERPT (use to mirror evaluator language back)
-${input.tenderText.slice(0, 4_500)}
+## TENDER TEXT (the passages that carry the evaluator's own language, in document order; elisions are marked)
+${selectTenderContext(input.tenderText, {
+    budgetChars: COVER_TENDER_BUDGET_CHARS,
+    focusTerms: [...TENDER_FOCUS_EVALUATION, ...TENDER_FOCUS_METHODOLOGY],
+  }).text}
 
 ## YOUR OUTPUT
 Two top-level Markdown sections:
@@ -428,6 +547,89 @@ Where evidence is genuinely missing, write a "Bid-Team Action: confirm X before 
 Start directly with "# Section A: Company Profile". Do NOT output any cover letter, executive summary, technical approach, Section D, compliance matrix, declaration, or commentary.`;
 }
 
+/**
+ * Section C needs the evidence FACTS, not the evidence PROSE.
+ *
+ * expertProofLine and projectProofLine both emit structured fields first and
+ * then append up to 600 chars of free text from the source CV or project
+ * summary. Section B is where that prose belongs and Section B still receives
+ * it in full. Section C's own instruction is to "name them inline in the
+ * methodology — who does what": for that it needs the name, title, disciplines,
+ * certifications, client, country, sector, value and services, and the CV blob
+ * behind them is the single largest block in the prompt while adding nothing
+ * the section is asked to write.
+ *
+ * Dropping it is what lets a normal tender's evidence — six experts and six
+ * projects rather than the three and one the live run happened to select —
+ * reach a provider at all, without removing a single fact the writer may cite.
+ */
+const EVIDENCE_FIELD_LABELS = /^(Disciplines|Sectors|Certifications\/Licences|Services):/;
+
+/** Abbreviations whose full stop is not a sentence boundary. */
+const NOT_A_SENTENCE_END = /(?:^|\s)(?:Dr|Mr|Mrs|Ms|Eng|Prof|St|No|Ltd|Inc|Co|approx|est|etc|vs|e\.g|i\.e)\.$/i;
+
+/**
+ * Shortest head that may remain after a prose cut. Deliberately small: the
+ * abbreviation guard is what protects a name like "Dr. Abdul Seid", and a long
+ * minimum here only skipped past that name's real sentence end and kept the
+ * whole summary instead.
+ */
+const MIN_STRUCTURED_HEAD_CHARS = 12;
+
+/**
+ * Trim one evidence line to its structured head.
+ *
+ * A line that carries no free text is returned unchanged, so this can never
+ * shorten a line that was already only facts.
+ */
+export function structuredEvidenceLine(line: string): string {
+  const segments = line.split(" | ");
+  // The expert profile is appended as its own segment and is the only trailing
+  // segment that carries neither a field label nor the years-of-experience
+  // value, so it is identifiable without guessing at its content.
+  if (
+    segments.length > 1
+    && !EVIDENCE_FIELD_LABELS.test(segments[segments.length - 1])
+    && !/^\d+\+ years experience$/.test(segments[segments.length - 1])
+  ) {
+    segments.pop();
+  }
+  // The project summary is appended after the structured parts with ". ", so
+  // it is cut at the first sentence boundary that is genuinely one.
+  const last = segments[segments.length - 1];
+  // A digit begins a sentence as often as a capital in this data: project
+  // summaries routinely open "1. Scope" or "2018 assignment for…".
+  const boundary = /\.\s+(?=[A-Z0-9])/g;
+  let match: RegExpExecArray | null;
+  while ((match = boundary.exec(last)) !== null) {
+    const head = last.slice(0, match.index + 1);
+    if (head.length < MIN_STRUCTURED_HEAD_CHARS) continue;
+    if (NOT_A_SENTENCE_END.test(head)) continue;
+    segments[segments.length - 1] = head;
+    break;
+  }
+  return segments.join(" | ");
+}
+
+/** Trim a whole evidence block to structured facts, line by line. */
+export function structuredEvidenceOnly(block: string): string {
+  return block.split("\n").map((line) => (line.trim().length === 0 ? line : structuredEvidenceLine(line))).join("\n");
+}
+
+/**
+ * Tender-text allowance for the cover letter and executive summary. These
+ * mirror the evaluator's language back rather than answering the scope clause
+ * by clause, so they need less of the tender than Section C does.
+ */
+const COVER_TENDER_BUDGET_CHARS = 3_500;
+
+/**
+ * Tender-text allowance for Section C. Smaller than the head-slice it replaced
+ * because the passages selected into it are the ones the methodology answers,
+ * so less text carries more of the tender.
+ */
+const TECHNICAL_APPROACH_TENDER_BUDGET_CHARS = 5_000;
+
 function buildTechnicalApproachPrompt(input: AIBidWriterInput): string {
   // Criterion evidence map — inject when available so Claude knows
   // exactly which evidence to cite per evaluation criterion, and at
@@ -436,14 +638,27 @@ function buildTechnicalApproachPrompt(input: AIBidWriterInput): string {
     ? `\n## CRITERION-TO-EVIDENCE ALLOCATION (NON-NEGOTIABLE — follow this exactly)\n${input.criterionEvidenceMap}\n\nFor EACH criterion above, write a dedicated sub-section in C.2 that:\n1. Cites the listed PROJECT(s) by name with contract value as proof of delivery\n2. Names the listed EXPERT(s) with their specific role on that project\n3. Allocates word count PROPORTIONAL to the criterion weight — the highest-weight criterion gets the longest, most evidence-dense sub-section\n`
     : "";
 
+  // The tender travels by relevance, not by position. A head-slice spent the
+  // whole allowance on the cover sheet and the instructions to bidders and cut
+  // away the scope of work the methodology is supposed to answer; selecting on
+  // scope/deliverable/standard vocabulary puts the scope in front of the writer
+  // and drops the front matter, which is both a smaller and a better prompt.
+  const tenderContext = selectTenderContext(input.tenderText, {
+    budgetChars: TECHNICAL_APPROACH_TENDER_BUDGET_CHARS,
+    focusTerms: [...TENDER_FOCUS_METHODOLOGY, ...TENDER_FOCUS_EVALUATION],
+  });
+  const tenderHeading = tenderContext.complete
+    ? "## TENDER TEXT (full scope — your methodology must match this exactly)"
+    : "## TENDER TEXT (the scope-bearing passages of the tender, in document order; elisions are marked — your methodology must match what is shown)";
+
   return `Write Section C — the Technical Approach — for this technical proposal.
 
 ## TENDER
 TITLE: ${input.tenderTitle}
 CLIENT: ${input.clientName}
 
-## TENDER TEXT (full scope — your methodology must match this exactly)
-${input.tenderText.slice(0, 8_000)}
+${tenderHeading}
+${tenderContext.text}
 
 ## ANALYSIS SUMMARY
 ${input.analysisSummary.slice(0, 2_500)}
@@ -470,10 +685,10 @@ ${criterionBlock}
 ${input.requirements.slice(0, 4_000)}
 
 ## PROPOSED EXPERTS (name them inline in the methodology — who does what)
-${input.experts.slice(0, 6_000)}
+${structuredEvidenceOnly(input.experts).slice(0, 6_000)}
 
 ## RELEVANT PROJECT EVIDENCE (cite specific projects when they demonstrate a methodology element)
-${input.projects.slice(0, 6_500)}
+${structuredEvidenceOnly(input.projects).slice(0, 6_500)}
 
 ## DETERMINISTIC POST-INJECTION (DO NOT DUPLICATE THESE STRUCTURES)
 After your output is generated, the engine will deterministically inject the
@@ -587,7 +802,7 @@ Section D additions (auto-injected end of Section D):
 - Health and Safety Plan
 - Innovation and Value Engineering Proposals
 - Local Content and Capacity Building
-- Win Themes and Discriminators
+- Why We Are Well Suited
 
 Closers (auto-injected before Section E):
 - Tender-Specific Obstacles and Mitigation
@@ -741,7 +956,9 @@ export function buildProposalSectionSpecs(input: AIBidWriterInput, opts?: { deep
     {
       id: "technical-approach",
       title: "Section C: Technical Approach",
-      systemPrompt: TECHNICAL_APPROACH_SYSTEM_PROMPT,
+      systemPrompt: technicalApproachSystemPrompt(
+        buildSectorGuidanceBlock([input.tenderText ?? "", input.tenderTitle ?? "", input.requirements ?? ""].join(" ")),
+      ),
       userPrompt: buildTechnicalApproachPrompt(input),
       maxOutputTokens: budget.c,
     },
@@ -795,8 +1012,11 @@ function buildTechnicalApproachDrillDownPrompt(input: AIBidWriterInput, firstPas
 TITLE: ${input.tenderTitle}
 CLIENT: ${input.clientName}
 
-## TENDER TEXT (use to align methodology vocabulary to THIS sector)
-${input.tenderText.slice(0, 8_000)}
+## TENDER TEXT (the scope-bearing passages, in document order; elisions are marked — use to align methodology vocabulary to THIS sector)
+${selectTenderContext(input.tenderText, {
+    budgetChars: TECHNICAL_APPROACH_TENDER_BUDGET_CHARS,
+    focusTerms: [...TENDER_FOCUS_METHODOLOGY, ...TENDER_FOCUS_EVALUATION],
+  }).text}
 
 ## EVALUATION CRITERIA (your methodology must score against these)
 ${input.evaluationMethodology.slice(0, 4_500)}

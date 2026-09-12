@@ -1,10 +1,9 @@
-// Regression guard (FM-008 class): the Tender model has NO `analysisSource`
-// column — the analysis source is recorded in `tender.notes`. Consumers that
-// read a non-existent `tender.analysisSource` field always saw `undefined`,
-// silently degrading their behaviour. #814 fixed workflow-state.ts and
-// tender-readiness-state.ts; this guard locks the two remaining consumers:
-//   - app/dashboard/.../executive-snapshot.tsx (GO/REVIEW/NO_GO decision)
-//   - lib/engine/generate-elite.ts (bid-strategy win-probability penalty)
+// Regression guard (FM-008 class): the Tender model has no `analysisSource`
+// column. Analysis source lives in `tender.notes` and must be resolved through
+// the shared analysis-source authority. The executive snapshot no longer owns
+// an independent analysis-source gate: it renders the canonical readiness
+// result produced server-side. Generate-elite still consumes the pure resolver
+// directly for its bid-strategy input.
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -20,24 +19,22 @@ describe("detectAnalysisSource reads the notes marker (the real source of truth)
   });
 });
 
-describe("executive-snapshot derives analysis trust from notes, not the missing field", () => {
-  const src = readFileSync("app/dashboard/tenders/[id]/executive-snapshot.tsx", "utf8");
-
-  it("imports and uses detectAnalysisSource(tender)", () => {
-    assert.match(src, /import \{ detectAnalysisSource \} from "@\/lib\/engine\/analysis-source"/);
-    assert.match(src, /detectAnalysisSource\(tender\)/);
-  });
-
-  it("does not gate GO on a raw (tender.analysisSource ?? \"\") read", () => {
-    assert.doesNotMatch(src, /\(tender\.analysisSource \?\? ""\)\.toUpperCase\(\)/);
-  });
-});
+// app/dashboard/tenders/[id]/executive-snapshot.tsx was removed entirely as
+// part of the app-wide consolidation onto the canonical Tender Release
+// State. The FM-008-class property it protected — never reimplement an
+// analysis-source resolver or read the nonexistent tender.analysisSource
+// column — still holds in the replacement: lib/engine/tender-release-state.ts
+// and components/tender-release-state-panel.tsx reference neither
+// tender.analysisSource nor detectAnalysisSource(tender) (confirmed by grep);
+// grounding is instead read from getTenderReleaseSnapshot's
+// analysis.eligibleForExport, which goes through the established
+// resolveTenderAnalysisState resolver.
 
 describe("generate-elite passes a derived analysisSource into computeBidStrategy", () => {
-  const src = readFileSync("lib/engine/generate-elite.ts", "utf8");
+  const source = readFileSync("lib/engine/generate-elite.ts", "utf8");
 
   it("imports detectAnalysisSource and sets analysisSource in the bid-strategy input", () => {
-    assert.match(src, /import \{ detectAnalysisSource \} from "\.\/analysis-source"/);
-    assert.match(src, /analysisSource: detectAnalysisSource\(tender\)/);
+    assert.match(source, /import \{ detectAnalysisSource \} from "\.\/analysis-source"/);
+    assert.match(source, /analysisSource: detectAnalysisSource\(tender\)/);
   });
 });

@@ -1,38 +1,9 @@
 // Bid-strategy gap classifier.
 //
-// PRODUCTION SYMPTOM
-// ──────────────────
-// Bid Strategy showed: win probability 38%, recommendation DECLINE,
-// capability coverage 0, experience fit 92, compliance readiness 95,
-// eligibility clearance 100. The 0 capability score was driven by:
-//   • analysis source was REGEX_FALLBACK_AI_ERROR (unapproved),
-//   • requirements had no reviewed-expert matches linked to this tender,
-//   • the company vault had plenty of reviewed experts ready to link.
-// In other words, the company HAS the capability — the system had not
-// finished linking the evidence. Recommending DECLINE on that basis is
-// dangerously misleading.
-//
-// WHAT THIS MODULE DOES
-// ─────────────────────
-// Pure classifier that consumes the same BidStrategyInput the engine
-// already builds and returns a typed reason for why capability coverage
-// is low, distinguishing:
-//   • TRUE_CAPABILITY_GAP    — vault genuinely lacks reviewed experts
-//                              for the required disciplines.
-//   • EVIDENCE_LINKING_GAP   — vault has the experts; none are linked
-//                              to this tender yet, or none are reviewed.
-//   • METADATA_EXTRACTION_GAP — no requirements extracted yet, so the
-//                              capability scorer has nothing to compare
-//                              against.
-//   • PROVIDER_RATE_LIMIT_GAP — analysisSource indicates regex fallback;
-//                              requirements / dimensions may be partial.
-//   • NO_CAPABILITY_GAP      — capability coverage is healthy; no
-//                              classification required.
-//
-// The classifier returns the cause AND a short human-readable
-// explanation suitable for the rationale field. It NEVER changes scores
-// — that's the engine's job — it just labels the cause so the engine
-// can refuse to collapse to DECLINE when the gap is system-readiness.
+// Distinguishes a true capability gap from a system/evidence-linking gap. The
+// runtime Company Vault contract treats authenticated REVIEWED evidence and
+// durable SOURCE_VERIFIED evidence as equally authoritative; draft states are
+// never treated as capability proof.
 
 export type CapabilityGapCause =
   | "NO_CAPABILITY_GAP"
@@ -42,11 +13,8 @@ export type CapabilityGapCause =
   | "PROVIDER_RATE_LIMIT_GAP";
 
 export type BidStrategyGapAnalysis = {
-  /** Primary classification of why capabilityCoverage is low (NO_CAPABILITY_GAP when it isn't). */
   capabilityGapCause: CapabilityGapCause;
-  /** True when ANY system-readiness signal is present, regardless of capability score. */
   systemReadinessGapsPresent: boolean;
-  /** Granular flags so the UI and audit log can show every signal that fired. */
   signals: {
     analysisRegexFallback: boolean;
     noRequirementsExtracted: boolean;
@@ -55,10 +23,7 @@ export type BidStrategyGapAnalysis = {
     vaultHasExpertsButNoneReviewed: boolean;
     evidenceCoverageZero: boolean;
   };
-  /** Short, human-readable explanation suitable for the rationale paragraph. */
   explanation: string;
-  /** Recommendation hint — when true, the engine MUST NOT collapse to DECLINE
-   *  because the gap is system-readiness, not true capability. */
   inhibitDecline: boolean;
 };
 
@@ -70,9 +35,9 @@ export type GapClassifierInput = {
     evidenceCoverageRatio?: number | null;
   };
   company: {
+    /** Count of runtime-authoritative experts in the Company Vault. */
     expertCount: number;
   };
-  /** Capability coverage score the engine just computed (0..100). */
   capabilityScore: number;
 };
 
@@ -86,19 +51,26 @@ const REGEX_FALLBACK_SOURCES = new Set([
 
 const LOW_CAPABILITY_THRESHOLD = 40;
 
+function authoritativeTrustLevel(value: string | null | undefined): boolean {
+  return value === "REVIEWED" || value === "SOURCE_VERIFIED";
+}
+
 /** Pure classifier — no side effects, no I/O. */
 export function classifyBidStrategyGaps(input: GapClassifierInput): BidStrategyGapAnalysis {
   const analysisSource = (input.tender.analysisSource ?? "").toString().trim().toUpperCase();
   const analysisRegexFallback = analysisSource.length > 0 && REGEX_FALLBACK_SOURCES.has(analysisSource);
   const noRequirementsExtracted = (input.tender.requirements.length ?? 0) === 0;
-  const reviewedLinkedExperts = (input.tender.expertMatches ?? []).filter((m) => m.expert.trustLevel === "REVIEWED").length;
+  const authoritativeLinkedExperts = (input.tender.expertMatches ?? [])
+    .filter((m) => authoritativeTrustLevel(m.expert.trustLevel)).length;
   const anyLinkedExperts = (input.tender.expertMatches ?? []).length;
   const vaultHasExperts = (input.company.expertCount ?? 0) > 0;
   const evidenceCoverageZero = (input.tender.evidenceCoverageRatio ?? null) === 0;
 
+  // Historical signal property names are retained for API compatibility. Their
+  // meaning is now runtime-authoritative evidence, not human REVIEWED only.
   const vaultLacksReviewedExperts = !vaultHasExperts;
   const vaultHasExpertsButNoneLinked = vaultHasExperts && anyLinkedExperts === 0;
-  const vaultHasExpertsButNoneReviewed = vaultHasExperts && anyLinkedExperts > 0 && reviewedLinkedExperts === 0;
+  const vaultHasExpertsButNoneReviewed = vaultHasExperts && anyLinkedExperts > 0 && authoritativeLinkedExperts === 0;
 
   const signals = {
     analysisRegexFallback,
@@ -116,7 +88,6 @@ export function classifyBidStrategyGaps(input: GapClassifierInput): BidStrategyG
     vaultHasExpertsButNoneReviewed ||
     (evidenceCoverageZero && vaultHasExperts);
 
-  // Capability is healthy → no classification needed.
   if (input.capabilityScore >= LOW_CAPABILITY_THRESHOLD) {
     return {
       capabilityGapCause: "NO_CAPABILITY_GAP",
@@ -129,7 +100,6 @@ export function classifyBidStrategyGaps(input: GapClassifierInput): BidStrategyG
     };
   }
 
-  // Capability score is LOW. Classify by priority (most specific first).
   if (noRequirementsExtracted) {
     return {
       capabilityGapCause: "METADATA_EXTRACTION_GAP",
@@ -137,7 +107,7 @@ export function classifyBidStrategyGaps(input: GapClassifierInput): BidStrategyG
       signals,
       explanation:
         "Capability coverage is low because no requirements have been extracted from the tender yet. " +
-        "Repair the tender analysis (run AI Analyze or use the source-grounded repair endpoint) before drawing capability conclusions.",
+        "Run AI Analyze on the current canonical source revision before drawing capability conclusions.",
       inhibitDecline: true,
     };
   }
@@ -147,9 +117,8 @@ export function classifyBidStrategyGaps(input: GapClassifierInput): BidStrategyG
       systemReadinessGapsPresent: true,
       signals,
       explanation:
-        "Capability coverage is low because the analysis source is an unapproved regex fallback. " +
-        "Extracted requirements may be partial; the capability metric is unreliable. " +
-        "Re-run AI Analyze when providers recover, or approve the fallback explicitly, before relying on this dimension.",
+        "Capability coverage is low because the analysis source is a non-authoritative regex/deterministic fallback. " +
+        "Extracted requirements may be partial; re-run AI Analyze before relying on this dimension.",
       inhibitDecline: true,
     };
   }
@@ -159,20 +128,18 @@ export function classifyBidStrategyGaps(input: GapClassifierInput): BidStrategyG
       systemReadinessGapsPresent: true,
       signals,
       explanation:
-        "Capability coverage is low because the company vault has reviewed experts but none are linked / reviewed for THIS tender yet. " +
-        "Evidence-linking incomplete; capability unknown until coverage confirmed. " +
-        "Run the matching pass or confirm reviewed-evidence suggestions before drawing a bid/no-bid conclusion.",
+        "Capability coverage is low because the Company Vault has authoritative source-backed experts but no authoritative tender-specific expert evidence is linked yet. " +
+        "Run Engine or allow the current Engine job to complete; no separate human promotion step is required.",
       inhibitDecline: true,
     };
   }
-  // Vault has no reviewed experts at all → genuine capability gap.
   return {
     capabilityGapCause: "TRUE_CAPABILITY_GAP",
     systemReadinessGapsPresent,
     signals,
     explanation:
-      "Capability coverage is low because the company vault lacks reviewed experts for the required disciplines. " +
-      "This is a real capability gap — consider a JV / subcontract for the missing disciplines, or invest in vault depth before bidding.",
+      "Capability coverage is low because the Company Vault lacks authoritative source-backed experts for the required disciplines. " +
+      "This is a real capability gap — consider a JV/subcontract for the missing disciplines or upload genuine missing CV evidence.",
     inhibitDecline: false,
   };
 }

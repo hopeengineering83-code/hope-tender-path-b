@@ -1,29 +1,110 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { clientLogger } from "@/lib/ui/client-logger";
+import { subscribeTenderWorkflowSync } from "@/lib/ui/tender-workflow-sync";
+import { DisclosureAnchorLink } from "./disclosure-anchor-link";
+import { ArrowRightIcon, CheckCircleIcon, WarningIcon } from "./icons";
+
+type PlanSummary = {
+  totalRequired: number;
+  totalGenerated: number;
+  planState: string;
+  automaticPlanPending?: boolean;
+};
+
+function planReason(summary: PlanSummary): string {
+  if (summary.planState === "CONFIRMED_BUILD_PLAN") {
+    return "A current source-verified Build Plan is active. Generated documents are reconciled against its revision and content hash.";
+  }
+  if (summary.planState === "EXPLICIT_TENDER_PLAN") {
+    return "Tender-issued file scope is available. The Engine will persist and source-verify the authoritative Build Plan automatically.";
+  }
+  if (summary.planState === "DERIVED_DRAFT_UNCONFIRMED") {
+    return "A provisional scope was derived from current requirements. The server will validate and promote it automatically when the source evidence is sufficient.";
+  }
+  return "The authoritative Build Plan has not been created yet. Run Engine uses the verified source and current AI analysis to create and verify it automatically; recovery is available below if it does not appear.";
+}
 
 export function SubmissionPlanTruthPanel({ tenderId }: { tenderId: string }) {
-  const [data, setData] = useState<any>(null);
+  const [summary, setSummary] = useState<PlanSummary | null>(null);
+  const [failed, setFailed] = useState(false);
 
-  useEffect(() => {
-    fetch(`/api/tenders/${tenderId}/workflow-center`)
-      .then(res => res.json())
-      .then(json => setData(json.plan))
-      .catch((e: unknown) => clientLogger.error("fetch failed", e instanceof Error ? { message: e.message } : { error: String(e) }));
+  const load = useCallback(async () => {
+    setFailed(false);
+    try {
+      const response = await fetch(`/api/tenders/${tenderId}/submission-plan`, {
+        cache: "no-store",
+        credentials: "include",
+      });
+      const json = await response.json().catch(() => ({})) as { summary?: PlanSummary; error?: string };
+      if (!response.ok) throw new Error(json.error ?? `submission-plan ${response.status}`);
+      if (!json.summary) throw new Error("Submission plan response did not include a summary");
+      setSummary(json.summary);
+    } catch (error) {
+      setFailed(true);
+      clientLogger.error(
+        "submission plan truth fetch failed",
+        error instanceof Error ? { message: error.message } : { error: String(error) },
+      );
+    }
   }, [tenderId]);
 
-  if (!data) return null;
+  useEffect(() => {
+    void load();
+    return subscribeTenderWorkflowSync(tenderId, () => {
+      void load();
+    });
+  }, [load, tenderId]);
 
+  if (failed) {
+    return (
+      <div id="submission-plan" className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4">
+        <p className="text-sm text-red-700">Submission plan status could not be loaded.</p>
+        <button type="button" onClick={() => void load()} className="mt-2 text-xs font-medium text-red-700 underline">Retry</button>
+      </div>
+    );
+  }
+
+  if (!summary) {
+    return (
+      <div id="submission-plan" className="mt-4 rounded-xl border border-slate-200 bg-white p-4" aria-busy="true" role="status" aria-live="polite">
+        <p className="text-sm text-slate-700">Loading submission plan status…</p>
+      </div>
+    );
+  }
+
+  const verified = summary.planState === "CONFIRMED_BUILD_PLAN";
   return (
-    <div id="submission-plan" className={`mt-4 rounded-xl border p-4 ${data.isVerified ? "border-green-200 bg-green-50" : "border-amber-200 bg-amber-50"}`}>
-      <h3 className={`text-sm font-bold ${data.isVerified ? "text-green-900" : "text-amber-900"}`}>
-        Submission Plan: {data.status.replace(/_/g, " ")}
+    <div id="submission-plan" className={`mt-4 rounded-xl border p-4 ${verified ? "border-green-200 bg-green-50" : "border-amber-200 bg-amber-50"}`}>
+      <h3 className={`flex items-center gap-1.5 text-sm font-bold ${verified ? "text-green-900" : "text-amber-900"}`}>
+        {verified ? <CheckCircleIcon /> : <WarningIcon />}
+        {verified ? "Source-verified Build Plan" : "Automatic Build Plan pending"}
       </h3>
-      <p className="mt-1 text-xs text-slate-600">{data.reason}</p>
-      <div className="mt-3 flex gap-4 text-[10px] font-bold uppercase">
-          <span className="text-slate-500">Required: {data.totalRequired}</span>
-          <span className="text-slate-500">Generated: {data.totalGenerated}</span>
+      <p className="mt-1 text-xs text-slate-600">{planReason(summary)}</p>
+      <div className="mt-3 flex flex-wrap items-center gap-4 text-[10px] font-bold uppercase">
+        <span className="text-slate-500">{verified ? "Verified required" : "Derived scope files"}: {summary.totalRequired}</span>
+        <span className="text-slate-500">Current outputs: {summary.totalGenerated}</span>
+        {!verified && (
+          // Recovery affordance, not a step on the normal path.
+          //
+          // The Engine already derives and source-verifies the Build Plan on its
+          // own: the ENGINE_RUN handler calls buildAndVerifyBuildPlan, and the
+          // sentence above this row says so. Labelling this link "Build and
+          // verify automatically" made it read as a required action competing
+          // with the real next action (Run Engine) — a third mandatory click on
+          // a workflow whose contract allows exactly two, and one this link does
+          // not even perform: it is an anchor to the recovery disclosure, not a
+          // mutation. The label now matches what it does, and what its own title
+          // attribute always said.
+          <DisclosureAnchorLink
+            href="#submission-plan-completeness"
+            className="inline-flex items-center gap-1 rounded-md border border-amber-200 bg-white px-2.5 py-1 text-[10px] font-medium text-amber-700 hover:bg-amber-100"
+            title="Open automatic Build Plan recovery"
+          >
+            Open exceptional Build Plan recovery <ArrowRightIcon />
+          </DisclosureAnchorLink>
+        )}
       </div>
     </div>
   );

@@ -46,7 +46,7 @@ export function buildWhyUsSummary(opts: {
   if (top) {
     const value = fmtMoney(top.contractValue, top.currency);
     bullets.push(
-      `**Same project, already delivered.** ${opts.companyName} has delivered ${top.name}${value ? ` (${value})` : ""}${top.clientName ? ` for ${top.clientName}` : ""} — a directly comparable assignment by the same team proposed for ${opts.clientName}.`,
+      `**Relevant reviewed experience.** ${opts.companyName} presents ${top.name}${value ? ` (${value})` : ""}${top.clientName ? ` for ${top.clientName}` : ""} as a project record whose applicable lessons inform the approach for ${opts.clientName}.`,
     );
   }
 

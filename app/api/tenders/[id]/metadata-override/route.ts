@@ -1,4 +1,5 @@
 // Tender Metadata Override endpoint.
+import { logger } from "../../../../../lib/observability";
 //
 // GET: Return all TenderMetadataOverride rows for a tender.
 // POST: Upsert a TenderMetadataOverride for a specific field.
@@ -20,11 +21,9 @@ import { resolveCanonicalFieldState, canonicalToClientChip } from "../../../../.
 import { isCriticalField, canBeNotApplicable, type TenderPolicyContext } from "../../../../../lib/engine/tender-policy-registry";
 import { enrichMetadataWithSourceEvidence } from "../../../../../lib/engine/metadata-source-enrichment";
 import {
-  classifyTenderFactAuthority,
   isMeaningfulReason,
   isValidConfirmationBasis,
   isSubmissionCriticalField,
-  isOperationalWarningField,
   isConditionallySubmissionCritical,
   MIN_CRITICAL_REASON_LENGTH,
   type HumanConfirmedAudit,
@@ -32,7 +31,6 @@ import {
 import {
   upsertTenderFactFromManualOverride,
   markTenderFactNotApplicable,
-  rejectInvalidTenderFact,
 } from "../../../../../lib/engine/tender-facts-ledger-service";
 
 export const dynamic = "force-dynamic";
@@ -244,12 +242,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const overrideValue = typeof body.overrideValue === "string" ? body.overrideValue.trim() || null : null;
   const reason = typeof body.reason === "string" ? body.reason.trim() || null : null;
-  // NEVER trust client-supplied previousValue — compute it server-side.
-  const previousValue = null; // Will be set from the existing override row below.
-
   // ─── SERVER-SIDE POLICY VALIDATION (P0) ──────────────────────────
   // The API must enforce policy. Hidden UI buttons are not security controls.
 
+  // NEVER trust client-supplied previousValue — compute it server-side.
   // Load existing override to compute real prior value
   const existingOverride = await prisma.tenderMetadataOverride.findUnique({
     where: { tenderId_field: { tenderId: id, field } },
@@ -473,6 +469,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // Upsert: update if exists, create if not.
   // Guarded against P2021/P2010 in case the migration hasn't been applied yet.
   let upserted;
+  // NEVER trust client-supplied previousValue — compute it server-side.
+  // The realPriorValue above is loaded from the existing override row (or
+  // the tender scalar if no override exists). The client-supplied
+  // previousValue in the request body is read only for audit comparison,
+  // never persisted as the source of truth.
   try {
     upserted = await prisma.tenderMetadataOverride.upsert({
       where: { tenderId_field: { tenderId: id, field } },
@@ -581,7 +582,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   } catch (ledgerErr) {
     // Ledger mutation failed — log but don't fail the override. The legacy
     // TenderMetadataOverride row is already written and is the fallback.
-    console.error("[metadata-override] ledger mutation failed (non-blocking):", ledgerErr instanceof Error ? ledgerErr.message : String(ledgerErr));
+    logger.error("[metadata-override] ledger mutation failed (non-blocking)", { detail: ledgerErr instanceof Error ? ledgerErr.message : String(ledgerErr) });
   }
 
   // ─── Post-override source-evidence enrichment (INFORMATIONAL ONLY) ────────

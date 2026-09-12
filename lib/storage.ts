@@ -203,13 +203,29 @@ class DbBase64Storage implements StorageAdapter {
   }
 }
 
-class BlobStorage implements StorageAdapter {
+// Minimal shape of the @vercel/blob functions this adapter actually calls.
+// Test-only injection point (see BlobStorage's constructor) — production
+// code never passes this and always uses the real dynamic import below.
+export type BlobClientOverrides = {
+  put?: (key: string, body: Buffer, options: { access: "private"; token: string }) => Promise<{ url: string }>;
+  get?: (url: string, options: { access: "private"; token: string }) => Promise<{ statusCode: number; stream: ReadableStream } | null>;
+  del?: (url: string, options: { token: string }) => Promise<void>;
+};
+
+export class BlobStorage implements StorageAdapter {
   private readonly fallback = new DbBase64Storage();
+
+  // The optional constructor argument exists solely so tests can exercise
+  // the real put/get/delete logic (URL validation, error handling, fallback
+  // behavior) against a fake client, without a live Blob store or the
+  // --experimental-test-module-mocks flag this project's test runner does
+  // not pass. getStorageAdapter() below never supplies this argument.
+  constructor(private readonly overrides: BlobClientOverrides = {}) {}
 
   async putFile(buffer: Buffer, metadata: StorageMetadata) {
     const token = process.env.BLOB_READ_WRITE_TOKEN;
     if (!token) return this.fallback.putFile(buffer, metadata);
-    const { put } = await import("@vercel/blob");
+    const put = this.overrides.put ?? (await import("@vercel/blob")).put;
     const ext = path.extname(metadata.fileName).replace(/[^.a-zA-Z0-9]/g, "");
     const key = `${safeScope(metadata)}/${randomUUID()}${ext}`;
     const result = await put(key, buffer, { access: "private", token });
@@ -226,7 +242,7 @@ class BlobStorage implements StorageAdapter {
       }
       const token = process.env.BLOB_READ_WRITE_TOKEN;
       if (!token) throw new Error("Blob storage token is not configured");
-      const { get } = await import("@vercel/blob");
+      const get = this.overrides.get ?? (await import("@vercel/blob")).get;
       const result = await get(record.storagePath, { access: "private", token });
       if (!result || result.statusCode !== 200 || !result.stream) {
         throw new Error(`Blob read failed${result ? ` with status ${result.statusCode}` : ": object not found"}`);
@@ -244,7 +260,7 @@ class BlobStorage implements StorageAdapter {
       }
       const token = process.env.BLOB_READ_WRITE_TOKEN;
       if (!token) throw new Error("Blob storage token is not configured");
-      const { del } = await import("@vercel/blob");
+      const del = this.overrides.del ?? (await import("@vercel/blob")).del;
       await del(record.storagePath, { token });
       return;
     }
