@@ -128,7 +128,18 @@ export function buildPortfolioMetricsBlock(metrics: PortfolioMetrics, companyNam
     tiles.push(`| Disciplines on the team: ${metrics.uniqueDisciplines.join(" / ")} |`);
   }
   if (metrics.hasDonorEvidence) {
-    tiles.push(`| ✓ Donor / international institution delivery track record on file |`);
+    // No dingbat. U+2713 CHECK MARK is outside WinAnsi, so the PDF renderer
+    // switches to an embedded Unicode face for the whole document - and the
+    // face it picks has no glyph for it, which draws .notdef. On the
+    // delivered 35-page PDF (run 34698133772) the client's first capability
+    // block carried a NUL where the tick should be:
+    //
+    //   <U+0000> Donor / international institution delivery track record...
+    //
+    // Nothing was logged. A missing glyph is silent, unlike an UNENCODABLE
+    // character, which throws and is therefore caught in development. Every
+    // sibling tile in this block is plain text; this one now matches.
+    tiles.push(`| Donor / international institution delivery track record on file |`);
   }
 
   if (tiles.length === 0) {
