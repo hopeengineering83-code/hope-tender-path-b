@@ -16,7 +16,8 @@
 // Pure-regex extractor, same shape as company-fact-extractor. No AI
 // call, no network. Detects:
 //   • clientName    ← "client: …", "for …" entity-suffix line
-//   • country       ← detected city/region keywords (Ethiopia common)
+//   • country       ← one generic country reference, and only when the
+//                     text names exactly one country (lib/engine/country-reference)
 //   • contractValue ← "ETB 525,800,000", "USD 3.5M", "GBP 390,717"
 //   • currency      ← currency token alongside the value
 //   • startDate / endDate ← "2014-2015", "2023 to 2025", "Dec 2017 to Present"
@@ -24,6 +25,9 @@
 //
 // Idempotent: only suggests fields that aren't already populated.
 // Caller merges with `chooseIncomingOrExisting` semantics.
+
+import { findCountriesInText } from "./country-reference";
+import { CURRENCY_TOKEN_ALTERNATION, resolveCurrencyToken } from "./currency-reference";
 
 export interface ProjectFactExtraction {
   clientName?: string;
@@ -36,18 +40,6 @@ export interface ProjectFactExtraction {
   sector?: string;
 }
 
-const CURRENCY_TOKENS: Array<{ token: string; code: string }> = [
-  { token: "ETB", code: "ETB" },
-  { token: "Birr", code: "ETB" },
-  { token: "GBP", code: "GBP" },
-  { token: "£", code: "GBP" },
-  { token: "USD", code: "USD" },
-  { token: "$", code: "USD" },
-  { token: "EUR", code: "EUR" },
-  { token: "€", code: "EUR" },
-  { token: "KES", code: "KES" },
-  { token: "ZAR", code: "ZAR" },
-];
 
 // Currency-then-number OR number-then-currency.
 // Examples: "ETB 525,800,000" / "525,800,000 ETB" / "USD 3.5M" / "3.5M USD".
@@ -62,8 +54,21 @@ function parseValueAndCurrency(text: string): { value?: number; currency?: strin
   // short trailing reference like "50,000 ETB/month").
   let best: { value: number; currency: string } | undefined;
 
-  const before = /\b(ETB|Birr|GBP|USD|EUR|KES|ZAR|\$|£|€)[^\S\n]{0,3}([\d]{1,3}(?:[,.]?\d{3})*(?:\.\d+)?)\s*(M|B|million|billion)?\b/gi;
-  const after = /\b([\d]{1,3}(?:[,.]?\d{3})*(?:\.\d+)?)\s*(M|B|million|billion)?[^\S\n]{0,3}(ETB|Birr|GBP|USD|EUR|KES|ZAR)\b/gi;
+  // Currency knowledge comes from the one generic reference rather than the
+  // six-currency list this used to carry, which read an amount in NGN, RWF,
+  // VND, PEN or JOD as no amount at all. The alternation is case-SENSITIVE by
+  // construction (see currency-reference), so these patterns must not take the
+  // `i` flag; the magnitude suffix carries its own casing instead.
+  const NUMBER = "([\\d]{1,3}(?:[,.]?\\d{3})*(?:\\.\\d+)?)";
+  const MAGNITUDE = "([MmBb]|[Mm]illion|[Bb]illion)?";
+  const before = new RegExp(
+    `(?<![A-Za-z0-9])(${CURRENCY_TOKEN_ALTERNATION})[^\\S\\n]{0,3}${NUMBER}\\s*${MAGNITUDE}`,
+    "g",
+  );
+  const after = new RegExp(
+    `(?<![A-Za-z0-9])${NUMBER}\\s*${MAGNITUDE}[^\\S\\n]{0,3}(${CURRENCY_TOKEN_ALTERNATION})(?![A-Za-z])`,
+    "g",
+  );
 
   const consider = (numRaw: string, suffixRaw: string | undefined, tokenRaw: string) => {
     let value = Number(numRaw.replace(/,/g, ""));
@@ -74,7 +79,8 @@ function parseValueAndCurrency(text: string): { value?: number; currency?: strin
     // Reject implausibly small values that aren't M/B-suffixed (likely
     // a stray enumerator or page number).
     if (!sfx && value < 1000) return;
-    const code = CURRENCY_TOKENS.find((c) => c.token.toLowerCase() === tokenRaw.toLowerCase())?.code ?? tokenRaw.toUpperCase();
+    const code = resolveCurrencyToken(tokenRaw);
+    if (!code) return;
     if (!best || value > best.value) best = { value, currency: code };
   };
 
@@ -83,17 +89,6 @@ function parseValueAndCurrency(text: string): { value?: number; currency?: strin
 
   return best ?? {};
 }
-
-// Country: list of common targets. Surfacing nothing is preferred to a
-// bad guess.
-const COUNTRY_TOKENS = [
-  "Ethiopia", "Kenya", "Tanzania", "Uganda", "Rwanda", "Burundi",
-  "South Sudan", "Sudan", "Djibouti", "Eritrea", "Somalia",
-  "Nigeria", "Ghana", "South Africa", "Egypt", "Morocco", "Algeria",
-  "Senegal", "Cameroon", "Zambia", "Zimbabwe", "Mozambique",
-  "DRC", "Democratic Republic of Congo", "Congo",
-  "United Kingdom", "USA", "United States",
-];
 
 const CLIENT_LINE_PATTERNS = [
   /\bclient\s*[:\-]?\s*([A-Z][A-Za-z0-9.,'’()\-/& ]{2,90})/i,
@@ -270,7 +265,10 @@ export function extractProjectAmounts(summary: string): ProjectAmount[] {
   const out: ProjectAmount[] = [];
 
   // "<label words> Cost: 550,074,678.02 ETB" or "... 110,000 ETB/month"
-  const rx = /([A-Za-z&,'()\/ .-]{0,90}?)\b(?:cost|fee|value|price|sum)\b\s*[:\-]?\s*([0-9][0-9,]*(?:\.[0-9]+)?)\s*([A-Z]{3}|Birr|£|\$|€)?\s*(\/\s*month|per\s+month)?/gi;
+  const rx = new RegExp(
+    `([A-Za-z&,'()\\/ .-]{0,90}?)\\b(?:[Cc]ost|[Ff]ee|[Vv]alue|[Pp]rice|[Ss]um)\\b\\s*[:\\-]?\\s*([0-9][0-9,]*(?:\\.[0-9]+)?)\\s*(${CURRENCY_TOKEN_ALTERNATION})?\\s*(\\/\\s*month|per\\s+month)?`,
+    "g",
+  );
   let m: RegExpExecArray | null;
   while ((m = rx.exec(text)) !== null) {
     const raw = Number((m[2] || "").replace(/,/g, ""));
@@ -284,7 +282,7 @@ export function extractProjectAmounts(summary: string): ProjectAmount[] {
     // A per-month amount is a rate however it is labelled.
     if (perMonth) role = "SUPERVISION_RATE";
     const currencyToken = (m[3] || "").trim();
-    const currency = CURRENCY_TOKENS.find((c) => c.token.toLowerCase() === currencyToken.toLowerCase())?.code;
+    const currency = resolveCurrencyToken(currencyToken) ?? undefined;
     out.push({ role, value: raw, currency, perMonth, label: label || "Stated amount" });
   }
   return out;
@@ -301,13 +299,15 @@ export function extractProjectFacts(summary: string, name?: string): ProjectFact
   if (cv.value) out.contractValue = cv.value;
   if (cv.currency) out.currency = cv.currency;
 
-  // Country
-  for (const token of COUNTRY_TOKENS) {
-    if (new RegExp(`\\b${token.replace(/ /g, "\\s+")}\\b`, "i").test(text)) {
-      out.country = token === "DRC" || token === "Democratic Republic of Congo" ? "DRC" : token;
-      break;
-    }
-  }
+  // Country. This used to walk a hand-written list of two dozen mostly East
+  // African names and take the FIRST one the list happened to contain, so
+  // list order decided the answer and a project in Nigeria whose text also
+  // mentioned an Ethiopian head office came out as Ethiopia. Country
+  // knowledge now lives in one generic reference module, and a text naming
+  // more than one country yields no country at all rather than the
+  // alphabetically luckiest one.
+  const countriesInText = findCountriesInText(text);
+  if (countriesInText.length === 1) out.country = countriesInText[0];
 
   // Client name (entity-suffix bias)
   for (const p of CLIENT_LINE_PATTERNS) {

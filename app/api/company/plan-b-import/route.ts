@@ -10,6 +10,7 @@ import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "../../../../lib/rate-l
 import { completenessStats, deriveExpectedCounts, hasUsableText } from "./helpers";
 import { sanitizeError } from "../../../../lib/sanitize-error";
 import { safeParse } from "../../../../lib/safe-json";
+import { resolveProjectCountry } from "../../../../lib/engine/country-reference";
 import {
   expertReviewFields,
   projectReviewFields,
@@ -780,6 +781,10 @@ export async function POST(req: Request) {
     let projectsCreated = 0;
     let projectsUpdated = 0;
     let projectsSkipped = 0;
+    // Country-field hygiene, reported so a bulk import states plainly how many
+    // country values it repaired and how many it deliberately refused to guess.
+    let countryCorrected = 0;
+    let countryUnresolved = 0;
     const legal = { created: 0, updated: 0, skipped: 0 };
     const financial = { created: 0, updated: 0, skipped: 0 };
     const compliance = { created: 0, updated: 0, skipped: 0 };
@@ -1081,7 +1086,44 @@ export async function POST(req: Request) {
       const summary = [exactRawText, project.contractValueSummary ? `Value / fee summary: ${clean(project.contractValueSummary)}` : null, project.duration ? `Duration: ${clean(project.duration)}` : null, source].filter(Boolean).join("\n\n");
       const serviceAreas = Array.isArray(project.serviceAreas) && project.serviceAreas.length > 0 ? project.serviceAreas : project.sectors;
       const clientName = clean(project.clientName) || null;
-      const country = clean(project.country) || null;
+      const payloadCountry = clean(project.country) || null;
+
+      // COUNTRY FIELD HYGIENE (owner-authorised, conservative).
+      //
+      // `Project.country` is a country column, and this path wrote whatever
+      // the payload put in that slot. On the owner's own portfolio that left
+      // 0 of 114 records holding a plain country: full postal addresses,
+      // city/region composites, client names, area figures and placeholder
+      // words. portfolio-card-repair renders this column as the project
+      // LOCATION, which is how "Abuja, Federal Capital Territory, Nigeria"
+      // reached the opening capability paragraph of an Ethiopian bid, and
+      // proposal-intelligence scores tender/project country agreement by
+      // substring, so a composite never matched and quietly forfeited points
+      // it had earned.
+      //
+      // The resolver may use ONLY this record's own evidence - the stored
+      // value itself, then the record's own source text - and refuses to
+      // decide when that evidence names no country or more than one. It never
+      // consults the current tender, the company's nationality, a sibling
+      // project or a default region, and it never replaces a value that is
+      // already a country. It runs before the trust decision below so the
+      // value that gets source-verified is the value that gets stored.
+      const countryResolution = resolveProjectCountry({
+        storedCountry: payloadCountry,
+        sourceText: exactRawText || summary,
+      });
+      const country = countryResolution.shouldWrite ? countryResolution.country : payloadCountry;
+      if (countryResolution.shouldWrite) {
+        countryCorrected += 1;
+      } else if (
+        countryResolution.outcome === "UNRESOLVED_AMBIGUOUS" ||
+        countryResolution.outcome === "UNRESOLVED_NO_EVIDENCE"
+      ) {
+        if (payloadCountry) {
+          countryUnresolved += 1;
+          warnings.push(`Project ${name}: country left unresolved - ${countryResolution.reason}`);
+        }
+      }
       const sector = clean(project.sector || project.sectors?.[0]) || null;
       const serviceAreasJson = arr(serviceAreas);
       const linkedSourceDoc = resolveLinkedSourceDoc(recordTrustCtx, project.sourceDocument, project.sourceSha256);
@@ -1217,7 +1259,7 @@ export async function POST(req: Request) {
       companyProfileUpdated,
       documents: { received: sourceDocuments.length, created: documentsCreated, updated: documentsUpdated, skipped: documentsSkipped },
       experts: { received: experts.length, created: expertsCreated, updated: expertsUpdated, skipped: expertsSkipped },
-      projects: { received: projects.length, created: projectsCreated, updated: projectsUpdated, skipped: projectsSkipped },
+      projects: { received: projects.length, created: projectsCreated, updated: projectsUpdated, skipped: projectsSkipped, countryCorrected, countryUnresolved },
       expectedCounts,
       missingCounts: {
         experts: expertCompleteness?.missing ?? null,

@@ -5,6 +5,7 @@ import { requireRole, forbiddenResponse, unauthorizedResponse, getSession } from
 import { logAction } from "../../../../lib/audit";
 import { MUTATION_RATE_LIMIT, rateLimit } from "../../../../lib/rate-limit";
 import { ensureCompanyForUser } from "../../../../lib/company-workspace";
+import { resolveProjectCountry } from "../../../../lib/engine/country-reference";
 import {
   buildReviewProvenance,
   buildPartialSourceVerificationProvenance,
@@ -198,7 +199,20 @@ export async function POST(req: Request) {
       try {
         const { extractProjectFacts, mergeProjectFacts } = await import("../../../../lib/engine/project-fact-extractor");
         const extracted = extractProjectFacts(project.summary, project.name);
-        const update = mergeProjectFacts(project, extracted);
+        const update: Record<string, unknown> = { ...mergeProjectFacts(project, extracted) };
+
+        // COUNTRY FIELD HYGIENE - the same conservative resolver the bulk
+        // import uses, so one project typed in by hand and a hundred imported
+        // from JSON end up with the same kind of value in the same column.
+        // A value that is already a country is never touched; a composite such
+        // as "Kigali, Rwanda" yields "Rwanda"; anything the record's own
+        // evidence cannot settle is left alone rather than guessed at.
+        const countryResolution = resolveProjectCountry({
+          storedCountry: (update.country as string | null | undefined) ?? project.country,
+          sourceText: project.summary,
+        });
+        if (countryResolution.shouldWrite) update.country = countryResolution.country;
+
         if (Object.keys(update).length > 0) {
           await prisma.project.update({ where: { id: project.id }, data: update });
         }
