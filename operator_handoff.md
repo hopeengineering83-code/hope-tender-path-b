@@ -143,6 +143,68 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-12 UTC (later still) — What the client actually reads about project value
+
+Head `25daa395`. Two hosted runs on the repaired vault: acceptance 34716057918
+(full chain, green) and export verification 34717065352 (same package, no
+regeneration).
+
+**The chain is green and the vault repair reached the app.** AI Analyze and Run
+Engine both succeeded — so a provider wrote the analysis, and the 16:04 failure
+was capacity, not code. `export-readiness ok=True status=READY blockers=0`;
+ZIP 200/304,583 bytes, one file, digest verified; `Technical Proposal.pdf`
+309,988 bytes, 32 pages; letterhead applied to 1 document; 2 embedded images
+(signature 251x101, stamp 1056x992) on page 32. Generation readiness on the
+tender went 5 -> 65 and `supportPackageReady` false -> true, with
+COMPANY_INGESTION_NOT_READY and NO_REVIEWED_PROJECT_MATCHES both gone.
+
+**MEASURED IN THE DELIVERED BYTES: 0 monetary figures, 0 value statements, 3
+scale figures** (7,000 m2, 2,800 m2, 7,500 m2). The vault now holds a contract
+value on 113 of 114 projects and the document cites none of them.
+
+A first version of that measurement reported *5* monetary figures — `2026`,
+`ISO 9001`, `ISO 21542`, `TIN 0064637886` and a licence number. It treated any
+three-letter token beside digits as a currency, and would have been quoted as
+proof the enrichment had worked. It now resolves currencies through the
+application's own reference, in a script rather than an inline regex.
+
+**THE MECHANISM, from the delivered text rather than from reasoning.** Section B
+renders exactly ONE project card:
+
+```
+Hospital Project - Healthcare
+Client              City Administration of Abuja
+Location & Scale    Nigeria - 7,500 m2
+Duration            2024-2026
+Services Provided   Feasibility study, Geotechnical investigation, ...
+```
+
+Two things are wrong with that, and they are separate.
+
+1. **No value row of any kind.** The AI card template asks for `Contract Value`,
+   `Testimony Reference` and `Relevance to This Assignment`; the writer emitted
+   them; `repairPortfolioCards` drops a row whose cell asserts nothing and which
+   the record cannot fill. So the row is absent because THIS record states no
+   amount — it is very likely the 1 of 114 with no parseable value, which also
+   explains the absent Consultancy Fee and Construction Value rows. Confirming
+   which record it is remains open.
+
+2. **One card for three named references.** The same page says "3 project
+   reference(s)" and names them: *G+6 General Hospital - Dr Abdul Seid;
+   Dessie Specialized Hospital; Hospital Project*. Only the third is carded —
+   and it is the Nigerian one, in an Addis Ababa hospital tender, while both
+   Ethiopian hospitals are named and then shown nothing. The previous entry
+   recorded the structure seal dropping "5 empty headings (2 expert cards, 3
+   project cards)" and deferred judgement pending a model-backed run. This run
+   is model-backed and shows the harm: the portfolio section of an Ethiopian
+   hospital bid presents one Nigerian project with no stated value. That is now
+   a defect, not a design question.
+
+**Not yet fixed, and next:** establish which record carries no value, then fix
+the card-dropping so a named reference is either carded or not promised. The
+enrichment reached the vault; it has not yet reached the page.
+
+
 ### 2026-09-12 UTC (later) — Country/currency knowledge, the live vault, and a regression I caused
 
 Claude Code (Opus 5) · branch `release/consolidated-recovery-20260717` · PR #1175
