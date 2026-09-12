@@ -83,6 +83,23 @@ export type CanonicalWorkflowDecision = {
    * gates remain independent and still fire.
    */
   mandatoryAwaitingPlannedOutputCount?: number;
+  /**
+   * Mandatory requirements no automatic check can decide either way — page
+   * limits, fonts, hard-copy counts, binding, envelope marking. Subtracted
+   * from the coverage DENOMINATOR, never added to the covered count: nothing
+   * is reported as verified that was not verified.
+   *
+   * Counting them as uncovered made a tender unwinnable by construction. The
+   * rule can never reach FULL/SUBSTANTIAL — no document evidences it and the
+   * stored bytes cannot adjudicate it — so the gate refused forever while
+   * telling the owner there was "no owner action" to take. Reproduced live on
+   * tender 50940b8b, where it also blocked GET /download?type=pdf and made
+   * the delivered document unreadable by any route.
+   *
+   * They are still reported: final-package-readiness-model surfaces each one
+   * as a human-judgement review item on the package.
+   */
+  mandatoryNotMachineDecidableCount?: number;
 
   // Documents
   requiredDocumentsTotal: number;
@@ -125,6 +142,23 @@ export function buildCanonicalWorkflowDecision(input: {
   mandatoryComplianceRowsCount: number;
   mandatoryFullOrSubstantialCoverageCount: number;
   mandatoryAwaitingPlannedOutputCount?: number;
+  /**
+   * Mandatory requirements no automatic check can decide either way — page
+   * limits, fonts, hard-copy counts, binding, envelope marking. Subtracted
+   * from the coverage DENOMINATOR, never added to the covered count: nothing
+   * is reported as verified that was not verified.
+   *
+   * Counting them as uncovered made a tender unwinnable by construction. The
+   * rule can never reach FULL/SUBSTANTIAL — no document evidences it and the
+   * stored bytes cannot adjudicate it — so the gate refused forever while
+   * telling the owner there was "no owner action" to take. Reproduced live on
+   * tender 50940b8b, where it also blocked GET /download?type=pdf and made
+   * the delivered document unreadable by any route.
+   *
+   * They are still reported: final-package-readiness-model surfaces each one
+   * as a human-judgement review item on the package.
+   */
+  mandatoryNotMachineDecidableCount?: number;
 
   // Build plan
   confirmedBuildPlanExists: boolean;
@@ -232,16 +266,22 @@ export function buildCanonicalWorkflowDecision(input: {
   // output the same gate is preventing.
   const mandatoryCoveredForGeneration =
     input.mandatoryFullOrSubstantialCoverageCount + (input.mandatoryAwaitingPlannedOutputCount ?? 0);
+  // The population automatic matching can actually decide. See
+  // mandatoryNotMachineDecidableCount.
+  const mandatoryDecidableCount = Math.max(
+    0,
+    input.mandatoryRequirementCount - (input.mandatoryNotMachineDecidableCount ?? 0),
+  );
   if (requirementsOK && input.confirmedBuildPlanExists && input.mandatoryRequirementCount > 0 && input.mandatoryComplianceRowsCount > 0) {
-    if (mandatoryCoveredForGeneration < input.mandatoryRequirementCount) {
+    if (mandatoryCoveredForGeneration < mandatoryDecidableCount) {
       blockerCodes.push("MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE");
-      blockerDetails.push(`${input.mandatoryFullOrSubstantialCoverageCount}/${input.mandatoryRequirementCount} mandatory requirements have release-qualified FULL/SUBSTANTIAL coverage. Strengthen partial evidence or add eligible source-backed evidence for requirements with no adequate evidence.`);
+      blockerDetails.push(`${input.mandatoryFullOrSubstantialCoverageCount}/${mandatoryDecidableCount} automatically decidable mandatory requirements have release-qualified FULL/SUBSTANTIAL coverage. Strengthen partial evidence or add eligible source-backed evidence for requirements with no adequate evidence.`);
     }
   }
 
   // ── Priority 11: PDF required but unavailable ────────────────────────
   const complianceOK = requirementsOK && input.confirmedBuildPlanExists &&
-    (input.mandatoryRequirementCount === 0 || (input.mandatoryComplianceRowsCount > 0 && mandatoryCoveredForGeneration >= input.mandatoryRequirementCount));
+    (input.mandatoryRequirementCount === 0 || (input.mandatoryComplianceRowsCount > 0 && mandatoryCoveredForGeneration >= mandatoryDecidableCount));
   if (complianceOK && input.pdfRequiredButUnavailable) {
     blockerCodes.push("PDF_REQUIRED_UNAVAILABLE");
     blockerDetails.push("Required PDF output is unavailable. Finalize the required PDF or upload the tender-issued PDF.");
@@ -327,7 +367,7 @@ export function buildCanonicalWorkflowDecision(input: {
       : { action: "RUN_AI_ANALYZE", label: "Re-run AI Analyze", reason: "No source-grounded requirements are available for the current verified source." },
     NO_CONFIRMED_BUILD_PLAN: { action: "RUN_ENGINE", label: "Run Engine", reason: "Run Engine uses the current verified source and current AI analysis, then starts matching and automatic Build Plan creation." },
     MANDATORY_NO_COMPLIANCE_ROWS: { action: "LINK_VAULT_EVIDENCE", label: "Link evidence to requirements", reason: `${input.mandatoryRequirementCount} mandatory requirements have no compliance matrix rows. Run Engine to link evidence.` },
-    MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE: { action: "LINK_VAULT_EVIDENCE", label: "Source evidence required", reason: `Automatic matching found release-qualified FULL/SUBSTANTIAL coverage for ${input.mandatoryFullOrSubstantialCoverageCount}/${input.mandatoryRequirementCount} mandatory requirements. Strengthen partial evidence or add eligible source-backed evidence where none is adequate; no confirmation click can bypass this gate.` },
+    MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE: { action: "LINK_VAULT_EVIDENCE", label: "Source evidence required", reason: `Automatic matching found release-qualified FULL/SUBSTANTIAL coverage for ${input.mandatoryFullOrSubstantialCoverageCount}/${Math.max(0, input.mandatoryRequirementCount - (input.mandatoryNotMachineDecidableCount ?? 0))} automatically decidable mandatory requirements. Strengthen partial evidence or add eligible source-backed evidence where none is adequate; no confirmation click can bypass this gate.` },
     PDF_REQUIRED_UNAVAILABLE: { action: "FINALIZE_REQUIRED_PDF", label: "Finalize required PDF", reason: "Required PDF output is unavailable. Finalize the required PDF (from the approved DOCX source) or upload the tender-issued PDF." },
     REQUIRED_DOCS_NOT_GENERATED: { action: "GENERATE_DOCUMENTS", label: "Generate proposal documents", reason: `${input.generatedDocumentsTotal}/${input.requiredDocumentsTotal} required documents generated.` },
     DOCS_NOT_VALIDATED: { action: "FIX_EXPORT_BLOCKERS", label: "Validate documents", reason: "Generated documents have not been validated." },
@@ -416,7 +456,7 @@ export function buildCanonicalWorkflowDecision(input: {
   } else if (
     input.mandatoryRequirementCount > 0
     && input.mandatoryFullOrSubstantialCoverageCount + (input.mandatoryAwaitingPlannedOutputCount ?? 0)
-       < input.mandatoryRequirementCount
+       < Math.max(0, input.mandatoryRequirementCount - (input.mandatoryNotMachineDecidableCount ?? 0))
   ) {
     stageStates["MATCH_EVIDENCE"] = "BLOCKED";
     stageAvailability["MATCH_EVIDENCE"] = true;
@@ -480,6 +520,7 @@ export function buildCanonicalWorkflowDecision(input: {
     mandatoryComplianceRowsCount: input.mandatoryComplianceRowsCount,
     mandatoryFullOrSubstantialCoverageCount: input.mandatoryFullOrSubstantialCoverageCount,
     mandatoryAwaitingPlannedOutputCount: input.mandatoryAwaitingPlannedOutputCount ?? 0,
+    mandatoryNotMachineDecidableCount: input.mandatoryNotMachineDecidableCount ?? 0,
     requiredDocumentsTotal: input.requiredDocumentsTotal,
     generatedDocumentsTotal: input.generatedDocumentsTotal,
     exportReadyDocumentsTotal: input.exportReadyDocumentsTotal,
@@ -576,6 +617,9 @@ export async function getCanonicalTenderWorkflowDecision(
     return anyRowCount;
   })();
   const mandatoryFullOrSubstantialCoverageCount = snapshot.evidence.covered;
+  // The snapshot already set these aside from the coverage population; the
+  // count travels with it so the gate's denominator matches the numerator's.
+  const mandatoryNotMachineDecidableCount = snapshot.evidence.notMachineDecidable;
 
   // Mandatory requirements whose outstanding evidence is a file this workflow
   // will generate. This asks exactly: is this requirement waiting on
@@ -757,6 +801,7 @@ export async function getCanonicalTenderWorkflowDecision(
     // allowance was inert no matter what the query returned — the whole reason
     // the generation deadlock survived a fix to the query itself.
     mandatoryAwaitingPlannedOutputCount,
+    mandatoryNotMachineDecidableCount,
     confirmedBuildPlanExists,
     requiredDocumentsTotal,
     generatedDocumentsTotal,

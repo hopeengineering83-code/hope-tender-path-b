@@ -154,8 +154,14 @@ describe("every surface passes the package facts to the one resolver", () => {
     const source = readFileSync("lib/engine/final-package-readiness-model.ts", "utf8");
     assert.match(source, /SUBMISSION_RULE_BROKEN_BY_PACKAGE/);
     assert.match(source, /SUBMISSION_RULE_AWAITING_PACKAGE/);
-    // The blocker is still produced — fail-closed is unchanged.
-    assert.match(source, /\.filter\(\(status\) => status\.mandatory && status\.displayStatus !== "FULLY_MET"\)/);
+    // The blocker is still produced — fail-closed is unchanged for everything
+    // the machine can decide. `machineDecidable` was added to the same filter
+    // so that a rule no automatic check can settle either way (page limits,
+    // fonts, hard-copy counts, binding, envelope marking) stops making the
+    // tender unwinnable; it is reported as a human-judgement review item
+    // instead. VIOLATED and PENDING_PACKAGE still block exactly as before.
+    assert.match(source, /\.filter\(\(status\) => status\.mandatory && status\.machineDecidable && status\.displayStatus !== "FULLY_MET"\)/);
+    assert.match(source, /buildHumanJudgementReviewItems/);
   });
 });
 

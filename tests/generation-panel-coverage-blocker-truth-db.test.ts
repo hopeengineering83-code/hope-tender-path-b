@@ -439,7 +439,11 @@ dbDescribe("Generation panel — coverage blocker reaches the release status", (
     const index = workflowDecision?.blockerCodes.indexOf("MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE") ?? -1;
     assert.ok(index >= 0);
     const detail = workflowDecision?.blockerDetails[index] ?? "";
-    assert.match(detail, /2\/4 mandatory requirements have release-qualified FULL\/SUBSTANTIAL coverage/);
+    // "automatically decidable" names the population the ratio is over. All
+    // four are decidable here, so the numbers are unchanged and the blocker
+    // still fires — the denominator only shrinks for rules no automatic check
+    // can settle either way, which this tender has none of.
+    assert.match(detail, /2\/4 automatically decidable mandatory requirements have release-qualified FULL\/SUBSTANTIAL coverage/);
     assert.match(detail, /Strengthen partial evidence/i);
   });
 });

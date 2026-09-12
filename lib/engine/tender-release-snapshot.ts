@@ -60,9 +60,17 @@ export type SnapshotRequirementsState = {
 };
 
 export type SnapshotEvidenceState = {
+  /** Mandatory requirements the machine can adjudicate — the coverage population. */
   total: number;
   covered: number;
   coveragePercent: number;
+  /**
+   * Mandatory requirements excluded from `total` because no automatic verdict
+   * about them is possible (page limits, fonts, hard-copy counts, binding,
+   * envelope marking). Reported so the exclusion is visible rather than
+   * implied by a shrinking denominator.
+   */
+  notMachineDecidable: number;
 };
 
 export type SnapshotBuildPlanState = {
@@ -527,13 +535,27 @@ export async function getTenderReleaseSnapshot(
     blocker: requirementsBlocker,
   };
 
-  const covered = mandatoryStatuses.filter(
+  // Coverage is a statement about what automatic matching established, so its
+  // population is the mandatory requirements automatic matching can decide.
+  // A rule that is NOT_MACHINE_DECIDABLE by construction — page limits,
+  // fonts, hard-copy counts, binding, envelope marking — belongs to neither
+  // side of that ratio: counting it as covered would claim a verdict nobody
+  // reached, and counting it in the denominator made the tender permanently
+  // unwinnable (5cb8d694; reproduced live on tender 50940b8b at 2/3). It is
+  // excluded here and reported separately, and the readiness model surfaces
+  // it as a human-judgement review item.
+  //
+  // `requirements.mandatory` above is untouched and still the true total.
+  const machineDecidableMandatory = mandatoryStatuses.filter((status) => status.machineDecidable);
+  const machineDecidableCount = machineDecidableMandatory.length;
+  const covered = machineDecidableMandatory.filter(
     (status) => status.displayStatus === "FULLY_MET",
   ).length;
   const evidence: SnapshotEvidenceState = {
-    total: mandatoryCount,
+    total: machineDecidableCount,
     covered,
-    coveragePercent: mandatoryCount === 0 ? 0 : Math.round((covered / mandatoryCount) * 100),
+    coveragePercent: machineDecidableCount === 0 ? 0 : Math.round((covered / machineDecidableCount) * 100),
+    notMachineDecidable: mandatoryCount - machineDecidableCount,
   };
 
   const buildPlanCount = tender.generatedDocuments.length;

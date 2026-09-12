@@ -58,6 +58,28 @@ export type RequirementEvidenceStatus = {
    * ordinary evidence requirement.
    */
   packageRule: { family: string; status: string; reason: string } | null;
+  /**
+   * False only for a package rule the stored bytes cannot decide at all —
+   * page limits, fonts, hard-copy counts, binding, envelope marking. Such a
+   * rule is real and must still be honoured, but no automatic verdict about
+   * it is possible, so it cannot be counted for or against machine coverage.
+   * True for every ordinary requirement and for every package rule the
+   * package facts can actually adjudicate.
+   */
+  machineDecidable: boolean;
+};
+
+/**
+ * A requirement that only a person can decide. Non-blocking by construction —
+ * it is surfaced so the owner sees it, never silently passed.
+ */
+export type HumanJudgementReviewItem = {
+  requirementId: string;
+  title: string;
+  mandatory: boolean;
+  family: string;
+  reason: string;
+  nextAction: string;
 };
 
 export type PlannedPackageDocument = {
@@ -140,7 +162,15 @@ export type FinalPackageReadinessModel = {
     weakEvidence: number;
     missingEvidence: number;
     coverageRatio: number;
+    /**
+     * Mandatory requirements the machine can actually adjudicate. This is the
+     * denominator every coverage gate must use; `mandatory` above stays the
+     * true total, so the two together say how many were set aside and why.
+     */
+    machineDecidableMandatory: number;
     blockers: FinalPackageBlocker[];
+    /** Rules only a person can decide. Never blocking, always reported. */
+    humanJudgementReviewItems: HumanJudgementReviewItem[];
   };
   evidence: {
     rows: number;
@@ -537,14 +567,31 @@ export function mapRequirementsToEvidence(
     // packageRule reason read "It is satisfied by the produced package and
     // needs no owner-supplied evidence."
     //
-    // FAIL-CLOSED IS UNCHANGED. Nothing is covered because a rule left a
-    // denominator. A package rule counts as met ONLY on an objective SATISFIED
-    // verdict from the package facts; VIOLATED is NOT_MET, and both
-    // PENDING_PACKAGE (no package yet) and NOT_MACHINE_DECIDABLE (page limits,
-    // binding, hard-copy counts — things stored bytes cannot decide) stay
-    // short of FULLY_MET and keep blocking. Capability and qualification
-    // requirements are untouched: they have no packageRule and still require
-    // source-backed evidence.
+    // FAIL-CLOSED IS UNCHANGED for everything the machine can decide. A
+    // package rule counts as met ONLY on an objective SATISFIED verdict from
+    // the package facts; VIOLATED is NOT_MET; PENDING_PACKAGE (no package
+    // yet) stays short of FULLY_MET and keeps blocking. Capability and
+    // qualification requirements are untouched: they have no packageRule and
+    // still require source-backed evidence.
+    //
+    // NOT_MACHINE_DECIDABLE is the one case that cannot be handled by a
+    // status at all, and sweeping it in with PENDING_PACKAGE here was a
+    // regression I introduced in 5cb8d694. Page limits, fonts, hard-copy
+    // counts, binding and envelope marking are not "not yet decided" — they
+    // are undecidable from stored bytes, permanently. Such a rule could
+    // therefore never reach FULLY_MET, so a tender carrying one was
+    // unwinnable by construction: export refused forever, with a nextAction
+    // that read "No owner action" and no owner-supplied evidence able to
+    // change it. Reproduced live on tender 50940b8b ("Technical Proposal
+    // Email Submission", 2/3 mandatory coverage), where it also blocked
+    // GET /download?type=pdf and made the delivered document impossible to
+    // inspect by any route.
+    //
+    // It keeps its honest PARTIALLY_MET status — nothing is reported as
+    // verified that was not verified — and is instead excluded from the
+    // machine-coverage population and surfaced as a human-judgement review
+    // item. See machineDecidable below, buildRequirementBlockers, and the
+    // coverage denominator in tender-release-snapshot.
     const displayStatus = conformance?.applicable
       ? conformance.status === "SATISFIED"
         ? "FULLY_MET"
@@ -582,6 +629,7 @@ export function mapRequirementsToEvidence(
       packageRule: conformance?.applicable
         ? { family: String(conformance.family), status: conformance.status, reason: conformance.reason }
         : null,
+      machineDecidable: !(conformance?.applicable && conformance.status === "NOT_MACHINE_DECIDABLE"),
     };
   });
 }
@@ -870,11 +918,39 @@ function buildDocumentBlockers(
     }));
 }
 
+/**
+ * Rules only a person can decide. They never enter the blocker list — a
+ * blocker names something the owner can act on to reach release, and there is
+ * no such action here — but they are always reported, so "excluded from the
+ * coverage denominator" can never mean "quietly dropped".
+ */
+function buildHumanJudgementReviewItems(
+  statuses: RequirementEvidenceStatus[],
+): HumanJudgementReviewItem[] {
+  return statuses
+    .filter((status) => !status.machineDecidable && status.packageRule)
+    .map((status) => ({
+      requirementId: status.requirementId,
+      title: status.title,
+      mandatory: status.mandatory,
+      family: status.packageRule!.family,
+      reason: status.packageRule!.reason,
+      nextAction: `Check by eye before submitting: ${status.title}. The stored package bytes cannot decide this rule, so no automatic verdict exists either way.`,
+    }));
+}
+
 function buildRequirementBlockers(
   statuses: RequirementEvidenceStatus[],
 ): FinalPackageBlocker[] {
   return statuses
-    .filter((status) => status.mandatory && status.displayStatus !== "FULLY_MET")
+    // A rule the machine cannot decide is excluded here, not passed. It keeps
+    // its PARTIALLY_MET status and is reported by
+    // buildHumanJudgementReviewItems. Blocking on it made the package
+    // unwinnable: the blocker's own nextAction said "No owner action", so
+    // there was nothing anyone could do to clear it. Everything the machine
+    // CAN decide still blocks exactly as before, VIOLATED and
+    // PENDING_PACKAGE included.
+    .filter((status) => status.mandatory && status.machineDecidable && status.displayStatus !== "FULLY_MET")
     .map((status) => {
       // A submission rule still blocks release when it is broken or not yet
       // observable — fail-closed is unchanged — but the next action is to
@@ -1065,6 +1141,7 @@ export async function getFinalPackageReadinessModel(
   const pdfRequirements = detectPdfExportRequirements(planned, generated);
   const documentBlockers = buildDocumentBlockers(planned);
   const requirementBlockers = buildRequirementBlockers(requirementEvidenceStatuses);
+  const humanJudgementReviewItems = buildHumanJudgementReviewItems(requirementEvidenceStatuses);
   const documentManifest = buildFinalZipManifestFromModel(tenderId, planned, generated);
   const manifest: FinalZipManifest = {
     ...documentManifest,
@@ -1158,7 +1235,11 @@ export async function getFinalPackageReadinessModel(
         ? requirementEvidenceStatuses.filter((item) => item.displayStatus === "FULLY_MET").length
           / requirementEvidenceStatuses.length
         : 0,
+      machineDecidableMandatory: requirementEvidenceStatuses.filter(
+        (item) => item.mandatory && item.machineDecidable,
+      ).length,
       blockers: requirementBlockers,
+      humanJudgementReviewItems,
     },
     evidence: {
       rows: tender.requirements.reduce(
