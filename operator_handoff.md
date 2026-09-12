@@ -143,6 +143,102 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-12 UTC — Final hardening + release audit (PR #1175)
+
+Head at start `96ba456f`, clean; head now `b1d6d7b9`. Four commits, all
+verified. Production untouched, no merge, no DATABASE_URL change, no gate
+weakened.
+
+**Classifier defects, both fixed (`4e86fccf`).** Two modules held OPPOSITE
+punctuation contracts while sharing one phrase vocabulary:
+packaging-requirement-rule stripped ":" to a space, package-conformance kept
+it, and both tested `/\bformat\s*:\s*(?:pdf|...)/`. Unreachable in the first,
+reachable in the second — and classifyPackageRule consults the first as its
+gate and the second for the family, so one requirement was read two ways and
+"Format: PDF" never got past the gate. Fixed with one exported
+`normaliseRequirementText`; file-name comparison keeps its own normaliser
+because identity is not prose. Typography/page-size/page-limit phrases added;
+a typography rule now lands in NOT_MACHINE_DECIDABLE, the family the owner's
+earlier decision already covers. 30 tests over seven sectors, seven negatives,
+plus a META-TEST that fails if any pattern contains a character the normaliser
+deletes — verified by reintroducing one.
+
+**lib/prisma.ts bootstrap: PRESERVE (`f8d49dcf`).** Enabled it can issue 56
+CREATE TABLE, 83 CREATE INDEX, 120 guarded ADD COLUMN and four UNCONDITIONAL
+AiJob statements (ALTER COLUMN TYPE, SET DEFAULT, ALTER SEQUENCE OWNED BY,
+setval) — the only ones that rewrite an existing non-empty table, and the only
+race candidates. No DROP/TRUNCATE/DELETE anywhere. It cannot reach a deployed
+database: Vercel sets NODE_ENV=production on Preview too, and empirically the
+empty third Neon DB was NOT self-created (health showed 0/8 tables until
+migrate deploy). Not removed: the disabled path still runs the cold-start
+connectivity and schema-presence probes, and the enabled path is what makes
+`npm run dev` and the DB-integration suite work on a fresh database. New test
+EXECUTES bootstrap in production mode and asserts zero DDL; verified it fails
+when the NODE_ENV check is removed.
+
+**One new client-visible defect, found in the delivered bytes and fixed
+(`b1d6d7b9`).** The 35-page PDF carried a NUL where a tick should be:
+`<U+0000> Donor / international institution delivery track record on file`.
+Cause: a hard-coded U+2713 in buildPortfolioMetricsBlock. It is outside
+WinAnsi, so the renderer switches to an embedded Unicode face — which has no
+glyph for it and draws .notdef, silently. An UNENCODABLE character throws and
+gets caught; a missing glyph does not. Now plain text, with a behavioural
+guard that renders the block, sanitises in pipeline order and names any
+offender by code point, plus a counterpart case proving Ethiopic DATA is still
+carried through.
+
+**Final acceptance, run 34702231973 on `b1d6d7b9` — green:**
+
+```
+AI Analyze · Run Engine · ENGINE_RUN -> PROPOSAL_GENERATION -> AUTO_FINALIZE  success
+no FAILED/CANCELED job in the chain
+baseline sha256 7aeb59d5 -> current edf55157   (artifact regenerated)
+export-readiness: ok=True status=READY blockers=0
+audit: Technical Proposal.pdf score=100 PASSED readyForExport zipEligible
+POST /export 200 · ZIP HTTP:200 SIZE:319598 · 1 file, digest verified
+layout: no clipping, overflow, footer collision or pagination problem on any page
+EMBEDDED IMAGE XOBJECTS: 2 — page 35: 251x101 (3,246 B) + 1056x992 (103,155 B)
+NUL bytes in the delivered text: 0   (was 1 on run 34698133772)
+mandatory 3 · machineDecidableMandatory 2 · humanJudgementReviewItems 1
+warnings: DEADLINE_PASSED
+```
+
+**Local gate on the same head:** tsc clean · lint clean · 11807 pass / 0 fail ·
+next build ok · npm audit 1 LOW (postcss-selector-parser), nothing high or
+critical. Exact-head CI green on all six checks.
+
+**UI.** The artifact host is blocked by org egress, so the capture was
+reproduced locally and matched CI exactly: 237 screenshots, 111/111
+route/viewport coverage, 0 critical, 0 overflow, 0 warnings. Screens reviewed
+directly; they never show success while blocked.
+
+**AUTHORSHIP — MEASURED, DETERMINISTIC FALLBACK.** Every run today:
+
+```
+[ai] section-parallel generation (deep) finished in 1.8s —
+  cover-and-summary=fallback  company-and-experience=fallback
+  technical-approach=fallback additional-and-declaration=fallback
+```
+
+0 of 4 section groups model-backed. All ten providers failed, each for its own
+reason: gemini rate limit · groq 429 (8000 TPM) · mistral 403 tier_not_allowed
+· zai 429 · cerebras 402 · openrouter 402 (affords 892 of 16000 tokens) ·
+openai 429 · together 401 invalid key · deepseek 402 Insufficient Balance ·
+anthropic 400 credit too low. This is the dominant cause of the remaining
+quality gap and it is an owner billing/credential action, not code.
+
+**Open, owner-only:** provider credit (above); one vault field — a project
+record whose `country` holds a full location plus an area figure, which prints
+as `Operating across Abuja, Federal Capital Territory, Nigeria (7,500` in the
+client's headline tile (string is not in product code anywhere); the passed
+2026-08-25 deadline, which the app reports as advisory.
+
+**Observed, deliberately NOT changed:** the structure seal drops 5 empty
+headings each run (2 expert profile cards, 3 project cards) after the duplicate
+deduplicator strips their table bodies — two cleanup passes cooperating, net
+output clean at score 100. Distinguishing design from defect needs a
+model-backed run.
+
 ### 2026-09-12 UTC — Green end to end, and the owner's branding reaches the client
 
 Tender `50940b8b-f2ba-4558-a630-898763d82f98`, four hosted runs, each one
