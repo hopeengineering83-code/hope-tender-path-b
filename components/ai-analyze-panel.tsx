@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CheckIcon, CrossIcon, SparklesIcon } from "./icons";
+import type { LiveProviderDiagnosticsResponse } from "../app/api/ai-providers/diagnostics/route";
 import {
   describeAIAnalyzeWorkflowState,
   type CurrentEnginePresentationState,
@@ -37,12 +38,52 @@ type SourceReadiness = {
 
 export type AIAnalyzeEngineState = CurrentEnginePresentationState;
 
-type ProviderDiag = {
-  provider: string;
-  configured: boolean;
-  ok: boolean;
-  reason: string | null;
-  latencyMs: number | null;
+/**
+ * The row type comes FROM THE ROUTE. It used to be declared here as
+ * `{ provider, configured, ok, reason, latencyMs }` — five fields the
+ * diagnostics endpoint has never returned. Reading them off an `any` gave
+ * `undefined` every time, which is falsy, so every provider rendered
+ * "not configured" underneath a summary saying two of them had completed a
+ * real extraction. Importing the contract makes that a compile error.
+ */
+type ProviderDiag = LiveProviderDiagnosticsResponse["perProvider"][number];
+
+/** What the analysis capability test actually reported for this provider. */
+function analysisOutcome(provider: ProviderDiag) {
+  return provider.results.find((result) => result.capability === "analysis") ?? null;
+}
+
+/**
+ * One line per provider, in the provider's own words.
+ *
+ * `usableForAiAnalyze` is the only thing that means "this provider can run AI
+ * Analyze" — connectivity alone is not it, which is the distinction the
+ * capability test exists to draw.
+ */
+function describeProvider(provider: ProviderDiag): string {
+  const analysis = analysisOutcome(provider);
+  const model = provider.resolvedModel ? ` · ${provider.resolvedModel}` : "";
+  if (provider.usableForAiAnalyze) {
+    const ms = analysis && analysis.durationMs > 0 ? ` (${analysis.durationMs}ms)` : "";
+    return `OK${ms}${model}`;
+  }
+  const detail = analysis?.safeMessage ?? analysis?.category ?? null;
+  const state = DIAGNOSTIC_STATE_LABEL[provider.diagnosticState] ?? provider.diagnosticState;
+  return detail ? `${state} — ${detail}${model}` : `${state}${model}`;
+}
+
+const DIAGNOSTIC_STATE_LABEL: Record<ProviderDiag["diagnosticState"], string> = {
+  KEY_MISSING: "not configured",
+  CONFIGURATION_INVALID: "configuration invalid",
+  MODEL_UNAVAILABLE: "model unavailable on this account",
+  BILLING_BLOCKED: "billing",
+  RATE_LIMITED: "rate limited",
+  CONNECTIVITY_VERIFIED: "answered, but no structured extraction",
+  ANALYSIS_VERIFIED: "analysis verified",
+  GENERATION_VERIFIED: "generation verified",
+  // Nothing was measured. Never rendered as a failure.
+  NOT_TESTED: "not tested",
+  CONFIGURED: "contacted, nothing proven",
 };
 
 const POLL_INTERVAL_MS = 3_000;
@@ -98,7 +139,7 @@ export function AIAnalyzePanel({
   const [engineState, setEngineState] = useState<AIAnalyzeEngineState | null>(null);
   const [engineStateLoading, setEngineStateLoading] = useState(true);
   const [engineStateError, setEngineStateError] = useState("");
-  const [diag, setDiag] = useState<{ anyWorking: boolean; summary: string; perProvider: ProviderDiag[] } | null>(null);
+  const [diag, setDiag] = useState<{ aiAnalyzeReady: boolean; summary: string; perProvider: ProviderDiag[] } | null>(null);
   const [diagnosing, setDiagnosing] = useState(false);
 
   const loadReadiness = useCallback(async () => {
@@ -290,16 +331,18 @@ export function AIAnalyzePanel({
       const response = await fetch("/api/ai-providers/diagnostics?live=1", { cache: "no-store" });
       const body = await response.json().catch(() => null);
       if (!response.ok || !body) {
-        setDiag({ anyWorking: false, summary: "Provider diagnostics could not be completed.", perProvider: [] });
+        setDiag({ aiAnalyzeReady: false, summary: "Provider diagnostics could not be completed.", perProvider: [] });
       } else {
+        // aiAnalyzeReady is the field the route sends. `anyWorking` never
+        // existed, so this banner was red even while announcing success.
         setDiag({
-          anyWorking: Boolean(body.anyWorking),
+          aiAnalyzeReady: Boolean(body.aiAnalyzeReady),
           summary: String(body.summary ?? ""),
           perProvider: Array.isArray(body.perProvider) ? body.perProvider : [],
         });
       }
     } catch {
-      setDiag({ anyWorking: false, summary: "The provider diagnostics endpoint could not be reached.", perProvider: [] });
+      setDiag({ aiAnalyzeReady: false, summary: "The provider diagnostics endpoint could not be reached.", perProvider: [] });
     } finally {
       setDiagnosing(false);
     }
@@ -424,14 +467,14 @@ export function AIAnalyzePanel({
 
       {diag ? (
         <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
-          <p className={`text-xs font-semibold ${diag.anyWorking ? "text-emerald-700" : "text-red-700"}`}>{diag.summary}</p>
+          <p className={`text-xs font-semibold ${diag.aiAnalyzeReady ? "text-emerald-700" : "text-red-700"}`}>{diag.summary}</p>
           {diag.perProvider.length > 0 ? (
             <ul className="mt-2 space-y-1">
               {diag.perProvider.map((provider) => (
                 <li key={provider.provider} className="flex items-start gap-2 text-xs">
-                  <span className={`mt-0.5 ${provider.ok ? "text-emerald-600" : provider.configured ? "text-red-600" : "text-slate-400"}`}>{provider.ok ? <CheckIcon /> : provider.configured ? <CrossIcon /> : "—"}</span>
-                  <span className="font-medium text-slate-700">{provider.provider}</span>
-                  <span className="text-slate-500">{provider.ok ? `OK${typeof provider.latencyMs === "number" ? ` (${provider.latencyMs}ms)` : ""}` : provider.reason ?? (provider.configured ? "failed" : "not configured")}</span>
+                  <span className={`mt-0.5 ${provider.usableForAiAnalyze ? "text-emerald-600" : provider.diagnosticState === "KEY_MISSING" || provider.diagnosticState === "NOT_TESTED" ? "text-slate-400" : "text-red-600"}`}>{provider.usableForAiAnalyze ? <CheckIcon /> : provider.diagnosticState === "KEY_MISSING" || provider.diagnosticState === "NOT_TESTED" ? "—" : <CrossIcon />}</span>
+                  <span className="font-medium text-slate-700">{provider.displayName || provider.provider}</span>
+                  <span className="text-slate-500">{describeProvider(provider)}</span>
                 </li>
               ))}
             </ul>

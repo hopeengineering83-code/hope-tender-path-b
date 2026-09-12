@@ -7,10 +7,39 @@ import {
   billingBlockedProviders,
   diagnosticDeadlineFrom,
   type CapabilityName,
+  type ProviderCapabilityReport,
 } from "../../../../lib/ai-provider-capability-test";
 import { automaticChainDisplay } from "../../../../lib/ai-provider-registry";
 import { getProviderModel, type AiProviderName } from "../../../../lib/ai-provider-registry";
 import { prisma, prismaReady } from "../../../../lib/prisma";
+
+/**
+ * THE LIVE DIAGNOSTICS CONTRACT, exported so a caller cannot invent its own.
+ *
+ * The AI Analyze panel used to declare a local row type of
+ * `{ provider, configured, ok, reason, latencyMs }` and read `body.anyWorking`.
+ * Not one of those five fields exists here. Every read produced `undefined`,
+ * which is falsy, so every provider rendered "not configured" and the summary
+ * rendered red — directly under its own text saying two providers had
+ * completed a real extraction. Nothing failed and nothing was logged: an
+ * absent key on an `any` is silent.
+ *
+ * Exporting the shape and importing it at the call site is what makes that a
+ * compile error instead of a screenshot.
+ */
+export type LiveProviderDiagnosticsResponse = {
+  live: true;
+  activeChain: string;
+  partial: boolean;
+  notTested: Array<{ provider: string; reason: string }>;
+  chainLength: number;
+  aiAnalyzeReady: boolean;
+  analysisVerifiedProviders: AiProviderName[];
+  billingBlockedProviders: AiProviderName[];
+  testedCount: number;
+  summary: string;
+  perProvider: ProviderCapabilityReport[];
+};
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -120,7 +149,7 @@ export async function GET(req: Request) {
   const tested = reports.filter((r) => r.eligible && r.diagnosticState !== "NOT_TESTED");
   const anyKeyPresent = reports.some((r) => r.keyPresent);
 
-  return NextResponse.json({
+  const payload: LiveProviderDiagnosticsResponse = {
     live: true,
     activeChain: automaticChainDisplay(),
     // A partial run must never read as a complete one. `aiAnalyzeReady: false`
@@ -147,5 +176,6 @@ export async function GET(req: Request) {
           ? "Provider keys exist, but no provider has a complete effective model configuration. See each explicit provider state below."
         : `No provider completed a real AI Analyze extraction. Connectivity alone is not sufficient — see the per-provider analysis result below.`,
     perProvider: reports,
-  });
+  };
+  return NextResponse.json(payload);
 }

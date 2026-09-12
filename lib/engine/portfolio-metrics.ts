@@ -110,7 +110,20 @@ export function buildPortfolioMetricsBlock(metrics: PortfolioMetrics, companyNam
     tiles.push(`| **${metrics.reviewedProjectCount}** Project References |`);
   }
   if (metrics.totalContractValue > 0) {
-    tiles.push(`| **${summariseValue(metrics.totalContractValue, metrics.currency)}** Aggregate Portfolio Value |`);
+    // "Aggregate Portfolio Value" overstates what this number is.
+    //
+    // Project.contractValue is extracted from the project reference text, and
+    // on a real consultancy portfolio it is overwhelmingly the CONSTRUCTION
+    // cost of the works the firm designed or supervised — 95 of 112 on the
+    // portfolio this was measured against — not the firm's own fee, which is
+    // a separate and far smaller figure in the same reference ("Construction
+    // Cost: 550,074,678.02 ETB" alongside "Design Cost: 1,100,000 ETB").
+    //
+    // Until this tile rendered, the distinction cost nothing: every value was
+    // null and the tile never appeared. Now that the import derives the
+    // column, an unqualified "Portfolio Value" in the first block an
+    // evaluator reads would imply firm-scale turnover. Say what it is.
+    tiles.push(`| **${summariseValue(metrics.totalContractValue, metrics.currency)}** Aggregate Value of Projects Delivered |`);
   }
   if (metrics.reviewedExpertCount >= 2) {
     tiles.push(`| **${metrics.reviewedExpertCount}** Specialists on the Proposed Team |`);

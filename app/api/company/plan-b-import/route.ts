@@ -995,7 +995,13 @@ export async function POST(req: Request) {
     }
 
     const existingExperts = await tx.expert.findMany({ where: { companyId: company.id }, select: { id: true, fullName: true } });
-    const existingProjects = await tx.project.findMany({ where: { companyId: company.id }, select: { id: true, name: true } });
+    // The derived-fact merge below fills ONLY empty columns, so it has to see
+    // what the stored row already holds — otherwise a value a person corrected
+    // by hand would be silently replaced by a re-derived one.
+    const existingProjects = await tx.project.findMany({
+      where: { companyId: company.id },
+      select: { id: true, name: true, clientName: true, country: true, sector: true, contractValue: true, currency: true, startDate: true, endDate: true },
+    });
     const expertMap = new Map(existingExperts.map((e) => [key(e.fullName), e]));
     const projectMap = new Map(existingProjects.map((p) => [key(p.name), p]));
 
@@ -1110,12 +1116,54 @@ export async function POST(req: Request) {
         reviewNotes: effectiveReviewNotes,
       };
       const existing = projectMap.get(key(name));
+
+      // DERIVED PORTFOLIO FACTS — the same enrichment the single-project route
+      // (app/api/company/projects) has always applied, which this bulk path
+      // never did.
+      //
+      // Reproduced on the owner's own portfolio. Every project record carries
+      // its reference text, and the text carries the numbers: the flagship
+      // hospital's summary reads "1. Construction Cost: 550,074,678.02 ETB"
+      // and "(7,000 m²)" and "2015-2018 E.C.". The Project model has columns
+      // for exactly these — contractValue, currency, startDate, endDate — and
+      // this import left all four null on all 114 records, so
+      // portfolio-metrics computed a total contract value of 0, the
+      // "Aggregate Portfolio Value" tile never rendered, and the delivered
+      // 35-page proposal contained ZERO monetary figures. The reference
+      // proposal the owner benchmarks against leads with ETB 550 million and
+      // cites 35 amounts. Nothing was missing from the vault; nothing had been
+      // parsed out of it.
+      //
+      // extractProjectFacts recovers a contract value from 112 of those 114
+      // records and a country from all 114, and it is the SAME extractor the
+      // other ingestion path already trusts. Two paths, one behaviour.
+      //
+      // mergeProjectFacts fills only fields that are empty, so:
+      //   * a value the payload supplied is kept;
+      //   * a value already stored on the row is kept, which is why the
+      //     select above was widened;
+      //   * the trust decision above is untouched — projectReviewFields still
+      //     verifies name/clientName/country/sector against the source bytes,
+      //     and derived numbers claim no verification they do not have.
+      let derivedFacts: Record<string, unknown> = {};
+      if (summary && summary.trim().length > 50) {
+        try {
+          const { extractProjectFacts, mergeProjectFacts } = await import("../../../../lib/engine/project-fact-extractor");
+          derivedFacts = mergeProjectFacts({ ...(existing ?? {}), ...data }, extractProjectFacts(summary, name));
+        } catch (factErr) {
+          // Enrichment is additive. A failure here must never cost the import
+          // the record itself.
+          warnings.push(`Project ${name}: portfolio facts could not be derived from the reference text (${factErr instanceof Error ? factErr.message : String(factErr)}).`);
+        }
+      }
+      const dataWithFacts = { ...data, ...derivedFacts };
+
       if (existing) {
-        await tx.project.update({ where: { id: existing.id }, data });
+        await tx.project.update({ where: { id: existing.id }, data: dataWithFacts });
         projectsUpdated += 1;
       } else {
-        const created = await tx.project.create({ data: { companyId: company.id, ...data } });
-        projectMap.set(key(name), { id: created.id, name: created.name });
+        const created = await tx.project.create({ data: { companyId: company.id, ...dataWithFacts } });
+        projectMap.set(key(name), { id: created.id, name: created.name, clientName: null, country: null, sector: null, contractValue: null, currency: null, startDate: null, endDate: null });
         projectsCreated += 1;
       }
     }
