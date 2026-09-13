@@ -139,9 +139,18 @@ export async function GET(req: Request) {
   // Up to three real capability tests against each of ten providers, serially,
   // inside a 60s route. One request-level deadline bounds the whole thing, so
   // the route returns what it measured instead of being killed with no body.
+  // ?provider=openai,deepseek — the run the NOT_TESTED message already tells
+  // operators to perform. Ten serial round-trips do not always fit one 60s
+  // request, and without this the advice named no action that could be taken.
+  const onlyProviders = (url.searchParams.get("provider") || "")
+    .split(",")
+    .map((name) => name.trim())
+    .filter(Boolean);
+
   const run = await testAutomaticChainCapabilities({
     capabilities,
     deadlineAt: diagnosticDeadlineFrom(maxDuration),
+    ...(onlyProviders.length > 0 ? { onlyProviders } : {}),
   });
   const reports = run.reports;
   const analysisReady = verifiedAnalysisProviders(reports);

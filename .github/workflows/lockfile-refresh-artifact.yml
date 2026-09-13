@@ -912,9 +912,18 @@ jobs:
           #
           # Diagnostics run inside runAsDiagnostic(), so observations here
           # impose no cooldowns on real work.
+          #
+          # Scoped to openai+deepseek and to the analysis capability on
+          # purpose. The unfiltered run on 34778938488 spent its 60s budget on
+          # a 45s Z.ai timeout and never contacted these two at all -- the
+          # NOT_TESTED outcome that told the operator to "re-run the test for
+          # this provider on its own". These are the two whose empty
+          # completions this branch exists to explain; the others already
+          # report actionable billing, auth and rate-limit reasons.
           curl -sS --connect-timeout 15 --max-time 120 \
             -H "Cookie: hope_session=$SESSION_COOKIE" \
-            "$BASE_URL/api/ai-providers/diagnostics?live=1" > /tmp/provider-chain.json || true
+            "$BASE_URL/api/ai-providers/diagnostics?live=1&capability=analysis&provider=openai,deepseek" \
+            > /tmp/provider-chain.json || true
           python3 - <<'PYEOF' | tee /tmp/provider-chain.txt
           import json
           try:

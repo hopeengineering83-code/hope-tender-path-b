@@ -684,9 +684,27 @@ export async function testAutomaticChainCapabilities(opts?: {
   includePaid?: boolean;
   /** Absolute epoch-ms deadline for the whole request. */
   deadlineAt?: number;
+  /**
+   * Restrict the run to these providers, in canonical chain order.
+   *
+   * The whole chain is ten real, serial round-trips inside a 60s route, so one
+   * slow provider can spend the budget before the rest are reached: on
+   * 2026-09-13 Z.ai timed out at 45s and six providers -- including the two
+   * under investigation -- came back NOT_TESTED. That outcome already told the
+   * operator to "re-run the test for this provider on its own", which was
+   * advice with no way to follow it. This is the way.
+   *
+   * Names are matched against the canonical order, so an unknown name selects
+   * nothing rather than silently widening the run, and chain order is always
+   * preserved regardless of the order they are given in.
+   */
+  onlyProviders?: readonly string[];
 }): Promise<ChainCapabilityRun> {
   const env = opts?.env ?? process.env;
-  const providers = getAutomaticProviderOrder(env);
+  const requested = opts?.onlyProviders?.map((name) => name.trim().toLowerCase()).filter(Boolean);
+  const providers = requested && requested.length > 0
+    ? getAutomaticProviderOrder(env).filter((provider) => requested.includes(provider.toLowerCase()))
+    : getAutomaticProviderOrder(env);
 
   const reports: ProviderCapabilityReport[] = [];
   const notTested: UntestedProvider[] = [];
