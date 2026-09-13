@@ -143,6 +143,90 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-13 UTC (latest) — Two adapters that never said why they gave up
+
+**Tool:** Claude Code. **Branch:** `release/consolidated-recovery-20260717`
+(PR #1175, draft, unmerged). **Commits:** `919d0b22`, `7ac48bf6`, `88bb3467`,
+`8e79ed42`, `470425bb`. Production untouched; Preview DATABASE_URL unchanged.
+
+**Started from the owner's screenshot** of the provider-chain card at
+`39a37526`: 2/10 OK, with OpenAI and DeepSeek reporting only
+`MALFORMED_RESPONSE — Provider returned an empty response.` after real
+round-trips of 1085ms and 639ms.
+
+**ANSWER, measured on the live Preview (run 34781548562):**
+
+```
+openai    BILLING -- OpenAI HTTP 429 on gpt-4o: "You have no credits
+          remaining. Add credits to continue using the API at ..."
+deepseek  BILLING -- DeepSeek HTTP 402 on deepseek-chat: "Insufficient Balance"
+```
+
+Both are **owner-side billing**. Neither was a code defect, a refusal, a
+content filter, an output-budget problem or a parsing bug. **Seven of the eight
+failures on that card are billing or credentials.** A previous handoff entry
+said "six providers 402/401/403" — right in spirit, wrong in count, because
+these two were hidden behind a placeholder.
+
+**Why they were invisible — the actual root cause.** `generateWithOpenAI` and
+`generateWithDeepSeek` logged every failure to the server console and returned
+`null`. `callProviderInner` records a failure only when a call THROWS, so a
+null return recorded nothing; the capability test, seeing no text and no
+capture, could only say "empty response". A 401, a 429, a 4xx body, a timeout
+and a genuine empty completion all arrived as the same sentence. The real
+reason sat in a Vercel runtime log that is **behind a billing limit on this
+account** — not inconvenient to reach, unreachable.
+
+`generateOpenAICompatible` has had a `note()` on every branch all along, which
+is why Together, Cerebras and OpenRouter reported real reasons on the same
+card. These two adapters predate it. Both now have it on all seven
+post-contact give-up paths; the key-missing guard deliberately records nothing.
+
+**Four supporting fixes, each from a failed attempt at the previous one:**
+
+1. `describeEmptyCompletion()` — an empty completion says which kind it is,
+   from `finish_reason`, `refusal` and `reasoning_content`, all of which were
+   being discarded. An exhausted output budget classifies REQUEST_TOO_LARGE
+   (zero cooldown: our defect, not provider ill-health).
+2. The capability test kept `capture.category` but replaced its message with a
+   fixed sentence; it now prefers the adapter's own account.
+3. `?provider=` on the diagnostics route. The chain is ten serial round-trips
+   in a 60s budget; Z.ai burned 45s timing out and six providers came back
+   NOT_TESTED, telling the operator to "re-run the test for this provider on
+   its own" — which the route offered no way to do.
+4. OpenAI's 429 message no longer claims "rate limit". OpenAI returns 429 for
+   an unpayable account too, so the text asserted a cause the status code does
+   not carry, directly contradicting its own BILLING category on the card.
+
+**Two tests updated, both strengthened.** `provider-fallback-chain` asserted
+`"openai: no response"` — the placeholder was all the adapters could produce;
+it now requires the real cause and forbids "no response" entirely.
+`provider-deadline-clamp-coverage` already narrowed for diagnostic text that
+interpolates a timeout constant; it recognised `logger.` only and now includes
+`note(`.
+
+**A mistake of mine worth recording.** The first CI chain-test step read
+`reports[].capabilities[]` — field names taken from the route's internal
+variable rather than `LiveProviderDiagnosticsResponse`. It printed
+`NOT MEASURED` instead of "0 verified", which is the only reason it was not
+reported as ten dead providers. Guards of that kind are why `NOT MEASURED`
+branches exist; keep writing them.
+
+**Tests run, real output.** tsc clean; `npx next lint` clean;
+`RUN_DB_INTEGRATION=true npm test` → **11960 pass / 0 fail**; build clean. One
+earlier run of the same tree reported 99 fail / 409 cancelled with 326
+"Can't reach database server" — local Postgres died mid-run; restarted and
+re-ran before believing it.
+
+**Still blocked on the owner, unchanged.** With only Gemini and Groq usable
+there is no meaningful provider diversity, so the 17-dimension benchmark
+**cannot be honestly scored** — a number taken now measures two providers and
+a deterministic fallback. Do not quote one. Credit/keys needed for Cerebras,
+OpenRouter, Together, DeepSeek, OpenAI, Anthropic; Vercel runtime logs are
+also behind a billing limit, which is what made this investigation necessary.
+
+**Merge status: not reviewed.** Keep #1175 draft. Do not merge.
+
 ### 2026-09-13 UTC (later) — One chain of defects, and two gates that agreed on a wrong document
 
 **Tool:** Claude Code. **Branch:** `release/consolidated-recovery-20260717`

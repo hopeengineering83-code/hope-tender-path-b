@@ -95,7 +95,11 @@ describe("a provider that gives up silently is indistinguishable from a dead key
     // step as branches are added.
     for (const fn of ["generateWithOpenAI", "generateWithDeepSeek"]) {
       const body = functionBody(AI_SOURCE, fn);
-      for (const shape of [/auth error HTTP/, /rate limit HTTP 429/, /HTTP \$\{res\.status\}/, /API error:/, /timed out after/, /fetch failed:/]) {
+      // "HTTP 429" rather than "rate limit HTTP 429": OpenAI returns 429 for
+      // an unpayable account too, so the message must not assert a cause the
+      // status code does not carry. DeepSeek's 429 is a true throughput limit
+      // and keeps its wording; both satisfy /HTTP 429/.
+      for (const shape of [/auth error HTTP/, /HTTP 429/, /HTTP \$\{res\.status\}/, /API error:/, /timed out after/, /fetch failed:/]) {
         assert.match(body, shape, `${fn} does not report ${shape}`);
       }
     }

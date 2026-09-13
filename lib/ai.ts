@@ -1337,8 +1337,16 @@ async function generateWithOpenAI(
         return null;
       }
       if (res.status === 429) {
-        logger.warn(`[ai] OpenAI rate limit (429) on ${model} — skipping to next provider.`);
-        note(`rate limit HTTP 429 on ${model}: ${body}`);
+        // NOT NECESSARILY A RATE LIMIT. OpenAI returns 429 for an unpayable
+        // account as well as for throughput, and the live chain test on
+        // 2026-09-13 showed exactly that: category BILLING, "You have no
+        // credits remaining", under a message that said "rate limit". One
+        // reading tells the owner to wait for a limit that will never clear;
+        // the other tells them to add credits. The body distinguishes them and
+        // the classifier already reads it correctly — so the message stops
+        // asserting a cause it cannot know and lets the body speak.
+        logger.warn(`[ai] OpenAI HTTP 429 on ${model} — skipping to next provider.`);
+        note(`HTTP 429 on ${model}: ${body}`);
         return null;
       }
       logger.warn(`[ai] OpenAI error ${res.status} on ${model}: ${body} — skipping.`);
