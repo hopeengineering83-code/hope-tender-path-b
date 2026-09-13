@@ -143,6 +143,91 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-13 UTC (later) — One chain of defects, and two gates that agreed on a wrong document
+
+**Tool:** Claude Code. **Branch:** `release/consolidated-recovery-20260717`
+(PR #1175, draft, unmerged). **Commits:** `e2df3f85`, `59cf83ef`, `962d0289`,
+`619b26f7`, `f14ea6f4`, `b5eae849`, `c874e93a`. Production untouched; Preview
+DATABASE_URL unchanged.
+
+**The single most important finding.** Acceptance run **34769880487**
+(head `619b26f7`) passed **every** gate — chain green, readiness zero blockers,
+audit agreeing with readiness, ZIP built, layout checked — and delivered a
+client proposal whose project cards read:
+
+```
+Duration                      2015-2018
+Construction Value of Works   1M
+```
+
+`1M` is not a figure, and no currency code appeared anywhere in the document.
+An absent number breaks no rule and a nonsense one breaks none either, so two
+independent quality surfaces agreed on a document that was wrong. **Do not
+treat a green acceptance on this pipeline as proof the delivered bytes are
+correct** — read the money report and the PDF text dump every time.
+
+**The chain, in the order it was actually untangled.**
+
+1. `PRICING_LEAKAGE [HIGH]` with no excerpt → made the run name its own cause
+   (`5ebf0e55`), then discovered the report sat *after* the gate it explains
+   and moved it before (`9b880f18`).
+2. The named cause was three `Consultancy Fee | ETB …` rows **I had added**.
+   Fixed by not printing a past fee at all (`e2df3f85`) — a past fee is this
+   firm's pricing, which is what the two-envelope rule keeps out of a technical
+   envelope. **Strengthened** the control rather than exempting the label.
+3. That fix was half a rule: the repair pass never overwrites a cell "complete
+   as written", so a writer-authored fee row survived. Refused on the label
+   (`619b26f7`).
+4. `AUTO_FINALIZE FAILED … error=None` → `listUserJobs()` never selected
+   `errorMessage` (`59cf83ef`). Then the reason that arrived was *"Retry
+   once…"* for a blocker classified NON_RETRYABLE — wrong advice. Blockers now
+   pass through (`b5eae849`).
+5. The `1M` defect above: `safeParagraphText` split on a decimal point, dropped
+   the half carrying the amount and wrote back the tail (`f14ea6f4`).
+6. Removing that redaction exposed what it had been masking: AUTO_FINALIZE then
+   failed NON_RETRYABLE (run **34771035906**). Reproduced locally —
+   `"Construction Value of Works ETB 550.1M"` is clean, but
+   `"Construction Value of Works\nETB 550.1M"` is leakage, because DOCX
+   extraction puts each cell on its own line. Fixed in the detector
+   (`c874e93a`).
+
+**A correction I had to make mid-session, recorded deliberately.** After run
+34769880487 I reported that the fee fix had cleared the pricing gate. That was
+premature: the cleaner had been redacting the value rows, so part of that
+`PRICING LEAKAGE: false` was the redaction, not the fix. Run 34771035906
+proved it by failing once the redaction stopped.
+
+**Theme worth carrying forward.** Items 2, 5 and 6 are the same defect —
+*a fragment judged without the context that gives it meaning*. A cell is not a
+sentence; a decimal point is not a full stop; a label one cell away is still
+the label. The codebase already documented this family (`visibleXmlText`,
+`REFERENCE_CONTEXT_FRAGMENTS`); it recurs because each layer re-derives its own
+splitting.
+
+**Tests run, real output.** `npx tsc --noEmit` clean; `npx next lint` clean;
+`RUN_DB_INTEGRATION=true npm test` → **11937 pass / 0 fail** (2804 suites);
+`npm run build` clean. New suites this stretch:
+`a-past-fee-is-still-this-firms-pricing.test.ts` (19 cases, Poland/Philippines/
+Peru across EUR/PHP/USD plus the cell-boundary cases and their negatives),
+`a-cleaned-cell-must-not-become-a-number-with-no-meaning.test.ts`,
+`a-failed-job-must-say-why.test.ts`,
+`a-non-retryable-failure-must-not-say-retry.test.ts`.
+
+**Known risk / NOT yet proven.** No run has yet shown all three at once:
+figures intact, `PRICING LEAKAGE: false`, and `AUTO_FINALIZE:SUCCEEDED`. Every
+run so far managed at most two. That is the next acceptance's job.
+
+**Also observed, not chased:** Vercel did not create a deployment for
+`c874e93a` for over 12 minutes while the previous commit deployed normally.
+The `pr1175` and `repo` Vercel projects show `Error` on every PR comment; both
+are separate from `hope-tender-path-b` and pre-date this session.
+
+**Next action.** Acceptance `confirm=accept` on a deployed head carrying
+`c874e93a`; read the money report and the PDF text dump, not just the exit
+status.
+
+**Merge status: not reviewed.** Keep #1175 draft. Do not merge.
+
 ### 2026-09-13 UTC — The pricing gate names its own cause, and the cause was mine
 
 **Tool:** Claude Code. **Branch:** `release/consolidated-recovery-20260717`
