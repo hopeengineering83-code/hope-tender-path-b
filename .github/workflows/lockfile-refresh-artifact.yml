@@ -444,11 +444,40 @@ jobs:
               head -c 2000 /tmp/delivered-technical-proposal.pdf
               echo
             } | tee /tmp/pdf-branding-pre-gate.txt
+            # The pricing and money reports below read these same bytes. With no
+            # bytes there is nothing to report, and an absent report file must
+            # never be mistaken for a clean one.
+            echo "PRICING LEAKAGE FRAGMENTS: NOT MEASURED (the finalized PDF is gate-refused, HTTP $status)" \
+              | tee /tmp/pricing-leakage-fragments.txt
+            echo "DELIVERED FIGURES: NOT MEASURED (the finalized PDF is gate-refused, HTTP $status)" \
+              | tee /tmp/pdf-money-report.txt
             rm -f /tmp/delivered-technical-proposal.pdf
             exit 0
           fi
           node scripts/tmp-inspect-pdf-typography-and-assets.mjs \
             /tmp/delivered-technical-proposal.pdf 2>&1 | tee /tmp/pdf-branding-pre-gate.txt
+
+          # WHICH SENTENCE TRIPPED THE PRICING GATE?
+          #
+          # The audit reports PRICING_LEAKAGE [HIGH] with no excerpt, and two
+          # AUTO_FINALIZE failures in a row had to be diagnosed by guessing.
+          # Approximating the audit's view with a different extractor gives a
+          # different answer — the raw page text reads clean and the reflowed
+          # text does not — so this runs the application's OWN reader and
+          # detector over the delivered bytes and names the offending fragments.
+          #
+          # It runs HERE, before the readiness gate, because PRICING_LEAKAGE is
+          # itself a reason readiness fails: on run 34767072234 the gate refused
+          # the package and every later step was skipped, including this report.
+          # Informational — it never fails the run.
+          npx tsx scripts/tmp-report-pricing-leakage-fragments.ts \
+            /tmp/delivered-technical-proposal.pdf 2>&1 | tee /tmp/pricing-leakage-fragments.txt || true
+
+          # Same reasoning for the money census: it measures the delivered PDF,
+          # and the delivered PDF is in hand at this point whether or not the
+          # package passes.
+          node scripts/tmp-dump-pdf-text.mjs /tmp/delivered-technical-proposal.pdf > /tmp/pdf-text.txt 2>/dev/null || true
+          npx tsx scripts/tmp-report-delivered-figures.ts /tmp/pdf-text.txt 2>&1 | tee /tmp/pdf-money-report.txt || true
 
       - name: Snapshot final workflow-center and export-readiness state
         run: |
@@ -707,18 +736,13 @@ jobs:
           #
           # Informational: it never fails the run. How persuasive a document is
           # is not a pass/fail contract.
+          # The money and pricing-leakage reports used to run here. They now run
+          # in the pre-gate step, against the same finalized bytes: run
+          # 34767072234 failed at readiness with PRICING_LEAKAGE, and every step
+          # from here on was skipped — so the report that names the offending
+          # sentence was unreachable in exactly the case it exists for. A
+          # diagnostic behind the gate it explains is no diagnostic.
           node scripts/tmp-dump-pdf-text.mjs "/tmp/zip-extract/Technical Proposal.pdf" > /tmp/pdf-text.txt 2>/dev/null || true
-          npx tsx scripts/tmp-report-delivered-figures.ts /tmp/pdf-text.txt 2>&1 | tee /tmp/pdf-money-report.txt || true
-
-          # WHICH SENTENCE TRIPPED THE PRICING GATE?
-          #
-          # The audit reports PRICING_LEAKAGE [HIGH] with no excerpt, and two
-          # AUTO_FINALIZE failures in a row had to be diagnosed by guessing.
-          # Approximating the audit's view with a different extractor gives a
-          # different answer — the raw page text reads clean and the reflowed
-          # text does not — so this runs the application's OWN reader and
-          # detector over the delivered bytes and names the offending fragments.
-          npx tsx scripts/tmp-report-pricing-leakage-fragments.ts "/tmp/zip-extract/Technical Proposal.pdf" 2>&1 | tee /tmp/pricing-leakage-fragments.txt || true
 
           # The audit above says whether the bytes ARRIVED. This says what the
           # store holds, so a zero above can be attributed rather than guessed:
