@@ -201,6 +201,53 @@ describe("a past fee never reaches a technical envelope, in any sector or curren
   });
 });
 
+describe("a table cell is judged with the label in the cell next door", () => {
+  /**
+   * MEASURED. DOCX extraction preserves cell boundaries, so a project card row
+   * reaches the detector as two fragments:
+   *
+   *   Construction Value of Works
+   *   ETB 550.1M
+   *
+   * The value then stands alone as a bare amount and reads as this bid's
+   * price -- for a row that is exempt when written on one line. export-gap-
+   * repair recorded the document blockedByHygiene and AUTO_FINALIZE failed
+   * NON_RETRYABLE on run 34771035906.
+   */
+  it("accepts the row split across cells exactly as it accepts it on one line", () => {
+    for (const text of [
+      "Construction Value of Works ETB 550.1M",
+      "Construction Value of Works\nETB 550.1M",
+      "Duration\n2015-2018\nConstruction Value of Works\nETB 550.1M",
+      "Value of the Works\nUSD 12,500,000",
+      "Aggregate Value of Projects Delivered\nPHP 880,000,000",
+    ]) {
+      assert.equal(containsPricingLeakage(text, TECHNICAL_PROPOSAL), false, JSON.stringify(text));
+    }
+  });
+
+  it("still refuses a bare amount with no label above it", () => {
+    // The cue must come from a real label, not from being in a table.
+    for (const text of [
+      "Summary of Services\nETB 550.1M",
+      "ETB 550.1M",
+      "Fee Basis\nETB 550.1M",
+    ]) {
+      assert.equal(containsPricingLeakage(text, TECHNICAL_PROPOSAL), true, JSON.stringify(text));
+    }
+  });
+
+  it("still refuses a live offer that borrows the label across cells", () => {
+    // The current-offer veto runs before this exemption is reachable.
+    for (const text of [
+      "Our fee for this proposal\nConstruction Value of Works\nETB 550,000,000",
+      "The price for this assignment\nValue of the Works\nETB 2,400,000",
+    ]) {
+      assert.equal(containsPricingLeakage(text, TECHNICAL_PROPOSAL), true, JSON.stringify(text));
+    }
+  });
+});
+
 describe("a HIGH finding names the text that produced it", () => {
   it("quotes the offending fragment and the rule that matched", () => {
     const finding = pricingLeakageFinding(

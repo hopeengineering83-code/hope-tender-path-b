@@ -201,9 +201,7 @@ function isHistoricalReferenceValueSentence(sentence: string): boolean {
   // already vetoed "our fee", "this proposal", "bid price", "lump sum" and the
   // rest before this line is reached, so a sentence that frames the amount as
   // an offer cannot reach the exemption however it is labelled.
-  const labelledDeliveredWorkValue =
-    /\b(construction\s+value(?:\s+of\s+works)?|value\s+of\s+(?:the\s+)?works|aggregate\s+value\s+of\s+projects(?:\s+delivered)?)\b/i
-      .test(sentence);
+  const labelledDeliveredWorkValue = DELIVERED_WORK_VALUE_LABEL.test(sentence);
 
   // A comparable-projects table row names the client organisation next to the
   // value, and carries none of the prose cues above: no verb, no year, no
@@ -229,6 +227,13 @@ function isHistoricalReferenceValueSentence(sentence: string): boolean {
  * Preserve that narrowly-scoped historical context across at most the preceding
  * two sentence fragments without weakening current-bid price detection.
  */
+/**
+ * Labels that describe the cost of a DELIVERED ASSET rather than anyone's
+ * price. One definition, so the single-line exemption and the cell-per-line
+ * continuation rule cannot drift apart.
+ */
+const DELIVERED_WORK_VALUE_LABEL = /\b(construction\s+value(?:\s+of\s+works)?|value\s+of\s+(?:the\s+)?works|aggregate\s+value\s+of\s+projects(?:\s+delivered)?)\b/i;
+
 function isHistoricalReferenceValueContinuation(sentence: string, priorContext: string): boolean {
   const hasCurrencyValue = /(?:\b(?:EUR|USD|ETB|GBP|Birr|dollar|euro)\s*[0-9][0-9,]*(?:\.\d+)?(?:[KkMmBb](?:illion)?)?\b|\b[0-9][0-9,]*(?:\.\d+)?(?:[KkMmBb](?:illion)?)?\s*(?:EUR|USD|ETB|GBP|Birr|dollar|euro)\b|[$€£]\s*[0-9][0-9,]*(?:\.\d+)?(?:[KkMmBb](?:illion)?)?)/i.test(sentence);
   if (!hasCurrencyValue) return false;
@@ -248,8 +253,22 @@ function isHistoricalReferenceValueContinuation(sentence: string, priorContext: 
     && /\b(completed|delivered|managed|supervised|designed|implemented|project|assignment|client|contract|hospital|building|road|bridge|water|master\s+plan|design|supervision|consultancy)\b/i.test(priorContext);
   // A named client beside the value is the reference-table shape.
   const clientRowCue = CLIENT_ORGANISATION_RE.test(priorContext);
+  // THE LABEL IS IN THE CELL NEXT DOOR.
+  //
+  // "Construction Value of Works ETB 550.1M" is already exempt on one line --
+  // the label says the amount is the cost of a delivered asset, not a price.
+  // DOCX extraction puts each table cell on its own line, so the same row
+  // arrives as two fragments and the value stands alone as a bare amount. It
+  // was then read as this bid's price, export-gap-repair recorded the document
+  // blockedByHygiene, and AUTO_FINALIZE failed NON_RETRYABLE on run
+  // 34771035906 -- for a row that is exempt when written as one line.
+  //
+  // This is consistency, not relaxation: the same vocabulary the single-line
+  // exemption uses, reached only after the current-offer veto above has run,
+  // so no wording of a live offer can borrow it.
+  const deliveredWorkLabelCue = DELIVERED_WORK_VALUE_LABEL.test(priorContext);
 
-  return explicitReferenceCue || datedPastProjectCue || clientRowCue;
+  return explicitReferenceCue || datedPastProjectCue || clientRowCue || deliveredWorkLabelCue;
 }
 
 /**
