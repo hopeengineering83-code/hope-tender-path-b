@@ -184,6 +184,27 @@ function isHistoricalReferenceValueSentence(sentence: string): boolean {
   const labelledHistoricValue = /\b(project|contract)\s+value\b/i.test(sentence)
     && /\b(client|completed|completion|duration|location|reference|experience|project)\b/i.test(sentence);
 
+  // Labels that state, in themselves, that the amount belongs to work already
+  // delivered.
+  //
+  // "Construction Value of Works" is the label this codebase gives the cost of
+  // the ASSET a past project built — never this firm's fee and never this
+  // bid's price. portfolio-card-repair and benchmark-tables both emit it under
+  // that role, deliberately, precisely so a construction cost is not mistaken
+  // for a consultancy contract. A project card carrying it was nevertheless
+  // scored PRICING_LEAKAGE [HIGH] and failed the rubric at 75, because the
+  // label was outside the historical vocabulary above: that vocabulary knew
+  // "project value" and "contract value" and not the one the cards actually
+  // print. The document quoted no price at all.
+  //
+  // This does not relax technical/financial separation. currentOfferPricing has
+  // already vetoed "our fee", "this proposal", "bid price", "lump sum" and the
+  // rest before this line is reached, so a sentence that frames the amount as
+  // an offer cannot reach the exemption however it is labelled.
+  const labelledDeliveredWorkValue =
+    /\b(construction\s+value(?:\s+of\s+works)?|value\s+of\s+(?:the\s+)?works|aggregate\s+value\s+of\s+projects(?:\s+delivered)?)\b/i
+      .test(sentence);
+
   // A comparable-projects table row names the client organisation next to the
   // value, and carries none of the prose cues above: no verb, no year, no
   // "contract value" label — just
@@ -199,7 +220,7 @@ function isHistoricalReferenceValueSentence(sentence: string): boolean {
   // by currentOfferPricing above before this point is reached.
   const namesClientOrganisation = CLIENT_ORGANISATION_RE.test(sentence);
 
-  return strongHistoricCue || datedReference || labelledHistoricValue || namesClientOrganisation;
+  return strongHistoricCue || datedReference || labelledHistoricValue || labelledDeliveredWorkValue || namesClientOrganisation;
 }
 
 /**
