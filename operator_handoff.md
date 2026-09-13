@@ -143,6 +143,91 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-13 UTC — The pricing gate names its own cause, and the cause was mine
+
+**Tool:** Claude Code. **Branch:** `release/consolidated-recovery-20260717`
+(PR #1175, draft, unmerged). **Heads this session:** `9b880f18`, `e2df3f85`,
+`59cf83ef`. Production untouched; Preview DATABASE_URL unchanged.
+
+**What was wrong.** The delivered Technical Proposal.pdf scored 75 /
+QUALITY_FAILED with `PRICING_LEAKAGE [HIGH]` and **no excerpt**, and
+AUTO_FINALIZE could not converge. My first diagnosis — reached by
+approximating the audit's view with a different extractor — blamed a fused
+personnel table and a fused page footer. **It was wrong, and it is recorded
+here as wrong.** Running the audit's own reader and detector over the
+delivered bytes named the cause:
+
+```
+PRICING LEAKAGE ON THE AUDIT'S OWN TEXT: true
+FRAGMENTS THE DETECTOR FLAGS ON THEIR OWN: 3 of 1100
+  > Row 1: Consultancy Fee | ETB 1.1M
+  > Row 1: Consultancy Fee | ETB 450K
+  > Row 1: Consultancy Fee | USD 945K
+```
+
+Those rows were added by me earlier in this same session.
+
+**Three fixes, each with its evidence.**
+
+1. **A diagnostic behind the gate it explains is no diagnostic** (`9b880f18`,
+   acceptance tooling only). On run `34767072234` the fragment report sat in a
+   step after the readiness gate, so it was skipped in exactly the case it
+   exists for. The delivered PDF was never the obstacle — the pre-gate step had
+   downloaded it at HTTP 200, 318445 bytes, 35 pages. Both the pricing and
+   money reports now run there; the gate-refused branch writes an explicit
+   `NOT MEASURED` line so an absent report is never read as a clean one.
+
+2. **A past fee is still this firm's pricing** (`e2df3f85`). Both card builders
+   withheld a monthly supervision RATE as "a price signal" while printing a
+   lump-sum fee; only the per-month flag separated them, which has no basis in
+   the principle. The fix **strengthens** the control rather than widening the
+   exemption — exempting the label would leave a bidder's fee levels standing
+   in a technical envelope, which is what the two-envelope rule exists to
+   prevent. The row is not written at all, in `portfolio-card-repair.ts` and
+   `benchmark-tables.ts`, and the stored `contractValue` column is refused on
+   the same grounds when it holds that same fee. Construction value untouched;
+   a genuine distinct contract figure untouched.
+
+3. **A HIGH finding names the text that produced it** (`e2df3f85`).
+   `pricingLeakageFinding()` returns the offending fragment and the rule that
+   matched, and says explicitly when the match spans a fragment boundary and so
+   exists in no sentence at all. `containsPricingLeakage` is now a thin wrapper
+   over it; a test asserts the two agree in both directions, so the fail-closed
+   verdict is provably unchanged.
+
+4. **A durable job that fails with no reason is unactionable** (`59cf83ef`).
+   Two runs reported `AUTO_FINALIZE FAILED ... error=None`. The reason was
+   never lost: the handler writes `AUTO_FINALIZE_NOT_CONVERGED — <blockers>` to
+   `AiJob.errorMessage`, but `listUserJobs()` never selected the column, so
+   `/api/ai-jobs` returned no such key. The "missing JSON key read as null"
+   failure mode, precisely. Proven by reverting the select: the assertion fails
+   and the scoping test still passes.
+
+**Tests run, with real output.** `npx tsc --noEmit` clean; `npx next lint`
+clean; `RUN_DB_INTEGRATION=true npm test` → **11920 pass / 0 fail** (2801
+suites); `npm run build` clean. New suites:
+`tests/a-past-fee-is-still-this-firms-pricing.test.ts` (Poland/Philippines/Peru
+across EUR/PHP/USD in road, water and education; asserts the repaired card
+passes the gate that failed the proposal; re-verifies the three Ethiopian rows
+still read as leakage) and `tests/a-failed-job-must-say-why.test.ts`.
+
+**Two tests that asserted the printed fee were updated, not deleted** — one
+pre-existing (`portfolio-card-never-ships-an-empty-cell.test.ts`) and one of
+mine from this session. Both encoded the assumption a delivered PDF disproved.
+Neither was a correct failing test being weakened; each now pins the rule.
+
+**Known risk / not yet proven.** Every fix above is proven in source and in the
+suite. **None is yet proven in delivered bytes** — the existing
+Technical Proposal.pdf (`sha256=95287afb...`) predates them, and only a full
+regeneration on a deployed head can show the cards carrying one correctly
+labelled figure each and AUTO_FINALIZE converging.
+
+**Next action.** Preview deploy of `59cf83ef`, then one `confirm=accept` run;
+read the pre-gate pricing report and the chain-failure line, which will now
+carry a real reason if anything fails.
+
+**Merge status: not reviewed.** Keep #1175 draft. Do not merge.
+
 ### 2026-09-12 UTC (later still) — What the client actually reads about project value
 
 Head `25daa395`. Two hosted runs on the repaired vault: acceptance 34716057918
