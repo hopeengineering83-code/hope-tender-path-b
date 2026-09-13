@@ -48,7 +48,13 @@ describe("every provider adapter clamps to the parent deadline", () => {
         // configured with, not a timeout being handed to a provider, so it is
         // outside this assertion's subject. Narrowed deliberately rather than
         // relaxed: a genuine unclamped provider call still fails.
-        if (/\blogger\.|console\./.test(trimmed)) continue;
+        // `note(...)` is the same thing as the logger case above: it records a
+        // human-readable failure reason for the diagnostics card ("timed out
+        // after 60000ms"), which is the value the adapter was CONFIGURED with,
+        // not a timeout handed to a provider. Added when generateWithOpenAI
+        // and generateWithDeepSeek gained the note() helper that every other
+        // OpenAI-shaped adapter already had.
+        if (/\blogger\.|console\.|\bnote\(/.test(trimmed)) continue;
         // Assignment/derivation lines that only compute a local are acceptable
         // provided the local is itself clamped at the call site; those show up
         // as `const x = COND ? A : B;` with no timeout: / signal: on the line.

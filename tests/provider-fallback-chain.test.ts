@@ -283,8 +283,26 @@ describe("canonical provider scenario — AI Analyze completes on the first usab
       (err: unknown) => {
         assert.ok(err instanceof NoAiProviderReadyError);
         const details = (err as NoAiProviderReadyError).failureDetails.join(" ");
-        assert.match(details, /openai: no response/);
-        assert.match(details, /deepseek: no response/);
+        assert.match(details, /openai:/);
+        assert.match(details, /deepseek:/);
+
+        // THIS USED TO ASSERT "openai: no response" / "deepseek: no response".
+        //
+        // That was the best these two adapters could say: they logged each
+        // failure to the server console and returned null, and callProviderInner
+        // records a failure only when a call THROWS -- so a null return recorded
+        // nothing and the detail degraded to a placeholder. The same gap put
+        // "Provider returned an empty response" on the chain card for a 429 and
+        // a 402 (run 34779768516).
+        //
+        // The assertion is now stronger, not merely different: the details must
+        // carry the REAL cause. If the adapters ever go silent again, "no
+        // response" comes back and these fail.
+        assert.doesNotMatch(details, /no response/, "a placeholder is not a reason");
+        assert.match(details, /HTTP 429/, "OpenAI's quota refusal must reach the operator");
+        assert.match(details, /insufficient_quota/);
+        assert.match(details, /HTTP 402/, "DeepSeek's balance refusal must reach the operator");
+        assert.match(details, /Insufficient Balance/);
         return true;
       },
     );

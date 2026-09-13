@@ -1288,6 +1288,24 @@ async function generateWithOpenAI(
 
   const model = modelOverride || process.env.OPENAI_PROPOSAL_MODEL || "gpt-4o";
 
+  // EVERY BRANCH THAT GIVES UP MUST SAY WHY.
+  //
+  // This adapter logged each failure to the server console and returned null.
+  // callProviderInner only records a failure when the call THROWS, so a null
+  // return recorded nothing at all -- and the capability test, seeing no text
+  // and no capture, reported "Provider returned an empty response". That is
+  // what the chain card showed for OpenAI and DeepSeek on 2026-09-13, for what
+  // may have been a 401, a 429, a 4xx body, a timeout or a genuine empty
+  // completion. The distinction was in a server log the owner cannot read --
+  // Vercel runtime logs are behind a billing limit on this account.
+  //
+  // generateOpenAICompatible already does exactly this for every other
+  // OpenAI-shaped provider, which is why Together, Cerebras and OpenRouter
+  // reported real reasons on the same card. These two adapters predate it.
+  const note = (reason: string) => {
+    recordProviderFailure("openai", new Error(`OpenAI ${reason}`));
+  };
+
   const controller = new AbortController();
   const openaiTimeoutMs = (model.includes("o1") || model.includes("o3")) ? O1_O3_TIMEOUT_MS : OPENAI_COMPAT_DEFAULT_TIMEOUT_MS;
   const timeoutId = setTimeout(() => controller.abort(), resolveEffectiveTimeoutMs(openaiTimeoutMs));
@@ -1311,17 +1329,20 @@ async function generateWithOpenAI(
     clearTimeout(timeoutId);
 
     if (!res.ok) {
-      const body = await res.text().catch(() => "");
+      const body = redactSecrets(await res.text().catch(() => "")).slice(0, 200);
       if (res.status === 401 || res.status === 403) {
         // Auth errors: record failure but return null so fallback chain continues.
         logger.warn(`[ai] OpenAI auth error (${res.status}) — skipping to next provider.`);
+        note(`auth error HTTP ${res.status}: ${body}`);
         return null;
       }
       if (res.status === 429) {
         logger.warn(`[ai] OpenAI rate limit (429) on ${model} — skipping to next provider.`);
+        note(`rate limit HTTP 429 on ${model}: ${body}`);
         return null;
       }
-      logger.warn(`[ai] OpenAI error ${res.status} on ${model}: ${body.slice(0, 240)} — skipping.`);
+      logger.warn(`[ai] OpenAI error ${res.status} on ${model}: ${body} — skipping.`);
+      note(`HTTP ${res.status} on ${model}: ${body}`);
       return null;
     }
 
@@ -1331,7 +1352,9 @@ async function generateWithOpenAI(
     };
 
     if (data.error?.message) {
-      logger.warn(`[ai] OpenAI API error: ${data.error.message}`);
+      const sanitized = redactSecrets(data.error.message).slice(0, 200);
+      logger.warn(`[ai] OpenAI API error: ${sanitized}`);
+      note(`API error: ${sanitized}`);
       return null;
     }
 
@@ -1339,7 +1362,7 @@ async function generateWithOpenAI(
     if (text.length === 0) {
       const why = describeEmptyCompletion(data.choices?.[0], maxTokens);
       logger.warn(`[ai] OpenAI ${model} ${why}.`);
-      recordProviderFailure("openai", new Error(`OpenAI ${model} ${why}`));
+      note(`${model} ${why}`);
       return null;
     }
     return text;
@@ -1348,9 +1371,12 @@ async function generateWithOpenAI(
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes("aborted") || msg.includes("timeout")) {
       logger.warn(`[ai] OpenAI fetch timed out after ${openaiTimeoutMs}ms — falling through.`);
+      note(`timed out after ${openaiTimeoutMs}ms`);
       return null;
     }
-    logger.warn(`[ai] OpenAI fetch failed: ${msg} — falling through to next provider.`);
+    const sanitized = redactSecrets(msg).slice(0, 200);
+    logger.warn(`[ai] OpenAI fetch failed: ${sanitized} — falling through to next provider.`);
+    note(`fetch failed: ${sanitized}`);
     return null;
   }
 }
@@ -1388,6 +1414,11 @@ async function generateWithDeepSeek(
   if (!deepSeekKey) return null;
 
   const model = modelOverride || getDeepSeekModel();
+  // Every branch that gives up must say why — see generateWithOpenAI above for
+  // the full reasoning and the run that exposed it.
+  const note = (reason: string) => {
+    recordProviderFailure("deepseek", new Error(`DeepSeek ${reason}`));
+  };
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), resolveEffectiveTimeoutMs(DEEPSEEK_DEFAULT_TIMEOUT_MS));
 
@@ -1413,20 +1444,27 @@ async function generateWithDeepSeek(
 
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      const sanitized = body.replace(/["']sk-[^"'\s]{8,}[^"'\s]*["']/g, '"[REDACTED]"').slice(0, 200);
+      // One redactor. The local regex here knew only quoted sk- keys and not
+      // `Bearer <token>`, which is the form a provider echoes back when it
+      // quotes a rejected Authorization header — the same divergence the
+      // comment below this block already describes for the JSON-error path.
+      const sanitized = redactSecrets(body).slice(0, 200);
       if (res.status === 401 || res.status === 403) {
         const strictAuth = ["1", "true", "yes"].includes((process.env.AI_PROVIDER_STRICT_AUTH || "").trim().toLowerCase());
         if (strictAuth) {
           throw new Error(`DeepSeek API key invalid (${res.status}): ${sanitized}`);
         }
         logger.warn(`[ai] DeepSeek auth error (${res.status}) — continuing to deterministic fallback: ${sanitized}`);
+        note(`auth error HTTP ${res.status}: ${sanitized}`);
         return null;
       }
       if (res.status === 429) {
         logger.warn(`[ai] DeepSeek rate limit (429) on ${model} — skipping to deterministic fallback.`);
+        note(`rate limit HTTP 429 on ${model}: ${sanitized}`);
         return null;
       }
       logger.warn(`[ai] DeepSeek error ${res.status} on ${model}: ${sanitized} — skipping.`);
+      note(`HTTP ${res.status} on ${model}: ${sanitized}`);
       return null;
     }
 
@@ -1446,6 +1484,7 @@ async function generateWithDeepSeek(
       // a second time. One redactor, so the patterns cannot diverge again.
       const sanitized = redactSecrets(data.error.message).slice(0, 200);
       logger.warn(`[ai] DeepSeek API error: ${sanitized}`);
+      note(`API error: ${sanitized}`);
       return null;
     }
 
@@ -1453,7 +1492,7 @@ async function generateWithDeepSeek(
     if (text.length === 0) {
       const why = describeEmptyCompletion(data.choices?.[0], maxTokens);
       logger.warn(`[ai] DeepSeek ${model} ${why}.`);
-      recordProviderFailure("deepseek", new Error(`DeepSeek ${model} ${why}`));
+      note(`${model} ${why}`);
       return null;
     }
     return text;
@@ -1462,6 +1501,7 @@ async function generateWithDeepSeek(
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes("aborted") || msg.includes("timeout")) {
       logger.warn(`[ai] DeepSeek fetch timed out after ${DEEPSEEK_DEFAULT_TIMEOUT_MS}ms — falling through.`);
+      note(`timed out after ${DEEPSEEK_DEFAULT_TIMEOUT_MS}ms`);
       return null;
     }
     const sanitized = redactSecrets(msg).slice(0, 200);
@@ -1470,6 +1510,7 @@ async function generateWithDeepSeek(
       if (strictAuth) throw err;
     }
     logger.warn(`[ai] DeepSeek fetch failed: ${sanitized} — falling through to deterministic.`);
+    note(`fetch failed: ${sanitized}`);
     return null;
   }
 }
