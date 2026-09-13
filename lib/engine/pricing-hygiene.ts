@@ -345,11 +345,41 @@ function withoutExtractionScaffolding(text: string): string {
     .replace(/(^|\n)[ \t]*Row\s+\d+\s*:[ \t]*/gi, "$1");
 }
 
-export function containsPricingLeakage(text: string, doc?: Pick<ExportReadyDocument, "name" | "exactFileName" | "documentType" | "format">): boolean {
-  if (!isTechnicalEnvelopeDoc(doc)) return false;
-  if (isCommercialOrFinancialDoc(doc)) return false;
-  if (isSensitiveFinancialOrLegalDoc(doc)) return false;
-  if (isCvOrProfileDoc(doc)) return false;
+/**
+ * WHY A FINDING CARRIES ITS EXCERPT
+ * ---------------------------------
+ * `containsPricingLeakage` answers yes/no, and every surface above it reported
+ * that answer as "Possible financial/pricing language appears in a technical
+ * document" with nothing quoted. On a 35-page proposal that is unactionable:
+ * it cannot be told apart from a false positive, the owner has no word to
+ * search for, and two AUTO_FINALIZE failures in a row were diagnosed by
+ * guessing which sentence might have tripped it — the first guess was wrong.
+ * The gate is fail-closed, so an unactionable message is an unactionable block.
+ *
+ * This is the same treatment the placeholder gate already applies (see
+ * document-quality-gate.ts, "the message names the phrases it actually
+ * matched"). Same trigger, same severity, same score impact; only the
+ * diagnosis improves — `containsPricingLeakage` below is a thin wrapper over
+ * this function and its verdict is unchanged.
+ */
+export type PricingLeakageFinding = {
+  /** The text that produced the verdict, trimmed for display. */
+  fragment: string;
+  /** Which rule matched, so a false positive can be traced to its pattern. */
+  rule: string;
+  /**
+   * True when no single fragment matches on its own and the verdict comes
+   * from text joined across a fragment boundary. That difference is itself
+   * the finding: it means no sentence in the document contains a price.
+   */
+  spansFragmentBoundary: boolean;
+};
+
+export function pricingLeakageFinding(text: string, doc?: Pick<ExportReadyDocument, "name" | "exactFileName" | "documentType" | "format">): PricingLeakageFinding | null {
+  if (!isTechnicalEnvelopeDoc(doc)) return null;
+  if (isCommercialOrFinancialDoc(doc)) return null;
+  if (isSensitiveFinancialOrLegalDoc(doc)) return null;
+  if (isCvOrProfileDoc(doc)) return null;
 
   const textSentences = sentences(withoutExtractionScaffolding(text));
   // One pass, and the context window reads the ORIGINAL fragments.
@@ -407,7 +437,7 @@ export function containsPricingLeakage(text: string, doc?: Pick<ExportReadyDocum
       return !isHistoricalReferenceValueContinuation(s, priorContext);
     })
     .join("\n");
-  if (!scanText) return false;
+  if (!scanText) return null;
 
   const currencyAmount = /(?:\b(?:EUR|USD|ETB|GBP|Birr|dollar|euro)\s*[0-9][0-9,]*(?:\.\d+)?(?:[KkMmBb](?:illion)?)?\b|\b[0-9][0-9,]*(?:\.\d+)?(?:[KkMmBb](?:illion)?)?\s*(?:EUR|USD|ETB|GBP|Birr|dollar|euro)\b|[$€£]\s*[0-9][0-9,]*(?:\.\d+)?(?:[KkMmBb](?:illion)?)?)/i;
   const pricedTermNumber = /\b(total price|unit price|price schedule|fee schedule|commercial offer|financial proposal|commercial proposal|daily rate|monthly rate|hourly rate|consultancy fee|professional fee|lump sum|contract amount|contract value|bill of quantities|BoQ|quoted amount|quoted price|invoice amount|payment amount|VAT amount|reimbursable amount)\b.{0,90}\b[0-9][0-9,]*(?:\.\d+)?\b/i;
@@ -416,12 +446,52 @@ export function containsPricingLeakage(text: string, doc?: Pick<ExportReadyDocum
   const percentageFeeRef = /\b(fee|rate|charge|commission|pricing)\b.{0,60}\b\d+\s*%|\b\d+\s*%.{0,60}\b(fee|rate|charge|commission|pricing|cost)\b/i;
   const currencyCodeAlone = /\b(USD|ETB|EUR|GBP)\b.{0,40}\b(price|fee|rate|cost|amount|budget|payment|quotation|invoice)\b|\b(price|fee|rate|cost|amount|budget|payment|quotation|invoice)\b.{0,40}\b(USD|ETB|EUR|GBP)\b/i;
 
-  return (
-    currencyAmount.test(scanText) ||
-    pricedTermNumber.test(scanText) ||
-    numberPricedTerm.test(scanText) ||
-    standaloneFinancialTerm.test(scanText) ||
-    percentageFeeRef.test(scanText) ||
-    currencyCodeAlone.test(scanText)
-  );
+  // The verdict is unchanged: the same six patterns, tested against the same
+  // joined text, in the same order. Only the RESULT is richer.
+  const rules: ReadonlyArray<readonly [string, RegExp]> = [
+    ["currency amount", currencyAmount],
+    ["priced term followed by a number", pricedTermNumber],
+    ["number followed by a priced term", numberPricedTerm],
+    ["standalone financial term", standaloneFinancialTerm],
+    ["percentage-based fee reference", percentageFeeRef],
+    ["currency code beside a price word", currencyCodeAlone],
+  ];
+
+  const matched = rules.find(([, pattern]) => pattern.test(scanText));
+  if (!matched) return null;
+  const [rule, pattern] = matched;
+
+  // Name the offender. A fragment that matches ON ITS OWN is the sentence the
+  // owner has to fix, so it is quoted directly. When nothing matches alone,
+  // the verdict came from text joined across a fragment boundary — the
+  // false-positive family the long comment above describes — and saying so is
+  // more useful than quoting a sentence that is individually clean, because it
+  // tells the reader the document may contain no price at all.
+  const survivors = scanText.split("\n");
+  const guilty = survivors.find((fragment) => pattern.test(fragment));
+  if (guilty) {
+    return { fragment: displayFragment(guilty), rule, spansFragmentBoundary: false };
+  }
+  for (let index = 0; index + 1 < survivors.length; index += 1) {
+    const pair = `${survivors[index]}\n${survivors[index + 1]}`;
+    if (pattern.test(pair)) {
+      return { fragment: displayFragment(pair.replace(/\n/g, " / ")), rule, spansFragmentBoundary: true };
+    }
+  }
+  return { fragment: displayFragment(scanText.replace(/\n/g, " / ")), rule, spansFragmentBoundary: true };
+}
+
+/** Keeps a quoted excerpt short enough for a message and free of line breaks. */
+function displayFragment(fragment: string): string {
+  const flat = fragment.replace(/\s+/g, " ").trim();
+  return flat.length > 220 ? `${flat.slice(0, 217)}...` : flat;
+}
+
+/**
+ * The original boolean contract, preserved exactly. Every existing caller and
+ * test keeps its behaviour; callers that want to say WHICH text tripped the
+ * gate use `pricingLeakageFinding` instead.
+ */
+export function containsPricingLeakage(text: string, doc?: Pick<ExportReadyDocument, "name" | "exactFileName" | "documentType" | "format">): boolean {
+  return pricingLeakageFinding(text, doc) !== null;
 }

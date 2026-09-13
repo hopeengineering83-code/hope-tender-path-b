@@ -350,10 +350,21 @@ export function buildProjectPortfolioCards(projects: ProjectRecord[], tenderTitl
       && Number.isFinite(project.contractValue)
       && Math.abs(constructionValue.value - project.contractValue) < 0.01;
 
-    if (hasContractValue(project.contractValue) && !storedIsTheConstructionAmount) {
+    // A PAST FEE IS STILL THIS FIRM'S PRICING — see portfolio-card-repair for
+    // the delivered-PDF evidence. The "Consultancy Fee | ETB 1.1M" branch that
+    // stood here produced three of the rows the application's own detector
+    // named as the PRICING_LEAKAGE [HIGH] that scored the proposal 75 /
+    // QUALITY_FAILED. The construction value below stays: it describes the
+    // asset, not anyone's price. The stored column is refused on the same
+    // grounds when it holds that fee.
+    const storedIsTheConsultancyFee =
+      consultancyFee !== undefined
+      && typeof project.contractValue === "number"
+      && Number.isFinite(project.contractValue)
+      && Math.abs(consultancyFee.value - project.contractValue) < 0.01;
+
+    if (hasContractValue(project.contractValue) && !storedIsTheConstructionAmount && !storedIsTheConsultancyFee) {
       rows.push(`| Contract Value | ${escCell(fmtMoney(project.contractValue, project.currency))} |`);
-    } else if (consultancyFee) {
-      rows.push(`| Consultancy Fee | ${escCell(`${fmtMoney(consultancyFee.value, consultancyFee.currency ?? project.currency)} (${consultancyFee.label})`)} |`);
     } else {
       rows.push(`| Contract Value | ${escCell("Value detail in Appendix B (project reference)")} |`);
     }

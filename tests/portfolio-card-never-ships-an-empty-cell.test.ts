@@ -106,7 +106,7 @@ test("no delivered card cell ever asserts nothing", () => {
   }
 });
 
-test("a consultancy fee is never printed as a bare contract value", () => {
+test("a consultancy fee is never printed at all, under any label", () => {
   const markdown = card(ROAD_RECORD.name, [["Contract Value", "—"]]);
   const repaired = repairPortfolioCards(markdown, [ROAD_RECORD]);
   const cells = cellsOf(repaired.markdown);
@@ -115,7 +115,18 @@ test("a consultancy fee is never printed as a bare contract value", () => {
   // design fee. Printing the former as this firm's contract value overstates
   // its contract by about fifty times.
   assert.equal(cells.has("Contract Value"), false, "the misleading bare label must be replaced");
-  assert.equal(cells.get("Consultancy Fee"), "ETB 4.5M");
+
+  // THIS ASSERTION WAS `cells.get("Consultancy Fee") === "ETB 4.5M"` UNTIL A
+  // DELIVERED PDF DISPROVED IT. The application's own reader and detector,
+  // run over the delivered bytes, named three such rows as the
+  // PRICING_LEAKAGE [HIGH] that scored the proposal 75/QUALITY_FAILED
+  // ("> Row 1: Consultancy Fee | ETB 1.1M"). A past fee is still this firm's
+  // pricing; relabelling it was never the point, keeping it out of a technical
+  // envelope is. The construction cost describes the asset, not anyone's
+  // price, so it stays — and so does the existing rule on the monthly rate,
+  // which this now simply generalises.
+  assert.equal(cells.has("Consultancy Fee"), false, "a past fee belongs in the financial envelope");
+  assert.ok(!repaired.markdown.includes("4.5M"), "nor the fee amount under some other label");
   assert.equal(cells.get("Construction Value of Works"), "ETB 240.0M");
   // A monthly supervision rate is a price signal, not a track-record fact.
   assert.ok(!repaired.markdown.includes("95"), "the monthly supervision rate must not be printed");

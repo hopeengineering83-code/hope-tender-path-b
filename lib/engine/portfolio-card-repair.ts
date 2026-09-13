@@ -189,6 +189,12 @@ export function recordFactsFor(project: PortfolioCardProject): RecordFacts {
     && Number.isFinite(storedValue)
     && Math.abs(works.value - storedValue) < 0.01;
 
+  const storedIsTheConsultancyFee =
+    fee !== undefined
+    && storedValue !== undefined
+    && Number.isFinite(storedValue)
+    && Math.abs(fee.value - storedValue) < 0.01;
+
   return {
     location: composeLocation(derived.location, project.country || derived.country),
     // tidy() collapses runs of whitespace but not the newlines the source text
@@ -197,13 +203,38 @@ export function recordFactsFor(project: PortfolioCardProject): RecordFacts {
     scale: scaleMatch ? tidy(scaleMatch[0].replace(/\s+/g, " ")) : undefined,
     duration: formatYearRange(derived.startDate, derived.endDate),
     services: services.length > 0 ? services.join(", ") : undefined,
-    // The three amounts are never merged. The consultancy fee is this firm's
-    // contract; the construction cost is the scale of the asset it worked on
-    // and says so; a monthly supervision rate is a price signal, not a
-    // track-record fact, and is not printed at all.
-    consultancyFee: fee ? formatMoney(fee.value, fee.currency ?? project.currency) : undefined,
+    // A PAST FEE IS STILL THIS FIRM'S PRICING.
+    //
+    // The comment here used to say the monthly supervision rate was withheld
+    // because "it reads as a price signal in a technical-only envelope" while
+    // the lump-sum fee was printed. Nothing but the per-month flag separated
+    // them, and that distinction has no basis in the principle: both state
+    // what this firm charges to do this work. The construction cost is
+    // different in kind — it describes the ASSET, not anyone's price, which
+    // is why it stays.
+    //
+    // Measured, not reasoned. The delivered PDF carried three of these rows,
+    // and the application's own reader and detector named them as the reason
+    // the document scored 75/QUALITY_FAILED with PRICING_LEAKAGE [HIGH]:
+    //
+    //   FRAGMENTS THE DETECTOR FLAGS ON THEIR OWN: 3 of 1100
+    //     > Row 1: Consultancy Fee | ETB 1.1M
+    //     > Row 1: Consultancy Fee | ETB 450K
+    //     > Row 1: Consultancy Fee | USD 945K
+    //
+    // The fix is not to exempt the label. An evaluator reading "Consultancy
+    // Fee ETB 1.1M" in a technical envelope can infer this bidder's fee
+    // levels, and keeping that out is exactly what the two-envelope rule is
+    // for — so the row is not written at all. `fee` is still resolved above
+    // so the construction amount is not mistaken for it.
+    consultancyFee: undefined,
     constructionValue: works ? formatMoney(works.value, works.currency ?? project.currency) : undefined,
-    contractValue: storedValue && Number.isFinite(storedValue) && storedValue > 0 && !storedIsTheConstructionAmount
+    // The same reasoning applies to the stored column. If the index happens to
+    // hold the FEE the source states, then "Contract Value ETB 1.1M" discloses
+    // this firm's pricing just as plainly as the row above would have — the
+    // label changes, the disclosure does not. Withholding one and printing the
+    // other would be a gap, not a rule.
+    contractValue: storedValue && Number.isFinite(storedValue) && storedValue > 0 && !storedIsTheConstructionAmount && !storedIsTheConsultancyFee
       ? formatMoney(storedValue, project.currency)
       : undefined,
   };

@@ -81,13 +81,38 @@ describe("a value the record states must reach the card", () => {
     assert.match(result.markdown, /\| Construction Value of Works \| ETB 550\.1M \|/);
   });
 
-  it("labels a consultancy fee as a fee, not as a contract value", () => {
+  it("prints no fee at all, and still prints the construction value beside it", () => {
+    // THIS TEST ASSERTED THE OPPOSITE UNTIL A DELIVERED PDF DISPROVED IT.
+    // It required "Consultancy Fee" on the card. The application's own reader
+    // and detector, run over the delivered bytes, named three such rows as the
+    // PRICING_LEAKAGE [HIGH] that scored the proposal 75/QUALITY_FAILED:
+    //
+    //   > Row 1: Consultancy Fee | ETB 1.1M
+    //
+    // A past fee is still this firm's pricing, and a technical envelope is
+    // where it must not appear. The construction cost is different in kind --
+    // it describes the asset, not anyone's price -- so it is not withheld.
     const withFee = project({
       summary: "Detailed design of a district hospital in Kenya. Design Fee: 1,100,000 KES. Construction Cost: 89,000,000 KES.",
     });
     const result = repairPortfolioCards(cardWithoutValueRow, [withFee] as never);
-    assert.doesNotMatch(result.markdown, /\| Contract Value \|/);
-    assert.match(result.markdown, /Consultancy Fee/);
+    assert.doesNotMatch(result.markdown, /Consultancy Fee/);
+    assert.doesNotMatch(result.markdown, /1,100,000|KES 1\.1M/);
+    assert.match(result.markdown, /\| Construction Value of Works \| KES 89\.0M \|/);
+  });
+
+  it("refuses the stored column too when it holds the fee", () => {
+    // Withholding the fee row while printing the identical amount under
+    // "Contract Value" would change the label and not the disclosure.
+    const feeInTheColumn = project({
+      contractValue: 1_100_000,
+      currency: "KES",
+      summary: "Detailed design of a district hospital in Kenya. Design Fee: 1,100,000 KES. Construction Cost: 89,000,000 KES.",
+    });
+    const result = repairPortfolioCards(cardWithoutValueRow, [feeInTheColumn] as never);
+    assert.doesNotMatch(result.markdown, /Contract Value/);
+    assert.doesNotMatch(result.markdown, /1\.1M/);
+    assert.match(result.markdown, /\| Construction Value of Works \| KES 89\.0M \|/);
   });
 
   it("adds nothing to a card whose record states no amount", () => {

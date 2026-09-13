@@ -13,7 +13,7 @@ import {
   isValidationPassed,
   type DocumentOutputState,
 } from "./document-output-state";
-import { containsPricingLeakage } from "./pricing-hygiene";
+import { containsPricingLeakage, pricingLeakageFinding } from "./pricing-hygiene";
 import { hasSourceEvaluationCriteria } from "./evaluation-criteria-presence";
 import { checkExportFileByteReadiness } from "./export-byte-readiness";
 import { detectSubmissionPackageMode } from "./submission-package-mode";
@@ -351,8 +351,21 @@ export function documentHygieneIssues(text: string | null | undefined, doc?: Pic
   if (/\[(insert|add|fill|placeholder|todo|tbd|name of|date here|signature here|stamp here)[^\]]*\]/i.test(text) || /\b(TODO|TBD|FIXME|PLACEHOLDER)\b/i.test(text)) {
     issues.push("Placeholder or unresolved drafting instruction is present");
   }
-  if (containsPricingLeakage(text, doc)) {
-    issues.push("Possible financial/pricing language appears in a technical document");
+  // The message quotes what matched. It used to say only "Possible
+  // financial/pricing language appears in a technical document" — a HIGH,
+  // fail-closed finding on a 35-page proposal with no word to search for and
+  // no way to tell it from a false positive. Two AUTO_FINALIZE failures in a
+  // row were diagnosed by guessing which sentence tripped it, and the first
+  // guess was wrong. Same trigger, same severity, same score impact; the
+  // leading phrase is unchanged so the callers that classify on
+  // /pricing language/i still match.
+  const pricingFinding = pricingLeakageFinding(text, doc);
+  if (pricingFinding) {
+    issues.push(
+      pricingFinding.spansFragmentBoundary
+        ? `Possible financial/pricing language appears in a technical document: no single sentence contains it — the ${pricingFinding.rule} match spans a fragment boundary near "${pricingFinding.fragment}"`
+        : `Possible financial/pricing language appears in a technical document: ${pricingFinding.rule} in "${pricingFinding.fragment}"`,
+    );
   }
   return issues;
 }
