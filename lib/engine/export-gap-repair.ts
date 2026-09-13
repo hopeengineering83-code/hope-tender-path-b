@@ -120,12 +120,51 @@ function textHasCanonicalHygieneRisk(text: string, doc: RepairDoc): boolean {
  * also avoiding a destructive whole-paragraph deletion when good technical
  * text shares that paragraph with one unsafe sentence.
  */
-function safeParagraphText(text: string, doc: RepairDoc): string {
-  const sentences = text.match(/[^.!?]+(?:[.!?]+|$)/g) ?? [text];
-  const kept = sentences
+/**
+ * A NUMBER IS NOT A SENTENCE BOUNDARY.
+ *
+ * The splitter here was /[^.!?]+(?:[.!?]+|$)/g, with no guard for a decimal
+ * point, so a money cell was cut in half:
+ *
+ *   "ETB 550.1M"  ->  ["ETB 550.", "1M"]
+ *
+ * The half carrying the amount was classified as pricing risk and dropped, and
+ * the orphan tail was written back. A delivered client proposal
+ * (run 34769880487) consequently stated "Construction Value of Works 1M" on
+ * every project card -- ETB 550.1M, ETB 125.0M and USD 18.9M each reduced to
+ * the text after their decimal point -- while readiness reported zero
+ * blockers, the audit agreed and the ZIP built. A nonsense figure breaks no
+ * rule, so nothing caught it.
+ *
+ * The lookbehind matches the one the canonical detector already uses in
+ * pricing-hygiene's `sentences()`: a period preceded by up to three digits
+ * that are themselves preceded by a boundary is a decimal point, not a full
+ * stop.
+ */
+function splitIntoSentences(text: string): string[] {
+  return (text.match(/(?:[^.!?]|(?<=(?:^|[\s(\[])\d{1,3})[.])+(?:[.!?]+|$)/g) ?? [text])
     .map((sentence) => sentence.replace(/\s+/g, " ").trim())
-    .filter(Boolean)
-    .filter((sentence) => !textHasCanonicalHygieneRisk(sentence, doc));
+    .filter(Boolean);
+}
+
+/**
+ * Does this fragment assert anything on its own?
+ *
+ * What is left after removing an unsafe sentence must still be readable as a
+ * claim. "1M", "550." and "0M" are debris: they survive only because the
+ * splitter cut through them, and a client document is worse for carrying them
+ * than for carrying nothing.
+ */
+function assertsNothing(fragment: string): boolean {
+  const bare = fragment.replace(/[\s.,;:()\[\]-]/g, "");
+  return bare.length === 0 || /^[\d]+[KkMmBb]?$/.test(bare);
+}
+
+function safeParagraphText(text: string, doc: RepairDoc): string {
+  const sentences = splitIntoSentences(text);
+  const kept = sentences
+    .filter((sentence) => !textHasCanonicalHygieneRisk(sentence, doc))
+    .filter((sentence) => !assertsNothing(sentence));
   const safe = kept.join(" ").trim();
 
   // If the whole paragraph was classified unsafe but sentence splitting failed
@@ -161,7 +200,31 @@ export async function cleanDocxHygieneIssues(base64Content: string, doc: RepairD
     // Repair at paragraph granularity so canonical violations split across
     // multiple Word runs are visible as one sentence. Preserve every safe
     // sentence from a mixed paragraph and rewrite only the visible text runs.
-    let cleaned = xml.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g, (paragraphXml) => {
+    // A TABLE CELL IS JUDGED WITH ITS ROW.
+    //
+    // Each cell is its own <w:p>, so judging paragraphs alone strips the label
+    // sitting one cell away -- the very thing that tells a value what it is.
+    // "ETB 550.1M" on its own is a bare amount and reads as a price; beside
+    // "Construction Value of Works" it is a past project's scale, which the
+    // canonical detector already exempts. The first reading is what reached a
+    // delivered proposal and blanked the figure.
+    //
+    // So rows whose FULL text is clean in context are left untouched. A row
+    // that really does carry risk still falls through to per-paragraph
+    // cleaning below, and nothing here relaxes what counts as risk: this only
+    // stops the detector being asked about half a sentence.
+    const safeRowRanges: Array<[number, number]> = [];
+    const rowPattern = /<w:tr(?:\s[^>]*)?>[\s\S]*?<\/w:tr>/g;
+    for (let match = rowPattern.exec(xml); match !== null; match = rowPattern.exec(xml)) {
+      if (!textHasCanonicalHygieneRisk(paragraphVisibleText(match[0]), doc)) {
+        safeRowRanges.push([match.index, match.index + match[0].length]);
+      }
+    }
+    const insideSafeRow = (offset: number): boolean =>
+      safeRowRanges.some(([start, end]) => offset >= start && offset < end);
+
+    let cleaned = xml.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g, (paragraphXml, offset: number) => {
+      if (insideSafeRow(offset)) return paragraphXml;
       const visible = paragraphVisibleText(paragraphXml);
       if (!textHasCanonicalHygieneRisk(visible, doc)) return paragraphXml;
       return rewriteParagraphVisibleText(paragraphXml, safeParagraphText(visible, doc));
