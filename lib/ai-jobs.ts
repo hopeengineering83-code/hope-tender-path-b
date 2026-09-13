@@ -482,7 +482,18 @@ export async function recoverIfStuck(jobId: string, opts?: { stuckAfterMs?: numb
   return updated.count > 0;
 }
 
-export async function listUserJobs(userId: string, opts?: { jobType?: JobType; status?: JobStatus; tenderId?: string; take?: number }): Promise<Array<{ id: string; jobType: JobType; status: JobStatus; tenderId: string | null; createdAt: Date; finishedAt: Date | null }>> {
+/**
+ * A FAILED JOB MUST SAY WHY.
+ *
+ * `errorMessage` was absent from the selection, so every consumer of this list
+ * read a job's reason as null. AUTO_FINALIZE writes the precise blocker there
+ * — "AUTO_FINALIZE_NOT_CONVERGED — <blockers>" — and two consecutive hosted
+ * runs reported the failure as `error=None`, which is indistinguishable from a
+ * job that failed for no recorded reason. The reason was in the database the
+ * whole time; it simply never left it. The rows are already scoped to the
+ * requesting user's own jobs, so this exposes nothing that user may not see.
+ */
+export async function listUserJobs(userId: string, opts?: { jobType?: JobType; status?: JobStatus; tenderId?: string; take?: number }): Promise<Array<{ id: string; jobType: JobType; status: JobStatus; tenderId: string | null; createdAt: Date; finishedAt: Date | null; errorMessage: string | null }>> {
   await prismaReady;
   const rows = await prisma.aiJob.findMany({
     where: {
@@ -493,7 +504,7 @@ export async function listUserJobs(userId: string, opts?: { jobType?: JobType; s
     },
     orderBy: { createdAt: "desc" },
     take: opts?.take ?? 25,
-    select: { id: true, jobType: true, status: true, tenderId: true, createdAt: true, finishedAt: true },
+    select: { id: true, jobType: true, status: true, tenderId: true, createdAt: true, finishedAt: true, errorMessage: true },
   });
   return rows.map((r) => ({ ...r, jobType: r.jobType as JobType, status: r.status as JobStatus }));
 }
