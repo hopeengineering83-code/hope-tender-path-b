@@ -240,6 +240,19 @@ export function recordFactsFor(project: PortfolioCardProject): RecordFacts {
   };
 }
 
+/**
+ * Does this card row's label name a price rather than a fact about the work?
+ *
+ * Used to refuse the row outright in a portfolio card. "Fee", "rate", "price",
+ * "remuneration", "invoice" and "billing" can only describe what someone
+ * charges. "Cost" and "value" are excluded on purpose: a past project's
+ * construction cost is the scale of the asset, not anyone's price, and
+ * refusing it would delete legitimate track record.
+ */
+function isPricingRowLabel(label: string): boolean {
+  return /\b(fee|fees|rate|rates|price|pricing|remuneration|invoice|invoiced|billing|billed|quotation|quoted)\b/i.test(label);
+}
+
 /** What each recognised card label may be filled from. */
 function fillFor(label: string, facts: RecordFacts): string | undefined {
   const key = label.toLowerCase().replace(/[^a-z]/g, "");
@@ -417,6 +430,25 @@ export function repairPortfolioCards(
       continue;
     }
 
+    // A PRICING ROW THE WRITER WROTE IS STILL A PRICING ROW.
+    //
+    // Not adding one is only half the rule. This pass fills empty cells and
+    // drops unsupported ones, but a cell that is COMPLETE AS WRITTEN is
+    // explicitly never overwritten — so "| Consultancy Fee | ETB 1.1M |"
+    // authored upstream reached the delivered PDF untouched, which is where
+    // the detector found it. The row is refused on its LABEL, before the
+    // completeness check, because the defect is the disclosure and not the
+    // cell's quality.
+    //
+    // Deliberately narrow. It names fee/rate/price vocabulary — words that can
+    // only describe what someone charges — and leaves "cost" and "value"
+    // alone: "Construction Cost" and "Construction Value of Works" state the
+    // scale of the asset, which is track record an evaluator is entitled to.
+    if (isPricingRowLabel(label)) {
+      removed.push(label.trim());
+      continue;
+    }
+
     const kept = assertingParts(value);
     const replacement = fillFor(label, facts);
 
@@ -443,20 +475,15 @@ export function repairPortfolioCards(
       continue;
     }
 
-    // A consultancy fee is not a "Contract Value" without saying so. The
-    // records behind these cards state up to three amounts — a construction
-    // cost, a design fee and a monthly supervision rate — and printing the
-    // wrong one under a bare value label misstates the firm's contract. When
-    // the only amount available is the fee, the ROW IS RELABELLED rather than
-    // silently filled.
+    // A bare "Contract Value" the record cannot answer becomes the amount the
+    // record DOES state, under the role the source gives it. This used to
+    // relabel the row to "Consultancy Fee"; a past fee is no longer printed at
+    // all (see recordFactsFor), so the only substitution left is the
+    // construction value, which describes the asset rather than any price.
     const valueKey = label.toLowerCase().replace(/[^a-z]/g, "");
-    if ((valueKey === "contractvalue" || valueKey === "value") && facts.consultancyFee) {
-      filled.push("Consultancy Fee");
-      pushTableRow(`| Consultancy Fee | ${facts.consultancyFee} |`);
-      if (facts.constructionValue) {
-        filled.push("Construction Value of Works");
-        pushTableRow(`| Construction Value of Works | ${facts.constructionValue} |`);
-      }
+    if ((valueKey === "contractvalue" || valueKey === "value") && facts.constructionValue) {
+      filled.push("Construction Value of Works");
+      pushTableRow(`| Construction Value of Works | ${facts.constructionValue} |`);
       continue;
     }
 

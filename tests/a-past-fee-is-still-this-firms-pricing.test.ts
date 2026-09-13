@@ -106,6 +106,64 @@ describe("a past fee never reaches a technical envelope, in any sector or curren
     });
   }
 
+  it("removes a fee row the WRITER authored, not only one the repair would add", () => {
+    // Not adding one is half a rule. This pass never overwrites a cell that is
+    // "complete as written", so an upstream-authored
+    // "| Consultancy Fee | ETB 1.1M |" passed through untouched and reached
+    // the delivered PDF -- which is where the detector found it. Refusing it
+    // on the LABEL closes that path: the defect is the disclosure, not the
+    // cell's quality.
+    const authored = [
+      "### Reference Project",
+      "",
+      "| Field | Detail |",
+      "|---|---|",
+      "| Client | Municipal Authority |",
+      "| Consultancy Fee | EUR 640K |",
+      "| Duration | 2019-2022 |",
+      "",
+    ].join("\n");
+    const result = repairPortfolioCards(authored, [project({
+      summary: "Detailed design and supervision of 42 km of regional road in Poland. Design Fee: 640,000 EUR. Construction Cost: 31,500,000 EUR.",
+    })] as never);
+    assert.doesNotMatch(result.markdown, /Consultancy Fee/);
+    assert.doesNotMatch(result.markdown, /EUR 640K/);
+    assert.match(result.markdown, /\| Construction Value of Works \| EUR 31\.5M \|/);
+    assert.equal(containsPricingLeakage(result.markdown, TECHNICAL_PROPOSAL), false);
+  });
+
+  it("refuses every pricing vocabulary a writer might reach for", () => {
+    for (const label of ["Consultancy Fee", "Design Fee", "Daily Rate", "Unit Price", "Remuneration", "Invoice Amount"]) {
+      const authored = [
+        "### Reference Project",
+        "",
+        "| Field | Detail |",
+        "|---|---|",
+        `| ${label} | EUR 640K |`,
+        "",
+      ].join("\n");
+      const result = repairPortfolioCards(authored, [project()] as never);
+      assert.doesNotMatch(result.markdown, new RegExp(label), label);
+    }
+  });
+
+  it("does not mistake an asset's cost or value for a price", () => {
+    // The rule must not delete legitimate track record. "Cost" and "value" are
+    // deliberately outside it.
+    for (const label of ["Construction Value of Works", "Construction Cost", "Contract Value", "Project Value"]) {
+      const authored = [
+        "### Reference Project",
+        "",
+        "| Field | Detail |",
+        "|---|---|",
+        `| ${label} | EUR 31.5M |`,
+        "",
+      ].join("\n");
+      const result = repairPortfolioCards(authored, [project()] as never);
+      assert.match(result.markdown, new RegExp(label), `${label} states the scale of the asset, not a price`);
+    }
+  });
+
   it("refuses the stored column when it holds the fee rather than the works cost", () => {
     const result = repairPortfolioCards(card("Reference Project"), [project({
       contractValue: 640_000,
