@@ -241,6 +241,12 @@ const REQUEST_TOO_LARGE_PHRASES = [
   "too many tokens",
   "reduce the length",
   "input tokens exceed",
+  // An output budget that ran out before the first token is OUR budgeting
+  // defect, not provider ill-health -- the same reasoning this category's
+  // zero cooldown already documents. Emitted by describeEmptyCompletion when
+  // finish_reason is "length".
+  "output token budget",
+  "entire output budget on reasoning",
 ];
 
 const TIMEOUT_PHRASES = ["timed out", "timeout", "etimedout", "aborted", "abort", "deadline exceeded"];
@@ -267,6 +273,17 @@ const MALFORMED_PHRASES = [
   "structured output missing",
   "no json found",
   "empty response",
+  // The adapters used to report every empty completion as "returned empty
+  // content", which matched nothing here and fell through to UNKNOWN. Same
+  // 60s cooldown either way, so no behaviour changes -- but the category now
+  // says what actually happened. These are the remaining shapes from
+  // describeEmptyCompletion: the provider answered, and the answer was
+  // unusable.
+  "empty content",
+  "declined to answer",
+  "content filter",
+  "reasoning and no answer",
+  "no choices at all",
 ];
 
 const PROVIDER_ERROR_PHRASES = [

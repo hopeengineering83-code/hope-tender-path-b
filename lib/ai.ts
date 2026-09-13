@@ -1326,7 +1326,7 @@ async function generateWithOpenAI(
     }
 
     const data = await res.json() as {
-      choices?: Array<{ message?: { content?: string } }>;
+      choices?: OpenAiCompatibleChoice[];
       error?: { message?: string };
     };
 
@@ -1337,7 +1337,9 @@ async function generateWithOpenAI(
 
     const text = data.choices?.[0]?.message?.content?.trim() ?? "";
     if (text.length === 0) {
-      logger.warn(`[ai] OpenAI ${model} returned empty content.`);
+      const why = describeEmptyCompletion(data.choices?.[0], maxTokens);
+      logger.warn(`[ai] OpenAI ${model} ${why}.`);
+      recordProviderFailure("openai", new Error(`OpenAI ${model} ${why}`));
       return null;
     }
     return text;
@@ -1429,7 +1431,7 @@ async function generateWithDeepSeek(
     }
 
     const data = await res.json() as {
-      choices?: Array<{ message?: { content?: string } }>;
+      choices?: OpenAiCompatibleChoice[];
       error?: { message?: string };
     };
 
@@ -1449,7 +1451,9 @@ async function generateWithDeepSeek(
 
     const text = data.choices?.[0]?.message?.content?.trim() ?? "";
     if (text.length === 0) {
-      logger.warn(`[ai] DeepSeek ${model} returned empty content.`);
+      const why = describeEmptyCompletion(data.choices?.[0], maxTokens);
+      logger.warn(`[ai] DeepSeek ${model} ${why}.`);
+      recordProviderFailure("deepseek", new Error(`DeepSeek ${model} ${why}`));
       return null;
     }
     return text;
@@ -1494,6 +1498,56 @@ function getTogetherModelForUseCase(useCase: AiUseCase = "proposal"): string {
   if (useCase === "extraction") return getTogetherAnalysisModel();
   if (useCase === "fast") return getTogetherFastModel();
   return getTogetherProposalModel();
+}
+
+/**
+ * WHY WAS THE COMPLETION EMPTY?
+ * -----------------------------
+ * Every OpenAI-compatible site read `choices[0].message.content` and nothing
+ * else, so an empty answer was reported as "Provider returned an empty
+ * response" no matter what had actually happened. On the provider-chain test
+ * at commit 39a37526 that single sentence was all two of the ten providers
+ * (OpenAI gpt-4o, DeepSeek deepseek-chat) had to say for themselves, after
+ * real round-trips of 1085ms and 639ms — indistinguishable from a dead key,
+ * and impossible to act on.
+ *
+ * The response already carries the answer in fields this code discarded:
+ *
+ *   finish_reason: "length"        the budget ran out before any content
+ *   finish_reason: "content_filter" the provider blocked it
+ *   message.refusal                the model declined, and said why
+ *   message.reasoning_content      it spent the budget thinking, not answering
+ *
+ * Those are four different problems with four different owners — one is a
+ * config change on our side, one is the prompt, one is the provider. Reporting
+ * them as one is what made the chain look uniformly broken.
+ *
+ * This only describes; it changes no request and no verdict. An empty
+ * completion is still a failure, still non-fatal, and still falls through to
+ * the next provider in the canonical chain.
+ */
+export type OpenAiCompatibleChoice = {
+  message?: { content?: string | null; refusal?: string | null; reasoning_content?: string | null };
+  finish_reason?: string | null;
+};
+
+export function describeEmptyCompletion(choice: OpenAiCompatibleChoice | undefined, maxTokens?: number): string {
+  if (!choice) return "returned no choices at all";
+
+  const finish = (choice.finish_reason ?? "").trim();
+  const refusal = (choice.message?.refusal ?? "").trim();
+  const reasoning = (choice.message?.reasoning_content ?? "").trim();
+
+  if (refusal) return `declined to answer: ${refusal.slice(0, 160)}`;
+  if (finish === "content_filter") return "was blocked by the provider's content filter";
+  if (finish === "length") {
+    const budget = Number.isFinite(maxTokens) ? ` (max_tokens=${maxTokens})` : "";
+    return reasoning
+      ? `spent its entire output budget on reasoning and produced no answer${budget} — raise the budget or use a non-reasoning model`
+      : `hit the output token budget before producing any content${budget} — raise the budget`;
+  }
+  if (reasoning) return `returned ${reasoning.length} characters of reasoning and no answer`;
+  return finish ? `returned empty content (finish_reason=${finish})` : "returned empty content and no finish_reason";
 }
 
 function fallbackTemperature(): number {
@@ -1571,7 +1625,7 @@ async function generateOpenAICompatible(params: {
       return null;
     }
 
-    const data = await res.json() as { choices?: Array<{ message?: { content?: string } }>; error?: { message?: string } };
+    const data = await res.json() as { choices?: OpenAiCompatibleChoice[]; error?: { message?: string } };
     if (data.error?.message) {
       const sanitized = redactSecrets(data.error.message).slice(0, 200);
       logger.warn(`[ai] ${providerLabel} API error: ${sanitized}`);
@@ -1580,8 +1634,10 @@ async function generateOpenAICompatible(params: {
     }
     const text = data.choices?.[0]?.message?.content?.trim() ?? "";
     if (text.length === 0) {
-      logger.warn(`[ai] ${providerLabel} ${model} returned empty content.`);
-      note(`${model} returned empty content`);
+      // Say WHICH kind of empty. See describeEmptyCompletion.
+      const why = describeEmptyCompletion(data.choices?.[0], maxTokens);
+      logger.warn(`[ai] ${providerLabel} ${model} ${why}.`);
+      note(`${model} ${why}`);
       return null;
     }
     return text;

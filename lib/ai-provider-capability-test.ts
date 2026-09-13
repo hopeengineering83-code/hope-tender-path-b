@@ -479,8 +479,22 @@ export async function runCapabilityTest(
     return record("failed", classifyProviderError(failure), safeMessage(failure));
   }
   if (!text || String(text).trim().length === 0) {
+    // SAY WHICH KIND OF EMPTY.
+    //
+    // This branch already had the adapter's own account of the failure in
+    // `capture.error` -- it used `capture.category` from the same object -- and
+    // replaced the message with a fixed sentence. On the chain test at commit
+    // 39a37526 that sentence was the entire diagnosis for two of ten providers
+    // (OpenAI gpt-4o, DeepSeek deepseek-chat), after real round-trips of 1085ms
+    // and 639ms. "Provider returned an empty response" cannot be told apart
+    // from a dead key, and it is the same for a refusal, a content filter and
+    // an output budget that ran out before the first token -- three different
+    // problems with three different owners, one of them a config change on our
+    // side. The adapters now describe the difference (describeEmptyCompletion);
+    // discarding it here would put it straight back in the bin.
     const category = (capture.category as AiProviderFailureCategory | null) ?? "MALFORMED_RESPONSE";
-    return record("failed", category, "Provider returned an empty response.");
+    const detail = capture.error ? safeMessage(capture.error) : "";
+    return record("failed", category, detail || "Provider returned an empty response with no recorded reason.");
   }
 
   if (spec.validate) {
