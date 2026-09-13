@@ -57,8 +57,12 @@ const cardWithoutValueRow = [
 
 describe("a value the record states must reach the card", () => {
   it("adds the row the writer never wrote", () => {
-    const result = repairPortfolioCards(cardWithoutValueRow, [project({ contractValue: 550074678.02, currency: "ETB" })] as never);
-    assert.match(result.markdown, /\| Contract Value \| ETB 550\.1M \|/);
+    // A stored contract value that is genuinely the firm's contract, distinct
+    // from the construction cost the record also states. Using the
+    // construction amount here would assert the very misstatement the suite
+    // below exists to prevent.
+    const result = repairPortfolioCards(cardWithoutValueRow, [project({ contractValue: 12_000_000, currency: "ETB" })] as never);
+    assert.match(result.markdown, /\| Contract Value \| ETB 12\.0M \|/);
     // The rows the writer did write are untouched and still in order.
     const lines = result.markdown.split("\n").filter((l) => l.startsWith("|"));
     assert.ok(lines.some((l) => l.includes("Dr Abdul Seid")));
@@ -97,9 +101,9 @@ describe("a value the record states must reach the card", () => {
   it("does not duplicate a value row the writer already wrote", () => {
     const cardWithValue = cardWithoutValueRow.replace(
       "| Duration | 2015–2018 |",
-      "| Duration | 2015–2018 |\n| Contract Value | ETB 550.1M |",
+      "| Duration | 2015–2018 |\n| Contract Value | ETB 12.0M |",
     );
-    const result = repairPortfolioCards(cardWithValue, [project({ contractValue: 550074678.02, currency: "ETB" })] as never);
+    const result = repairPortfolioCards(cardWithValue, [project({ contractValue: 12_000_000, currency: "ETB" })] as never);
     const occurrences = result.markdown.split("Contract Value").length - 1;
     assert.equal(occurrences, 1, "the row is added only when it is missing");
   });
@@ -138,5 +142,45 @@ describe("a value the record states must reach the card", () => {
     const v2 = result.markdown.indexOf("ETB 125.0M");
     assert.ok(v1 > first && v1 < second, "the first card's value stays in the first card");
     assert.ok(v2 > second, "the second card's value stays in the second card");
+  });
+});
+
+describe("the same amount is never printed under two different roles", () => {
+  /**
+   * MEASURED IN A DELIVERED PDF. The first run that carried value rows put the
+   * same figure on every card twice:
+   *
+   *   Contract Value               ETB 550.1M
+   *   Construction Value of Works  ETB 550.1M
+   *
+   * The stored contractValue is an index filled from the record's own text, and
+   * that text states a CONSTRUCTION cost — the cost of the asset, not what this
+   * firm was paid. One of those two lines was false, in front of an evaluator
+   * who can check it against the client's own records.
+   */
+  it("labels a stored construction cost as construction, not as contract value", () => {
+    const record = project({ contractValue: 550074678.02, currency: "ETB" });
+    const result = repairPortfolioCards(cardWithoutValueRow, [record] as never);
+
+    assert.match(result.markdown, /\| Construction Value of Works \| ETB 550\.1M \|/);
+    assert.doesNotMatch(result.markdown, /\| Contract Value \|/);
+
+    // The figure is not hidden — it appears exactly once, labelled truthfully.
+    const occurrences = result.markdown.split("ETB 550.1M").length - 1;
+    assert.equal(occurrences, 1);
+  });
+
+  it("still prints a contract value that is genuinely a different amount", () => {
+    // A record whose stored contract value is NOT the construction cost: both
+    // facts are real and both belong on the card.
+    const record = project({
+      contractValue: 12_000_000,
+      currency: "ETB",
+      summary: "Design and supervision of a hospital in Ethiopia. Construction Cost: 550,074,678.02 ETB. 2015-2018.",
+    });
+    const result = repairPortfolioCards(cardWithoutValueRow, [record] as never);
+
+    assert.match(result.markdown, /\| Contract Value \| ETB 12\.0M \|/);
+    assert.match(result.markdown, /\| Construction Value of Works \| ETB 550\.1M \|/);
   });
 });

@@ -10,7 +10,7 @@ import {
   isValidCountryValue,
   resolveProjectCountry,
 } from "../lib/engine/country-reference";
-import { extractProjectFacts, mergeProjectFacts } from "../lib/engine/project-fact-extractor";
+import { extractProjectAmounts, extractProjectFacts, mergeProjectFacts } from "../lib/engine/project-fact-extractor";
 import { recordFactsFor } from "../lib/engine/portfolio-card-repair";
 
 /**
@@ -378,5 +378,47 @@ describe("the project card shows a place, composed rather than chosen", () => {
     ]) {
       assert.equal(extractProjectFacts(summary).location, undefined, summary);
     }
+  });
+});
+
+describe("an amount's role is decided by its own sentence", () => {
+  it("does not take the role from the sentence before it", () => {
+    // "supervision" in the PREVIOUS sentence classified a construction cost as
+    // a monthly supervision rate — and a rate is never printed, so the card
+    // silently lost its value. The identical record with "(7,000 m²)" before
+    // the cost word classified correctly, which means role was being decided by
+    // upstream punctuation.
+    const amounts = extractProjectAmounts(
+      "Design and supervision of a hospital in Ethiopia. Construction Cost: 550,074,678.02 ETB. 2015-2018.",
+    );
+    const construction = amounts.find((a) => a.role === "CONSTRUCTION");
+    assert.equal(construction?.value, 550074678.02, "the construction cost must be recognised as one");
+    assert.equal(amounts.some((a) => a.role === "SUPERVISION_RATE"), false);
+  });
+
+  it("still reads a supervision rate that really is one", () => {
+    const amounts = extractProjectAmounts(
+      "Contract Administration & Construction Supervision Cost: 110,000 ETB/month.",
+    );
+    assert.equal(amounts[0]?.role, "SUPERVISION_RATE");
+    assert.equal(amounts[0]?.perMonth, true);
+  });
+
+  it("reads the same cost the same way whatever precedes it", () => {
+    const withBracket = extractProjectAmounts("A hospital (7,000 m²). Construction Cost: 550,074,678.02 ETB.");
+    const withProse = extractProjectAmounts("Supervision of a hospital. Construction Cost: 550,074,678.02 ETB.");
+    assert.equal(withBracket[0]?.role, withProse[0]?.role, "role must not depend on the preceding punctuation");
+  });
+});
+
+describe("a location is a place, not a fragment of a bracket", () => {
+  it("drops a trailing parenthetical even when its closing bracket was cut off", () => {
+    // The capture stops at the first character outside its class, so "(7,000 m²)"
+    // arrives unclosed; leaving it turned the location into
+    // "Gimba City, Ethiopia (7, 000 m" once the comma-part cap split the number.
+    const facts = extractProjectFacts(
+      "Design and supervision of a G+6 general hospital in Gimba City, Ethiopia (7,000 m²). Construction Cost: 550,074,678.02 ETB.",
+    );
+    assert.equal(facts.location, "Gimba City, Ethiopia");
   });
 });

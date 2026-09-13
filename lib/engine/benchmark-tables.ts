@@ -337,7 +337,20 @@ export function buildProjectPortfolioCards(projects: ProjectRecord[], tenderTitl
     const consultancyFee = amounts.find((a) => a.role === "CONSULTANCY_FEE" && !a.perMonth);
     const constructionValue = amounts.find((a) => a.role === "CONSTRUCTION" && !a.perMonth);
 
-    if (hasContractValue(project.contractValue)) {
+    // The stored contractValue is an index filled from the record's own text,
+    // and on this portfolio that text overwhelmingly states a CONSTRUCTION
+    // cost. When it IS the construction amount the source states, printing it
+    // under "Contract Value" as well would put the same figure on the card
+    // twice under two labels, one of them overstating this firm's contract by
+    // orders of magnitude. It is presented once, under the role the source
+    // gives it. See portfolio-card-repair for the delivered-PDF evidence.
+    const storedIsTheConstructionAmount =
+      constructionValue !== undefined
+      && typeof project.contractValue === "number"
+      && Number.isFinite(project.contractValue)
+      && Math.abs(constructionValue.value - project.contractValue) < 0.01;
+
+    if (hasContractValue(project.contractValue) && !storedIsTheConstructionAmount) {
       rows.push(`| Contract Value | ${escCell(fmtMoney(project.contractValue, project.currency))} |`);
     } else if (consultancyFee) {
       rows.push(`| Consultancy Fee | ${escCell(`${fmtMoney(consultancyFee.value, consultancyFee.currency ?? project.currency)} (${consultancyFee.label})`)} |`);

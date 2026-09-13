@@ -273,7 +273,21 @@ export function extractProjectAmounts(summary: string): ProjectAmount[] {
   while ((m = rx.exec(text)) !== null) {
     const raw = Number((m[2] || "").replace(/,/g, ""));
     if (!Number.isFinite(raw) || raw < 1000) continue;
-    const label = (m[1] || "").replace(/^[\s.,;:\-\d]+/, "").replace(/\s+/g, " ").trim();
+    // The label window runs backwards from the cost word and can cross a
+    // sentence boundary, which decides the amount's ROLE from a neighbouring
+    // sentence. "Design and supervision of a hospital in Ethiopia.
+    // Construction Cost: 550,074,678.02 ETB" classified as SUPERVISION_RATE
+    // because "supervision" sat in the PREVIOUS sentence — so a construction
+    // cost was silently dropped from the card (a rate is never printed), while
+    // the identical record with "(7,000 m2)" before the cost word classified
+    // correctly. Role decided by upstream punctuation is role decided by
+    // accident. Keep only the fragment after the last sentence terminator.
+    const label = (m[1] || "")
+      .split(/(?<=[.!?])\s+/)
+      .pop()!
+      .replace(/^[\s.,;:\-\d]+/, "")
+      .replace(/\s+/g, " ")
+      .trim();
     const perMonth = Boolean(m[4]);
     let role: ProjectAmountRole = "UNLABELLED";
     for (const entry of AMOUNT_LABEL_ROLES) {
@@ -351,8 +365,14 @@ export function extractProjectFacts(summary: string, name?: string): ProjectFact
     // not to the place.
     loc = loc.replace(/\s+\b(?:for|under|with|by|on\s+behalf|funded|financed|financing|awarded|commissioned|through|as\s+part|comprising|including|and\s+its)\b.*$/i, "");
     loc = loc.replace(/\b(?:Ref(?:erence)?\s+(?:No\.?|#).*)$/i, "");
-    // A trailing bracketed figure is scale, which has its own field.
+    // A trailing bracketed figure is scale, which has its own field. The
+    // capture stops at the first character outside its class, so "(7,000 m2)"
+    // arrives with its closing bracket missing — an unclosed parenthetical is
+    // still a parenthetical, and leaving it turned a location into
+    // "Gimba City, Ethiopia (7, 000 m" once the comma-part cap split the
+    // number.
     loc = loc.replace(/\s*\([^)]*\)\s*$/, "");
+    loc = loc.replace(/\s*\([^)]*$/, "");
     loc = loc.replace(/[\s,;:.\-]+$/, "").trim();
     // A place is at most a few comma-separated parts. More than that is a
     // sentence that happened to start with one.

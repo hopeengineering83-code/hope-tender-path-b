@@ -166,6 +166,29 @@ export function recordFactsFor(project: PortfolioCardProject): RecordFacts {
       ? Number(project.contractValue)
       : undefined;
 
+  // The stored contractValue is an INDEX, not a claim about what this firm was
+  // paid. The portfolio enrichment fills it from the record's own text, and on
+  // this portfolio that text overwhelmingly states a CONSTRUCTION cost — so the
+  // column holds the cost of the asset, not the consultancy contract.
+  //
+  // Printing it under "Contract Value" therefore overstates the firm's contract
+  // by orders of magnitude, and the first run that carried these rows did
+  // exactly that, in the delivered PDF, twice per card:
+  //
+  //   Contract Value               ETB 550.1M
+  //   Construction Value of Works  ETB 550.1M
+  //
+  // Same amount, two labels, one of them false — in front of an evaluator who
+  // can check it against the client's own records. When the stored value IS the
+  // construction amount the source states, it is presented only under the role
+  // the source gives it. Nothing is hidden: the figure still appears, labelled
+  // truthfully.
+  const storedIsTheConstructionAmount =
+    works !== undefined
+    && storedValue !== undefined
+    && Number.isFinite(storedValue)
+    && Math.abs(works.value - storedValue) < 0.01;
+
   return {
     location: composeLocation(derived.location, project.country || derived.country),
     // tidy() collapses runs of whitespace but not the newlines the source text
@@ -180,7 +203,7 @@ export function recordFactsFor(project: PortfolioCardProject): RecordFacts {
     // track-record fact, and is not printed at all.
     consultancyFee: fee ? formatMoney(fee.value, fee.currency ?? project.currency) : undefined,
     constructionValue: works ? formatMoney(works.value, works.currency ?? project.currency) : undefined,
-    contractValue: storedValue && Number.isFinite(storedValue) && storedValue > 0
+    contractValue: storedValue && Number.isFinite(storedValue) && storedValue > 0 && !storedIsTheConstructionAmount
       ? formatMoney(storedValue, project.currency)
       : undefined,
   };
