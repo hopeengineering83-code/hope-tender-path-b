@@ -710,6 +710,16 @@ jobs:
           node scripts/tmp-dump-pdf-text.mjs "/tmp/zip-extract/Technical Proposal.pdf" > /tmp/pdf-text.txt 2>/dev/null || true
           npx tsx scripts/tmp-report-delivered-figures.ts /tmp/pdf-text.txt 2>&1 | tee /tmp/pdf-money-report.txt || true
 
+          # WHICH SENTENCE TRIPPED THE PRICING GATE?
+          #
+          # The audit reports PRICING_LEAKAGE [HIGH] with no excerpt, and two
+          # AUTO_FINALIZE failures in a row had to be diagnosed by guessing.
+          # Approximating the audit's view with a different extractor gives a
+          # different answer — the raw page text reads clean and the reflowed
+          # text does not — so this runs the application's OWN reader and
+          # detector over the delivered bytes and names the offending fragments.
+          npx tsx scripts/tmp-report-pricing-leakage-fragments.ts "/tmp/zip-extract/Technical Proposal.pdf" 2>&1 | tee /tmp/pricing-leakage-fragments.txt || true
+
           # The audit above says whether the bytes ARRIVED. This says what the
           # store holds, so a zero above can be attributed rather than guessed:
           # an asset the applier skips because it has no inline bytes looks
@@ -778,6 +788,7 @@ jobs:
             /tmp/pdf-page-report.txt
             /tmp/pdf-asset-audit.txt
             /tmp/pdf-money-report.txt
+            /tmp/pricing-leakage-fragments.txt
             /tmp/pdf-branding-pre-gate.txt
             /tmp/delivered-technical-proposal.pdf
             /tmp/company-assets.json
