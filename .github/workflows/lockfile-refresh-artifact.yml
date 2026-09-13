@@ -921,19 +921,27 @@ jobs:
               d = json.load(open('/tmp/provider-chain.json', encoding='utf-8'))
           except Exception as exc:
               raise SystemExit(f"PROVIDER CHAIN: NOT MEASURED (unreadable response: {exc})")
-          reports = d.get('reports') or []
+          # Field names come from LiveProviderDiagnosticsResponse and
+          # ProviderCapabilityReport, not from guesswork: the first version of
+          # this step read `reports[].capabilities[]`, which the payload does
+          # not have, and correctly printed NOT MEASURED rather than a false
+          # pass. The real shape is perProvider[].results[].
+          reports = d.get('perProvider') or []
           if not reports:
-              raise SystemExit(f"PROVIDER CHAIN: NOT MEASURED (no reports; keys={sorted(d)[:12]})")
-          ok = sum(1 for r in reports if r.get('diagnosticState') == 'VERIFIED')
-          print(f"PROVIDER CHAIN: {ok}/{len(reports)} verified")
+              raise SystemExit(f"PROVIDER CHAIN: NOT MEASURED (no perProvider; keys={sorted(d)[:12]})")
+          verified = {'CONNECTIVITY_VERIFIED', 'ANALYSIS_VERIFIED', 'GENERATION_VERIFIED'}
+          ok = sum(1 for r in reports if r.get('diagnosticState') in verified)
+          print(f"PROVIDER CHAIN: {ok}/{len(reports)} verified — {d.get('summary')}")
+          print(f"  aiAnalyzeReady={d.get('aiAnalyzeReady')} tested={d.get('testedCount')} partial={d.get('partial')}")
           for r in reports:
-              name = r.get('provider')
-              state = r.get('diagnosticState')
-              print(f"  {str(name):<12} {str(state):<12} model={r.get('model')}")
-              for cap in (r.get('capabilities') or []):
+              print(f"  {str(r.get('provider')):<12} {str(r.get('diagnosticState')):<22}"
+                    f" model={r.get('resolvedModel')} keyPresent={r.get('keyPresent')}")
+              for cap in (r.get('results') or []):
                   if cap.get('status') == 'ok':
                       continue
                   print(f"      {cap.get('capability')}: {cap.get('category')} -- {cap.get('safeMessage')}")
+          for nt in (d.get('notTested') or []):
+              print(f"  NOT TESTED: {nt.get('provider')} -- {nt.get('reason')}")
           PYEOF
         continue-on-error: true
 
