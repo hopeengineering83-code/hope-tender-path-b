@@ -903,11 +903,48 @@ jobs:
       - name: Read the live vault, the selection pipeline and provider state
         run: python3 scripts/tmp-inspect-vault-and-selection.py 2>&1 | tee /tmp/vault-inspection.txt
 
+      - name: Run the live provider chain test and print WHY each one failed
+        run: |
+          # Same call the "Test provider chain" button makes. It is the only
+          # surface that exercises a real round-trip per provider, and the
+          # reason each failure needs is in its safeMessage -- which is exactly
+          # what "Provider returned an empty response" used to erase.
+          #
+          # Diagnostics run inside runAsDiagnostic(), so observations here
+          # impose no cooldowns on real work.
+          curl -sS --connect-timeout 15 --max-time 120 \
+            -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/ai-providers/diagnostics?live=1" > /tmp/provider-chain.json || true
+          python3 - <<'PYEOF' | tee /tmp/provider-chain.txt
+          import json
+          try:
+              d = json.load(open('/tmp/provider-chain.json', encoding='utf-8'))
+          except Exception as exc:
+              raise SystemExit(f"PROVIDER CHAIN: NOT MEASURED (unreadable response: {exc})")
+          reports = d.get('reports') or []
+          if not reports:
+              raise SystemExit(f"PROVIDER CHAIN: NOT MEASURED (no reports; keys={sorted(d)[:12]})")
+          ok = sum(1 for r in reports if r.get('diagnosticState') == 'VERIFIED')
+          print(f"PROVIDER CHAIN: {ok}/{len(reports)} verified")
+          for r in reports:
+              name = r.get('provider')
+              state = r.get('diagnosticState')
+              print(f"  {str(name):<12} {str(state):<12} model={r.get('model')}")
+              for cap in (r.get('capabilities') or []):
+                  if cap.get('status') == 'ok':
+                      continue
+                  print(f"      {cap.get('capability')}: {cap.get('category')} -- {cap.get('safeMessage')}")
+          PYEOF
+        continue-on-error: true
+
       - name: Upload inspection report
         uses: actions/upload-artifact@v4
         with:
           name: preview-vault-inspection
-          path: /tmp/vault-inspection.txt
+          path: |
+            /tmp/vault-inspection.txt
+            /tmp/provider-chain.txt
+            /tmp/provider-chain.json
           if-no-files-found: error
           retention-days: 3
 
