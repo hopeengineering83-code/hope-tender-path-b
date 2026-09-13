@@ -1,5 +1,6 @@
 import type { PrismaClient } from "@prisma/client";
 import { logger } from "./observability";
+import { redactSecrets } from "./sanitize-error";
 import { canUseVaultRecord } from "./vault-review-provenance";
 
 const REVIEW_PROVENANCE_COLUMNS = [
@@ -68,6 +69,24 @@ export function publicJobFailureMessage(error: unknown, correlationId: string): 
   if (/TENDER_FACTS_INVALID[\s\S]{0,400}(?:metadata field title|title.*source page)|(?:metadata field title|title.*source page)[\s\S]{0,400}TENDER_FACTS_INVALID/i.test(message)) {
     return `TITLE_SOURCE_PROVENANCE_INVALID: The tender title could not be proven at a valid page in the active source. Reconcile the title source file, page, and quote, then retry Run Engine. ${ref}`;
   }
+  // AUTO_FINALIZE names the documents it could not converge, and that list is
+  // the only actionable thing about the failure. Collapsed into the generic
+  // fallback below it became "The background job could not complete. Retry
+  // once..." -- advice that is actively wrong, because the blocker is
+  // classified NON_RETRYABLE precisely so retrying cannot help. Two hosted
+  // runs were diagnosed by guessing as a result.
+  //
+  // The blockers are document names and readiness codes the same user already
+  // sees on the export-readiness surface, so passing them through discloses
+  // nothing new; they are redacted and bounded all the same.
+  const notConverged = /AUTO_FINALIZE_NOT_CONVERGED\s*[-\u2014:]*\s*([\s\S]*)$/i.exec(message);
+  if (notConverged) {
+    const blockers = redactSecrets((notConverged[1] || "").trim()).slice(0, 400);
+    return blockers
+      ? `AUTO_FINALIZE_NOT_CONVERGED: Auto-finalize could not resolve every document. Retrying will not help -- resolve these first: ${blockers} ${ref}`
+      : `AUTO_FINALIZE_NOT_CONVERGED: Auto-finalize could not resolve every document, and recorded no blocker list. ${ref}`;
+  }
+
   if (/\b(?:TenderFile|Tender|Company|AiJob)\b.+\bnot found\b/i.test(message)) {
     return `A required source record no longer exists. Refresh the page, confirm the source file is still attached, and retry. ${ref}`;
   }
