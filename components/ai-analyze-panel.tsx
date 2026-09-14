@@ -125,6 +125,32 @@ const PROVIDER_LABEL: Record<(typeof PROVIDER_NAMES)[number], string> = {
   anthropic: "Anthropic",
 };
 
+/**
+ * What each category means to the person reading the tender page.
+ *
+ * The enum names are precise and are kept in the code, the tests and the
+ * authenticated diagnostics. They are not, on their own, something an owner can
+ * act on: "AUTH_OR_CONFIGURATION_INVALID" does not say "your plan does not
+ * include the model this provider is configured with, and changing it is free".
+ * The whole point of attributing a failure to a provider is that the owner can
+ * tell what, if anything, is theirs to fix — so say it in words.
+ */
+const CATEGORY_PLAIN_LANGUAGE: Record<string, string> = {
+  BILLING: "no credit on that account",
+  AUTH_OR_CONFIGURATION_INVALID: "key or configured model rejected — check the key and that your plan includes the model",
+  RATE_LIMITED: "rate limited right now",
+  TEMPORARILY_UNAVAILABLE: "provider temporarily unavailable",
+  TIMEOUT: "timed out",
+  OUTPUT_BUDGET_TOO_SMALL: "its plan cannot fit this tender and an answer in one budget",
+  MALFORMED_RESPONSE: "answered with nothing usable",
+  REQUEST_TOO_LARGE: "request larger than the model accepts",
+  SKIPPED_COOLING_DOWN: "skipped while cooling down after an earlier failure",
+};
+
+function describeCategories(categories: readonly string[]): string {
+  return categories.map((c) => CATEGORY_PLAIN_LANGUAGE[c] ?? c.toLowerCase().replace(/_/g, " ")).join("; ");
+}
+
 function categoriesIn(text: string): string[] {
   return FAILURE_CATEGORY_RULES.filter(([pattern]) => pattern.test(text)).map(([, name]) => name);
 }
@@ -199,7 +225,7 @@ export function summarizeAIAnalyzeFailure(message: string | null | undefined): s
   const perProvider = perProviderFailureCategories(text);
   if (perProvider.length > 0) {
     const named = perProvider
-      .map(({ provider, categories }) => `${PROVIDER_LABEL[provider as (typeof PROVIDER_NAMES)[number]]}: ${categories.join(" + ")}`)
+      .map(({ provider, categories }) => `${PROVIDER_LABEL[provider as (typeof PROVIDER_NAMES)[number]]}: ${describeCategories(categories)}`)
       .join(" · ");
     return `AI Analyze could not complete after the configured provider chain. ${named}. Open Provider diagnostics for the full per-provider result, then retry AI Analyze.`;
   }
@@ -214,7 +240,7 @@ export function summarizeAIAnalyzeFailure(message: string | null | undefined): s
   // turned those events into impossible summaries such as "11 provider issues"
   // for a ten-provider chain.
   const categories = categoriesIn(text);
-  return `AI Analyze could not complete after the configured provider chain.${categories.length ? ` Observed categories (not attributed to a provider): ${categories.join(", ")}.` : ""} Open Provider diagnostics for unique-provider results, then retry AI Analyze.`;
+  return `AI Analyze could not complete after the configured provider chain.${categories.length ? ` Seen somewhere in this run, not attributed to a provider: ${describeCategories(categories)}.` : ""} Open Provider diagnostics for unique-provider results, then retry AI Analyze.`;
 }
 
 function sleep(ms: number) {

@@ -84,10 +84,20 @@ describe("a failure summary must say which provider failed how", () => {
   it("names providers in the summary instead of a union of categories", () => {
     const summary = summarizeAIAnalyzeFailure(REAL_FAILURE);
     assert.match(summary, /Gemini:/);
-    assert.match(summary, /Mistral: AUTH_OR_CONFIGURATION_INVALID/);
-    assert.match(summary, /Z\.ai: RATE_LIMITED/);
+    assert.match(summary, /Mistral:/);
+    assert.match(summary, /Z\.ai:/);
     // The old union phrasing must not come back for a message that HAS pairing.
     assert.doesNotMatch(summary, /Observed categories: BILLING, AUTH_OR_CONFIGURATION_INVALID/);
+  });
+
+  it("says what the owner can act on, in words rather than an enum", () => {
+    const summary = summarizeAIAnalyzeFailure(REAL_FAILURE);
+    // The tier-blocked model is the one thing here the owner can fix for free,
+    // so the summary has to say so rather than print a constant name at them.
+    assert.match(summary, /Mistral: [^·]*plan includes the model/);
+    assert.match(summary, /Cerebras: [^·]*no credit/);
+    assert.doesNotMatch(summary, /AUTH_OR_CONFIGURATION_INVALID/, "raw enum names are for the code and the diagnostics, not the tender page");
+    assert.doesNotMatch(summary, /OUTPUT_BUDGET_TOO_SMALL/);
   });
 
   it("never echoes a provider payload into the workflow UI", () => {
@@ -100,8 +110,8 @@ describe("a failure summary must say which provider failed how", () => {
   it("falls back to an explicitly unattributed union when there is no pairing", () => {
     const summary = summarizeAIAnalyzeFailure("provider chain failed: HTTP 429 rate limit and a 402 billing refusal");
     assert.match(summary, /not attributed to a provider/);
-    assert.match(summary, /RATE_LIMITED/);
-    assert.match(summary, /BILLING/);
+    assert.match(summary, /rate limited/);
+    assert.match(summary, /no credit/);
   });
 
   it("leaves a non-provider failure exactly as it was", () => {
