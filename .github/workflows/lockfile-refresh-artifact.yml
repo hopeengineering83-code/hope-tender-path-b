@@ -914,9 +914,31 @@ jobs:
         run: |
           tid="${{ inputs.tender_id }}"
           if [ -z "$tid" ]; then
-            tid=$(curl -sS --connect-timeout 15 --max-time 45 \
-              -H "Cookie: hope_session=$SESSION_COOKIE" "$BASE_URL/api/tenders" \
-              | python3 -c "import json,sys; d=json.load(sys.stdin); ts=d.get('tenders') or d if isinstance(d,list) else d.get('tenders',[]); print((ts[0] or {}).get('id','') if ts else '')" 2>/dev/null || echo "")
+            # /api/tenders returns { items, nextCursor, hasMore }. This read
+            # looked for a `tenders` key, found nothing, and reported
+            # "NOT READ -- no tender id discovered" on a Preview that had the
+            # tender all along. The 2>/dev/null swallowed the reason, so the
+            # step could not say whether the request failed, the session was
+            # rejected, or the shape was simply different. It now names the
+            # shape it got, and accepts every shape this API has used.
+            curl -sS --connect-timeout 15 --max-time 45 \
+              -H "Cookie: hope_session=$SESSION_COOKIE" \
+              "$BASE_URL/api/tenders" > /tmp/tenders.json || true
+            tid=$(python3 - <<'PYEOF'
+          import json
+          try:
+              d = json.load(open('/tmp/tenders.json', encoding='utf-8'))
+          except Exception as exc:
+              print("", end="")
+              import sys; print(f"TENDER DISCOVERY: unreadable response ({exc})", file=sys.stderr); raise SystemExit(0)
+          import sys
+          rows = d if isinstance(d, list) else (d.get('items') or d.get('tenders') or [])
+          if not rows:
+              print(f"TENDER DISCOVERY: no rows; top-level keys = {sorted(d) if isinstance(d, dict) else type(d).__name__}", file=sys.stderr)
+              print("", end=""); raise SystemExit(0)
+          print((rows[0] or {}).get('id', ''), end="")
+          PYEOF
+          )
           fi
           if [ -z "$tid" ]; then
             echo "AI_ANALYZE JOBS: NOT READ -- no tender id discovered (gap in this script, not a statement about the jobs)"
