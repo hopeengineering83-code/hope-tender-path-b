@@ -50,27 +50,31 @@ application fixes belong on #1175 alone.
 
 | Owner tool | Branch / PR | Scope | Locked files or areas | Status | Next action |
 |---|---|---|---|---|---|
-| Codex → Claude Code | `release/consolidated-recovery-20260717` (PR #1175, draft, base `integration/controlled-recovery`) | Consolidated release recovery: 10-provider fallback chain, provider-diversity request planning, durable fallback staging, canonical readiness/export convergence, artifact identity, real DOCX/PDF/ZIP bytes | `lib/ai.ts`, `lib/ai-jobs/analysis-job-service.ts`, `lib/ai-analyze/retry-service.ts`, `lib/engine/*`, `app/api/tenders/[id]/*`, `docs/pr1175-frozen-regression-ledger.md` | Open (draft). Head `5465023f`; exact-head CI green; Preview READY and release-matched; acceptance green | **BLOCKED — OWNER ACTION** (see the two blockers below). Do not merge; do not promote Production. |
+| Codex → Claude Code | `release/consolidated-recovery-20260717` (PR #1175, draft, base `integration/controlled-recovery`) | Consolidated release recovery: 10-provider fallback chain, provider-diversity request planning, durable fallback staging, canonical readiness/export convergence, artifact identity, real DOCX/PDF/ZIP bytes | `lib/ai.ts`, `lib/ai-jobs/analysis-job-service.ts`, `lib/ai-analyze/retry-service.ts`, `lib/engine/*`, `app/api/tenders/[id]/*`, `docs/pr1175-frozen-regression-ledger.md` | Open (draft). Head `a5615049`; exact-head CI green; Preview READY on `45954953`; **Preview database unreachable** | **BLOCKED — OWNER ACTION** (see the two blockers below). Do not merge; do not promote Production. |
 
-#### BLOCKED — two owner actions, as of 2026-09-07T23:45Z (head `5465023f`)
+#### BLOCKED — owner action, as of 2026-09-14T13:20Z (head `a5615049`)
 
-1. **Every AI provider is failing, so the deterministic fallback wrote the whole
-   proposal.** Six failures are credential/billing, not transient: Mistral 403
-   tier, Cerebras 402, OpenRouter 402, Together 401 invalid key, DeepSeek 402,
-   Anthropic 400 credit. **The 17-dimension benchmark cannot be honestly scored
-   until at least one provider generates** — a score taken now measures the
-   deterministic template, not the product. Do not quote a number.
+**The Preview database is UNREACHABLE.** Confirmed from two independent
+vantage points: Vercel `/api/health` reports `status: "database-unreachable"`,
+`databaseReachable: false`, every critical table `null`; and a GitHub Actions
+runner connecting directly with the migration URL (run 34848216138) reports
+`Can't reach database server at ep-icy-sun-ae891nv7.c-2.us-east-2.aws.neon.tech:5432`.
+DNS resolves. The schema is **not** gone and the enriched vault is **not**
+lost — `tables` reads `null` ("could not ask"), never `false` ("missing").
 
-2. **A fallback-authored proposal is currently treated as final-export
-   authority**, contradicting the stated policy. `auto-finalize/route.ts` never
-   passes `deterministicFallbackUsed` to a gate that already implements the rule
-   correctly. Fix needs no migration (`ProposalVersion.mode` records
-   authorship). **Deliberately not applied**: while every provider is down it
-   would block all export. Needs a yes/no from Hope.
+**Do not run `confirm=provision`.** It runs `DROP SCHEMA public CASCADE` and
+there is no evidence of a missing schema to justify it.
 
-Full evidence, including the verbatim provider errors and a warning that PDF
-text extraction produced three false findings this session, is in the newest
-Session Log entry. Read it before touching the export gate or quoting a score.
+Blocked on this: the fresh model-backed acceptance run, per-section authorship
+capture, the monetary-statement classification audit on delivered bytes, the
+data-to-proposal audit, and the 17-dimension benchmark score. **Do not quote a
+score taken from a stale artifact.**
+
+Provider state (external, not code defects): OpenAI HTTP 429 `insufficient_quota`,
+DeepSeek HTTP 402 `Insufficient Balance`. Re-read current diagnostics before
+each benchmark run rather than reusing these.
+
+Full evidence is in the newest Session Log entry.
 
 ### Closed as superseded
 
@@ -143,7 +147,113 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
-### 2026-09-13 UTC (latest) — Two adapters that never said why they gave up
+### 2026-09-14 UTC (latest) — One splitter rule, shared; and the Preview database is unreachable, not empty
+
+**Tool:** Claude Code · **Branch/PR:** `release/consolidated-recovery-20260717` (PR #1175, draft, unmerged)
+**Head at start:** `45954953` · **Head at end:** `a5615049`
+
+#### Scope
+
+1. **Shared semantic splitter — investigated, then decided, on evidence.**
+   Three sentence segmenters exist. Two are on the production path:
+   `lib/engine/pricing-hygiene.ts sentences()` and
+   `lib/engine/export-gap-repair.ts splitIntoSentences()`. The third,
+   `lib/engine/generated-claim-grounding.ts sentences()`, **is imported by
+   nothing except its own test** — an unsupported-claim grounding checker that
+   no production caller invokes. It was left alone and is recorded here as
+   open debt rather than silently changed or silently deleted.
+
+   A probe over the fourteen required splitter semantics had the two
+   production splitters **disagreeing on 10 of 14**. Those disagreements
+   separate cleanly:
+
+   - *Policy differences each module is right about* — the judge treats a
+     newline as a boundary (a table rendered one cell per line is one unit per
+     cell) and drops terminators (fragments are matched against detection
+     patterns); the repairer does neither, because its survivors are re-joined
+     into delivered prose. **Not consolidated.** They answer different
+     questions.
+   - *One genuinely shared invariant, implemented in only one of them* — a
+     period that is a token's internal punctuation is not a terminator.
+     export-gap-repair carried a lookbehind for up to three digits, which
+     rescues `ETB 550.1M` but not `ETB 550,074,678.02`, an email, a URL or a
+     dotted date.
+
+   `lib/engine/sentence-segmentation.ts` now owns that one rule; both call
+   sites use it through explicit `newlinesAreBoundaries` / `keepTerminators`
+   options and keep their own policy. No threshold moved, no pattern
+   narrowed, nothing whitelisted: keeping a token whole makes fragments
+   larger, which gives the judge more context (still judged, veto and
+   priced-content guards unchanged) and makes the repairer remove an unsafe
+   sentence whole instead of leaving the half carrying the amount.
+
+2. **Addendum / revision handling audited — no defect found.**
+   `resolveAmendedDeadline()` takes precedence from what the documents *say*
+   (explicit amending language, then addendum ordinal), never from upload
+   order, and returns `UNRESOLVED_CONFLICT` rather than guessing.
+   `selectCanonicalTenderFiles()` keeps same-name/different-bytes files as
+   separate active logical sources. Provenance reaches the fact entry via
+   `sourceFileName`. No hard-coded deadline anywhere; every `Pharo` string in
+   `lib/` and `app/` is a comment or a prompt example, not behaviour.
+
+3. **Benchmark proposals from ChatGPT/Claude: searched, absent.** No file
+   matching `*chatgpt*`, `*claude*proposal*`, `*benchmark*proposal*` or
+   `*gpt*proposal*` exists in the workspace; the only `.docx`/`.pdf` present
+   are `.storage` fixtures with UUID names.
+
+#### Files changed
+
+`lib/engine/sentence-segmentation.ts` (new) · `lib/engine/pricing-hygiene.ts` ·
+`lib/engine/export-gap-repair.ts` (also exports `safeParagraphText` for test) ·
+`tests/punctuation-inside-a-token-never-ends-a-sentence.test.ts` (new, 18 tests)
+
+#### Tests actually run
+
+- `npx tsc --noEmit` — clean
+- `npx next lint` — "✔ No ESLint warnings or errors"
+- `RUN_DB_INTEGRATION=true npm test` — **11984 pass, 0 fail, 0 skipped** (was 11966; +18)
+- `npm run build` — succeeded
+
+#### BLOCKER — the Preview database is UNREACHABLE (owner action)
+
+Confirmed from **two independent network vantage points**:
+
+- Vercel Preview `/api/health` on `45954953`:
+  `{"ok":false,"status":"database-unreachable","tables":{...all null},"databaseReachable":false}`
+- GitHub Actions runner, direct migration URL, run **34848216138**:
+  `PrismaClientInitializationError: Can't reach database server at`
+  `ep-icy-sun-ae891nv7.c-2.us-east-2.aws.neon.tech:5432`
+
+DNS resolves (A and AAAA records both present), so this is the Neon **compute
+endpoint**, not name resolution and not our configuration. **The schema is not
+gone and the enriched vault is not lost** — that distinction is exactly what
+the previous session's `lib/liveness.ts` fix exists to report, and it is now
+reporting it correctly rather than showing 0/8 tables as if they had been
+dropped. **Do not run `confirm=provision`**: it runs `DROP SCHEMA public
+CASCADE`, and there is no evidence of a missing schema to justify it.
+
+This blocks the model-backed acceptance run, the monetary-statement
+classification audit on delivered bytes, the data-to-proposal audit and the
+17-dimension score. Nothing about it is a code defect.
+
+#### Risks / assumptions
+
+- The splitter change is proven by the full suite and by cross-sector tests,
+  but not yet by a delivered-bytes acceptance run — that needs the database.
+- `generated-claim-grounding.ts` remains dead code with a live test.
+
+#### Next action
+
+Owner: restore the Neon endpoint (or supply a reachable Preview
+`DATABASE_URL` / `PREVIEW_DATABASE_URL_MIGRATION`). Then re-run health, the
+provider chain read, and one fresh acceptance.
+
+#### Merge status
+
+**DO NOT MERGE.** Draft. Production untouched; Production `DATABASE_URL`
+unchanged.
+
+### 2026-09-13 UTC — Two adapters that never said why they gave up
 
 **Tool:** Claude Code. **Branch:** `release/consolidated-recovery-20260717`
 (PR #1175, draft, unmerged). **Commits:** `919d0b22`, `7ac48bf6`, `88bb3467`,
