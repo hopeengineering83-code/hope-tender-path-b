@@ -30,6 +30,7 @@ import { applyActiveUploadedLetterheadToTenderDocuments } from "./apply-active-l
 import { normalizeStatus } from "./document-output-state";
 import { checkFullExportReadiness, documentHygieneIssues, extractDocxVisibleText } from "./export-readiness";
 import { containsPricingLeakage } from "./pricing-hygiene";
+import { segmentSentences } from "./sentence-segmentation";
 import { verifiedIntegrityDataFromBase64 } from "./persisted-byte-integrity";
 import { generatedDocumentHasContent } from "../generated-document-content";
 import { logger } from "../observability";
@@ -142,9 +143,13 @@ function textHasCanonicalHygieneRisk(text: string, doc: RepairDoc): boolean {
  * stop.
  */
 function splitIntoSentences(text: string): string[] {
-  return (text.match(/(?:[^.!?]|(?<=(?:^|[\s(\[])\d{1,3})[.])+(?:[.!?]+|$)/g) ?? [text])
-    .map((sentence) => sentence.replace(/\s+/g, " ").trim())
-    .filter(Boolean);
+  // Rewriting, not judging: the survivors are re-joined into a delivered
+  // paragraph, so terminators are kept and a newline inside a paragraph is a
+  // line wrap rather than the end of a claim. The token rule is shared with
+  // pricing-hygiene, which is where the three-digit lookbehind that used to
+  // live here came from -- it rescued "ETB 550.1M" but not "ETB
+  // 550,074,678.02", an email, a URL or a date.
+  return segmentSentences(text, { newlinesAreBoundaries: false, keepTerminators: true });
 }
 
 /**
@@ -599,4 +604,12 @@ export async function runExportGapRepair(
   };
 }
 
-export const __testing__ = { safeTypeFor };
+export const __testing__ = {
+  safeTypeFor,
+  /**
+   * Exposed so the paragraph rewriter can be tested on the exact text that
+   * once reached a client as "Construction Value of Works 1M". Everything
+   * above it is DOCX plumbing; the defect was here.
+   */
+  safeParagraphText,
+};

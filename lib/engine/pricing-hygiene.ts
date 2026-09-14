@@ -1,4 +1,5 @@
 import type { ExportReadyDocument } from "./export-readiness";
+import { segmentSentences } from "./sentence-segmentation";
 
 function labelOf(doc?: Pick<ExportReadyDocument, "name" | "exactFileName" | "documentType" | "format">): string {
   return `${doc?.name ?? ""} ${doc?.exactFileName ?? ""} ${doc?.documentType ?? ""} ${doc?.format ?? ""}`.toLowerCase();
@@ -51,11 +52,11 @@ export function isCvOrProfileDoc(doc?: Pick<ExportReadyDocument, "name" | "exact
  * context is judged.
  */
 function sentences(text: string): string[] {
-  return text
-    .replace(/\r\n?/g, "\n")
-    .split(/(?:(?<!(?:^|[\s(\[])\d{1,3})[.!?]\s+|\n+)/)
-    .map((s) => s.replace(/\s+/g, " ").trim())
-    .filter(Boolean);
+  // Judging, not rewriting: one unit per cell when a table is rendered one
+  // cell per line, and terminators dropped because the fragment is matched
+  // against detection patterns. The token rule (numbers, emails, URLs, dates,
+  // abbreviations, list ordinals) is shared with export-gap-repair.
+  return segmentSentences(text, { newlinesAreBoundaries: true, keepTerminators: false });
 }
 
 /**
