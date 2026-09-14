@@ -141,6 +141,53 @@ export function preflightProvider(
 }
 
 /**
+ * The largest input this provider+model will accept for a use case.
+ *
+ * WHY THIS IS EXPORTED, and what it is for.
+ * -----------------------------------------
+ * A capability probe sends a tiny fixed payload. Passing it proves the key,
+ * the route and the model's structured-output behaviour -- it does not prove
+ * that a REAL workload fits, and the two answers can differ:
+ *
+ *   Groq openai/gpt-oss-120b passed the analysis probe twice on 2026-09-14
+ *   and was reported "usable for AI Analyze". The owner's real AI Analyze
+ *   then recorded, durably:
+ *     "groq: Prompt exceeds the configured provider throughput budget
+ *      (7242 input tokens)."
+ *   Groq does not even appear in that job's `tried:` list. It was skipped by
+ *   preflight before contact, because 7242 input + 512 minimum output + a
+ *   400-token margin is 8154 against an 8000 TPM ceiling. The skip is
+ *   CORRECT. What was wrong was telling the owner the provider could run
+ *   AI Analyze.
+ *
+ * The ceiling is computed from the same profile, the same constants and the
+ * same margins preflightProvider uses, so a diagnostic and the real run can
+ * never drift apart on this number.
+ */
+export function maxAcceptableInputTokens(
+  provider: AiProviderName,
+  useCase: AiUseCase,
+  env?: NodeJS.ProcessEnv,
+  modelOverride?: string,
+): { tokens: number; model: string; limitedBy: "context" | "throughput" } {
+  const profile = modelOverride
+    ? resolveModelProfile(provider, modelOverride)
+    : resolveActiveModelProfile(provider, useCase, env ?? process.env);
+  const contextCeiling = profile.contextTokens
+    - MIN_USEFUL_OUTPUT_TOKENS
+    - Math.max(128, Math.ceil(profile.contextTokens * SAFETY_MARGIN_FRACTION));
+  if (profile.freeTierTpmLimit === null) {
+    return { tokens: Math.max(0, contextCeiling), model: profile.model, limitedBy: "context" };
+  }
+  const throughputCeiling = profile.freeTierTpmLimit
+    - MIN_USEFUL_OUTPUT_TOKENS
+    - Math.max(128, Math.ceil(profile.freeTierTpmLimit * SAFETY_MARGIN_FRACTION));
+  return throughputCeiling < contextCeiling
+    ? { tokens: Math.max(0, throughputCeiling), model: profile.model, limitedBy: "throughput" }
+    : { tokens: Math.max(0, contextCeiling), model: profile.model, limitedBy: "context" };
+}
+
+/**
  * Batch preflight: check all providers in canonical order and return the
  * eligible list plus the skip reasons. Callers use this to filter the chain
  * BEFORE iterating, so oversized providers never consume an attempt.

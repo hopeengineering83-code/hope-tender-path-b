@@ -32,6 +32,7 @@
 // model names is a second authority on a question only they can answer, and it
 // goes stale the moment they retire a snapshot.
 
+import { maxAcceptableInputTokens } from "./ai-preflight";
 import {
   getProviderEntry,
   getProviderBaseUrl,
@@ -85,6 +86,16 @@ export type ProviderCapabilityReport = {
   results: CapabilityTestResult[];
   /** True ONLY when the analysis capability test passed. */
   usableForAiAnalyze: boolean;
+  /**
+   * The largest input this provider will accept for AI Analyze, and what
+   * limits it. A passing probe proves the key, the route and the model's
+   * structured-output behaviour on a TINY payload; it does not prove a real
+   * tender fits. Groq passed the analysis probe on 2026-09-14 and was still
+   * skipped before contact on the owner's real run at 7242 input tokens.
+   * Null when no model could be resolved to measure.
+   */
+  maxAnalysisInputTokens: number | null;
+  analysisInputLimitedBy: "context" | "throughput" | null;
   usableForGeneration: boolean;
   availableModels: string[] | null;
   /** Exact per-capability resolutions; analysis remains `resolvedModel` for compatibility. */
@@ -560,6 +571,8 @@ export async function testProviderCapabilities(
         safeMessage: eligibility.safeMessage,
       })),
       usableForAiAnalyze: false,
+      maxAnalysisInputTokens: null,
+      analysisInputLimitedBy: null,
       usableForGeneration: false,
       availableModels: null,
       resolvedModels: { proposal: null, extraction: null, fast: null },
@@ -595,7 +608,8 @@ export async function testProviderCapabilities(
         category: "CONFIGURATION_INVALID" as const,
         safeMessage: "No effective configured model is available; provider was not contacted.",
       })),
-      usableForAiAnalyze: false, usableForGeneration: false,
+      usableForAiAnalyze: false, maxAnalysisInputTokens: null, analysisInputLimitedBy: null,
+      usableForGeneration: false,
       availableModels, resolvedModels, resolvedModel: null,
       modelVisible: resolved.confirmedByProvider,
       diagnosticState: resolved.confirmedByProvider === false ? "MODEL_UNAVAILABLE" : "CONFIGURATION_INVALID",
@@ -627,6 +641,14 @@ export async function testProviderCapabilities(
   }
 
   const passed = (name: CapabilityName) => results.some((r) => r.capability === name && r.status === "ok");
+  // Never let measuring the ceiling fail the report: an unmeasurable headroom
+  // is reported as null ("not measured"), never as 0 ("accepts nothing").
+  let analysisHeadroom: ReturnType<typeof maxAcceptableInputTokens> | null = null;
+  try {
+    analysisHeadroom = maxAcceptableInputTokens(provider, "extraction", env);
+  } catch {
+    analysisHeadroom = null;
+  }
   const nothingMeasured = results.length > 0 && results.every((r) => r.status === "not_tested");
 
   return {
@@ -635,6 +657,10 @@ export async function testProviderCapabilities(
     // "Usable for AI Analyze" means the ANALYSIS test passed. Connectivity is
     // deliberately not sufficient.
     usableForAiAnalyze: passed("analysis"),
+    // Measured from the SAME profile, constants and margins preflight uses on
+    // the real run, so a diagnostic and the workload cannot drift apart.
+    maxAnalysisInputTokens: analysisHeadroom?.tokens ?? null,
+    analysisInputLimitedBy: analysisHeadroom?.limitedBy ?? null,
     usableForGeneration: passed("generation"),
     availableModels,
     resolvedModels,
