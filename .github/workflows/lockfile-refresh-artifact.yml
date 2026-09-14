@@ -1012,6 +1012,14 @@ jobs:
               print(f"  {str(r.get('provider')):<12} {str(r.get('diagnosticState')):<22}"
                     f" analyze={r.get('usableForAiAnalyze')}"
                     f" model={r.get('resolvedModel')} keyPresent={r.get('keyPresent')}")
+              # Per-use-case models, because "configured" is not one question.
+              # Groq is dropped from the analysis CHUNK PLANNER unless proposal,
+              # extraction AND fast all resolve non-empty (isProviderConfigured),
+              # and an empty slot is invisible in the single `model` field above.
+              rm = r.get('resolvedModels') or {}
+              if rm:
+                  print(f"      resolvedModels: proposal={rm.get('proposal')!r} "
+                        f"extraction={rm.get('extraction')!r} fast={rm.get('fast')!r}")
               for cap in (r.get('results') or []):
                   if cap.get('status') == 'ok':
                       continue
