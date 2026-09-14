@@ -329,6 +329,24 @@ async function generateWithClaude(prompt: string, systemPrompt: string = DEFAULT
     if (hadRateLimit && errors.every((e) => /429|rate.?limit|over.?capacity|tokens?\s+per\s+minute|404|not.?found|model_not_found|empty\s+response/i.test(e))) {
       throw new Error(`Claude rate-limited (all models in chain returned 429 or were unavailable): ${errors.join(" | ")}`);
     }
+    // EVERY OTHER CAUSE MUST SURVIVE TOO, not just the rate-limit one.
+    //
+    // This collected each model's real error, logged it, and then returned
+    // null — discarding it. The caller cannot tell "the provider refused us"
+    // from "the provider answered with nothing", so it recorded the only thing
+    // it knew: `new Error("empty response")`. The owner's diagnostics then read
+    //
+    //   anthropic  analysis: MALFORMED_RESPONSE -- empty response
+    //
+    // for a key whose actual answer was a billing refusal. That points the
+    // operator at our JSON handling instead of at their account, which is the
+    // most expensive kind of wrong diagnosis: it hides a one-click fix behind
+    // a hunt through code that is working correctly.
+    //
+    // The narrow branch above exists because someone already hit this for
+    // rate-limits specifically. The rule is not specific to rate limits, or to
+    // this provider: a real cause must never be replaced by a generic one.
+    throw new Error(`Claude unavailable (all models in chain failed): ${errors.join(" | ")}`);
   }
   return null;
 }
@@ -873,12 +891,20 @@ async function callProviderInner(
         return null;
       }
 
+      // "It threw" and "it returned nothing" are different facts and must not
+      // collapse. This recorded the real error in the catch and then recorded
+      // `new Error("empty response")` unconditionally underneath it, so the
+      // second call overwrote the first and the true cause never reached the
+      // operator. Only a call that actually RESOLVED empty is an empty
+      // response.
+      let threw = false;
       const r = await generateWithClaude(prompt, opts?.systemPrompt, maxTokens).catch((err) => {
+        threw = true;
         recordProviderFailure("anthropic", err);
         return null;
       });
       if (r) { recordProviderSuccess("anthropic"); return r; }
-      recordProviderFailure("anthropic", new Error("empty response"));
+      if (!threw) recordProviderFailure("anthropic", new Error("empty response"));
       return null;
     }
     case "gemini": {
