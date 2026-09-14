@@ -50,7 +50,7 @@ application fixes belong on #1175 alone.
 
 | Owner tool | Branch / PR | Scope | Locked files or areas | Status | Next action |
 |---|---|---|---|---|---|
-| Codex → Claude Code | `release/consolidated-recovery-20260717` (PR #1175, draft, base `integration/controlled-recovery`) | Consolidated release recovery: 10-provider fallback chain, provider-diversity request planning, durable fallback staging, canonical readiness/export convergence, artifact identity, real DOCX/PDF/ZIP bytes | `lib/ai.ts`, `lib/ai-jobs/analysis-job-service.ts`, `lib/ai-analyze/retry-service.ts`, `lib/engine/*`, `app/api/tenders/[id]/*`, `docs/pr1175-frozen-regression-ledger.md` | Open (draft). Head `a5615049`; exact-head CI green; Preview READY on `45954953`; **Preview database unreachable** | **BLOCKED — OWNER ACTION** (see the two blockers below). Do not merge; do not promote Production. |
+| Codex → Claude Code | `release/consolidated-recovery-20260717` (PR #1175, draft, base `integration/controlled-recovery`) | Consolidated release recovery: 10-provider fallback chain, provider-diversity request planning, durable fallback staging, canonical readiness/export convergence, artifact identity, real DOCX/PDF/ZIP bytes | `lib/ai.ts`, `lib/ai-jobs/analysis-job-service.ts`, `lib/ai-analyze/retry-service.ts`, `lib/engine/*`, `app/api/tenders/[id]/*`, `docs/pr1175-frozen-regression-ledger.md` | Open (draft). CI **verified green on `d3aa3b9f`** (run 34849659336, all 61 steps, incl. DB integration, build, Playwright isolation); Preview deployment READY; **Preview database unreachable** | **BLOCKED — OWNER ACTION** (see the two blockers below). Do not merge; do not promote Production. |
 
 #### BLOCKED — owner action, as of 2026-09-14T13:20Z (head `a5615049`)
 
