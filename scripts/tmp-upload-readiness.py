@@ -91,15 +91,44 @@ for t in tenders:
     print(f"      tender files = {len(files)}")
     for f in files[:12]:
         # extractedTextLength / isScannedPlaceholder / hasInlineFileContent are
-        # added by withDashboardFileMetrics; the page counts are only populated
-        # once extraction has run, so None there means "not yet", not "broken".
+        # added by withDashboardFileMetrics on the tender-detail endpoint.
         print(f"        - {f.get('originalFileName')}  chars={f.get('extractedTextLength')}  "
               f"scanned-placeholder={f.get('isScannedPlaceholder')}  "
               f"inline={f.get('hasInlineFileContent')}")
-        print(f"          pages={f.get('totalPages')} extracted={f.get('extractedPages')} "
-              f"score={f.get('extractionScore')} method={f.get('extractionMethod')}")
         if not (f.get("extractedTextLength") or 0) > 0:
             tender_files_pending.append(f.get("originalFileName"))
+
+    # PAGE COUNTS COME FROM THE PANEL'S OWN ENDPOINT, NOT FROM THE TENDER.
+    #
+    # This block used to read totalPages/extractedPages/extractionScore/
+    # extractionMethod off the tender-detail payload and print them. That
+    # endpoint's file select carries none of them -- it returns id, fileName,
+    # originalFileName, mimeType, size, classification, deletionStatus,
+    # storagePath and createdAt -- so every field printed as "None" on a
+    # tender whose extraction had in fact completed perfectly well.
+    #
+    # "None" read as "extraction produced nothing", and on 2026-09-14 that
+    # cost two false alarms against a healthy pipeline before the endpoint
+    # was checked. A diagnostic that cannot tell "it is missing" from "I did
+    # not ask" is the same defect this repo already fixed in lib/liveness.ts,
+    # and it belongs here too. /api/tenders/<id>/extraction-quality is the
+    # endpoint that actually selects those columns, and it is what the
+    # Extraction Quality panel itself reads.
+    eq = get(f"/api/tenders/{tid}/extraction-quality")
+    if not isinstance(eq, dict) or "summary" not in eq:
+        print("      extraction quality = NOT READ (endpoint unavailable) -- "
+              "this is a gap in THIS SCRIPT's reach, not a statement about extraction")
+    else:
+        summary = eq.get("summary") or {}
+        print(f"      extraction quality: readyForAnalysis={eq.get('readyForAnalysis')} "
+              f"readyForGeneration={eq.get('readyForGeneration')}")
+        print(f"        totalPagesKnown={summary.get('totalPagesKnown')} "
+              f"totalPages={summary.get('totalPages')} extracted={summary.get('extractedPages')} "
+              f"ocr={summary.get('ocrPages')} failed={summary.get('failedPages')}")
+        for b in (eq.get("blockers") or []):
+            print(f"        BLOCKER: {b.get('fileName')} -- {b.get('quality')}")
+        for w in (eq.get("warnings") or []):
+            print(f"        warning: {w.get('fileName')} -- {w.get('quality')}")
 
 print("\n" + "=" * 78)
 print("VERDICT")
