@@ -50,31 +50,26 @@ application fixes belong on #1175 alone.
 
 | Owner tool | Branch / PR | Scope | Locked files or areas | Status | Next action |
 |---|---|---|---|---|---|
-| Codex → Claude Code | `release/consolidated-recovery-20260717` (PR #1175, draft, base `integration/controlled-recovery`) | Consolidated release recovery: 10-provider fallback chain, provider-diversity request planning, durable fallback staging, canonical readiness/export convergence, artifact identity, real DOCX/PDF/ZIP bytes | `lib/ai.ts`, `lib/ai-jobs/analysis-job-service.ts`, `lib/ai-analyze/retry-service.ts`, `lib/engine/*`, `app/api/tenders/[id]/*`, `docs/pr1175-frozen-regression-ledger.md` | Open (draft). CI **verified green on `d3aa3b9f`** (run 34849659336, all 61 steps, incl. DB integration, build, Playwright isolation); Preview deployment READY; **Preview database unreachable** | **BLOCKED — OWNER ACTION** (see the two blockers below). Do not merge; do not promote Production. |
+| Codex → Claude Code | `release/consolidated-recovery-20260717` (PR #1175, draft, base `integration/controlled-recovery`) | Consolidated release recovery: 10-provider fallback chain, provider-diversity request planning, durable fallback staging, canonical readiness/export convergence, artifact identity, real DOCX/PDF/ZIP bytes | `lib/ai.ts`, `lib/ai-jobs/analysis-job-service.ts`, `lib/ai-analyze/retry-service.ts`, `lib/engine/*`, `app/api/tenders/[id]/*`, `docs/pr1175-frozen-regression-ledger.md` | Open (draft). Head `e59eca99`; CI **verified green on `d3aa3b9f`** (run 34849659336, all 61 steps, incl. DB integration, build, Playwright isolation); Preview deployment READY; **Preview database unreachable** | **BLOCKED — OWNER ACTION** (see the two blockers below). Do not merge; do not promote Production. |
 
-#### BLOCKED — owner action, as of 2026-09-14T13:20Z (head `a5615049`)
+#### CURRENT STATE — as of 2026-09-14T15:25Z (head `e59eca99`)
 
-**The Preview database is UNREACHABLE.** Confirmed from two independent
-vantage points: Vercel `/api/health` reports `status: "database-unreachable"`,
-`databaseReachable: false`, every critical table `null`; and a GitHub Actions
-runner connecting directly with the migration URL (run 34848216138) reports
-`Can't reach database server at ep-icy-sun-ae891nv7.c-2.us-east-2.aws.neon.tech:5432`.
-DNS resolves. The schema is **not** gone and the enriched vault is **not**
-lost — `tables` reads `null` ("could not ask"), never `false` ("missing").
+Preview database **healthy** (8/8 tables, schema matches code). Vault restored
+and durably verified 114/114. Owner upload complete; tender extraction 7/7
+pages, no blockers. **Do not run `confirm=provision`** — it runs
+`DROP SCHEMA public CASCADE` and there is nothing to rebuild.
 
-**Do not run `confirm=provision`.** It runs `DROP SCHEMA public CASCADE` and
-there is no evidence of a missing schema to justify it.
+**Waiting on one owner click: Retry AI Analyze.** The previous attempt failed
+because Gemini returned a transient 503 and every other provider is externally
+blocked; Gemini has re-verified ANALYSIS_VERIFIED twice since. Full root cause
+in the newest Session Log entry.
 
-Blocked on this: the fresh model-backed acceptance run, per-section authorship
-capture, the monetary-statement classification audit on delivered bytes, the
-data-to-proposal audit, and the 17-dimension benchmark score. **Do not quote a
-score taken from a stale artifact.**
+**Gemini is a single point of failure for AI Analyze.** Groq cannot serve a
+real analysis on the free tier at all (8000 TPM against a 7242-token prompt) —
+that is throughput, not credit, so no payment fixes it. Credit on OpenAI or
+DeepSeek is the cheapest route to redundancy.
 
-Provider state (external, not code defects): OpenAI HTTP 429 `insufficient_quota`,
-DeepSeek HTTP 402 `Insufficient Balance`. Re-read current diagnostics before
-each benchmark run rather than reusing these.
-
-Full evidence is in the newest Session Log entry.
+Do not quote a 17-dimension score until one model-backed run exists.
 
 ### Closed as superseded
 
@@ -147,7 +142,109 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
-### 2026-09-14 UTC (latest) — One splitter rule, shared; and the Preview database is unreachable, not empty
+### 2026-09-14 UTC (latest) — Fourth Neon swap recovered; AI Analyze root-caused from the durable job
+
+**Tool:** Claude Code · **Branch/PR:** `release/consolidated-recovery-20260717` (PR #1175, draft, unmerged)
+**Head at end:** `e59eca99` · CI verified green on `d3aa3b9f` (run 34849659336, all 61 steps)
+
+#### Database: recovered, do not re-provision
+
+The owner hit a Neon rate limit and swapped to a fourth database, setting the
+UNPOOLED string in `PREVIEW_DATABASE_URL_MIGRATION`, the POOLED one in Vercel
+(Preview only), then redeploying. Both point at the same database —
+`ep-hidden-recipe-ax1eef1o` (direct fp `bb15ceb4e0b5`, pooled fp
+`fc31623f1e7d`, and `/api/health` prints the pooled one).
+
+It read `database-unreachable` at first only because a brand-new Neon compute
+had not been woken; the provision job's direct connection started it.
+`confirm=provision` with `expected_fingerprint=bb15ceb4e0b5` succeeded (run
+34855409210): full migration history from empty, 4 canonical Role rows, every
+migration confirmed, owner account provisioned. `/api/health` then returned
+**HTTP 200, ok=true, healthy, 8/8 tables, schemaMatchesDeployedCode=true**.
+
+#### Vault: restored AND re-proved
+
+Owner re-uploaded. Readiness (run 34859196805): 6/6 vault documents extracted,
+3 brand assets (LETTERHEAD/STAMP/SIGNATURE, active, integrity VERIFIED), 28
+experts, 1 tender file, extraction quality **7 pages / 7 extracted / 0 OCR /
+0 failed, readyForAnalysis and readyForGeneration both true, no blockers**.
+
+The census came back on its own — 114 projects, 114 source-verified, country
+114/114 valid, malformed 0, contractValue 113, currency 113, dates 91/91 —
+but `durablyVerified` was **1**. `confirm=enrich` with
+`reverify_stale_provenance=yes` was dry-run first: it reported
+`verificationRepaired 113` with **contractValueFilled/currencyFilled/
+startDateFilled/endDateFilled/clientNameFilled/sectorFilled/countryCorrected
+all 0** — provenance only, no fact value touched — so it was applied. The
+post-apply re-read measures `durablyVerified 114` and `rowsModified 0`.
+
+#### AI Analyze failed — root-caused, and only half of it was ours
+
+The owner clicked Run AI Analyze. The card said *"2 of 4 tested provider(s)
+completed a real AI Analyze extraction — AI Analyze can run"* and the run
+failed anyway. The durable AiJob `c3b601f8` says why:
+
+```
+tried: gemini, mistral, zai, cerebras, openrouter, openai, together,
+       deepseek, anthropic
+  gemini: [503 Service Unavailable] This model is currently experiencing
+          high demand.
+  groq:   Prompt exceeds the configured provider throughput budget
+          (7242 input tokens).
+```
+
+**Groq is absent from `tried:`** — preflight skipped it before contact:
+7242 input + 512 minimum output + 400 margin = 8154 against
+`openai/gpt-oss-120b`'s 8000 TPM ceiling. **That skip is correct and was NOT
+changed.** Widening it would send a known-over-limit request and collect a
+429, recording provider ill-health for our own budgeting — the thing
+REQUEST_TOO_LARGE's zero cooldown exists to prevent. Gemini's 503 is external
+and transient.
+
+What WAS wrong is the claim. `usableForAiAnalyze` was `passed("analysis")`
+alone, and the probe sends a tiny payload. `ProviderCapabilityReport` now also
+carries `maxAnalysisInputTokens` / `analysisInputLimitedBy`, measured by
+`maxAcceptableInputTokens()` from the same profile, constants and margins
+`preflightProvider` uses on the real run.
+
+**Provider reality: Gemini is a single point of failure.** Groq cannot serve a
+real analysis on the free tier at any time (throughput, not credit). Mistral
+403 tier, Z.ai 429, Cerebras/OpenRouter/OpenAI/DeepSeek 402/429 no credit,
+Together 401 invalid key, Anthropic empty. Credit on OpenAI or DeepSeek is the
+cheapest route to redundancy.
+
+#### Product fixes shipped today, each from the owner's own data
+
+- `0050c7b8` — a verified `Project.startDate`/`endDate` never reached the
+  writer: `ProjectLite` declared no date columns, so the delivery window was
+  re-derived by regex from `summary` prose. Stored years now win; a
+  stored-vs-prose conflict emits nothing.
+- `96f1c5f9` — the stored tender title was `| Architectural Consultancy
+  Services for …`; a table cell separator reached the cover page, header and
+  required email subject line, and its length helped the title pass the
+  30-character "substantive" test.
+- `e59eca99` — the capability-probe claim above.
+- `1fed780f`, `cd5bdfef` — two diagnostics that could not tell "absent" from
+  "not asked" (the readiness page-count line; the AI Analyze category union).
+
+#### Tests actually run (local, exact head)
+
+`npx tsc --noEmit` clean · `npx next lint` clean ·
+`RUN_DB_INTEGRATION=true npm test` **12010 pass / 0 fail** · `npm run build`
+succeeded.
+
+#### Next action
+
+Owner: click **Retry AI Analyze**. Then Run Engine only after the analysis is
+confirmed model-backed. §9 monetary classification, §11's last links and the
+§13 score all still need one successful model-backed run.
+
+#### Merge status
+
+**DO NOT MERGE.** Draft. Production untouched; Production `DATABASE_URL`
+unchanged.
+
+### 2026-09-14 UTC — One splitter rule, shared; and the Preview database is unreachable, not empty
 
 **Tool:** Claude Code · **Branch/PR:** `release/consolidated-recovery-20260717` (PR #1175, draft, unmerged)
 **Head at start:** `45954953` · **Head at end:** `a5615049`
