@@ -903,53 +903,79 @@ jobs:
       - name: Read the live vault, the selection pipeline and provider state
         run: python3 scripts/tmp-inspect-vault-and-selection.py 2>&1 | tee /tmp/vault-inspection.txt
 
-      - name: Run the live provider chain test and print WHY each one failed
+      - name: Read Preview health
         run: |
-          # Same call the "Test provider chain" button makes. It is the only
-          # surface that exercises a real round-trip per provider, and the
-          # reason each failure needs is in its safeMessage -- which is exactly
-          # what "Provider returned an empty response" used to erase.
-          #
-          # Diagnostics run inside runAsDiagnostic(), so observations here
-          # impose no cooldowns on real work.
-          #
-          # Scoped to openai+deepseek and to the analysis capability on
-          # purpose. The unfiltered run on 34778938488 spent its 60s budget on
-          # a 45s Z.ai timeout and never contacted these two at all -- the
-          # NOT_TESTED outcome that told the operator to "re-run the test for
-          # this provider on its own". These are the two whose empty
-          # completions this branch exists to explain; the others already
-          # report actionable billing, auth and rate-limit reasons.
-          curl -sS --connect-timeout 15 --max-time 120 \
-            -H "Cookie: hope_session=$SESSION_COOKIE" \
-            "$BASE_URL/api/ai-providers/diagnostics?live=1&capability=analysis&provider=openai,deepseek" \
-            > /tmp/provider-chain.json || true
-          python3 - <<'PYEOF' | tee /tmp/provider-chain.txt
+          curl -sS --connect-timeout 15 --max-time 45 "$BASE_URL/api/health" > /tmp/preview-health.json || true
+          python3 - <<'PYEOF' | tee /tmp/preview-health.txt
           import json
           try:
-              d = json.load(open('/tmp/provider-chain.json', encoding='utf-8'))
+              d = json.load(open('/tmp/preview-health.json', encoding='utf-8'))
           except Exception as exc:
-              raise SystemExit(f"PROVIDER CHAIN: NOT MEASURED (unreadable response: {exc})")
-          # Field names come from LiveProviderDiagnosticsResponse and
-          # ProviderCapabilityReport, not from guesswork: the first version of
-          # this step read `reports[].capabilities[]`, which the payload does
-          # not have, and correctly printed NOT MEASURED rather than a false
-          # pass. The real shape is perProvider[].results[].
-          reports = d.get('perProvider') or []
-          if not reports:
-              raise SystemExit(f"PROVIDER CHAIN: NOT MEASURED (no perProvider; keys={sorted(d)[:12]})")
+              raise SystemExit(f"PREVIEW HEALTH: NOT MEASURED (unreadable: {exc})")
+          print(f"PREVIEW HEALTH: ok={d.get('ok')} status={d.get('status')}")
+          for key in ("releaseSha", "commitSha", "gitCommitSha", "version", "database", "schema"):
+              if key in d:
+                  print(f"  {key}={d[key]}")
+          PYEOF
+        continue-on-error: true
+
+      - name: Run the live provider chain test and print WHY each one failed
+        run: |
+          # Same call the "Test provider chain" button makes -- the only surface
+          # that does a real round-trip per provider.
+          #
+          # BATCHED, because the whole chain does not fit one request. Ten real
+          # serial round-trips share a 60s route budget, and on 34778938488 a
+          # single 45s Z.ai timeout consumed it and left six providers
+          # NOT_TESTED. Batching by the ?provider= filter gives every provider
+          # its own budget, so "not measured" stops being the common outcome.
+          # Z.ai runs alone because it is the known slow one.
+          #
+          # Diagnostics run inside runAsDiagnostic(), so nothing here imposes a
+          # cooldown on real work.
+          : > /tmp/provider-chain.jsonl
+          for batch in "gemini,groq,mistral" "zai" "cerebras,openrouter,openai" "together,deepseek,anthropic"; do
+            echo "--- batch: $batch"
+            curl -sS --connect-timeout 15 --max-time 120 \
+              -H "Cookie: hope_session=$SESSION_COOKIE" \
+              "$BASE_URL/api/ai-providers/diagnostics?live=1&capability=analysis&provider=$batch" \
+              >> /tmp/provider-chain.jsonl || true
+            echo >> /tmp/provider-chain.jsonl
+          done
+          python3 - <<'PYEOF' | tee /tmp/provider-chain.txt
+          import json
+          rows, untested, unreadable = [], [], 0
+          for line in open('/tmp/provider-chain.jsonl', encoding='utf-8'):
+              line = line.strip()
+              if not line:
+                  continue
+              try:
+                  d = json.loads(line)
+              except Exception:
+                  unreadable += 1
+                  continue
+              rows.extend(d.get('perProvider') or [])
+              untested.extend(d.get('notTested') or [])
+          if not rows:
+              raise SystemExit(
+                  f"PROVIDER CHAIN: NOT MEASURED (no perProvider in any batch; "
+                  f"{unreadable} unreadable response(s))")
           verified = {'CONNECTIVITY_VERIFIED', 'ANALYSIS_VERIFIED', 'GENERATION_VERIFIED'}
-          ok = sum(1 for r in reports if r.get('diagnosticState') in verified)
-          print(f"PROVIDER CHAIN: {ok}/{len(reports)} verified — {d.get('summary')}")
-          print(f"  aiAnalyzeReady={d.get('aiAnalyzeReady')} tested={d.get('testedCount')} partial={d.get('partial')}")
-          for r in reports:
+          ok = [r for r in rows if r.get('diagnosticState') in verified]
+          analysis_ok = [r for r in rows if r.get('usableForAiAnalyze')]
+          print(f"PROVIDER CHAIN: {len(ok)}/{len(rows)} verified, "
+                f"{len(analysis_ok)} usable for AI Analyze"
+                + (f", {unreadable} unreadable batch(es)" if unreadable else ""))
+          print(f"  USABLE FOR AI ANALYZE: {[r.get('provider') for r in analysis_ok] or 'NONE'}")
+          for r in rows:
               print(f"  {str(r.get('provider')):<12} {str(r.get('diagnosticState')):<22}"
+                    f" analyze={r.get('usableForAiAnalyze')}"
                     f" model={r.get('resolvedModel')} keyPresent={r.get('keyPresent')}")
               for cap in (r.get('results') or []):
                   if cap.get('status') == 'ok':
                       continue
                   print(f"      {cap.get('capability')}: {cap.get('category')} -- {cap.get('safeMessage')}")
-          for nt in (d.get('notTested') or []):
+          for nt in untested:
               print(f"  NOT TESTED: {nt.get('provider')} -- {nt.get('reason')}")
           PYEOF
         continue-on-error: true
@@ -961,7 +987,8 @@ jobs:
           path: |
             /tmp/vault-inspection.txt
             /tmp/provider-chain.txt
-            /tmp/provider-chain.json
+            /tmp/provider-chain.jsonl
+            /tmp/preview-health.txt
           if-no-files-found: error
           retention-days: 3
 
