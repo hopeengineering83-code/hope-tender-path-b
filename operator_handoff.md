@@ -234,6 +234,19 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
   `tests/advisory-work-does-not-outbid-the-writer.test.ts` 9/9.
   The new test was proven non-vacuous: with the fence removed from the helper,
   cases 2 and 4 fail.
+- **Full gate on the final tree (commit `6fb275fc`):** `npx prisma generate` ok;
+  `npx tsc --noEmit` clean; `npx next lint` "No ESLint warnings or errors";
+  `RUN_DB_INTEGRATION=true npm test` → **12,039 tests / 2,824 suites / 12,039
+  pass / 0 fail** (477.9s); `npm run build` completed. An earlier partial run at
+  12,033 tests showed 1 failure — that was CASE A, before it was corrected; it
+  is gone from the final run.
+- **Preview on the exact commit:** `hope-tender-path-b` deployment
+  `dpl_3htbCfiN1fe5qw3vSeSC8HNT4NCZ` **Ready**; `/api/health` returns
+  `ok:true, status:"healthy", release:"6fb275fc0504546f9e4ef972e44dd678db8518e4"`,
+  `databaseReachable:true`, `schemaMatchesDeployedCode:true`, 8/8 tables,
+  `databaseFingerprint fc31623f1e7d` (the expected pooled fingerprint for
+  `ep-hidden-recipe-ax1eef1o`). The `pr1175` and `repo` Vercel projects still
+  report Error; they are stray projects that were failing before this work.
 - **Known risk / assumption:** this is proven from the code and the owner's
   recorded job numbers, not yet from a fresh Preview run. The next real AI
   Analyze on this source is what confirms Groq is actually reached.
