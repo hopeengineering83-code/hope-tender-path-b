@@ -288,6 +288,45 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
   Analyze on this source is what confirms Groq is actually reached.
 - **Next action:** re-run the full gate on the final SHA, push, then drive one
   real AI Analyze on the current Preview and read the durable `tried:` list.
+- **Full gate on the final tree (`38186c84`):** `npx prisma generate` ok;
+  `npx tsc --noEmit` clean; `npx next lint` clean;
+  `RUN_DB_INTEGRATION=true npm test` → **12,042 tests / 2,825 suites / 12,042
+  pass / 0 fail** (445.4s); `npm run build` completed. Preview
+  `dpl_31rRTas3FfuCgxATf6JT5vSNtort` Ready, `/api/health` healthy on that exact
+  SHA, `schemaMatchesDeployedCode: true`, `databaseFingerprint fc31623f1e7d`.
+
+#### §21 FINDING, RECORDED NOT FIXED — jurisdiction asserted as universal
+
+Sector **dispatch** is fine and is not a Pharo hack: `isHealthcare`, `isWater`,
+`isGeotechnical`, `isFacilityAssessment` and the vocabulary/methodology tables
+each have peer branches for roads, water, urban planning, geotechnical, interior
+and industrial work, and each block is injected only when that sector is
+detected. That is ordinary general-purpose design. Verified by sampling, not
+assumed.
+
+What is NOT generic is the jurisdiction and currency asserted *inside* those
+blocks. `lib/ai.ts` alone carries ~20 sites instructing the writer to cite
+"ETB/contract value" as though it were the only currency, plus named Ethiopian
+regulators presented as universal requirements:
+
+- healthcare: "Ethiopian Health Authority licensing, EBCS compliance"
+- industrial: "effluent treatment design to Ethiopian EPA/WHO standards"
+- high-rise: "Ethiopian seismic zone (EBCS-8/ES EN 1998)"
+
+A healthcare tender in Kenya would receive factually wrong instructions. Across
+`lib/` there are ~150 ETB/Ethiopia/EBCS hits; many are legitimate (currency
+PARSING must recognise ETB as one of several), so each needs classifying as
+parser (keep) vs asserted-as-universal (derive from the tender's own country and
+currency, or say "the stated currency" when unknown).
+
+**Deliberately not done in this session, and why.** These strings are writer
+prompt inputs, so changing them changes proposal quality — the thing the
+17-dimension rubric measures. No model-backed proposal exists yet to measure
+against (workboard #46/#51), so a rewrite now could not be shown to help rather
+than hurt. Sequence it after one successful model-backed run. Tracked as
+workboard item "§21: audit hard-coded Ethiopian jurisdiction/currency in sector
+guidance".
+
 - **Merge status:** not reviewed. PR #1175 stays open, draft, unmerged.
 
 ### 2026-09-14 UTC — Fourth Neon swap recovered; AI Analyze root-caused from the durable job
