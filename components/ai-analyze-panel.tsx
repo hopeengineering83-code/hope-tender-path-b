@@ -89,29 +89,132 @@ const DIAGNOSTIC_STATE_LABEL: Record<ProviderDiag["diagnosticState"], string> = 
 const POLL_INTERVAL_MS = 3_000;
 const TERMINAL: JobStatus[] = ["SUCCEEDED", "PARTIAL_SUCCESS", "FAILED", "CANCELED"];
 
-/** Keep provider payloads in authenticated diagnostics, not the workflow UI. */
+/**
+ * Category names, in the order they are tested. Shared by the whole-message
+ * scan and the per-provider one so the two can never disagree about what a
+ * given error means.
+ */
+const FAILURE_CATEGORY_RULES: ReadonlyArray<readonly [RegExp, string]> = [
+  [/(?:402|billing|payment required|insufficient (?:balance|credit|quota)|no credits remaining)/i, "BILLING"],
+  [/(?:401|403|invalid api key|unauthori[sz]ed|not available in your subscription tier)/i, "AUTH_OR_CONFIGURATION_INVALID"],
+  [/(?:429|rate.?limit)/i, "RATE_LIMITED"],
+  [/(?:503|overload|temporarily unavailable|high demand)/i, "TEMPORARILY_UNAVAILABLE"],
+  [/(?:timeout|timed out|deadline)/i, "TIMEOUT"],
+  [/(?:output token budget|before producing any content)/i, "OUTPUT_BUDGET_TOO_SMALL"],
+  [/(?:malformed|empty response|unusable structured)/i, "MALFORMED_RESPONSE"],
+  [/(?:413|context (?:window|length)|request too large|prompt exceeds)/i, "REQUEST_TOO_LARGE"],
+  [/in cooldown|cooling down/i, "SKIPPED_COOLING_DOWN"],
+];
+
+/** The canonical chain, lower-cased exactly as the server writes it. */
+const PROVIDER_NAMES = [
+  "gemini", "groq", "mistral", "zai", "cerebras",
+  "openrouter", "openai", "together", "deepseek", "anthropic",
+] as const;
+
+const PROVIDER_LABEL: Record<(typeof PROVIDER_NAMES)[number], string> = {
+  gemini: "Gemini",
+  groq: "Groq",
+  mistral: "Mistral",
+  zai: "Z.ai",
+  cerebras: "Cerebras",
+  openrouter: "OpenRouter",
+  openai: "OpenAI",
+  together: "Together",
+  deepseek: "DeepSeek",
+  anthropic: "Anthropic",
+};
+
+function categoriesIn(text: string): string[] {
+  return FAILURE_CATEGORY_RULES.filter(([pattern]) => pattern.test(text)).map(([, name]) => name);
+}
+
+/**
+ * Pull the `provider: message` pairs the server already wrote.
+ *
+ * The durable AiJob error is shaped
+ *
+ *   ... Provider errors: gemini: <msg> | groq: <msg> | mistral: <msg> | ...
+ *
+ * and a multi-chunk job repeats that per chunk, so one provider can appear more
+ * than once with different causes. Segments that are not a known provider (the
+ * "chunk 2: ..." separator, for instance) are ignored rather than guessed at.
+ *
+ * Only the CATEGORY of each provider's message is kept. The raw text can carry
+ * provider payloads and belongs in authenticated diagnostics, not here.
+ */
+export function perProviderFailureCategories(message: string): Array<{ provider: string; categories: string[] }> {
+  const byProvider = new Map<string, Set<string>>();
+  for (const rawSegment of String(message).split(/\s\|\s/)) {
+    // The FIRST provider of each chunk follows "Provider errors:" rather than a
+    // pipe, so anchoring at the segment start silently dropped it — Gemini, the
+    // head of the canonical chain, was missing from the report while every
+    // later provider appeared. Trim the preamble before matching.
+    const marker = rawSegment.lastIndexOf("Provider errors:");
+    const segment = marker >= 0
+      ? rawSegment.slice(marker + "Provider errors:".length)
+      : rawSegment;
+    const match = segment.match(/^\s*([a-z.]+)\s*:\s*([\s\S]+)$/i);
+    if (!match) continue;
+    const name = match[1].toLowerCase();
+    if (!(PROVIDER_NAMES as readonly string[]).includes(name)) continue;
+    const found = categoriesIn(match[2]);
+    if (found.length === 0) continue;
+    const existing = byProvider.get(name) ?? new Set<string>();
+    for (const category of found) existing.add(category);
+    byProvider.set(name, existing);
+  }
+  // Canonical order, so the report reads like the chain it describes.
+  return PROVIDER_NAMES
+    .filter((name) => byProvider.has(name))
+    .map((name) => ({ provider: name, categories: [...(byProvider.get(name) ?? [])] }));
+}
+
+/**
+ * Keep provider payloads in authenticated diagnostics, not the workflow UI.
+ *
+ * THE DEFECT THIS FIXES.
+ * ----------------------
+ * This scanned the WHOLE error for category patterns and reported their union:
+ *
+ *   Observed categories: BILLING, AUTH_OR_CONFIGURATION_INVALID, RATE_LIMITED,
+ *   TEMPORARILY_UNAVAILABLE, MALFORMED_RESPONSE.
+ *
+ * Every one of those was true of SOME provider and none of them said which.
+ * The owner was then told to open Provider diagnostics — a separate live test
+ * that spends real round-trips — to learn what the durable job had already
+ * recorded. The pairing was in the message the whole time; the summary threw
+ * it away.
+ *
+ * That matters beyond tidiness: the union cannot separate the one provider the
+ * owner could fix in a minute (a model name their tier does not allow) from the
+ * eight that are externally blocked and need nothing from them at all.
+ */
 export function summarizeAIAnalyzeFailure(message: string | null | undefined): string {
   const text = String(message ?? "");
   if (!/provider|429|402|413|rate.?limit|billing|context|timeout|attempt_budget/i.test(text)) {
     return text || "AI Analyze failed. Correct the source or provider issue, then retry.";
   }
+
+  const perProvider = perProviderFailureCategories(text);
+  if (perProvider.length > 0) {
+    const named = perProvider
+      .map(({ provider, categories }) => `${PROVIDER_LABEL[provider as (typeof PROVIDER_NAMES)[number]]}: ${categories.join(" + ")}`)
+      .join(" · ");
+    return `AI Analyze could not complete after the configured provider chain. ${named}. Open Provider diagnostics for the full per-provider result, then retry AI Analyze.`;
+  }
+
+  // Fall back to the union only when the message carries no provider pairing —
+  // an older job, or a failure raised before the chain was walked. Saying
+  // "categories seen somewhere in this error" is honest; presenting it as a
+  // per-provider result would not be.
+  //
   // Do not count regex occurrences as providers. One provider error can name
-  // its status, retry and nested cause several times; the old implementation
-  // turned those events into impossible summaries such as "11 provider
-  // issues" for a ten-provider chain. The authenticated diagnostic owns exact
-  // per-provider counts. This compact workflow message names only categories
-  // actually evidenced in the safe error and never collapses billing/auth/
-  // timeout/malformed output into "rate-limited or unavailable".
-  const categories = [
-    /(?:402|billing|payment required|insufficient (?:balance|credit|quota))/i.test(text) ? "BILLING" : "",
-    /(?:401|403|invalid api key|unauthori[sz]ed)/i.test(text) ? "AUTH_OR_CONFIGURATION_INVALID" : "",
-    /(?:429|rate.?limit)/i.test(text) ? "RATE_LIMITED" : "",
-    /(?:503|overload|temporarily unavailable)/i.test(text) ? "TEMPORARILY_UNAVAILABLE" : "",
-    /(?:timeout|timed out|deadline)/i.test(text) ? "TIMEOUT" : "",
-    /(?:malformed|empty|unusable structured)/i.test(text) ? "MALFORMED_RESPONSE" : "",
-    /(?:413|context (?:window|length)|request too large|prompt exceeds)/i.test(text) ? "REQUEST_TOO_LARGE" : "",
-  ].filter(Boolean);
-  return `AI Analyze could not complete after the configured provider chain.${categories.length ? ` Observed categories: ${categories.join(", ")}.` : ""} Open Provider diagnostics for unique-provider results, then retry AI Analyze.`;
+  // its status, retry and nested cause several times; an earlier implementation
+  // turned those events into impossible summaries such as "11 provider issues"
+  // for a ten-provider chain.
+  const categories = categoriesIn(text);
+  return `AI Analyze could not complete after the configured provider chain.${categories.length ? ` Observed categories (not attributed to a provider): ${categories.join(", ")}.` : ""} Open Provider diagnostics for unique-provider results, then retry AI Analyze.`;
 }
 
 function sleep(ms: number) {
