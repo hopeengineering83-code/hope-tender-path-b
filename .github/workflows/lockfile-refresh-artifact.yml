@@ -903,6 +903,47 @@ jobs:
       - name: Read the live vault, the selection pipeline and provider state
         run: python3 scripts/tmp-inspect-vault-and-selection.py 2>&1 | tee /tmp/vault-inspection.txt
 
+      # WHY THIS EXISTS: the workflow UI's failure line is a regex over ONE
+      # aggregated message, so it reports the union of categories seen across
+      # the whole chain ("BILLING, AUTH..., RATE_LIMITED, ... REQUEST_TOO_LARGE")
+      # and cannot say which provider produced which. When a provider passes
+      # the analysis capability probe and then fails the real run, that union
+      # is exactly the wrong resolution to debug at. The AiJob row carries the
+      # durable, server-redacted failure text; this prints it verbatim.
+      - name: Read the durable AI_ANALYZE job failures verbatim
+        run: |
+          tid="${{ inputs.tender_id }}"
+          if [ -z "$tid" ]; then
+            tid=$(curl -sS --connect-timeout 15 --max-time 45 \
+              -H "Cookie: hope_session=$SESSION_COOKIE" "$BASE_URL/api/tenders" \
+              | python3 -c "import json,sys; d=json.load(sys.stdin); ts=d.get('tenders') or d if isinstance(d,list) else d.get('tenders',[]); print((ts[0] or {}).get('id','') if ts else '')" 2>/dev/null || echo "")
+          fi
+          if [ -z "$tid" ]; then
+            echo "AI_ANALYZE JOBS: NOT READ -- no tender id discovered (gap in this script, not a statement about the jobs)"
+            exit 0
+          fi
+          echo "tender: $tid"
+          curl -sS --connect-timeout 15 --max-time 45 \
+            -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/ai-jobs?tenderId=$tid&take=25" > /tmp/ai-jobs.json || true
+          python3 - <<'PYEOF' | tee /tmp/ai-analyze-failures.txt
+          import json
+          try:
+              jobs = json.load(open('/tmp/ai-jobs.json', encoding='utf-8')).get('jobs', [])
+          except Exception as exc:
+              raise SystemExit(f"AI_ANALYZE JOBS: NOT READ (unreadable: {exc})")
+          if not jobs:
+              raise SystemExit("AI_ANALYZE JOBS: none recorded for this tender")
+          for j in jobs:
+              print(f"  {j.get('jobType')} {j.get('status')} id={j.get('id')} "
+                    f"created={j.get('createdAt')} finished={j.get('finishedAt')}")
+              msg = j.get('errorMessage') or j.get('error')
+              if msg:
+                  print("    errorMessage (verbatim, server-redacted):")
+                  for line in str(msg).splitlines() or [""]:
+                      print(f"      {line}")
+          PYEOF
+
       - name: Read Preview health
         run: |
           curl -sS --connect-timeout 15 --max-time 45 "$BASE_URL/api/health" > /tmp/preview-health.json || true
@@ -986,6 +1027,7 @@ jobs:
           name: preview-vault-inspection
           path: |
             /tmp/vault-inspection.txt
+            /tmp/ai-analyze-failures.txt
             /tmp/provider-chain.txt
             /tmp/provider-chain.jsonl
             /tmp/preview-health.txt
