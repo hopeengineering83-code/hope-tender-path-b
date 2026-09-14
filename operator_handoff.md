@@ -205,14 +205,39 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 `lib/engine/sentence-segmentation.ts` (new) · `lib/engine/pricing-hygiene.ts` ·
 `lib/engine/export-gap-repair.ts` (also exports `safeParagraphText` for test) ·
-`tests/punctuation-inside-a-token-never-ends-a-sentence.test.ts` (new, 18 tests)
+`tests/punctuation-inside-a-token-never-ends-a-sentence.test.ts` (new, 18 tests) ·
+`lib/engine/proposal-intelligence.ts` ·
+`tests/a-verified-date-must-reach-the-writer.test.ts` (new, 14 tests)
 
 #### Tests actually run
 
 - `npx tsc --noEmit` — clean
 - `npx next lint` — "✔ No ESLint warnings or errors"
-- `RUN_DB_INTEGRATION=true npm test` — **11984 pass, 0 fail, 0 skipped** (was 11966; +18)
+- `RUN_DB_INTEGRATION=true npm test` — **11998 pass, 0 fail, 0 skipped** (was 11966; +32 across two commits)
 - `npm run build` — succeeded
+
+4. **Data-to-proposal audit (§11) — one real break found and fixed.**
+   Walking source → extracted fact → structured field → provenance → matcher →
+   selected evidence → **writer context** → generated statement → delivered
+   bytes, the chain breaks at the writer. `projectProofLine()` read client,
+   country, sector and contract value straight off the record's columns, then
+   re-derived the delivery window by regex from `summary` prose, because
+   `ProjectLite` declared no date columns — "true of the type, false of the
+   data": every caller passes a full Project row loaded with `include`, and
+   `Project.startDate`/`endDate` are populated and durably verified across the
+   portfolio. A project whose summary did not restate its years reached the
+   proposal with **no delivery window at all** while the verified answer sat
+   unread in the same object. Fixed in `0050c7b8`; stored years now win, text
+   derivation is the fallback, and a stored-vs-prose disagreement emits
+   **nothing** rather than picking (the rest of the line survives).
+
+   Audited and found clean in the same pass: `expertProofLine()` reads every
+   field from its columns with no text re-derivation (`Expert.email`/`phone`
+   are excluded deliberately — personal contact details are not proposal team
+   content); `projectProofLine` already prefers stored `country` and
+   `serviceAreas` over derived. The remaining links (matcher → selected
+   evidence → generated statement → delivered bytes) need a real run and are
+   blocked below.
 
 #### BLOCKER — the Preview database is UNREACHABLE (owner action)
 
