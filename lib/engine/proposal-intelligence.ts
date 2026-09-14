@@ -6,7 +6,7 @@ export type TenderRequirementLite = { title: string; description: string; priori
 export type TenderLite = { title: string; reference?: string | null; clientName?: string | null; procuringEntityName?: string | null; country?: string | null; description?: string | null; intakeSummary?: string | null; analysisSummary?: string | null; evaluationMethodology?: string | null; deadline?: Date | string | null; submissionMethod?: string | null; submissionAddress?: string | null; clientContactName?: string | null };
 export type CompanyLite = { name: string; legalName?: string | null; description?: string | null; profileSummary?: string | null; serviceLines: string; sectors: string; email?: string | null; phone?: string | null; website?: string | null; address?: string | null };
 export type ExpertLite = { fullName: string; title?: string | null; yearsExperience?: number | null; disciplines: string; sectors: string; certifications: string; profile?: string | null };
-export type ProjectLite = { name: string; clientName?: string | null; country?: string | null; sector?: string | null; serviceAreas: string; contractValue?: number | null; currency?: string | null; summary?: string | null };
+export type ProjectLite = { name: string; clientName?: string | null; country?: string | null; sector?: string | null; serviceAreas: string; contractValue?: number | null; currency?: string | null; summary?: string | null; startDate?: Date | string | null; endDate?: Date | string | null };
 export type ProposalTheme = { code: string; label: string; triggers: RegExp[]; proofTerms: RegExp[]; methodologyBullets: string[] };
 export type EvaluationWeight = { criterion: string; weight: string; rawMatch: string };
 export type CommercialTerms = {
@@ -1454,20 +1454,46 @@ export function projectProofLine(project: ProjectLite): string {
   return `${project.name}${parts.length ? ` — ${parts.join(" | ")}` : ""}${summary ? `. ${summary}` : ""}`;
 }
 
-/** "2015-2018" from the record's own dates, stored or derived. */
+/**
+ * "2015-2018" from the record's own dates — the STORED ones first.
+ *
+ * THE DEFECT THIS FIXES
+ * ---------------------
+ * `ProjectLite` carried no date columns, so this function could only re-derive
+ * a duration by regex from `summary`. Every caller passes a full Project row,
+ * and `Project.startDate` / `Project.endDate` are populated and durably
+ * verified for the overwhelming majority of the portfolio -- so a verified
+ * structured field was invisible to the writer, and a project whose summary
+ * prose happened not to restate its years reached the proposal with no
+ * duration at all. The same record's `contractValue` was already read straight
+ * from the column two lines above, which is the authority class these dates
+ * belong to as well.
+ *
+ * CONFLICT IS NOT RESOLVED BY PREFERENCE
+ * --------------------------------------
+ * When the stored years and the years derived from the record's own prose
+ * disagree, nothing is emitted. One of the two is wrong and this function
+ * cannot tell which; a duration printed in a client proposal is acted on, and
+ * the enrichment census is explicit that verified facts are not to be
+ * adjusted to make matching tidier. Silence is recoverable, a wrong delivery
+ * window is not.
+ */
 function derivedDurationLabel(
-  _project: ProjectLite,
+  project: ProjectLite,
   derived: ReturnType<typeof extractProjectFacts>,
 ): string {
-  // ProjectLite carries no date columns, so the record's own text is the only
-  // source of a duration here.
-  const start = derived.startDate ?? null;
-  const end = derived.endDate ?? null;
-  const y = (d: Date | null): string => (d ? String(new Date(d).getUTCFullYear()) : "");
-  const a = y(start as Date | null);
-  const b = y(end as Date | null);
-  if (a && b && a !== b) return `${a}-${b}`;
-  return a || b || "";
+  const y = (d: Date | string | null | undefined): string => {
+    if (!d) return "";
+    const parsed = d instanceof Date ? d : new Date(d);
+    return Number.isNaN(parsed.getTime()) ? "" : String(parsed.getUTCFullYear());
+  };
+  const label = (a: string, b: string): string => (a && b && a !== b ? `${a}-${b}` : a || b || "");
+
+  const stored = label(y(project.startDate), y(project.endDate));
+  const fromText = label(y(derived.startDate as Date | null), y(derived.endDate as Date | null));
+
+  if (stored && fromText && stored !== fromText) return "";
+  return stored || fromText;
 }
 
 /**
