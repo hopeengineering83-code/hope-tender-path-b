@@ -2192,9 +2192,36 @@ export const ANALYSIS_CHUNK_OVERLAP = 1_000;
 // budget is the real limit; these chunks are sent sequentially with overlap.
 const ANALYSIS_MAX_CHUNKS = 200;
 
+
+/**
+ * The analysis prompt AS THE RUNTIME WILL MEASURE IT.
+ *
+ * THE DEFECT THIS FIXES.
+ * ----------------------
+ * Request sizing was measured twice, by two different pieces of text.
+ * `planAnalysisChunks` / `analysisChunkPreflight` / `analysisFitsOneConfiguredProvider`
+ * preflighted the RAW `buildAnalysisPrompt(...)` output, while the thing actually
+ * sent is `generateWithFallback`'s `protectPrompt(prompt).protectedPrompt` — the
+ * same text wrapped in the trust-boundary header, fence markers and footer.
+ * The wrapper is not free: it costs a fixed ~198 estimated input tokens.
+ *
+ * So the planner could certify a request shape as eligible for a provider that
+ * then refused it before contact, with the chain reporting "Prompt exceeds the
+ * configured provider throughput budget" for a request the planner had just
+ * declared it could take. Any request whose true size lands inside that
+ * ~198-token band is planned as fine and is unrunnable.
+ *
+ * The fence nonce is a UUID, whose length is fixed, so the wrapped length — and
+ * therefore the plan — stays deterministic for the same source and configuration.
+ * Chunk TEXT is unaffected either way; only the eligibility verdict changes.
+ */
+export function buildAnalysisPromptAsSent(content: string, index: number, total: number): string {
+  return protectPrompt(buildAnalysisPrompt(content, index, total)).protectedPrompt;
+}
+
 export function analysisFitsOneConfiguredProvider(content: string): boolean {
   if (content.length > ANALYSIS_MAX_SINGLE_REQUEST_SOURCE_CHARS) return false;
-  const prompt = buildAnalysisPrompt(content, 0, 1);
+  const prompt = buildAnalysisPromptAsSent(content, 0, 1);
   return CANONICAL_AI_PROVIDER_ORDER.some((provider) =>
     isProviderEnabled(provider)
     && preflightProvider(provider, prompt, {
@@ -2230,7 +2257,7 @@ function providersEligibleForEveryChunk(
   env: NodeJS.ProcessEnv,
 ): AiProviderName[] {
   return providers.filter((provider) => chunks.every((chunk, index) =>
-    preflightProvider(provider, buildAnalysisPrompt(chunk, index, chunks.length), {
+    preflightProvider(provider, buildAnalysisPromptAsSent(chunk, index, chunks.length), {
       systemPrompt: ANALYSIS_SYSTEM_PROMPT,
       useCase: "extraction",
       env,
@@ -2245,7 +2272,7 @@ export function analysisChunkPreflight(
   total: number,
   env: NodeJS.ProcessEnv = process.env,
 ) {
-  return preflightProvider(provider, buildAnalysisPrompt(content, index, total), {
+  return preflightProvider(provider, buildAnalysisPromptAsSent(content, index, total), {
     systemPrompt: ANALYSIS_SYSTEM_PROMPT,
     useCase: "extraction",
     env,
@@ -4898,7 +4925,31 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
     // This selects a provider that can carry the payload; it does not shrink,
     // truncate or reorder anything. Canonical order is still whatever
     // getAutomaticProviderOrder() returns.
-    const preflight = preflightProvider(provider, spec.userPrompt, {
+    // SECURITY + SIZING, one decision.
+    //
+    // The whole-proposal path a few hundred lines above fences its prompt
+    // (audit C-3) because it mixes TRUSTED application instructions with
+    // UNTRUSTED tender text, evidence and project profiles. This per-section
+    // path builds its prompts from the same untrusted material and fenced
+    // nothing: `spec.userPrompt` went to the provider raw, so tender text could
+    // issue directives the section writer would follow, and injection
+    // inspection never ran on it.
+    //
+    // Fencing it here also closes the sizing hole that broke AI Analyze: the
+    // preflight below and the dispatch below it must weigh the SAME bytes. The
+    // fence is not free (~198 estimated input tokens), so preflighting the raw
+    // prompt and sending the fenced one is how a provider gets handed a request
+    // preflight has just certified and then refuses. One string, measured once,
+    // sent as measured.
+    const sectionTrustBoundary = protectPrompt(spec.userPrompt);
+    if (sectionTrustBoundary.suspicious) {
+      logger.warn(
+        `[ai] section "${spec.id}" untrusted prompt content matched ${sectionTrustBoundary.matchedRules.length} injection rule(s)`,
+      );
+    }
+    const fencedSectionPrompt = sectionTrustBoundary.protectedPrompt;
+
+    const preflight = preflightProvider(provider, fencedSectionPrompt, {
       systemPrompt: spec.systemPrompt,
       useCase: "proposal",
     });
@@ -4922,7 +4973,7 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
     const requestedOutputTokens = Math.min(spec.maxOutputTokens ?? 4096, preflight.maxOutputTokens || (spec.maxOutputTokens ?? 4096));
     try {
       const text = await Promise.race([
-        callProvider(provider, spec.userPrompt, {
+        callProvider(provider, fencedSectionPrompt, {
           systemPrompt: spec.systemPrompt,
           useCase: "proposal",
           // The section's own budget, not the whole-proposal one. Four of these

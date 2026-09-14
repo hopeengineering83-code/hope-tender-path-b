@@ -33,7 +33,26 @@ export type LiveProviderDiagnosticsResponse = {
   partial: boolean;
   notTested: Array<{ provider: string; reason: string }>;
   chainLength: number;
+  /**
+   * A structured-extraction PROBE passed for at least one provider.
+   *
+   * THIS IS NOT "AI ANALYZE WILL SUCCEED". The probe is a small fixed payload.
+   * A provider can pass it and still be refused a real tender before contact:
+   * on 2026-09-14 Groq passed this probe in 843 ms and the owner's real run
+   * recorded "groq: Prompt exceeds the configured provider throughput budget
+   * (7242 input tokens)", with Groq absent from the job's `tried:` list. The
+   * page then showed a hard failure banner directly above a green line saying
+   * the analysis was ready to proceed, and both were literally true.
+   */
   aiAnalyzeReady: boolean;
+  /** Always true here: this endpoint never sends a real tender payload. */
+  probeOnly: true;
+  /**
+   * Whether a REAL source payload has been proven to complete. This endpoint
+   * cannot answer that — only a real AI Analyze on a specific source revision
+   * can — so it is always false and must never be inferred from the probe.
+   */
+  realPayloadProven: false;
   analysisVerifiedProviders: AiProviderName[];
   billingBlockedProviders: AiProviderName[];
   testedCount: number;
@@ -172,18 +191,20 @@ export async function GET(req: Request) {
     // one is what let AI Analyze fail on an environment the diagnostics called
     // healthy.
     aiAnalyzeReady: analysisReady.length > 0,
+    probeOnly: true,
+    realPayloadProven: false,
     analysisVerifiedProviders: analysisReady,
     billingBlockedProviders: billingBlocked,
     testedCount: tested.length,
     summary: analysisReady.length > 0
-      ? `${analysisReady.length} of ${tested.length} tested provider(s) completed a real AI Analyze extraction — AI Analyze can run.`
+      ? `${analysisReady.length} of ${tested.length} tested provider(s) completed a structured-extraction probe. A probe is a small fixed payload: it proves the key, the route and the model's structured output, NOT that a real tender fits. Each provider's largest accepted analysis input is shown below; compare it against the tender before concluding AI Analyze will succeed.`
       : run.deadlineExceeded
-        ? `The diagnostic reached its time limit after testing ${tested.length} of ${run.chainLength} provider(s); ${run.notTested.length} were not tested. No provider tested so far completed a real AI Analyze extraction — re-test the remaining providers individually before concluding the chain is broken.`
+        ? `The diagnostic reached its time limit after testing ${tested.length} of ${run.chainLength} provider(s); ${run.notTested.length} were not tested. No provider tested so far completed a structured-extraction probe — re-test the remaining providers individually before concluding the chain is broken.`
       : tested.length === 0 && !anyKeyPresent
         ? `No provider in the active chain is configured. Set at least one provider key (for example GEMINI_API_KEY, GROQ_API_KEY, MISTRAL_API_KEY or ZAI_API_KEY) and redeploy.`
         : tested.length === 0
           ? "Provider keys exist, but no provider has a complete effective model configuration. See each explicit provider state below."
-        : `No provider completed a real AI Analyze extraction. Connectivity alone is not sufficient — see the per-provider analysis result below.`,
+        : `No provider completed a structured-extraction probe. Connectivity alone is not sufficient — see the per-provider analysis result below.`,
     perProvider: reports,
   };
   return NextResponse.json(payload);

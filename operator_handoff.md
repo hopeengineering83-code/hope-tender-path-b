@@ -64,10 +64,27 @@ because Gemini returned a transient 503 and every other provider is externally
 blocked; Gemini has re-verified ANALYSIS_VERIFIED twice since. Full root cause
 in the newest Session Log entry.
 
-**Gemini is a single point of failure for AI Analyze.** Groq cannot serve a
-real analysis on the free tier at all (8000 TPM against a 7242-token prompt) —
-that is throughput, not credit, so no payment fixes it. Credit on OpenAI or
-DeepSeek is the cheapest route to redundancy.
+**CORRECTED 2026-09-14 — Gemini is NOT a single point of failure, and Groq
+needs no payment.** This paragraph previously read: "Groq cannot serve a real
+analysis on the free tier at all (8000 TPM against a 7242-token prompt) — that
+is throughput, not credit, so no payment fixes it. Credit on OpenAI or DeepSeek
+is the cheapest route to redundancy." Every part of that was wrong, and it was
+recommending the owner pay to work around a code defect.
+
+The 7,242-token prompt was **our** number, not the tender's. The owner's
+retained source is 12,122 characters. Request sizing was measured twice, by two
+different strings: the planner preflighted the raw analysis prompt (7,044
+tokens — inside Groq's 7,088 budget, so it certified a single request), while
+the runtime preflights `protectPrompt(prompt).protectedPrompt`, the same text
+wrapped in the trust-boundary header, fence markers and footer. That wrapper
+costs a fixed ~198 estimated input tokens. 7,044 + 198 = **7,242** — the exact
+figure in the owner's durable AiJob, with Groq absent from its `tried:` list.
+
+The planner now measures the prompt it actually sends. That source plans as two
+chunks of 6,265 and 5,545 tokens, **both inside Groq's free-tier budget**. Groq
+serves it on the free tier with no credit and no configuration change.
+
+Do not buy provider credit to make AI Analyze work on this source.
 
 Do not quote a 17-dimension score until one model-backed run exists.
 
@@ -142,7 +159,89 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
-### 2026-09-14 UTC (latest) — Fourth Neon swap recovered; AI Analyze root-caused from the durable job
+### 2026-09-14 UTC (latest) — AI Analyze was refused by a prompt we mis-measured, not by a provider limit
+
+- **Tool / branch / PR:** Claude Code · `release/consolidated-recovery-20260717` · PR #1175 (open, draft, unmerged).
+- **Scope:** one request was measured twice, by two different strings.
+  `planAnalysisChunks`, `analysisChunkPreflight` and
+  `analysisFitsOneConfiguredProvider` preflighted the RAW output of
+  `buildAnalysisPrompt`. What `generateWithFallback` sends — and preflights — is
+  `protectPrompt(prompt).protectedPrompt`: the same text inside the
+  trust-boundary header, two nonce fence markers and a footer. Measured
+  overhead: **198 estimated input tokens**, fixed.
+- **Root cause, tied to the owner's exact number:** the retained source is
+  **12,122 characters**. Raw prompt = **7,044** tokens, inside
+  `openai/gpt-oss-120b`'s free-tier budget of 7,088 (8,000 TPM less the 512
+  minimum output reservation and the 400-token margin), so the planner
+  certified a single request and put Groq in `fullRequestEligibleProviders`.
+  The runtime then measured the fenced prompt at **7,242** and skipped Groq
+  before contact. 7,044 + 198 = 7,242 — byte-identical to the owner's durable
+  AiJob line `groq: Prompt exceeds the configured provider throughput budget
+  (7242 input tokens)`, with Groq absent from that job's `tried:` list.
+- **Generic fix (no provider name, no sector term in it):** `buildAnalysisPromptAsSent()`
+  in `lib/ai.ts` returns the fenced prompt, and all three sizing call sites use
+  it. A capacity decision is now taken against the bytes that will be sent.
+  Determinism is preserved: the fence nonce is a UUID, whose length is fixed,
+  so chunk text and the durable snapshot hashes are unchanged.
+- **Consequence for the chain:** that source now plans as two chunks of 6,265
+  and 5,545 tokens, **both inside Groq's free-tier budget**. Groq serves it with
+  no credit and no configuration change. The prior handoff claim that "Groq
+  cannot serve a real analysis on the free tier at all" and that credit on
+  OpenAI or DeepSeek was "the cheapest route to redundancy" is **withdrawn** —
+  it recommended payment to work around a code defect. The Current State
+  section above has been corrected in place.
+- **A test had frozen the defect as the expectation.** CASE A of
+  `tests/ai-analysis-capacity-concurrency-regression.test.ts` asserted
+  `reason === "SINGLE_REQUEST"` and Groq eligible for the whole 12,122
+  characters. That was only ever true against the unfenced prompt. The
+  requirement it was written to protect was "keep Groq in the chain for this
+  source", and a monolith Groq refuses does the opposite. CASE A now asserts the
+  split, Groq eligible for every chunk, and lossless reconstruction.
+- **The same defect, second instance — and a security gap with it.** The
+  per-section proposal writer (`generateOneSection`) preflighted AND dispatched
+  `spec.userPrompt` with **no trust boundary at all**, while the whole-proposal
+  path in the same file fences its prompt (audit C-3) precisely because these
+  prompts mix trusted application instructions with untrusted tender text,
+  evidence and project profiles. Untrusted material reached the provider able to
+  issue directives, and injection inspection never ran on it. The section prompt
+  is now fenced once per attempt and that one fenced string is both preflighted
+  and sent. `tests/every-provider-call-weighs-the-bytes-it-sends.test.ts` (new,
+  6/6) pins the rule across all three paths: the preflighted expression and the
+  dispatched expression must be the same identifier.
+- **Files changed:** `lib/ai.ts`, `tests/ai-analysis-capacity-concurrency-regression.test.ts`,
+  `tests/the-planner-must-measure-the-prompt-it-sends.test.ts` (new),
+  `tests/every-provider-call-weighs-the-bytes-it-sends.test.ts` (new),
+  `app/api/ai-providers/diagnostics/route.ts`, `components/ai-analyze-panel.tsx`,
+  `tests/a-probe-result-must-not-claim-ai-analyze-will-run.test.ts` (new),
+  `operator_handoff.md`.
+- **Also in this commit — a probe result must not be read as a workflow verdict.**
+  `/api/ai-providers/diagnostics?live=1` now carries `probeOnly: true` and
+  `realPayloadProven: false`, and its summary says a probe proves the key, the
+  route and structured output but **not** that a real tender fits. The panel no
+  longer paints the summary green from probe success while a real run has
+  failed. This is the §7 semantics fix, separate from the sizing defect above.
+- **Tests actually run:** `npx tsc --noEmit` clean; `npx next lint` clean;
+  `tests/the-planner-must-measure-the-prompt-it-sends.test.ts` 7/7;
+  `tests/a-probe-result-must-not-claim-ai-analyze-will-run.test.ts` 9/9;
+  `tests/ai-analysis-capacity-concurrency-regression.test.ts` 8/8;
+  `tests/provider-request-budget-regression.test.ts` 5/5;
+  `tests/provider-tests-do-not-read-the-machine.test.ts` 7/7;
+  `tests/every-provider-call-weighs-the-bytes-it-sends.test.ts` 6/6;
+  `tests/p1-prompt-injection-trust-boundary.test.ts` 15/15;
+  `tests/deep-remediation-c3-c4-c5-h6.test.ts` 23/23;
+  `tests/writer-prompts-fit-the-provider-budget.test.ts` 24/24;
+  `tests/proposal-chunk-checkpoint.test.ts` 19/19;
+  `tests/advisory-work-does-not-outbid-the-writer.test.ts` 9/9.
+  The new test was proven non-vacuous: with the fence removed from the helper,
+  cases 2 and 4 fail.
+- **Known risk / assumption:** this is proven from the code and the owner's
+  recorded job numbers, not yet from a fresh Preview run. The next real AI
+  Analyze on this source is what confirms Groq is actually reached.
+- **Next action:** re-run the full gate on the final SHA, push, then drive one
+  real AI Analyze on the current Preview and read the durable `tried:` list.
+- **Merge status:** not reviewed. PR #1175 stays open, draft, unmerged.
+
+### 2026-09-14 UTC — Fourth Neon swap recovered; AI Analyze root-caused from the durable job
 
 **Tool:** Claude Code · **Branch/PR:** `release/consolidated-recovery-20260717` (PR #1175, draft, unmerged)
 **Head at end:** `e59eca99` · CI verified green on `d3aa3b9f` (run 34849659336, all 61 steps)

@@ -467,7 +467,24 @@ export function AIAnalyzePanel({
 
       {diag ? (
         <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
-          <p className={`text-xs font-semibold ${diag.aiAnalyzeReady ? "text-emerald-700" : "text-red-700"}`}>{diag.summary}</p>
+          {/*
+            PROVIDER CAPABILITY IS SUBORDINATE TO WORKFLOW STATE.
+
+            This line used to go emerald-green whenever a provider passed the
+            probe, which put a success-coloured sentence directly beneath the
+            red "AI Analyze did not complete" banner. The owner read the green
+            line, clicked Run, and the run failed -- the probe is a small fixed
+            payload and their tender needs 7,242 input tokens.
+
+            When the last real run failed, a passing probe means "eligible to
+            retry", not "proven". It is shown amber and says so.
+          */}
+          <p className={`text-xs font-semibold ${!diag.aiAnalyzeReady ? "text-red-700" : error ? "text-amber-700" : "text-emerald-700"}`}>{diag.summary}</p>
+          {diag.aiAnalyzeReady && error ? (
+            <p className="mt-1 text-xs text-amber-700">
+              The last real AI Analyze run failed. A passing probe makes a retry worth attempting; it does not prove this tender will complete.
+            </p>
+          ) : null}
           {diag.perProvider.length > 0 ? (
             <ul className="mt-2 space-y-1">
               {diag.perProvider.map((provider) => (

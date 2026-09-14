@@ -32,7 +32,7 @@ afterEach(() => {
 });
 
 describe("adaptive AI Analyze request shape", () => {
-  it("CASE A: keeps one request when all configured early extraction models can accept it", () => {
+  it("CASE A: the owner's retained 12,122-character source keeps Groq — by splitting, not by pretending it fits", () => {
     const env = providerEnv({
       GEMINI_API_KEY: "test-key",
       GEMINI_ANALYSIS_MODEL: "gemini-3.5-flash",
@@ -44,12 +44,43 @@ describe("adaptive AI Analyze request shape", () => {
     });
     const source = "consultancy supervision requirement. ".repeat(400).slice(0, 12_122).padEnd(12_122, "x");
     const plan = planAnalysisChunks(source, env);
-
     assert.equal(source.length, 12_122);
-    assert.equal(plan.reason, "SINGLE_REQUEST");
+
+    // WHAT THIS CASE USED TO ASSERT, AND WHY IT WAS WRONG.
+    // --------------------------------------------------
+    // It asserted `reason === "SINGLE_REQUEST"` and that gemini, groq and
+    // mistral were all eligible for the whole 12,122 characters in one call.
+    // That was measured against the RAW analysis prompt. The request actually
+    // sent is that prompt wrapped by protectPrompt — a trust-boundary header,
+    // two fence markers and a footer — which costs a further ~198 input tokens.
+    //
+    // Against the real, fenced request this source is 7,242 estimated input
+    // tokens for openai/gpt-oss-120b, whose free-tier budget after the minimum
+    // output reservation and margin is 7,088. Groq never accepted it. The
+    // owner's durable AiJob recorded exactly that number:
+    //
+    //   groq: Prompt exceeds the configured provider throughput budget
+    //         (7242 input tokens).
+    //
+    // with Groq absent from the job's `tried:` list. So this case had frozen
+    // the defect as the expectation: the requirement was always "keep Groq in
+    // the chain for this source", and a monolith Groq refuses does the exact
+    // opposite. Splitting is what keeps Groq.
+    assert.equal(plan.reason, "EARLY_CHAIN_DIVERSITY");
     assert.deepEqual(plan.configuredProviders.slice(0, 3), ["gemini", "groq", "mistral"]);
-    assert.deepEqual(plan.fullRequestEligibleProviders.slice(0, 3), ["gemini", "groq", "mistral"]);
-    assert.deepEqual(plan.chunks, [source]);
+    assert.equal(plan.fullRequestEligibleProviders.includes("groq"), false);
+
+    // The owner requirement, actually satisfied: Groq — canonical rank #2 —
+    // can receive every chunk of this source.
+    assert.equal(plan.chunkEligibleProviders.includes("groq"), true);
+    assert.ok(plan.chunks.length > 1);
+
+    // Splitting must not lose a character of the source.
+    const reconstructed = plan.chunks.reduce(
+      (all, chunk, index) => all + (index === 0 ? chunk : chunk.slice(ANALYSIS_CHUNK_OVERLAP)),
+      "",
+    );
+    assert.equal(reconstructed, source);
   });
 
   it("CASE B: restores Groq through sequential chunks when a monolith exceeds its exact TPM profile", () => {
