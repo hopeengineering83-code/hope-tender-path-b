@@ -570,6 +570,41 @@ export function getProviderBaseUrl(
   return base ? base.replace(/\/+$/, "") : null;
 }
 
+/**
+ * One model identifier, from an env var that may legitimately hold a list.
+ *
+ * THE DEFECT THIS FIXES.
+ * ----------------------
+ * Anthropic's model env var is ANTHROPIC_PROPOSAL_MODELS -- plural, and
+ * deliberately comma-separated: the proposal path splits it and walks the
+ * models in order. But the registry maps only `proposalModel` for Anthropic,
+ * so every OTHER use case fell through to the branch below that borrows the
+ * proposal env, and returned the whole list as if it were one model name.
+ *
+ * On the owner's Preview that produced, verbatim, in provider diagnostics:
+ *
+ *   anthropic CONFIGURED analyze=False
+ *     model=claude-sonnet-4-5,claude-opus-4-1,claude-3-5-sonnet-latest,claude-3-5-haiku-latest
+ *     analysis: MALFORMED_RESPONSE -- empty response
+ *
+ * No API resolves that string, so the last provider in the chain could never
+ * answer an AI Analyze, and the reason reaching the operator was "empty
+ * response" -- indistinguishable from a model that replied with nothing.
+ * It was also quiet: Anthropic's capability-profile rule is anchored on
+ * `claude-`, so the joined string still matched it and reported a normal 200K
+ * context. The limits looked healthy while the identifier being dispatched
+ * could never resolve.
+ *
+ * Taking the FIRST entry matches how the proposal path already reads the same
+ * variable, and matches the registry default (`claude-sonnet-4-5`) that this
+ * fallback was standing in for. A single-model value is returned unchanged, so
+ * no other provider's behaviour moves.
+ */
+function firstModelIdentifier(raw: string | undefined): string | undefined {
+  const first = (raw ?? "").split(",")[0]?.trim();
+  return first && first.length > 0 ? first : undefined;
+}
+
 export function getProviderModel(
   provider: AiProviderName,
   useCase: AiUseCase = "proposal",
@@ -594,13 +629,13 @@ export function getProviderModel(
   // an attempt; which GLM models a key may actually use is Z.ai's to answer.
   if (provider === "zai") return resolveZaiConfiguration(useCase, env).model;
 
-  const fromEnv = envName ? env[envName]?.trim() : undefined;
-  if (fromEnv && fromEnv.length > 0) return fromEnv;
+  const fromEnv = envName ? firstModelIdentifier(env[envName]) : undefined;
+  if (fromEnv) return fromEnv;
   // Analysis/fast fall back to the proposal model env if their specific env is
   // unset (mirrors prior getMistralAnalysisModel behaviour), then to defaults.
   if (slot !== "proposalModel") {
-    const proposalEnv = entry.env.proposalModel ? env[entry.env.proposalModel]?.trim() : undefined;
-    if (proposalEnv && proposalEnv.length > 0) return proposalEnv;
+    const proposalEnv = entry.env.proposalModel ? firstModelIdentifier(env[entry.env.proposalModel]) : undefined;
+    if (proposalEnv) return proposalEnv;
   }
   return entry.defaults[slot];
 }
