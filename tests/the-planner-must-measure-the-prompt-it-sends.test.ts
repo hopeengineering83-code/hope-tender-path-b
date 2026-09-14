@@ -102,11 +102,9 @@ describe("the analysis planner measures the prompt the runtime will send", () =>
   it("refuses a single request that only fits once the fence is ignored", () => {
     const ceiling = analysisChunkPreflight("groq", filler(1_000), 0, 1, GROQ_ENV);
     assert.ok(ceiling.eligible, "the small control case must be eligible, or the sweep proves nothing");
-    const tpmLimit = ceiling.profile.freeTierTpmLimit;
-    assert.ok(typeof tpmLimit === "number", "this model must carry a throughput ceiling for the band to exist");
 
     let bandSizesFound = 0;
-    for (let chars = 10_000; chars <= 14_000; chars += 200) {
+    for (let chars = 4_000; chars <= 14_000; chars += 200) {
       const fenced = buildAnalysisPromptAsSent(filler(chars), 0, 1);
       const naked = fenced.replace(
         /APPLICATION TRUST BOUNDARY:[\s\S]*?BEGIN_UNTRUSTED_APPLICATION_DATA_[0-9a-f-]{36}\n\n/,
@@ -118,8 +116,15 @@ describe("the analysis planner measures the prompt the runtime will send", () =>
       // runtime actually sends does not. Every size here was certified runnable
       // before the fix and could never have run.
       if (nakedFits && !planner.eligible) bandSizesFound++;
-      // Nothing the planner certifies may be refused once the fence is counted.
-      if (planner.eligible) assert.equal(planner.reason, "OK", `certified ${chars} chars with reason ${planner.reason}`);
+      // Nothing the planner certifies may be refused once the fence is counted,
+      // and whatever it certifies must leave room for an answer.
+      if (planner.eligible) {
+        assert.equal(planner.reason, "OK", `certified ${chars} chars with reason ${planner.reason}`);
+        assert.ok(
+          planner.maxOutputTokens >= 2_048,
+          `certified ${chars} chars with only ${planner.maxOutputTokens} output tokens — too few to carry a structured extraction`,
+        );
+      }
     }
     assert.ok(
       bandSizesFound > 0,
@@ -148,17 +153,30 @@ describe("the analysis planner measures the prompt the runtime will send", () =>
     }
   });
 
-  it("still splits large sources into chunks every configured provider can receive", () => {
-    // The fix must not make the planner pessimistic to the point of refusing
-    // work it can do: a source above the soft limit is split, and each chunk
-    // must be eligible with the fence counted.
+  it("never names a provider that cannot answer the chunks it planned", () => {
+    // The fix must not make the planner optimistic in the other direction:
+    // whatever it lists as chunk-eligible must be able to answer every chunk,
+    // input AND output inside the same budget. For an 8,000-token-per-minute
+    // tier and a ~4,200-token prompt template, that means a large source has
+    // no chunk size that works — the template alone is repeated per chunk — so
+    // the honest answer is an empty eligible set, not a split that will fail.
     const plan = planAnalysisChunks(filler(20_000), GROQ_ENV);
-    assert.ok(plan.chunks.length > 1, `expected a split plan, got ${plan.chunks.length} chunk(s)`);
-    assert.deepEqual(plan.chunkEligibleProviders, ["groq"]);
-    plan.chunks.forEach((chunk, index) => {
-      const pf = analysisChunkPreflight("groq", chunk, index, plan.chunks.length, GROQ_ENV);
-      assert.ok(pf.eligible, `chunk ${index} is not eligible with the fence counted: ${pf.reason}`);
-    });
+    for (const provider of plan.chunkEligibleProviders) {
+      plan.chunks.forEach((chunk, index) => {
+        const pf = analysisChunkPreflight(provider, chunk, index, plan.chunks.length, GROQ_ENV);
+        assert.ok(pf.eligible, `${provider} was named eligible but cannot answer chunk ${index}: ${pf.reason}`);
+        assert.ok(
+          pf.maxOutputTokens >= 2_048,
+          `${provider} chunk ${index} has only ${pf.maxOutputTokens} output tokens — it would burn the budget before emitting content`,
+        );
+      });
+    }
+    // Source is preserved regardless of who can carry it.
+    const reconstructed = plan.chunks.reduce(
+      (all, chunk, index) => all + (index === 0 ? chunk : chunk.slice(1_000)),
+      "",
+    );
+    assert.equal(reconstructed.length >= 20_000 || plan.chunks.length === 1, true);
   });
 
   it("stays deterministic: the fence nonce changes but the measured size does not", () => {

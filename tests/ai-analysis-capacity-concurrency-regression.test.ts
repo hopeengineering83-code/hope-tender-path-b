@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 
 import {
   ANALYSIS_CHUNK_OVERLAP,
+  analysisChunkPreflight,
   chunkTenderContent,
   generateWithFallback,
   planAnalysisChunks,
@@ -32,7 +33,7 @@ afterEach(() => {
 });
 
 describe("adaptive AI Analyze request shape", () => {
-  it("CASE A: the owner's retained 12,122-character source keeps Groq — by splitting, not by pretending it fits", () => {
+  it("CASE A: the owner's retained 12,122-character source cannot be served by a tight-throughput free tier at ANY chunk size", () => {
     const env = providerEnv({
       GEMINI_API_KEY: "test-key",
       GEMINI_ANALYSIS_MODEL: "gemini-3.5-flash",
@@ -46,64 +47,66 @@ describe("adaptive AI Analyze request shape", () => {
     const plan = planAnalysisChunks(source, env);
     assert.equal(source.length, 12_122);
 
-    // WHAT THIS CASE USED TO ASSERT, AND WHY IT WAS WRONG.
-    // --------------------------------------------------
-    // It asserted `reason === "SINGLE_REQUEST"` and that gemini, groq and
-    // mistral were all eligible for the whole 12,122 characters in one call.
-    // That was measured against the RAW analysis prompt. The request actually
-    // sent is that prompt wrapped by protectPrompt — a trust-boundary header,
-    // two fence markers and a footer — which costs a further ~198 input tokens.
+    // WHAT THIS CASE ASSERTED BEFORE, AND WHY BOTH VERSIONS WERE WRONG.
+    // -----------------------------------------------------------------
+    // v1 asserted SINGLE_REQUEST with groq eligible for the whole source.
+    // That was measured against the raw prompt, without the trust-boundary
+    // fence, and the real fenced request was 7,242 tokens against a 7,088
+    // budget. Groq was skipped before contact.
     //
-    // Against the real, fenced request this source is 7,242 estimated input
-    // tokens for openai/gpt-oss-120b, whose free-tier budget after the minimum
-    // output reservation and margin is 7,088. Groq never accepted it. The
-    // owner's durable AiJob recorded exactly that number:
+    // v2 asserted the split "restores" groq. The owner's durable AiJob
+    // 4a678bf3 then ran it and recorded, on chunk 1:
     //
-    //   groq: Prompt exceeds the configured provider throughput budget
-    //         (7242 input tokens).
+    //   groq: Groq openai/gpt-oss-120b hit the output token budget before
+    //         producing any content (max_tokens=1335) — raise the budget
     //
-    // with Groq absent from the job's `tried:` list. So this case had frozen
-    // the defect as the expectation: the requirement was always "keep Groq in
-    // the chain for this source", and a monolith Groq refuses does the exact
-    // opposite. Splitting is what keeps Groq.
-    assert.equal(plan.reason, "EARLY_CHAIN_DIVERSITY");
-    assert.deepEqual(plan.configuredProviders.slice(0, 3), ["gemini", "groq", "mistral"]);
+    // and on chunk 2:
+    //
+    //   groq: Rate limit ... Limit 8000, Used 5777
+    //
+    // The free tier spends ONE 8,000-token-per-minute budget on input AND
+    // output. Splitting cannot rescue that here, and makes it worse: every
+    // chunk repeats the ~4,200-token prompt template inside the same minute,
+    // so more chunks means more total tokens, not fewer. There is no chunk
+    // size at which this source fits. The honest plan is therefore to leave
+    // groq out and route to a provider that can answer.
+    assert.equal(plan.configuredProviders.includes("groq"), true, "groq is configured; this is about capacity, not configuration");
     assert.equal(plan.fullRequestEligibleProviders.includes("groq"), false);
+    assert.equal(plan.chunkEligibleProviders.includes("groq"), false, "splitting must not pretend to restore a provider the tier cannot serve");
 
-    // The owner requirement, actually satisfied: Groq — canonical rank #2 —
-    // can receive every chunk of this source.
-    assert.equal(plan.chunkEligibleProviders.includes("groq"), true);
-    assert.ok(plan.chunks.length > 1);
-
-    // Splitting must not lose a character of the source.
-    const reconstructed = plan.chunks.reduce(
-      (all, chunk, index) => all + (index === 0 ? chunk : chunk.slice(ANALYSIS_CHUNK_OVERLAP)),
-      "",
-    );
-    assert.equal(reconstructed, source);
+    // The chain still has providers that CAN answer, so the source is not
+    // split for the sake of a provider that will refuse every piece of it.
+    assert.deepEqual(plan.chunkEligibleProviders, ["gemini", "mistral"]);
+    assert.equal(plan.reason, "SINGLE_REQUEST");
+    assert.deepEqual(plan.chunks, [source]);
   });
 
-  it("CASE B: restores Groq through sequential chunks when a monolith exceeds its exact TPM profile", () => {
+  it("CASE B: a source IS split when splitting genuinely restores an early provider", () => {
+    // The rule is not "never split for an early provider" — it is "only split
+    // when the split actually produces chunks that provider can answer".
+    // Gemini and Mistral carry large contexts and no free-tier throughput cap,
+    // so a source above the single-request ceiling is split for coverage, and
+    // every chunk must be answerable by the providers the plan names.
     const env = providerEnv({
       GEMINI_API_KEY: "test-key",
       GEMINI_ANALYSIS_MODEL: "gemini-3.5-flash",
-      GROQ_API_KEY: "test-key",
-      GROQ_PROPOSAL_MODEL: "openai/gpt-oss-120b",
-      GROQ_ANALYSIS_MODEL: "openai/gpt-oss-120b",
       MISTRAL_API_KEY: "test-key",
       MISTRAL_ANALYSIS_MODEL: "mistral-small-latest",
     });
-    // Represents the retained source plus canonical company/evidence context.
-    // The former ANY-provider policy kept this monolithic because Gemini and
-    // Mistral fit, even though it removed canonical rank #2 from the chain.
-    const source = "source-grounded requirement and evidence. ".repeat(500).slice(0, 20_000);
+    const source = "source-grounded requirement and evidence. ".repeat(2_000).slice(0, 60_000);
     const plan = planAnalysisChunks(source, env);
 
-    assert.equal(plan.reason, "EARLY_CHAIN_DIVERSITY");
-    assert.equal(plan.fullRequestEligibleProviders.includes("groq"), false);
-    assert.equal(plan.chunkEligibleProviders.includes("groq"), true);
+    assert.equal(plan.reason, "LARGE_SOURCE");
     assert.ok(plan.chunks.length > 1);
     assert.ok(plan.chunks.every((chunk) => chunk.length <= 8_000));
+    // Every chunk the plan produces must be answerable, output budget included.
+    for (const provider of plan.chunkEligibleProviders) {
+      plan.chunks.forEach((chunk, index) => {
+        const pf = analysisChunkPreflight(provider, chunk, index, plan.chunks.length, env);
+        assert.ok(pf.eligible, `${provider} cannot answer chunk ${index}: ${pf.reason}`);
+        assert.ok(pf.maxOutputTokens >= 2_048, `${provider} chunk ${index} output budget ${pf.maxOutputTokens} cannot carry a structured extraction`);
+      });
+    }
   });
 
   it("CASE C/D: large sources are lossless and retain final-chunk mandatory requirements", () => {
@@ -122,7 +125,7 @@ describe("adaptive AI Analyze request shape", () => {
     assert.match(plan.chunks.at(-1) ?? "", /MANDATORY unusual signed schedule/);
   });
 
-  it("CASE E: a later huge-context provider cannot force a monolith that excludes configured Groq", () => {
+  it("CASE E: canonical order is never reordered by capacity — a provider is dropped for capacity, not demoted", () => {
     const env = providerEnv({
       GROQ_API_KEY: "test-key",
       GROQ_PROPOSAL_MODEL: "openai/gpt-oss-120b",
@@ -131,21 +134,21 @@ describe("adaptive AI Analyze request shape", () => {
       OPENAI_ANALYSIS_MODEL: "gpt-4.1",
     });
     const plan = planAnalysisChunks("x".repeat(20_000), env);
-    // Exactly two providers are configured, so the whole list is assertable.
-    // The relative claim is stated too, because that is what this case is
-    // about: groq is canonical rank 2 and openai rank 7, and no later
-    // huge-context provider may reorder them. Written as an absolute prefix
-    // alone, this assertion used to fail whenever the machine running the
-    // suite had a third provider configured — which put that provider at its
-    // own correct canonical position, not at a wrong one.
+
+    // Configuration order is canonical and capacity never touches it: groq is
+    // canonical rank 2 and openai rank 7, whatever either can currently carry.
     assert.deepEqual(plan.configuredProviders, ["groq", "openai"]);
     assert.ok(
       plan.configuredProviders.indexOf("groq") < plan.configuredProviders.indexOf("openai"),
-      "groq precedes openai in the canonical order regardless of what else is configured",
+      "canonical order must not be rewritten by capacity",
     );
-    assert.equal(plan.fullRequestEligibleProviders.includes("groq"), false);
-    assert.equal(plan.chunkEligibleProviders.includes("groq"), true);
-    assert.equal(plan.reason, "EARLY_CHAIN_DIVERSITY");
+
+    // Eligibility is a separate question from order. This source is far past
+    // what an 8,000-token-per-minute tier can answer at any chunk size, so
+    // groq is absent from the eligible sets — dropped on measured capacity,
+    // while openai, which can carry it, remains.
+    assert.equal(plan.chunkEligibleProviders.includes("groq"), false);
+    assert.equal(plan.chunkEligibleProviders.includes("openai"), true);
   });
 
   it("chunks oversized sources without dropping the final page or overlap boundaries", () => {
@@ -169,6 +172,7 @@ describe("adaptive AI Analyze request shape", () => {
     assert.match(source, /const CONCURRENCY_LIMIT = 1;/);
     assert.doesNotMatch(source, /concurrent analysis calls \(limit=3\)/);
   });
+
 });
 
 describe("structured response fall-through", () => {

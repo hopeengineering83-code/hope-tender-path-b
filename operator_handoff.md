@@ -80,9 +80,45 @@ wrapped in the trust-boundary header, fence markers and footer. That wrapper
 costs a fixed ~198 estimated input tokens. 7,044 + 198 = **7,242** — the exact
 figure in the owner's durable AiJob, with Groq absent from its `tried:` list.
 
-The planner now measures the prompt it actually sends. That source plans as two
-chunks of 6,265 and 5,545 tokens, **both inside Groq's free-tier budget**. Groq
-serves it on the free tier with no credit and no configuration change.
+The planner now measures the prompt it actually sends, and the owner's durable
+AiJob `4a678bf3` (19:03:42Z, after the fix deployed) proves it: `All 2 chunked
+analysis calls failed` — two chunks, with **groq present in chunk 1's `tried:`
+list**. It was contacted, not skipped. The request-shape defect is fixed.
+
+**CORRECTING THE CORRECTION ABOVE.** That same job then showed the deeper truth,
+and it partly vindicates the original claim this entry withdrew:
+
+```
+chunk 1  groq: hit the output token budget before producing any content
+               (max_tokens=1335) — raise the budget
+chunk 2  groq: Rate limit ... Limit 8000, Used 5777
+```
+
+Groq's free tier spends **one** 8,000-token-per-minute budget on input **and**
+output. A 6,265-token chunk leaves 1,335 for the answer, and `gpt-oss-120b` is a
+reasoning model that spends budget thinking before it emits anything. Splitting
+cannot rescue this and makes it worse: every chunk repeats the ~4,200-token
+prompt template inside the same minute, so more chunks means more tokens, not
+fewer. Measured across candidate output floors:
+
+| min output | input ceiling | chars/chunk | chunks | tokens/minute vs 8,000 |
+|---|---|---|---|---|
+| 1,024 | 6,576 | 9,456 | 2 | ~15,200 — exceeds |
+| 1,536 | 6,064 | 7,408 | 2 | ~15,200 — exceeds |
+| 2,048 | 5,552 | 5,360 | 3 | ~22,800 — exceeds |
+
+**There is no chunk size at which this source fits Groq's free tier.** So the
+original "Groq cannot serve a real analysis on the free tier" was substantially
+right, for a reason nobody had stated: input+output in one throughput window,
+not input alone.
+
+What stays withdrawn is the remedy. "Credit on OpenAI or DeepSeek is the
+cheapest route to redundancy" is still wrong: **Gemini and Z.ai are free and
+both reach ANALYSIS_VERIFIED**, and the chain routes to them once Groq is
+honestly excluded. `minUsefulOutputTokens(useCase)` now sets the floor per use
+case — 2,048 for extraction, above the 1,335 measured producing nothing — so a
+provider that cannot answer is refused before dispatch and the attempt goes to
+one that can.
 
 Do not buy provider credit to make AI Analyze work on this source.
 

@@ -31,6 +31,49 @@ const SAFETY_MARGIN_FRACTION = 0.05;
 const MIN_USEFUL_OUTPUT_TOKENS = 512;
 
 /**
+ * The smallest output budget that can actually CARRY this use case's result.
+ *
+ * THE DEFECT THIS FIXES, read off the owner's durable AiJob 4a678bf3.
+ * ------------------------------------------------------------------
+ * A single 512-token floor decided eligibility for every use case. Groq's
+ * free tier spends ONE 8,000-token-per-minute budget on input and output
+ * together, so a 6,265-token analysis chunk left 1,335 tokens for the answer.
+ * 1,335 clears a 512 floor, so preflight called the request viable. The run
+ * recorded:
+ *
+ *   groq: Groq openai/gpt-oss-120b hit the output token budget before
+ *         producing any content (max_tokens=1335) — raise the budget
+ *
+ * Zero content. `gpt-oss-120b` is a reasoning model: it spends budget thinking
+ * before it emits anything, and a structured extraction has to emit a whole
+ * JSON object of requirements. "Enough room to say something" is not one
+ * number — it depends on what the caller asked for. Splitting the source
+ * smaller does not help either, because every chunk repeats the ~4,200-token
+ * prompt template inside the same per-minute budget.
+ *
+ * So the floor is per use case, and an analysis chunk that cannot be answered
+ * is refused BEFORE dispatch, leaving the attempt for a provider that can
+ * answer it — which is what the fallback chain is for.
+ *
+ * The values are ordered by what the response has to contain, and 2,048 for
+ * extraction is set above the 1,335 that was measured producing nothing.
+ */
+export function minUsefulOutputTokens(useCase: AiUseCase): number {
+  switch (useCase) {
+    // A structured JSON object: requirements, client details, evaluation
+    // criteria, submission rules, each with source traceability.
+    case "extraction":
+      return 2_048;
+    // Prose long enough to be a proposal section rather than a stub.
+    case "proposal":
+      return 1_024;
+    // Short verdicts and classifications answer inside the base floor.
+    default:
+      return MIN_USEFUL_OUTPUT_TOKENS;
+  }
+}
+
+/**
  * Estimate the input token count for a prompt. Conservative 4-chars-per-token.
  */
 export function estimateInputTokens(prompt: string): number {
@@ -81,12 +124,13 @@ export function preflightProvider(
   const contextLimit = profile.contextTokens;
   const requestedOutputTokens = Math.min(profile.maxOutputTokens, getProviderOutputCap(provider, useCase));
   const contextSafetyMargin = Math.max(128, Math.ceil(contextLimit * SAFETY_MARGIN_FRACTION));
+  const minOutputTokens = minUsefulOutputTokens(useCase);
 
   // A request is viable only if the complete input, a useful response, and a
   // safety margin fit. Previously preflight checked input alone, while the
   // adapter additionally reserved 3–4K output tokens; Groq therefore received
   // known-over-limit requests despite a green preflight.
-  if (estimatedTokens + MIN_USEFUL_OUTPUT_TOKENS + contextSafetyMargin > contextLimit) {
+  if (estimatedTokens + minOutputTokens + contextSafetyMargin > contextLimit) {
     return {
       provider,
       eligible: false,
@@ -105,7 +149,7 @@ export function preflightProvider(
   if (
     profile.freeTierTpmLimit !== null && estimatedTokens > profile.freeTierTpmLimit
     || profile.freeTierTpmLimit !== null
-      && estimatedTokens + MIN_USEFUL_OUTPUT_TOKENS
+      && estimatedTokens + minOutputTokens
         + Math.max(128, Math.ceil(profile.freeTierTpmLimit * SAFETY_MARGIN_FRACTION)) > profile.freeTierTpmLimit
   ) {
     return {
@@ -136,7 +180,7 @@ export function preflightProvider(
     model: profile.model,
     profile,
     safeMessage: "OK",
-    maxOutputTokens: Math.max(MIN_USEFUL_OUTPUT_TOKENS, Math.min(requestedOutputTokens, availableOutputTokens)),
+    maxOutputTokens: Math.max(minOutputTokens, Math.min(requestedOutputTokens, availableOutputTokens)),
   };
 }
 
@@ -173,14 +217,19 @@ export function maxAcceptableInputTokens(
   const profile = modelOverride
     ? resolveModelProfile(provider, modelOverride)
     : resolveActiveModelProfile(provider, useCase, env ?? process.env);
+  // The SAME per-use-case floor preflightProvider applies. Reported ceilings
+  // and real verdicts drifting apart is the defect this whole function exists
+  // to prevent; a shared constant that one side has since outgrown would
+  // reintroduce it quietly.
+  const minOutputTokens = minUsefulOutputTokens(useCase);
   const contextCeiling = profile.contextTokens
-    - MIN_USEFUL_OUTPUT_TOKENS
+    - minOutputTokens
     - Math.max(128, Math.ceil(profile.contextTokens * SAFETY_MARGIN_FRACTION));
   if (profile.freeTierTpmLimit === null) {
     return { tokens: Math.max(0, contextCeiling), model: profile.model, limitedBy: "context" };
   }
   const throughputCeiling = profile.freeTierTpmLimit
-    - MIN_USEFUL_OUTPUT_TOKENS
+    - minOutputTokens
     - Math.max(128, Math.ceil(profile.freeTierTpmLimit * SAFETY_MARGIN_FRACTION));
   return throughputCeiling < contextCeiling
     ? { tokens: Math.max(0, throughputCeiling), model: profile.model, limitedBy: "throughput" }
