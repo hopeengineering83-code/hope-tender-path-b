@@ -295,6 +295,32 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
   `dpl_31rRTas3FfuCgxATf6JT5vSNtort` Ready, `/api/health` healthy on that exact
   SHA, `schemaMatchesDeployedCode: true`, `databaseFingerprint fc31623f1e7d`.
 
+#### FULLY VERIFIED HEAD — `ae9926f7`
+
+| Check | Result |
+|---|---|
+| CI run 6559 (push) | **success** — `34888476540` |
+| CI run 6560 (pull_request) | **success** — `34888483435` |
+| `RUN_DB_INTEGRATION=true npm test` | **12,051 / 12,051 pass, 0 fail** (450.6s) |
+| `prisma generate`, `tsc --noEmit`, `next lint`, `npm run build` | clean |
+| Vercel Preview | Ready and healthy on this exact SHA |
+
+**These are the first CI runs of the session that completed.** Runs 6554
+(`38186c84`), 6555/6556 (`11fa03e8`) and 6557/6558 (`6d3e450e`) all report
+`conclusion: cancelled` — each was superseded by the next push. A cancelled run
+reports `status: "completed"`, so **read `conclusion`, never `status`**; reading
+`status` alone is what made an unfinished gate look finished earlier today.
+
+The practical lesson for whoever pushes next: rapid consecutive pushes to this
+branch cancel their own CI. Let a run finish before pushing again, or accept
+that the only real signal is the one on the final SHA.
+
+**Two commits went out red before this.** `427c3f75` and `6d3e450e` each carried
+2 failing assertions in `tests/provider-capability-result-separation.test.ts`,
+fixed in `ae9926f7`. The cause was reusing a suite result from before the change
+it was meant to cover — the same class of error this session spent the day
+fixing in the product.
+
 #### §21 FINDING, RECORDED NOT FIXED — jurisdiction asserted as universal
 
 Sector **dispatch** is fine and is not a Pharo hack: `isHealthcare`, `isWater`,
