@@ -927,9 +927,15 @@ async function runPdfFinalization(
     // exactOrder is selected because the finalized PDF inherits its position
     // from these rows. Omitting it here is what let a finalized PDF be written
     // with no position at all — see the comment on inheritedExactOrder below.
+    //
+    // contentSummary is selected for the same reason, one field over. It is the
+    // only record of WHO WROTE the proposal — generate-elite always begins it
+    // with the mode label, naming the provider or the deterministic fallback —
+    // and the finalized PDF replaces the DOCX as the deliverable. Omitting it
+    // left the artifact the client actually receives with no authorship at all.
     select: {
       id: true, name: true, exactFileName: true, exactOrder: true,
-      documentType: true,
+      documentType: true, contentSummary: true,
       format: true, generationStatus: true, validationStatus: true,
       reviewStatus: true, fileContent: true, storagePath: true,
       contentSha256: true, contentByteLength: true, integrityStatus: true,
@@ -1099,6 +1105,21 @@ async function runPdfFinalization(
             reviewStatus: "PENDING",
             reviewNotes: "machine:auto-finalize-pdf — rendered from validated DOCX source. Awaiting canonical validation.",
             ...(inheritedExactOrder != null ? { exactOrder: inheritedExactOrder } : {}),
+            // AUTHORSHIP MUST SURVIVE THE RENDER.
+            //
+            // The DOCX carries the only record of who wrote this proposal:
+            // generate-elite writes contentSummary beginning with the mode
+            // label — the provider that authored it, or the deterministic
+            // fallback. This PDF then replaces that DOCX as the deliverable.
+            //
+            // Without this line the delivered artifact had no authorship at
+            // all. On the 2026-09-15 acceptance run the tender's only visible
+            // document was 'Technical Proposal.pdf' with contentSummary null,
+            // so "was this written by a model?" — the question the whole
+            // benchmark turns on — could not be answered from the product, only
+            // guessed at. Rendering a file into another format does not change
+            // who wrote it.
+            ...(sourceDoc.contentSummary ? { contentSummary: sourceDoc.contentSummary } : {}),
             ...pdfIntegrity,
         } as const;
         const targetRow = existingPdf ?? plannedRow;
