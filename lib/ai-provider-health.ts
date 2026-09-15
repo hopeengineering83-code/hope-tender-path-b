@@ -306,6 +306,51 @@ export function recordProviderPingSuccess(provider: AiProviderName): void {
   s.lastFailureMessage = null;
 }
 
+/**
+ * Record that a DIAGNOSTIC probe proved a capability — and nothing else.
+ *
+ * THE DEFECT THIS FIXES.
+ * ----------------------
+ * The three recorders above each bundle two unrelated things: the evidence
+ * that a capability works, and a reset of the operational failure state
+ * (`consecutiveFailures`, `cooldownUntil`, `lastFailureCategory`,
+ * `lastFailureMessage`). For a REAL workload call that bundling is right — a
+ * provider that just answered a real request is demonstrably not in the state
+ * its last failure described.
+ *
+ * For a probe it is not. `runCapabilityTest` called those same recorders
+ * directly, outside `runAsDiagnostic`, so a successful probe CLEARED a live
+ * real-work cooldown, zeroed the real failure count, and erased the recorded
+ * cause — changing what tender analysis and proposal generation would attempt
+ * next.
+ *
+ * That is the mirror image of the harm the diagnostic isolation was built to
+ * prevent. The comment there says it exactly: "asking 'is this working?' would
+ * make it stop working". The inverse is just as bad. A connectivity probe is a
+ * few hundred tokens; a tender extraction is several thousand. The small one
+ * succeeding against a provider that is rate-limiting the large one is not
+ * evidence the backoff should end, and clearing it sends real work straight
+ * back into the 429 the backoff existed to space out.
+ *
+ * The reporting need is real and is preserved: deriveProviderStatus() reads
+ * these three timestamps to report CONNECTIVITY_VERIFIED / ANALYSIS_VERIFIED /
+ * GENERATION_VERIFIED, and a probe is legitimate evidence for exactly that.
+ * So the timestamp is written and the failure state is left alone. Widening
+ * what the operator can SEE is not the same as widening what routing will DO.
+ */
+export function recordProviderProbeCapability(
+  provider: AiProviderName,
+  capability: "connectivity" | "analysis" | "generation",
+): void {
+  const s = ensureState(provider);
+  const now = Date.now();
+  if (capability === "connectivity") s.lastPingSucceededAt = now;
+  else if (capability === "analysis") s.lastAnalysisSucceededAt = now;
+  else s.lastGenerationSucceededAt = now;
+  // Deliberately NOT touched: lastSuccessAt, consecutiveFailures, cooldownUntil,
+  // lastFailureCategory, lastFailureMessage. A probe observes; it does not heal.
+}
+
 // ─── Billing refusal ─────────────────────────────────────────────────────────
 //
 // A provider that answers "this account cannot pay" is skipped for a while, not

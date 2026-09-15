@@ -195,6 +195,79 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-15 UTC (latest) — A probe may observe a provider; it may not heal it
+
+- **Tool / branch / PR:** Claude Code · `release/consolidated-recovery-20260717` · PR #1175 (open, draft, unmerged).
+- **Scope:** reconciled an external Codex report against this branch before
+  changing anything, then closed the one gap that reproduced here.
+
+  **Codex finding A — provider diagnostic isolation. PARTIALLY present; gap closed.**
+  The FAILURE direction was already isolated and well built: `lib/ai.ts` wraps
+  every `record*` call behind an `AsyncLocalStorage` diagnostic context, and
+  `callProvider` guards `recordProviderCapabilityResult` with
+  `!isDiagnosticContext()`. A probe that finds a provider rate-limited cannot
+  impose that cooldown on real work.
+
+  The SUCCESS direction was not. `runCapabilityTest` recorded a passing probe by
+  calling `recordProviderPingSuccess` / `recordProviderAnalysisSuccess` /
+  `recordProviderSuccess` directly, OUTSIDE `runAsDiagnostic`, so nothing
+  intercepted them — and each of those also sets `cooldownUntil = null`,
+  `consecutiveFailures = 0`, `lastFailureCategory = null`,
+  `lastFailureMessage = null`. A successful probe therefore cleared a live
+  real-work cooldown, healed the failure count, and erased the recorded cause.
+
+  The in-code justification was that "promoting a success can only widen what
+  routing will attempt; it cannot impose a cooldown". True about cooldowns, and
+  still a change to routing. A connectivity probe is a few hundred tokens; a
+  tender extraction is several thousand. The small one passing while the large
+  one is being rate-limited is not evidence the backoff should end, and clearing
+  it walks real work straight back into the 429 the backoff existed to space out.
+
+  Fix: `recordProviderProbeCapability()` writes ONLY the capability timestamp;
+  the capability test now imports that and no longer imports a workload
+  recorder at all. Operator reporting (CONNECTIVITY_VERIFIED /
+  ANALYSIS_VERIFIED / GENERATION_VERIFIED) is unchanged, because a probe is
+  still legitimate evidence of capability.
+
+  **Codex findings B/C/D — dependency upgrades and the xmldom/Mammoth adapter.
+  NOT reproduced; deliberately NOT recreated.** Current audit on this branch:
+  `npm audit --omit=dev` reports 0 vulnerabilities at every severity; the full
+  audit reports one LOW dev-only issue (postcss-selector-parser). This branch
+  pins `@xmldom/xmldom ^0.8.15` through an explicit `overrides` entry, consumed
+  by `mammoth@1.12.0`. No advisory requires 0.9.x here, so the Mammoth
+  compatibility adapter Codex described has no cause on this branch and was not
+  written. Upgrading a parser that a document extractor depends on, with no
+  security driver, would risk extraction fidelity for nothing.
+
+- **Files changed:** `lib/ai-provider-health.ts` (new probe-only recorder),
+  `lib/ai-provider-capability-test.ts` (uses it; no longer imports workload
+  recorders), `tests/a-probe-observes-it-does-not-heal.test.ts` (new),
+  `operator_handoff.md`.
+- **Tests actually run:** targeted 7/7; provider/health/diagnostic sweep
+  1659 tests across ~90 suites; full suite with DB integration
+  **12,102 / 12,102 pass, 0 fail, 0 cancelled**. `npx tsc --noEmit` clean,
+  `npx next lint` clean. Both new guards verified to FAIL against the old code
+  (workload recorders restored → wiring guard fails; a `cooldownUntil = null`
+  re-bundled into the probe recorder → behavioural guard fails).
+- **CI at the parent commit `30743512` (read by conclusion, not status):**
+  "Migrations, integrity, typecheck, lint, tests, build, and authenticated
+  isolation" success; "capture" (route/screenshot audit) success; "Reject high
+  and critical dependency vulnerabilities" success. `temporary-preview-hosted-acceptance`
+  failure — external AI-provider unavailability, explained in PR comment
+  #5682527219, not a code defect.
+- **Environment note:** four DB-backed suites failed mid-session purely because
+  the local Postgres had stopped. Restarting it and re-running gave 19/19, as
+  `CLAUDE.md` documents. Not a code regression.
+- **Risks / assumptions:** the probe no longer refreshes failure state, so a
+  provider whose cooldown is stale now waits for that cooldown to expire or for
+  a real call to succeed, rather than being freed by an operator clicking "Test
+  provider chain". That is the intended contract, and it is the safer direction.
+- **Next action:** AI Analyze remains blocked on external provider
+  availability (gemini transient 503 / 429; the rest billing or auth). All
+  code-controlled provider-routing defects are closed. Resume the end-to-end
+  benchmark the moment any provider answers.
+- **Merge status:** not reviewed. Do not merge. Do not promote Production.
+
 ### 2026-09-14 UTC (latest) — AI Analyze was refused by a prompt we mis-measured, not by a provider limit
 
 - **Tool / branch / PR:** Claude Code · `release/consolidated-recovery-20260717` · PR #1175 (open, draft, unmerged).

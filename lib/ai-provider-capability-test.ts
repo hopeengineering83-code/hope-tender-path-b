@@ -45,9 +45,7 @@ import {
 } from "./ai-provider-registry";
 import {
   recordDiagnosticObservation,
-  recordProviderPingSuccess,
-  recordProviderAnalysisSuccess,
-  recordProviderSuccess,
+  recordProviderProbeCapability,
   isBillingLockedOut,
 } from "./ai-provider-health";
 import { classifyProviderError, isBillingBlocked, type AiProviderFailureCategory } from "./ai-provider-classification";
@@ -516,14 +514,20 @@ export async function runCapabilityTest(
     }
   }
 
-  // The one crossing back into workload state: a capability PROVEN by a real
-  // call is exactly the evidence deriveProviderStatus() needs to report
-  // CONNECTIVITY_VERIFIED / ANALYSIS_VERIFIED / GENERATION_VERIFIED honestly.
-  // Promoting a success can only widen what routing will attempt; it cannot
-  // impose a cooldown, which is the harm the isolation exists to prevent.
-  if (capability === "connectivity") recordProviderPingSuccess(provider);
-  else if (capability === "analysis") recordProviderAnalysisSuccess(provider);
-  else recordProviderSuccess(provider);
+  // A capability PROVEN by a real call is exactly the evidence
+  // deriveProviderStatus() needs to report CONNECTIVITY_VERIFIED /
+  // ANALYSIS_VERIFIED / GENERATION_VERIFIED honestly, so the probe records it.
+  //
+  // It records ONLY that. This previously called the workload recorders
+  // (recordProviderPingSuccess / recordProviderAnalysisSuccess /
+  // recordProviderSuccess), each of which also clears cooldownUntil,
+  // consecutiveFailures and the recorded failure cause. The reasoning was that
+  // "promoting a success can only widen what routing will attempt; it cannot
+  // impose a cooldown" -- true about cooldowns, and still a change to routing.
+  // A few-hundred-token connectivity probe succeeding against a provider that
+  // is rate-limiting a several-thousand-token extraction is not evidence the
+  // backoff should end; clearing it walks real work straight back into the 429.
+  recordProviderProbeCapability(provider, capability);
 
   return record("ok", null, null);
 }
