@@ -70,6 +70,21 @@ describe("adaptive AI Analyze request shape", () => {
     // so more chunks means more total tokens, not fewer. There is no chunk
     // size at which this source fits. The honest plan is therefore to leave
     // groq out and route to a provider that can answer.
+    //
+    // WHY A CHUNK-SIZE SEARCH LOOKS LIKE IT WORKS, AND DOES NOT.
+    // ---------------------------------------------------------
+    // preflightProvider answers a PER-REQUEST question, and per request a
+    // small enough chunk genuinely passes: at ~4,900 characters this exact
+    // configuration reports groq ELIGIBLE, reason OK. Deriving a chunk size
+    // from maxAcceptableInputTokens() and searching down until preflight
+    // agrees therefore "restores" groq, and the plan looks repaired.
+    //
+    // It is not, because the free tier's 8,000 is tokens PER MINUTE across the
+    // whole job, not per request. Three chunks that each fit alone do not fit
+    // together, which is precisely what the durable run above recorded on its
+    // second chunk: "Limit 8000, Used 5777". A per-request verdict cannot
+    // answer a per-job throughput question, and treating it as though it can
+    // is how v2 was arrived at the first time.
     assert.equal(plan.configuredProviders.includes("groq"), true, "groq is configured; this is about capacity, not configuration");
     assert.equal(plan.fullRequestEligibleProviders.includes("groq"), false);
     assert.equal(plan.chunkEligibleProviders.includes("groq"), false, "splitting must not pretend to restore a provider the tier cannot serve");
