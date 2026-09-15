@@ -966,6 +966,68 @@ jobs:
                       print(f"      {line}")
           PYEOF
 
+      # WHY THIS EXISTS: a green acceptance run proves the pipeline completed,
+      # not that a model wrote anything. generateTenderDocuments deliberately
+      # falls back to a deterministic draft so a human always has something to
+      # review, so "AI Analyze succeeded" and "the proposal is model-backed" are
+      # two different claims and only one of them is visible in a workflow's
+      # step list. This prints the authorship the product already records.
+      - name: Read who actually authored this analysis and these documents
+        run: |
+          tid="${{ inputs.tender_id }}"
+          if [ -z "$tid" ]; then
+            curl -sS --connect-timeout 15 --max-time 45 \
+              -H "Cookie: hope_session=$SESSION_COOKIE" \
+              "$BASE_URL/api/tenders" > /tmp/tenders-auth.json || true
+            tid=$(python3 -c "import json;d=json.load(open('/tmp/tenders-auth.json'));r=d if isinstance(d,list) else (d.get('items') or d.get('tenders') or []);print((r[0] or {}).get('id','') if r else '',end='')" 2>/dev/null || echo "")
+          fi
+          if [ -z "$tid" ]; then
+            echo "AUTHORSHIP: NOT READ -- no tender id discovered"
+            exit 0
+          fi
+          curl -sS --connect-timeout 15 --max-time 45 \
+            -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/tenders/$tid/analysis-quality" > /tmp/analysis-quality.json || true
+          curl -sS --connect-timeout 15 --max-time 45 \
+            -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/tenders/$tid/documents" > /tmp/documents.json || true
+          python3 - <<'PYEOF' | tee /tmp/authorship.txt
+          import json
+
+          def load(path):
+              try:
+                  return json.load(open(path, encoding="utf-8"))
+              except Exception as exc:
+                  return {"__unreadable__": str(exc)}
+
+          q = load('/tmp/analysis-quality.json')
+          if "__unreadable__" in q:
+              print(f"ANALYSIS AUTHORSHIP: NOT READ ({q['__unreadable__']})")
+          else:
+              print(f"ANALYSIS AUTHORSHIP: analysisSource={q.get('analysisSource')!r}")
+              for key in ("analysisSourceLabel", "analysisSourceRisk", "ready", "score"):
+                  if key in q:
+                      print(f"  {key}={q[key]!r}")
+
+          d = load('/tmp/documents.json')
+          if "__unreadable__" in d:
+              print(f"DOCUMENT AUTHORSHIP: NOT READ ({d['__unreadable__']})")
+              raise SystemExit(0)
+          docs = d.get("documents") or d.get("items") or (d if isinstance(d, list) else [])
+          if not docs:
+              print(f"DOCUMENT AUTHORSHIP: no documents; top-level keys = {sorted(d) if isinstance(d, dict) else type(d).__name__}")
+              raise SystemExit(0)
+          print(f"DOCUMENT AUTHORSHIP: {len(docs)} document(s)")
+          for doc in docs:
+              summary = str(doc.get("contentSummary") or "")
+              # The summary always begins with the mode label, so the first
+              # clause says whether a provider or the deterministic draft wrote
+              # it. Print that rather than the whole paragraph.
+              head = summary.split(".")[0][:160] if summary else "(no contentSummary)"
+              print(f"  - {doc.get('fileName') or doc.get('name')!r}")
+              print(f"      reviewStatus={doc.get('reviewStatus')!r} mode={head!r}")
+          PYEOF
+
       - name: Read Preview health
         run: |
           curl -sS --connect-timeout 15 --max-time 45 "$BASE_URL/api/health" > /tmp/preview-health.json || true
@@ -1058,6 +1120,7 @@ jobs:
           path: |
             /tmp/vault-inspection.txt
             /tmp/ai-analyze-failures.txt
+            /tmp/authorship.txt
             /tmp/provider-chain.txt
             /tmp/provider-chain.jsonl
             /tmp/preview-health.txt
