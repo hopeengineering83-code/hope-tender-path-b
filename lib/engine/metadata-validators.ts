@@ -294,7 +294,7 @@ export function isValidClientContact(value: string | null | undefined): boolean 
 // "X Procuring Entity / Client Name: X Legal Client Name: X Project Name: Y"
 // are several extracted fields concatenated with their labels (observed live
 // on the dashboard pipeline) and must be treated as contaminated.
-const EMBEDDED_FIELD_LABEL = /\b(?:client|legal\s+client|project|entity|contact(?:\s+person)?|procuring\s+entity|reference)\s*(?:name)?\s*:/i;
+export const EMBEDDED_FIELD_LABEL = /\b(?:client|legal\s+client|project|entity|contact(?:\s+person)?|procuring\s+entity|reference)\s*(?:name)?\s*:/i;
 
 export function isClientNameContaminated(value: string | null | undefined): boolean {
   const text = (value ?? "").trim();

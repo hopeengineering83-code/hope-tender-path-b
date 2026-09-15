@@ -52,6 +52,12 @@ import {
   isPhysicalSubmissionMethod,
   isEmailSubmissionMethod,
 } from "./submission-method-policy";
+// Entity-identity field labels. The vocabulary is declared once in
+// metadata-validators.ts, which already used it for clientName alone; importing
+// it here rather than restating it is what stops the two contamination
+// authorities drifting apart again (same reasoning as the
+// METADATA_PLACEHOLDER_PATTERNS re-export above).
+import { EMBEDDED_FIELD_LABEL } from "./metadata-validators";
 
 // Criticality classification here is kept in lock-step with the canonical
 // tender-policy registry (lib/engine/tender-policy-registry.ts), which imports
@@ -228,6 +234,31 @@ export const METADATA_CONTAMINATION_PATTERNS: Array<{ rx: RegExp; signal: string
   { rx: /\bReference\s+(?:No|Number)\s*:/i, signal: "PORTAL_REFERENCE_LABEL_BLEED" },
   // "Print" / "Share" standalone portal nav items (only flag as noise in short values)
   { rx: /^\s*(?:Print|Share|Download|Save)\s*$/i, signal: "PORTAL_ACTION_BUTTON_TEXT" },
+  // Extraction-label echo: several extracted fields concatenated WITH their own
+  // labels into one value, e.g.
+  //   "<entity> Procuring Entity / Client Name: <entity> Legal Client Name:
+  //    <entity> Project Name: <project>"
+  //
+  // Two detectors disagreed about that string, and the gates read the wrong one.
+  // metadata-validators.isClientNameContaminated has recognised this shape for
+  // some time -- its own comment quotes it as observed live -- but it is only
+  // consulted by pre-generation-validation and the dashboard badge. The
+  // generation, export and Final-ZIP gates all descend from
+  // Tender.metadataContaminated, which canonical-analysis-update computes with
+  // THIS table, and this table knew only about portal scrape noise.
+  //
+  // So on 2026-09-15 a client name carrying three embedded field labels came
+  // back EXTRACTED_AND_GROUNDED, isValid, and eligible for generation, export
+  // and ZIP -- while the other detector, looking at the same bytes, called it
+  // contaminated. Acceptance criterion 6 says such a value must block final
+  // generation, and it did not.
+  //
+  // The vocabulary is imported, not restated, so there is one authority. It
+  // covers every field this table is applied to (client name, legal name,
+  // donor, implementing agency, both addresses, contact name): an identity
+  // value that contains the NAME OF A FIELD is a concatenation artefact
+  // whichever field it landed in.
+  { rx: EMBEDDED_FIELD_LABEL, signal: "EMBEDDED_FIELD_LABEL_BLEED" },
 ];
 
 export function detectMetadataContamination(value?: string | null): { contaminated: boolean; signal: string | null } {
