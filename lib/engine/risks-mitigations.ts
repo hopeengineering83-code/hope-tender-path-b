@@ -12,6 +12,8 @@
  * contain a "Risk Register" or "Risks and Mitigations" heading.
  */
 
+import { resolveJurisdictionTokens } from "./jurisdiction-instruments";
+
 type SectorRisk = { risk: string; impact: "High" | "Medium" | "Low"; likelihood: "High" | "Medium" | "Low"; mitigation: string };
 
 function escCell(text: string): string {
@@ -166,7 +168,7 @@ function risksForSector(primarySector: string): SectorRisk[] {
     { risk: "Utility load calculations underestimating peak demand", impact: "Medium", likelihood: "Medium", mitigation: "Utility demand schedule prepared at concept stage with 20% contingency; verified against equipment vendor data at 60% design; load management plan included in O&M manual." },
   ];
   if (/high.?rise|tall.*build|tower.*build|multi.?stor.*build|\bG\+\d{2,}\b/.test(sector)) return [
-    { risk: "Structural design non-compliance with seismic code rejected by authority", impact: "High", likelihood: "Medium", mitigation: "Structural calculations prepared to EBCS-8/EN 1998 using ETABS/SAP2000; submitted to authority in prescribed format; independent peer review by registered structural engineer before submission." },
+    { risk: "Structural design non-compliance with seismic code rejected by authority", impact: "High", likelihood: "Medium", mitigation: "Structural calculations prepared to {{JURISDICTION:SEISMIC_CODE_FAMILY}} using ETABS/SAP2000; submitted to authority in prescribed format; independent peer review by registered structural engineer before submission." },
     { risk: "BIM coordination clashes discovered late causing re-design cost", impact: "High", likelihood: "Medium", mitigation: "LOD 300 BIM coordination model with weekly clash-detection report; MEP routing confirmed against structural layout before shop drawings are issued." },
     { risk: "Curtain-wall water infiltration failure during first rainy season", impact: "High", likelihood: "Low", mitigation: "Curtain-wall performance specification includes air-water-structural test protocol (ASTM E330/E331/E283); mock-up panel tested before bulk fabrication; architect's site review at every level." },
     { risk: "Transfer structure capacity error causing structural failure risk", impact: "High", likelihood: "Low", mitigation: "Transfer beam/slab analysis peer-reviewed by independent structural engineer before construction commences; hold-point inspection at formwork, rebar, and concrete pour stages." },
@@ -202,8 +204,16 @@ function risksForSector(primarySector: string): SectorRisk[] {
   ];
 }
 
-export function buildRisksMitigationsTable(opts: { primarySector: string; clientName: string }): string {
-  const risks = risksForSector(opts.primarySector);
+export function buildRisksMitigationsTable(opts: {
+  primarySector: string;
+  clientName: string;
+  /**
+   * The tender's own text. One mitigation names a seismic code; it is named
+   * only when this text names it, and described by function otherwise.
+   */
+  sourceText?: string;
+}): string {
+  const risks = risksForSector(opts.primarySector).map((r) => ({ ...r, mitigation: resolveJurisdictionTokens(r.mitigation, opts.sourceText) }));
   const rows = risks.map((r) => `| ${escCell(r.risk)} | ${r.impact} | ${r.likelihood} | ${escCell(r.mitigation)} |`);
 
   return [

@@ -17,6 +17,7 @@ import { injectBeyondSpecTables } from "../lib/engine/beyond-spec-tables";
 import { canonicalWorkPlan } from "../lib/engine/canonical-work-plan";
 import { enrichSectorVocabulary } from "../lib/engine/sector-vocabulary-enricher";
 import { buildValueFrameworkTable } from "../lib/engine/benchmark-tables";
+import { buildRisksMitigationsTable } from "../lib/engine/risks-mitigations";
 
 /**
  * THE DEFECT.
@@ -261,36 +262,84 @@ describe("a deterministic table names a regulator only when a source names it", 
     assertNoUnresolvedToken(kenyanFramework, "Kenyan value framework");
   });
 
-  it("no deterministic builder still asserts an instrument outside the catalogue", () => {
+  it("the risk register mitigation and the geotech QA line follow the tender's country", () => {
+    const risks = (sourceText: string) =>
+      buildRisksMitigationsTable({ primarySector: "High-Rise & Multi-Storey Buildings", clientName: "Client", sourceText });
+    assert.match(risks(ETHIOPIAN_HIGH_RISE), /EBCS \/ ES EN 1998/);
+    const kenyanRisks = risks(KENYAN_HIGH_RISE);
+    assertNamesNoInstrument(kenyanRisks, "Kenyan risk register");
+    assertNoUnresolvedToken(kenyanRisks, "Kenyan risk register");
+
+    // Where international standards are already named alongside it, only the
+    // NATIONAL standard is conditional — ASTM and BS survive either way.
+    const geo = (sourceText: string) =>
+      resolveJurisdictionTokens("standards (ASTM / BS / {{JURISDICTION:NATIONAL_MATERIALS_STANDARD}})", sourceText);
+    assert.equal(geo("testing to EBCS"), "standards (ASTM / BS / EBCS)");
+    assert.equal(geo("testing in Nairobi"), "standards (ASTM / BS / the applicable national standard)");
+  });
+
+  it("no module anywhere in lib/ still asserts an instrument outside the catalogue", () => {
     // The point of the fix is that there is ONE place a jurisdiction instrument
-    // is named. A new hard-coded assertion in a builder would reintroduce the
-    // defect on a route the fixtures above do not happen to reach, so the
-    // builders are checked as source text, with comments stripped.
+    // is named. Checking only the builders the fixtures reach is how three more
+    // sites — a risk mitigation, a geotech QA line, and a cover-page example
+    // priming the writer with ETB and a national licensor — survived the first
+    // pass of this work. So the whole tree is scanned as source text, with
+    // comments stripped.
+    //
+    // lib/ai.ts is exempt from the STRING scan and checked separately below: it
+    // holds the specific arms of its own instrument() calls, which are correct.
     const ASSERTIONS = [
-      /"[^"]*Ethiopian (?:Health Authority|EPA|seismic)/,
+      /"[^"]*Ethiopian (?:Health Authority|EPA|seismic|Building Code|Construction Authority)/,
       /"[^"]*AA City/,
       /"[^"]*EBCS-8/,
-      /"[^"]*EBCS ?\/ ?(?:ASTM|ES EN)/,
+      /"[^"]*EBCS ?\/ ?(?:ASTM|ES EN|EN 199)/,
       /"[^"]*ERA ?\/ ?AASHTO/,
       /"[^"]*AASHTO ?\/ ?ERA/,
     ];
-    const BUILDERS = [
-      "lib/engine/proposal-intelligence.ts",
-      "lib/engine/methodology-tables.ts",
-      "lib/engine/proposal-sections.ts",
-      "lib/engine/canonical-work-plan.ts",
-      "lib/engine/beyond-spec-tables.ts",
-      "lib/engine/sector-vocabulary-enricher.ts",
-      "lib/engine/benchmark-tables.ts",
-      "lib/engine/deliverable-qa-checklist.ts",
-      "lib/engine/section-c-depth-amplifier.ts",
-    ];
-    for (const file of BUILDERS) {
-      const source = codeOnly(readFileSync(file, "utf8"));
-      for (const rx of ASSERTIONS) {
-        const hit = source.match(rx);
-        assert.equal(hit, null, `${file} asserts a jurisdiction instrument directly: ${hit?.[0]}`);
+    const EXEMPT = new Set(["lib/engine/jurisdiction-instruments.ts", "lib/ai.ts"]);
+
+    const offenders: string[] = [];
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name);
+        if (entry.isDirectory()) walk(path);
+        else if (/\.(ts|tsx|cjs)$/.test(entry.name) && !EXEMPT.has(path)) {
+          const source = codeOnly(readFileSync(path, "utf8"));
+          for (const rx of ASSERTIONS) {
+            const hit = source.match(rx);
+            if (hit) offenders.push(`${path}: ${hit[0].slice(0, 90)}`);
+          }
+        }
       }
+    };
+    walk("lib");
+    assert.deepEqual(offenders, [], `modules asserting a jurisdiction instrument directly:\n${offenders.join("\n")}`);
+  });
+
+  it("every instrument lib/ai.ts names sits behind its own source test", () => {
+    // ai.ts is prompt register, not prose, so it keeps its own wordings — but
+    // every Ethiopian instrument it names must be an argument to instrument(),
+    // never a bare string. A cover-page EXAMPLE counts: showing the writer
+    // "ETB 675M+" primes exactly the fabricated currency the rest of this work
+    // exists to prevent.
+    const source = codeOnly(readFileSync("lib/ai.ts", "utf8"));
+    const NAMED = /(?:Ethiopian (?:Health Authority|EPA|seismic)|AA City|EBCS|\bERA\b|\bETB\b|EIASC)/g;
+    const unguarded: string[] = [];
+    for (const line of source.split("\n")) {
+      if (!NAMED.test(line)) { NAMED.lastIndex = 0; continue; }
+      NAMED.lastIndex = 0;
+      // A line is guarded when the instrument sits inside an instrument(...)
+      // call; when it is a DETECTION regex, which asserts nothing; or when it
+      // is an enumerated multi-currency EXAMPLE LIST. That last exemption is
+      // narrow and deliberate: "(e.g. USD, ETB, KES, NGN, TZS, INR, AED)" shows
+      // the model the SHAPE of an ISO 4217 code across four continents, which
+      // is the opposite of steering it toward one country's currency.
+      const currencyExampleList = /ISO 4217[^"]*USD[^"]*KES/.test(line);
+      const guarded = /instrument\(/.test(line)
+        || currencyExampleList
+        || /\/[^/]*\bi?\b[^/]*\/[gimsuy]*\.test|test\(|triggers:|proofTerms:|match\(|replace\(|\.exec\(/.test(line);
+      if (!guarded) unguarded.push(line.trim().slice(0, 120));
     }
+    assert.deepEqual(unguarded, [], `lib/ai.ts names an instrument outside instrument():\n${unguarded.join("\n")}`);
   });
 });

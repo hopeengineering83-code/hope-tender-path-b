@@ -195,7 +195,67 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
-### 2026-09-15 UTC (latest) — A deterministic table names a regulator only when a source names it
+### 2026-09-15 UTC (latest) — The guard that finds the sites my reading missed
+
+- **Tool / branch / PR:** Claude Code · `release/consolidated-recovery-20260717` · PR #1175 (open, draft, unmerged).
+- **Scope:** the previous entry's guard checked only the NINE builders its
+  fixtures reach. Sweeping the whole tree with that same rule found four more
+  sites of the same class, none of which was on any deferred list:
+
+  1. `risks-mitigations.ts` — a mitigation asserting `EBCS-8/EN 1998` for any
+     tender that triggers the structural branch.
+  2. `section-c-depth-amplifier.ts` — `(ASTM / BS / EBCS)`, where the two
+     international standards are correct everywhere and only the national one
+     is jurisdictional. New catalogue key `NATIONAL_MATERIALS_STANDARD` covers
+     exactly that shape.
+  3. `lib/ai.ts` cover-page EXAMPLES — the healthcare example showed the writer
+     `ETB 675M+ Healthcare Portfolio | EIASC Grade A Licensed`, the supervision
+     example `ETB 1B+ Contract Value`, and the road example `ERA/MoT-Compliant
+     Methodology`. An example is not an assertion, but showing the model ETB is
+     how a Kenyan proposal learns to write ETB — the same fabricated currency
+     the ledger work exists to prevent.
+  4. `lib/ai.ts` instructions — **ten** occurrences of `ETB/contract value` plus
+     five more using ETB as shorthand for "the contract value" (`ETB values`,
+     `(ETB X, Client Y)`, `(ETB 18M, World Bank)`). All now say *contract value
+     in the currency the evidence states*. The instruction is unchanged; only
+     the guess is gone.
+
+  One ETB remains in `lib/ai.ts` and is correct: the extraction schema's
+  `(e.g. USD, ETB, KES, NGN, TZS, INR, AED)`. That list shows the SHAPE of an
+  ISO 4217 code across four continents, which is the opposite of steering the
+  model toward one country. The test exempts that one line by name.
+
+- **The guard is now the deliverable, not the fix.** Two tests replace the
+  nine-file scan: one walks every `.ts`/`.tsx`/`.cjs` under `lib/` and fails on
+  any direct instrument assertion, and one requires every Ethiopian instrument
+  in `lib/ai.ts` to sit inside an `instrument()` call or be a detection regex.
+  Detection regexes stay exempt because recognising a term asserts nothing.
+- **Files changed:** `lib/engine/jurisdiction-instruments.ts`,
+  `lib/engine/risks-mitigations.ts`, `lib/engine/section-c-depth-amplifier.ts`,
+  `lib/engine/generate-elite.ts`, `lib/ai.ts`,
+  `tests/a-deterministic-table-names-a-regulator-only-when-a-source-names-it.test.ts`,
+  `operator_handoff.md`.
+- **Tests actually run:** targeted 12/12; full suite with DB integration
+  **12,134 / 12,134 pass, 0 fail, 0 cancelled**; `tsc` clean; `next lint` clean.
+- **CI:** exact-head CI on `cf153e51` verified green by CONCLUSION (CI push
+  6591, CI pull_request 6592, dependency audit, route/screenshot audit — all
+  `success`). CI on `5e2518ca` was still running when this was written; the
+  next session must read its conclusion rather than assume it.
+- **Hosted acceptance:** failed again on `ee2d8cfe` with the SAME external
+  cause, now the seventh consecutive run — `Contacted 0 of 10 configured
+  provider(s) ... (tried: none — all skipped)`, gemini/mistral/zai in cooldown,
+  groq over its throughput budget at 7242 input tokens, and
+  cerebras/openrouter/openai/deepseek/anthropic in billing lockout. Not a code
+  regression, and not commented again on the PR. The release-readiness gate
+  added earlier behaved correctly: it stopped at *"AI Analyze is not
+  release-ready, so Run Engine cannot run"* with the durable cause printed,
+  instead of describing work the run never produced.
+- **Next action:** #48 — monetary-statement classification audit (A–G) on
+  delivered bytes, which needs a real generated artifact and so is blocked with
+  #46/#51 on provider credit, not on code.
+- **Merge status:** not reviewed. Do not merge. Do not promote Production.
+
+### 2026-09-15 UTC — A deterministic table names a regulator only when a source names it
 
 - **Tool / branch / PR:** Claude Code · `release/consolidated-recovery-20260717` · PR #1175 (open, draft, unmerged).
 - **Scope:** closes the gap the previous entry left open. The writer prompts in

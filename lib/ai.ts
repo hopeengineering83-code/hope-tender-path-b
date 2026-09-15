@@ -183,7 +183,7 @@ Your operating principles, in priority order:
 8. HONESTY ABOUT GAPS. If the COMPANY EVIDENCE genuinely does not support a claim, you do NOT fabricate project names, contract values, license numbers, or client references. Instead, mark the relevant compliance row as NOT MET or PARTIALLY MET with a concrete mitigation, and keep narrative claims strictly evidence-backed.
 
 9. FORBIDDEN PHRASES — automatic failure. The following phrases appear in every losing bid. Never write them. Replace with a named project, expert, contract value, or year:
-   - "extensive experience in" → instead: "delivered [Project X] (ETB Y, Client Z)"
+   - "extensive experience in" → instead: "delivered [Project X] ([contract value as the evidence states it], Client Z)"
    - "committed to excellence / quality / delivery"
    - "team of qualified professionals / experts / specialists"
    - "we look forward to the opportunity"
@@ -3576,7 +3576,7 @@ Operating principles, in priority order:
 
 2. EVIDENCE-ANCHORED. Every defect statement must cite either (a) the missing evidence (project name, contract value, license number, expert name, sector term) or (b) the forbidden language present (a quoted AI-trace phrase, a placeholder, a vague promise like "extensive experience").
 
-3. ACTIONABLE FIX SUGGESTIONS. For every defect, propose the SPECIFIC repair: "Replace 'we have extensive water experience' with the 2022 Sebeta WASH project (ETB 18M, World Bank)" — not "add a project reference".
+3. ACTIONABLE FIX SUGGESTIONS. For every defect, propose the SPECIFIC repair: "Replace 'we have extensive water experience' with the 2022 Sebeta WASH project (18M in the stated currency, World Bank)" — not "add a project reference".
 
 4. NO INVENTION. You may only reference projects, experts, license numbers, sectors, and clients that already appear in the proposal text or the supplied evidence inventory. If the evidence to fix a defect is missing entirely, say so explicitly: "EVIDENCE GAP: Section C.4 requires a JV partner reference but none is named in the firm's evidence inventory."
 
@@ -3846,7 +3846,7 @@ export async function refineProposalWithAI(input: {
 
   const axisDirectives: Record<string, string> = {
     structureCompleteness: "Add any missing canonical sections (Cover Letter, Executive Summary, Section A/B/C/D, Declaration, Submission Control Sheet). For Submission Control Sheet: include Submission Recipients (exact email), Email Subject Line, Submission Rules (deadline/format/copies from tender), Document Format Requirements, and a Pre-Submission Checklist with tick-boxes. For Section C.2 Technical Methodology: expand to at least 6 numbered sub-sections (C.2.1, C.2.2, … C.2.6) covering the scope phases — e.g. inception/mobilisation, data-collection/baseline, analysis/design, quality-review, reporting, and handover/support — mapped to the tender's scope items. Do NOT delete existing sections; only add what is missing.",
-    evidenceDensity: "Rewrite generic paragraphs (without project names, ETB values, license numbers, dates, or named clients) so each substantive paragraph carries at least one specific evidence anchor drawn from the existing project / expert references in the document. Keep all tables intact.",
+    evidenceDensity: "Rewrite generic paragraphs (without project names, contract values, license numbers, dates, or named clients) so each substantive paragraph carries at least one specific evidence anchor drawn from the existing project / expert references in the document. Keep all tables intact.",
     tableCoverage: "Where a section refers to data that should be tabular (project portfolio, team, risks, work plan, value framework), convert prose lists to Markdown tables matching the structures already used elsewhere in the document.",
     sectorVocabulary: `Strengthen the Section C technical methodology with sector-specific vocabulary appropriate to ${input.primarySector}. Use terms in context, not as a glossary list.`,
     throughlineConsistency: `Ensure these specific projects appear by name in the Cover Letter, Executive Summary, AND Section B Relevant Experience: ${input.topProjectNames.join("; ") || "the strongest comparable projects available in the document"}.`,
@@ -3870,7 +3870,7 @@ ${directives}
 Return the COMPLETE refined proposal markdown. Keep:
 - All existing section headings
 - All existing tables (do not break Markdown table syntax)
-- All existing factual claims (project names, ETB values, license numbers, dates, client names)
+- All existing factual claims (project names, contract values, license numbers, dates, client names)
 - All existing appendix references
 
 Only rewrite the prose to address the weak axes above. The output must be the FULL document, not a diff. Do NOT add explanations or commentary outside the markdown.
@@ -3986,7 +3986,7 @@ export async function generateBenchmarkProposalWithAI(params: AIBidWriterInput):
   const healthcareGuidance = isHealthcare
     ? `
 HEALTHCARE-SPECIFIC PROPOSAL GUIDANCE (mandatory for this tender):
-- Cover letter MUST cite the company's specific hospital project experience by name and ETB/contract value from the evidence.
+- Cover letter MUST cite the company's specific hospital project experience by name and contract value in the currency the evidence states from the evidence.
 - Executive Summary must lead with: "We have already delivered this assignment" framing if hospital evidence exists.
 - Team section must show each expert's ROLE on a PREVIOUS HOSPITAL PROJECT — not just qualifications.
 - Include a Team-to-Project Experience Mapping section showing expert → previous hospital project → role performed.
@@ -4020,7 +4020,7 @@ WATER/SANITATION/HYDRAULICS GUIDANCE (mandatory for this tender):
     ? `
 ROAD/BRIDGE/TRANSPORT INFRASTRUCTURE GUIDANCE (mandatory for this tender):
 - Cover letter and Executive Summary MUST cite the company's strongest road/bridge project by name, client, length/value, and country from the evidence.
-- Technical Approach must address: route survey and alignment, topographic survey control, geotechnical investigation (CBR, proctor, borehole/test pit), traffic count and design traffic (AADT, ESAL), road design standard (ERA design manual, AASHTO, or applicable), pavement design layers and thicknesses, drainage design (culverts, side drains, retention ponds), bridge/structure design (if applicable), road safety audit, environmental and social controls.
+- Technical Approach must address: route survey and alignment, topographic survey control, geotechnical investigation (CBR, proctor, borehole/test pit), traffic count and design traffic (AADT, ESAL), road design standard (AASHTO, or the national road design manual the tender names), pavement design layers and thicknesses, drainage design (culverts, side drains, retention ponds), bridge/structure design (if applicable), road safety audit, environmental and social controls.
 - Construction supervision: engineer's representative duties, materials testing programme (CBR, compaction, aggregate quality), progress reporting format, variation/claim management, interim payment certification, defects liability monitoring.
 - BOQ: earthworks quantities, surfacing, drainage structures, bridges — all linked to design drawings.
 - Handover: as-built drawings, maintenance manual, performance monitoring framework, road authority acceptance.`
@@ -4029,7 +4029,7 @@ ROAD/BRIDGE/TRANSPORT INFRASTRUCTURE GUIDANCE (mandatory for this tender):
   const buildingGuidance = isBuilding
     ? `
 BUILDING/ARCHITECTURE/SUPERVISION GUIDANCE (mandatory for this tender):
-- Cover letter and Executive Summary MUST cite the company's strongest comparable building project by name, client, and ETB/contract value from the evidence.
+- Cover letter and Executive Summary MUST cite the company's strongest comparable building project by name, client, and contract value in the currency the evidence states from the evidence.
 - Technical Approach must address: functional brief and space schedule, site analysis, architectural concept, structural system selection, MEP coordination (electrical, mechanical, plumbing), accessibility (Universal Design), life safety (fire egress, smoke control, emergency lighting), building permit documentation.
 - Design stages: concept → schematic → design development → detailed design/working drawings → construction documents.
 - Construction supervision: site inspection regime, material/shop drawing approval workflow, progress certification, variation control, quality testing (concrete cube, rebar, welding), defects register.
@@ -4082,7 +4082,7 @@ DONOR-FUNDED PROJECT COMPLIANCE GUIDANCE:
   const educationGuidance = isEducation
     ? `
 EDUCATION FACILITY DESIGN GUIDANCE (mandatory for this tender):
-- Cover letter and Executive Summary MUST cite the company's strongest comparable school/university project by name, client, and ETB/contract value from the evidence.
+- Cover letter and Executive Summary MUST cite the company's strongest comparable school/university project by name, client, and contract value in the currency the evidence states from the evidence.
 - Technical Approach must address: functional brief and space schedule (classrooms, laboratories, library, administration, sanitation, sports), accessible and inclusive design (ramps, accessible toilets, wayfinding for all users), climate-responsive design (natural ventilation, shading, daylighting, thermal comfort), structural adequacy for assembly occupancy.
 - MEP: power supply, backup generator/solar, water supply and sanitation (pupil-to-toilet ratio compliance with national standards), ICT cabling and display systems, fire detection and emergency systems.
 - Site design: boundary security, vehicular/pedestrian separation, outdoor learning and recreation areas.
@@ -4182,7 +4182,7 @@ TELECOMS / BROADBAND INFRASTRUCTURE GUIDANCE (mandatory for this tender):
   const heritageGuidance = isHeritage
     ? `
 HERITAGE CONSERVATION & ADAPTIVE REUSE GUIDANCE (mandatory for this tender):
-- Cover letter and Executive Summary MUST cite the company's strongest comparable heritage conservation or restoration project by name, building type, client, and ETB/contract value from the evidence.
+- Cover letter and Executive Summary MUST cite the company's strongest comparable heritage conservation or restoration project by name, building type, client, and contract value in the currency the evidence states from the evidence.
 - Technical Approach must address: condition survey and significance assessment (ICOMOS principles — minimum intervention, reversibility, compatibility), material-compatibility testing (XRF/petrographic) before specifying repair mortars, structural stabilisation design, MEP upgrade using reversible/compatible materials.
 - Heritage authority engagement: pre-application meeting at conservation-plan stage; conservation philosophy approved before design freeze; three-gate review (conservation plan → tender documents → construction phase).
 - Supervision: specialist contractor supervision with material-sample approval protocol; NCR register for every non-conforming intervention; photographic record at each phase.
@@ -4192,7 +4192,7 @@ HERITAGE CONSERVATION & ADAPTIVE REUSE GUIDANCE (mandatory for this tender):
   const industrialGuidance = isIndustrial
     ? `
 INDUSTRIAL & MANUFACTURING FACILITY GUIDANCE (mandatory for this tender):
-- Cover letter and Executive Summary MUST cite the company's strongest comparable industrial/factory project by name, production type, client, and ETB/contract value from the evidence.
+- Cover letter and Executive Summary MUST cite the company's strongest comparable industrial/factory project by name, production type, client, and contract value in the currency the evidence states from the evidence.
 - Technical Approach must address: process brief and production-flow analysis (value-stream mapping, lean principles), utility demand assessment (power, water, compressed air, waste streams), industrial structural design (heavy loading), HVAC/exhaust ventilation system, industrial flooring specification, fire suppression system, effluent treatment design to ${instrument(/Ethiopian EPA|\bEPA\b|WHO standard/i, "Ethiopian EPA/WHO standards", "the national environmental authority's effluent standards for the project location (WHO guidance where no national standard is stated)")}.
 - Environmental approvals: EIA/ESIA scope, effluent treatment design, waste management plan, occupational safety assessment.
 - Equipment integration: factory acceptance test (FAT) protocol; commissioning sequencing plan; operator training programme.
@@ -4202,7 +4202,7 @@ INDUSTRIAL & MANUFACTURING FACILITY GUIDANCE (mandatory for this tender):
   const highRiseGuidance = isHighRise
     ? `
 HIGH-RISE / MULTI-STOREY BUILDING GUIDANCE (mandatory for this tender):
-- Cover letter and Executive Summary MUST cite the company's strongest comparable high-rise or multi-storey project by name, floor count (G+N), structural system, client, and ETB/contract value from the evidence.
+- Cover letter and Executive Summary MUST cite the company's strongest comparable high-rise or multi-storey project by name, floor count (G+N), structural system, client, and contract value in the currency the evidence states from the evidence.
 - Technical Approach must address: structural system selection (shear wall/core-frame/hybrid) with ETABS/SAP2000 analysis incorporating ${instrument(/EBCS|ES EN 199|Ethiopian seismic/i, "the Ethiopian seismic zone (EBCS-8/ES EN 1998)", "the seismic zone and design code applicable to the project location as stated in the tender")} and wind loads, shear wall and core layout, transfer beam/slab design, foundation design (mat/pile), independent structural peer review.
 - BIM coordination: LOD 300+ full architectural/structural/MEP coordination; clash detection for MEP riser routing and structural penetrations.
 - Specialist systems: aluminium curtain wall specification, lift/car-lift design, BMS, fire alarm and suppression, generator/UPS sizing.
@@ -4213,7 +4213,7 @@ HIGH-RISE / MULTI-STOREY BUILDING GUIDANCE (mandatory for this tender):
   const hospitalityGuidance = isHospitality
     ? `
 HOSPITALITY & HOTEL DESIGN GUIDANCE (mandatory for this tender):
-- Cover letter and Executive Summary MUST cite the company's strongest comparable hotel/resort project by name, star rating, room count, client, and ETB/contract value from the evidence.
+- Cover letter and Executive Summary MUST cite the company's strongest comparable hotel/resort project by name, star rating, room count, client, and contract value in the currency the evidence states from the evidence.
 - Technical Approach must address: feasibility and development programme (room mix, F&B concept, BOH efficiency), RevPAR market benchmarking, brand-standard compliance matrix embedded from concept stage, mock guestroom constructed and approved before full fit-out.
 - Interior design: finishes schedule, FF&E specification and procurement schedule with lead-time tracking, lighting design, brand-standard compliance checklist.
 - MEP specialist systems: VRF/fan-coil guestroom HVAC, kitchen ventilation, pool/spa mechanical, AV and guest-technology design, access-control system.
@@ -4235,7 +4235,7 @@ CONSTRUCTION SUPERVISION & CONTRACT ADMINISTRATION GUIDANCE (mandatory for this 
   const geotechnicalGuidance = isGeotechnical
     ? `
 GEOTECHNICAL INVESTIGATION GUIDANCE (mandatory for this tender):
-- Cover letter and Executive Summary MUST cite the company's strongest comparable geotechnical investigation assignment by name, number of boreholes, founding depth, soil conditions encountered, client, and ETB/contract value from the evidence.
+- Cover letter and Executive Summary MUST cite the company's strongest comparable geotechnical investigation assignment by name, number of boreholes, founding depth, soil conditions encountered, client, and contract value in the currency the evidence states from the evidence.
 - Technical Approach must address: desk study (geological maps, hydrogeological records, previous investigation reports), borehole/trial-pit programme design (depth, spacing, sampling intervals calibrated to structure footprint and anticipated loading), SPT at 1.5 m intervals, undisturbed sampling for laboratory testing, permeability/falling-head tests where groundwater is encountered.
 - Laboratory programme: grain-size distribution, Atterberg limits, natural moisture content, compaction characteristics, unconfined compressive strength, triaxial shear strength, CBR (for road/pavement elements). Accredited laboratory must be confirmed before testing commences.
 - Analysis: bearing-capacity calculation (Terzaghi/Meyerhof/EC7), settlement analysis (immediate and long-term), liquefaction susceptibility index (for seismic zone), slope-stability check (Bishop simplified) where terrain requires, pile capacity recommendation with factors of safety.
@@ -4306,11 +4306,11 @@ AfDB / AFD PROCUREMENT GUIDANCE (mandatory for this tender):
 
   // Dynamic cover page headline facts calibrated to detected sector
   const coverPageExample = isHealthcare
-    ? `"2 Hospitals Designed | ETB 675M+ Healthcare Portfolio | 12-Expert Multidisciplinary Team | EIASC Grade A Licensed"`
+    ? `"2 Hospitals Designed | <currency> 675M+ Healthcare Portfolio | 12-Expert Multidisciplinary Team | <licence grade, exactly as the company's own evidence states it>"`
     : isWater
     ? `"5 Water Supply Schemes Delivered | Hydraulic Modelling In-house | FIDIC-Compliant Supervision | 12+ Boreholes Supervised"`
     : isRoadBridge
-    ? `"8 Road Projects Supervised | 150km+ Roads Designed | Bridge Engineering Capability | ERA/MoT-Compliant Methodology"`
+    ? `"8 Road Projects Supervised | 150km+ Roads Designed | Bridge Engineering Capability | ${instrument(/\bERA\b|Ethiopian Roads/i, "ERA/MoT-Compliant Methodology", "<road authority named by the tender>-Compliant Methodology")}"`
     : isUrban
     ? `"12 Master Plans Delivered | GIS Spatial Analysis In-house | Multi-Stakeholder Consultation | Municipal Planning Specialists"`
     : isEnvironmental
@@ -4342,7 +4342,7 @@ AfDB / AFD PROCUREMENT GUIDANCE (mandatory for this tender):
     : isHospitality
     ? `"5 Hospitality Projects Delivered | Brand-Standard Compliance | FF&E Coordination | Pre-Opening Commissioning Proven"`
     : isSupervision
-    ? `"12 Contracts Supervised | FIDIC-Accredited Resident Engineers | ITP & NCR System | ETB 1B+ Contract Value Under Supervision"`
+    ? `"12 Contracts Supervised | FIDIC-Accredited Resident Engineers | ITP & NCR System | <currency> 1B+ Contract Value Under Supervision"`
     : isGeotechnical
     ? `"50+ Boreholes Completed | Accredited Geotechnical Laboratory | Bearing Capacity & Settlement Analysis | Site Investigation Report Delivery Proven"`
     : isDonor
@@ -4434,7 +4434,7 @@ is in, using only verified evidence.
 
 ## STEP 3 — NON-NEGOTIABLE QUALITY RULES
 
-1. **Evidence-first**: Every strong claim must cite a specific project name, ETB/contract value, expert name + licence, or client reference from the EVIDENCE sections. Never invent facts.
+1. **Evidence-first**: Every strong claim must cite a specific project name, contract value in the currency the evidence states, expert name + licence, or client reference from the EVIDENCE sections. Never invent facts.
 2. **Tender-specific structure**: Follow the exact sections required by the tender. Do not use a generic template.
 3. **Client-value framing**: Every section must answer: "Why should we choose this firm over any other?" — answer with evidence, not intent.
 4. **Expert-to-project mapping**: Each proposed expert must be linked to a specific previous comparable project and the role they performed on it. Produce a Team-to-Project table.
@@ -4547,7 +4547,7 @@ Write ALL of these in order:
 ### COVER LETTER
 - Addressed to the client by name and position (if known)
 - Subject line: exact tender reference and title
-- **Opening paragraph (most important)**: cite the company's STRONGEST 1-2 specific projects comparable to this tender BY NAME and ETB/contract value — not generic capability statements
+- **Opening paragraph (most important)**: cite the company's STRONGEST 1-2 specific projects comparable to this tender BY NAME and contract value in the currency the evidence states — not generic capability statements
 - Second paragraph: briefly introduce the proposed team lead(s) and their comparable previous role
 - List the enclosed appendices by letter (Appendix A, B, C…)
 - Confirm technical-only proposal if required
@@ -4564,7 +4564,7 @@ Write ALL of these in order:
 - All sections with sub-sections and approximate structure
 
 ### EXECUTIVE SUMMARY (3-4 strong paragraphs, no bullet lists)
-- Lead sentence: "We have already delivered this assignment. [Company] designed / supervised / assessed [Project Name] (ETB X, Client Y) — a [parallel description]. The same team is available for this engagement."
+- Lead sentence: "We have already delivered this assignment. [Company] designed / supervised / assessed [Project Name] ([contract value], Client Y) — a [parallel description]. The same team is available for this engagement."
 - Second paragraph: address the top evaluation criterion directly with evidence
 - Third paragraph: explain the technical approach at a high level — why it is the right approach for this specific scope and client
 - Fourth paragraph: confirm compliance, team availability, and commitment

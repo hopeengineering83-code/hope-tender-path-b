@@ -94,6 +94,13 @@ export const JURISDICTION_PHRASES = {
     specific: "AA City Authority",
     generic: "the municipal authority that reviews structural calculations for the project location",
   },
+  NATIONAL_MATERIALS_STANDARD: {
+    evidence: "MATERIALS_TESTING_STANDARD",
+    // Used where international standards are already named alongside it, so
+    // only the NATIONAL one is conditional.
+    specific: "EBCS",
+    generic: "the applicable national standard",
+  },
   ROAD_DESIGN_STANDARD: {
     evidence: "ROAD_DESIGN_STANDARD",
     // AASHTO is international, so it stays in both forms; only the national

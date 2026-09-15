@@ -2360,7 +2360,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     if (whyUs) round2Sections.push(whyUs);
   }
   if (!upstreamCheck("C.5 Risk Register and Mitigation Strategy") && !upstreamCheck("Risk Register") && !upstreamCheck("Risks and Mitigations")) {
-    round2Sections.push(buildRisksMitigationsTable({ primarySector: intelligence.primarySector, clientName: intelligence.clientName }));
+    round2Sections.push(buildRisksMitigationsTable({ primarySector: intelligence.primarySector, clientName: intelligence.clientName, sourceText: tenderText }));
   }
   if (!upstreamCheck("C.6 Work Plan and Schedule") && !upstreamCheck("Work Plan") && !upstreamCheck("Schedule")) {
     // Same day count the phasing narrative uses, from the one parser, so the
