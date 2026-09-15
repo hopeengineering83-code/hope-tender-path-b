@@ -29,6 +29,8 @@
 // Adding a sector means adding one branch here, and every representation
 // follows.
 
+import { resolveJurisdictionTokens } from "./jurisdiction-instruments";
+
 interface PhasingRow {
   phase: string;
   deliverables: string;
@@ -61,7 +63,7 @@ function sectorPhasingRows(sector: string): PhasingRow[] {
     return [
       { phase: "1. Inception", deliverables: "Inception report; ToR confirmation; data-collection plan; site reconnaissance memo", duration: "Weeks 1–2", responsible: "Project Principal" },
       { phase: "2. Survey & Investigation", deliverables: "Topographic survey; geotechnical investigation (CBR, Proctor, boreholes); traffic count + design-traffic computation (AADT, ESAL)", duration: "Weeks 3–6", responsible: "Geotechnical Engineer" },
-      { phase: "3. Detailed Design", deliverables: "Alignment design; pavement design (AASHTO/ERA); drainage design; structural design (culverts/bridges); road-safety audit; tender documents", duration: "Weeks 7–14", responsible: "Highway Engineer" },
+      { phase: "3. Detailed Design", deliverables: "Alignment design; pavement design ({{JURISDICTION:ROAD_DESIGN_STANDARD}}); drainage design; structural design (culverts/bridges); road-safety audit; tender documents", duration: "Weeks 7–14", responsible: "Highway Engineer" },
       { phase: "4. Tender & Construction Supervision", deliverables: "Tender evaluation; construction supervision with subgrade/sub-base/base/surface hold-points; Marshall mix design oversight; monthly progress", duration: "Construction window + 4 weeks", responsible: "Resident Engineer" },
       { phase: "5. Close-out", deliverables: "As-built drawings; maintenance manual; pre-handover road-safety audit; defects-liability tracker", duration: "Weeks N–N+6", responsible: "Project Principal" },
     ];
@@ -188,7 +190,7 @@ function sectorPhasingRows(sector: string): PhasingRow[] {
       { phase: "1. Feasibility & Concept Design", deliverables: "Massing study; floor plate efficiency analysis; vertical transport (lift/car lift) concept; structural system selection (shear wall/core/frame); MEP riser strategy; preliminary quantity schedules (order of magnitude)", duration: "Weeks 1–4", responsible: "Lead Architect + Structural Lead" },
       { phase: "2. Detailed Structural & Architectural Design", deliverables: "Full architectural design (all floors, facades, roof); structural analysis (ETABS/SAP2000, seismic/wind load); shear wall and core layout; transfer beam/slab design; foundation design (mat/pile)", duration: "Weeks 5–16", responsible: "Lead Structural Engineer + Architect" },
       { phase: "3. MEP & Specialist Systems Design", deliverables: "MEP design package; fire alarm and suppression; BMS; car lift system design; aluminium curtain wall specification; generator/UPS sizing; plumbing riser diagram", duration: "Weeks 12–18", responsible: "MEP Engineers + Lift Specialist" },
-      { phase: "4. Regulatory Approvals & Tender Documents", deliverables: "Structural calculation submission to AA City/regional authority; full tender package (drawings, quantity schedules, specs); bid evaluation report", duration: "Weeks 19–24", responsible: "Lead Engineer + QS" },
+      { phase: "4. Regulatory Approvals & Tender Documents", deliverables: "Structural calculation submission to {{JURISDICTION:STRUCTURAL_APPROVAL_AUTHORITY}}; full tender package (drawings, quantity schedules, specs); bid evaluation report", duration: "Weeks 19–24", responsible: "Lead Engineer + QS" },
       { phase: "5. Construction Supervision", deliverables: "Foundation and shear wall hold-point inspections; structural concrete testing (cube test, rebar pull-out); curtain wall installation inspection; lift installation acceptance test; progress reports; as-built drawings", duration: "Construction period", responsible: "Resident Engineer + Structural Inspector" },
     ];
   }
@@ -297,8 +299,8 @@ function leadKeywordsFor(role: string): readonly string[] {
  * signed contract"); the week labels are rescaled to day numbers so the plan
  * speaks the tender's own units.
  */
-export function canonicalWorkPlan(opts: { sector: string; totalDays?: number }): readonly CanonicalWorkPlanPhase[] {
-  let rows = sectorPhasingRows(opts.sector);
+export function canonicalWorkPlan(opts: { sector: string; totalDays?: number; sourceText?: string }): readonly CanonicalWorkPlanPhase[] {
+  let rows = sectorPhasingRows(opts.sector).map((row) => ({ ...row, deliverables: resolveJurisdictionTokens(row.deliverables, opts.sourceText) }));
   if (opts.totalDays && opts.totalDays > 0) rows = rewritePhasesToDays(rows, opts.totalDays);
   return rows.map((row, i) => ({
     index: i + 1,

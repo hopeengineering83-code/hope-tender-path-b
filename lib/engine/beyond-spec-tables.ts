@@ -53,6 +53,8 @@
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
 
+import { resolveJurisdictionTokens } from "./jurisdiction-instruments";
+
 const MARKER_REGEX = /<!--\s+beyond-spec-table:([a-z-]+)\s+-->/gi;
 
 const HEADING_PATTERNS: Record<string, RegExp[]> = {
@@ -110,7 +112,7 @@ interface SustainabilityRow {
   evidenceMechanism: string;
 }
 
-function sustainabilityRows(sector: string): SustainabilityRow[] {
+function sustainabilityRows(sector: string, sourceText?: string): SustainabilityRow[] {
   const s = sector.toLowerCase();
   const generic: SustainabilityRow[] = [
     { pillar: "Climate Action", commitment: "Embed climate-resilient design into every technical decision; quantify embodied carbon at concept and detailed design stages", kpi: "≥ 15% reduction in embodied carbon vs business-as-usual baseline; climate-risk screening included in all design memos", evidenceMechanism: "Carbon calculation memo at 60% gate; climate-risk register reviewed monthly" },
@@ -230,12 +232,12 @@ function sustainabilityRows(sector: string): SustainabilityRow[] {
   if (/industrial|manufactur|factory|abattoir|processing.*plant|warehouse.*industrial/i.test(s)) return [
     ...generic,
     { pillar: "Cleaner Production", commitment: "Apply UNIDO cleaner-production assessment methodology: waste minimisation at source, water-loop closure, energy-efficiency targets before end-of-pipe treatment", kpi: "Specific water consumption ≤60% of sector baseline; waste-to-landfill ≤15% of total solid waste generated", evidenceMechanism: "Monthly resource-consumption log; waste manifest; third-party cleaner-production audit at commissioning" },
-    { pillar: "Effluent & Emissions Control", commitment: "Design effluent treatment plant to meet Ethiopian EPA/WHO standards with 25% safety margin; air-emissions management plan for dust, VOC, and process gases; real-time monitoring sensors", kpi: "Effluent BOD ≤50 mg/L; suspended solids ≤100 mg/L; air emissions within permit limits at all times", evidenceMechanism: "Quarterly third-party effluent analysis; continuous air-quality sensor data; EPA compliance inspection pass" },
+    { pillar: "Effluent & Emissions Control", commitment: "Design effluent treatment plant to meet {{JURISDICTION:EFFLUENT_STANDARD}} with 25% safety margin; air-emissions management plan for dust, VOC, and process gases; real-time monitoring sensors", kpi: "Effluent BOD ≤50 mg/L; suspended solids ≤100 mg/L; air emissions within permit limits at all times", evidenceMechanism: "Quarterly third-party effluent analysis; continuous air-quality sensor data; environmental-authority compliance inspection pass" },
     { pillar: "Worker Health & Safety", commitment: "OHSAS 18001/ISO 45001-aligned OHS plan; chemical-risk register; PPE supply and training; emergency-response procedures; LTI-free target", kpi: "Zero LTI (Lost Time Injuries) during construction and first year of operations; 100% PPE compliance on site", evidenceMechanism: "Weekly toolbox talks; PPE audit records; incident register; LTI-frequency rate monthly reporting" },
   ];
   if (/high.rise|high_rise|multi.stor|tower.*building|mixed.use.*tower|basement.*podium/i.test(s)) return [
     ...generic,
-    { pillar: "Structural Resilience", commitment: "Design to Ethiopian seismic zone requirements (ES EN 1998) with Ethiopian climatic wind loads; independent structural peer review before construction documents", kpi: "Pass Ethiopian Building Code (EBCS) seismic + wind compliance review; independent peer-review approval certificate", evidenceMechanism: "ETABS/SAP2000 analysis report; peer-review certificate; AA City Authority structural approval" },
+    { pillar: "Structural Resilience", commitment: "Design to the seismic requirements of {{JURISDICTION:SEISMIC_CODE_FAMILY}} for {{JURISDICTION:SEISMIC_ZONE}}, with the wind loads that code sets for the project location; independent structural peer review before construction documents", kpi: "Pass the {{JURISDICTION:SEISMIC_CODE_FAMILY}} seismic + wind compliance review; independent peer-review approval certificate", evidenceMechanism: "ETABS/SAP2000 analysis report; peer-review certificate; {{JURISDICTION:STRUCTURAL_APPROVAL_AUTHORITY}} structural approval" },
     { pillar: "Energy Efficiency", commitment: "Passive design principles (orientation, shading, insulation) to reduce HVAC load; high-performance aluminium curtain wall with low-e glass; LED and BMS-controlled lighting throughout", kpi: "Building energy intensity ≤120 kWh/m²/year; HVAC energy ≤45% of total energy budget", evidenceMechanism: "Energy modelling report (IES VE or equivalent); BMS energy consumption data at 12 months post-handover" },
     { pillar: "Construction Waste & Materials", commitment: "Concrete mix design minimises OPC content via supplementary cementitious materials (fly ash, GGBS); construction waste sorted and recycled; MEP coordination via BIM to reduce rework waste", kpi: "OPC replacement ≥15% by supplementary materials; construction waste recycling rate ≥50%", evidenceMechanism: "Mix design certificate; waste manifest; BIM coordination clash-detection reports" },
   ];
@@ -466,8 +468,8 @@ function localContentRows(): LocalContentRow[] {
 
 // ─── Table builders ──────────────────────────────────────────────────────
 
-function buildSustainabilityTable(sector: string): string {
-  const rows = sustainabilityRows(sector);
+function buildSustainabilityTable(sector: string, sourceText?: string): string {
+  const rows = sustainabilityRows(sector).map((r) => ({ ...r, commitment: resolveJurisdictionTokens(r.commitment, sourceText), kpi: resolveJurisdictionTokens(r.kpi, sourceText), evidenceMechanism: resolveJurisdictionTokens(r.evidenceMechanism, sourceText) }));
   const head = "| # | Pillar | Commitment | KPI | Evidence Mechanism |";
   const sep = "|---|--------|------------|-----|-------------------|";
   const body = rows.map((r, i) => `| ${i + 1} | ${r.pillar} | ${r.commitment} | ${r.kpi} | ${r.evidenceMechanism} |`);
@@ -593,14 +595,21 @@ export interface BeyondSpecTablesResult {
  */
 export function injectBeyondSpecTables(
   markdown: string,
-  opts: { primarySector: string },
+  opts: {
+    primarySector: string;
+    /**
+     * The tender's own text. Sustainability commitments name a seismic code and
+     * a reviewing authority; those are named only when this text names them.
+     */
+    sourceText?: string;
+  },
 ): BeyondSpecTablesResult {
   const present = detectExisting(markdown);
   const injected: Array<{ key: string; reason: "MISSING" | "SKIPPED_PRESENT" }> = [];
   const blocks: string[] = [];
 
   if (!present.has("sustainability")) {
-    blocks.push(buildSustainabilityTable(opts.primarySector));
+    blocks.push(buildSustainabilityTable(opts.primarySector, opts.sourceText));
     injected.push({ key: "sustainability", reason: "MISSING" });
   } else {
     injected.push({ key: "sustainability", reason: "SKIPPED_PRESENT" });

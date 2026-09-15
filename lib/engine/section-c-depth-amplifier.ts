@@ -46,6 +46,7 @@
 
 import type { ProjectRecord } from "./benchmark-tables";
 import { inlineEvidenceValue } from "./proposal-intelligence";
+import { resolveJurisdictionTokens } from "./jurisdiction-instruments";
 
 // Canonical Section C sub-section structure. Each entry includes
 // the heading text + a deterministic depth-paragraph generator.
@@ -57,7 +58,7 @@ interface SubSectionSpec {
   heading: string;      // full heading
   matchPatterns: RegExp[]; // patterns used to detect existing presence
   // Generates a multi-paragraph depth block tailored to the sector.
-  buildDepth(opts: { primarySector: string; projects: ProjectRecord[]; companyName: string; anchored: Set<string> }): string;
+  buildDepth(opts: { primarySector: string; projects: ProjectRecord[]; companyName: string; anchored: Set<string>; sourceText?: string }): string;
 }
 
 // Helper: emit a single evidence-anchor sentence from a project record.
@@ -162,22 +163,26 @@ const ECHO_FILLER = new Set([
 
 // Sector-aware methodology vocabulary blocks. Each returns a paragraph
 // rich in sector-specific terminology — feeds the sectorVocabulary axis.
-function sectorMethodologyParagraph(sector: string, subSection: string): string {
+function sectorMethodologyParagraph(sector: string, subSection: string, sourceText?: string): string {
+  return resolveJurisdictionTokens(sectorMethodologyParagraphRaw(sector, subSection), sourceText);
+}
+
+function sectorMethodologyParagraphRaw(sector: string, subSection: string): string {
   const s = sector.toLowerCase();
   if (/health|hospital|medical|clinic/.test(s)) {
     if (/understanding|C\.1/i.test(subSection)) return "The clinical brief drives every downstream decision: zone segregation between Emergency, Outpatient, In-patient, Imaging, Pharmacy, and Laboratory; Infection Prevention and Control (IPC) compliant flow patterns; medical-gas distribution coordinated with structural and MEP grids; radiation-shielding loads accounted for at structural sizing.";
     if (/methodology|C\.2/i.test(subSection)) return "Methodology follows the Ministry of Health functional programming framework: clinical-zone capacity sizing, IPC-compliant patient/staff/supply flow, biomedical equipment integration through PACS-ready cabling and lead-shielding for imaging rooms, and HEPA-rated ventilation across critical-care areas.";
-    if (/work plan|C\.3/i.test(subSection)) return "Phased deliverables: site assessment with weighted matrix → conceptual design with clinical zoning → detailed design with MEP coordination → working drawings + BOQ → construction supervision with three IPC hold-points → close-out with as-built and Health Authority licensing pack.";
+    if (/work plan|C\.3/i.test(subSection)) return "Phased deliverables: site assessment with weighted matrix → conceptual design with clinical zoning → detailed design with MEP coordination → working drawings + BOQ → construction supervision with three IPC hold-points → close-out with as-built and {{JURISDICTION:HEALTH_FACILITY_REGULATOR}} licensing pack.";
     if (/quality|QA|C\.4/i.test(subSection)) return "Quality gates at 30% Schematic, 60% Design Development, and 100% Pre-Issue. Each gate signed off by Project Principal + Technical Director. Independent peer review at 100%.";
   }
   if (/water|borehole|hydraulic|sanitary/.test(s)) {
-    if (/understanding|C\.1/i.test(subSection)) return "Source-to-tap delivery requires verified yield, hydraulic-model-driven network sizing (EPANET / WaterCAD), pump-station design matched to demand projection, storage reservoir sized for daily peaks, and chlorination compliant with EBCS standards.";
+    if (/understanding|C\.1/i.test(subSection)) return "Source-to-tap delivery requires verified yield, hydraulic-model-driven network sizing (EPANET / WaterCAD), pump-station design matched to demand projection, storage reservoir sized for daily peaks, and chlorination compliant with {{JURISDICTION:MATERIALS_TESTING_STANDARD}} standards.";
     if (/methodology|C\.2/i.test(subSection)) return "Methodology integrates source investigation (borehole siting, geophysical survey, yield test), demand projection, hydraulic modelling, pipe-network sizing, pump-station design (head, flow, power/solar), reservoir sizing, water-quality treatment design (chlorination, sedimentation, filtration), and sanitary protection zone delineation.";
     if (/work plan|C\.3/i.test(subSection)) return "Phased deliverables: source investigation → demand projection + hydraulic modelling → detailed design (network, pump station, treatment) → tender documents (BOQ, drawings, specifications) → construction supervision (pressure tests, commissioning) → handover with O&M manual + operator training.";
     if (/quality|QA|C\.4/i.test(subSection)) return "Quality controls at hydraulic-model verification, pre-tender design freeze, construction hold-points (pipe pressure tests, pump commissioning), and post-commissioning leakage check. Independent technical review of hydraulic model and BOQ.";
   }
   if (/road|bridge|highway|pavement/.test(s)) {
-    if (/understanding|C\.1/i.test(subSection)) return "Route-to-pavement delivery requires alignment survey with topographic control, geotechnical investigation (CBR, Proctor, borehole), traffic count + design traffic computation (AADT, ESAL), pavement design per AASHTO / ERA design manual, drainage design (culverts, side drains, retention), and road-safety audit.";
+    if (/understanding|C\.1/i.test(subSection)) return "Route-to-pavement delivery requires alignment survey with topographic control, geotechnical investigation (CBR, Proctor, borehole), traffic count + design traffic computation (AADT, ESAL), pavement design per the {{JURISDICTION:ROAD_DESIGN_STANDARD}} design manual, drainage design (culverts, side drains, retention), and road-safety audit.";
     if (/methodology|C\.2/i.test(subSection)) return "Methodology integrates topographic survey, geotechnical investigation, traffic analysis, pavement design layers, drainage design, structural design (culverts, bridges where applicable), road-safety audit, and environmental + social controls per FIDIC contract standards.";
     if (/work plan|C\.3/i.test(subSection)) return "Phased deliverables: topographic survey + geotechnical investigation → traffic analysis + design report → detailed design (alignment, pavement, drainage, structures) → tender documents → construction supervision (Marshall mix design, compaction, drainage construction) → handover with as-built drawings and maintenance manual.";
     if (/quality|QA|C\.4/i.test(subSection)) return "Quality controls at design-stage peer review, materials testing programme (CBR, compaction, aggregate quality), construction hold-points (subgrade, sub-base, base, surface), and pre-handover road-safety audit.";
@@ -288,10 +293,10 @@ const CANONICAL_SUB_SECTIONS: SubSectionSpec[] = [
     number: "C.1",
     heading: "C.1 Understanding of the Assignment",
     matchPatterns: [/^##\s+C\.1\b/im, /^##\s+Understanding\s+of\s+the\s+Assignment/im],
-    buildDepth: ({ primarySector, projects, anchored }) => {
+    buildDepth: ({ primarySector, projects, anchored, sourceText }) => {
       const anchor = anchorOnce([projects[0]], anchored, "validated on")
         ?? "The team brings validated delivery experience across comparable assignment types and applies a structured inception process — site orientation, document review, and stakeholder mapping — in the opening week to confirm scope before any technical work begins.";
-      const para = sectorMethodologyParagraph(primarySector, "C.1");
+      const para = sectorMethodologyParagraph(primarySector, "C.1", sourceText);
       return joinWithoutEcho(para, anchor);
     },
   },
@@ -299,10 +304,10 @@ const CANONICAL_SUB_SECTIONS: SubSectionSpec[] = [
     number: "C.2",
     heading: "C.2 Technical Methodology",
     matchPatterns: [/^##\s+C\.2\b/im, /^##\s+Technical\s+Methodology/im, /^##\s+Methodology/im],
-    buildDepth: ({ primarySector, projects, anchored }) => {
+    buildDepth: ({ primarySector, projects, anchored, sourceText }) => {
       const anchor = anchorOnce([projects[1], projects[0]], anchored, "demonstrated on")
         ?? "The methodology has been developed and refined through repeat delivery of comparable-scope assignments and is calibrated to the specific deliverable schedule, client reporting cadence, and stakeholder engagement requirements of this engagement.";
-      const para = sectorMethodologyParagraph(primarySector, "C.2");
+      const para = sectorMethodologyParagraph(primarySector, "C.2", sourceText);
       return joinWithoutEcho(para, anchor);
     },
   },
@@ -310,10 +315,10 @@ const CANONICAL_SUB_SECTIONS: SubSectionSpec[] = [
     number: "C.3",
     heading: "C.3 Work Plan and Deliverables",
     matchPatterns: [/^##\s+C\.3\b/im, /^##\s+Work\s+Plan/im, /^##\s+Deliverables/im],
-    buildDepth: ({ primarySector, projects, anchored }) => {
+    buildDepth: ({ primarySector, projects, anchored, sourceText }) => {
       const anchor = anchorOnce([projects[2], projects[1], projects[0]], anchored, "demonstrated on")
         ?? "The phased work programme draws on established delivery templates refined across comparable assignments. Each phase produces a formal deliverable with client sign-off before the next phase commences, ensuring predictable progress milestones and no scope creep between stages.";
-      const para = sectorMethodologyParagraph(primarySector, "C.3");
+      const para = sectorMethodologyParagraph(primarySector, "C.3", sourceText);
       return joinWithoutEcho(para, anchor);
     },
   },
@@ -321,10 +326,10 @@ const CANONICAL_SUB_SECTIONS: SubSectionSpec[] = [
     number: "C.4",
     heading: "C.4 Quality Assurance",
     matchPatterns: [/^##\s+C\.4\b/im, /^##\s+Quality\s+Assurance/im, /^##\s+QA\b/im],
-    buildDepth: ({ primarySector, projects, anchored }) => {
+    buildDepth: ({ primarySector, projects, anchored, sourceText }) => {
       const anchor = anchorOnce([projects[3], projects[0]], anchored, "applied on")
         ?? "The three-gate quality framework (30% / 60% / 100%) is applied on every engagement. Each gate is signed off by Project Principal and Technical Director before client submission; an independent peer reviewer — not a member of the delivery team — validates the 100% deliverable package.";
-      const para = sectorMethodologyParagraph(primarySector, "C.4");
+      const para = sectorMethodologyParagraph(primarySector, "C.4", sourceText);
       return joinWithoutEcho(para, anchor);
     },
   },
@@ -411,6 +416,7 @@ function buildAddendum(opts: {
   projects: ProjectRecord[];
   companyName: string;
   evaluationCriteria?: string[];
+  sourceText?: string;
 }): string {
   const blocks: string[] = [];
   // One set for the whole Section C block, so a project cited under one
@@ -420,11 +426,11 @@ function buildAddendum(opts: {
     const isPresent = opts.presentNumbers.has(spec.number);
     const isThin = opts.thinNumbers.has(spec.number);
     if (!isPresent) {
-      const depth = spec.buildDepth({ primarySector: opts.primarySector, projects: opts.projects, companyName: opts.companyName, anchored });
+      const depth = spec.buildDepth({ primarySector: opts.primarySector, projects: opts.projects, companyName: opts.companyName, anchored, sourceText: opts.sourceText });
       if (depth.length === 0) continue;
       blocks.push(`## ${spec.heading}`, "", depth);
     } else if (isThin) {
-      const depth = spec.buildDepth({ primarySector: opts.primarySector, projects: opts.projects, companyName: opts.companyName, anchored });
+      const depth = spec.buildDepth({ primarySector: opts.primarySector, projects: opts.projects, companyName: opts.companyName, anchored, sourceText: opts.sourceText });
       if (depth.length === 0) continue;
       blocks.push(`<!-- section-c-amplifier:${spec.number} -->`, depth);
     }
@@ -495,7 +501,18 @@ function buildAddendum(opts: {
  */
 export function amplifySectionCDepth(
   markdown: string,
-  opts: { primarySector: string; projects: ProjectRecord[]; companyName: string; evaluationCriteria?: string[] },
+  opts: {
+    primarySector: string;
+    projects: ProjectRecord[];
+    companyName: string;
+    evaluationCriteria?: string[];
+    /**
+     * The tender's own text. Sector paragraphs name a road-design manual, a
+     * materials standard and a health-facility regulator; those are named only
+     * when this text names them.
+     */
+    sourceText?: string;
+  },
 ): { markdown: string; injected: { number: string; mode: "ADDED" | "DEEPENED" }[] } {
   const sectionRange = locateSectionC(markdown);
   if (!sectionRange) return { markdown, injected: [] };
@@ -532,6 +549,7 @@ export function amplifySectionCDepth(
     projects: opts.projects,
     companyName: opts.companyName,
     evaluationCriteria: opts.evaluationCriteria,
+    sourceText: opts.sourceText,
   });
 
   if (!addendum) return { markdown, injected: [] };

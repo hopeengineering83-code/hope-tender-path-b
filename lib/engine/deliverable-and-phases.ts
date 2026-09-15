@@ -196,6 +196,11 @@ export function buildPhaseNarrative(opts: {
   experts: ExpertRecord[];
   primarySector: string;
   totalDays?: number;
+  /**
+   * The tender's own text. Phase deliverables name a road-design standard and a
+   * reviewing authority; those are named only when this text names them.
+   */
+  sourceText?: string;
 }): string {
   // No default. This used to fall back to 90 days, so a proposal for a tender
   // that states no programme asserted "over an indicative 90-day engagement
@@ -212,7 +217,7 @@ export function buildPhaseNarrative(opts: {
   // narrative and the phase leads are three views of it, so they cannot
   // disagree about how many phases the engagement has, what each is called,
   // how long it runs, or who is accountable for it.
-  const phases = canonicalWorkPlan({ sector: opts.primarySector, totalDays });
+  const phases = canonicalWorkPlan({ sector: opts.primarySector, totalDays, sourceText: opts.sourceText });
   const used = new Set<string>();
 
   const blocks: string[] = [];
@@ -373,7 +378,7 @@ export function injectDeliverableAndPhases(
     }
   }
   if (!hasPhases) {
-    blocks.push(buildPhaseNarrative({ experts: opts.experts, primarySector: opts.primarySector, totalDays: opts.totalDays }));
+    blocks.push(buildPhaseNarrative({ experts: opts.experts, primarySector: opts.primarySector, totalDays: opts.totalDays, sourceText: opts.tenderText }));
     injected.phases = true;
   }
   if (!hasBranded) {

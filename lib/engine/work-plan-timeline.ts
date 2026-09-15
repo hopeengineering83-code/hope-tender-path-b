@@ -30,8 +30,16 @@ function escCell(text: string): string {
   return text.replace(/\r?\n+/g, " ").replace(/\|/g, "/").replace(/\s{2,}/g, " ").trim();
 }
 
-export function buildWorkPlanTable(opts: { primarySector: string; totalDays?: number }): string {
-  const phases = canonicalWorkPlan({ sector: opts.primarySector, totalDays: opts.totalDays });
+export function buildWorkPlanTable(opts: {
+  primarySector: string;
+  totalDays?: number;
+  /**
+   * The tender's own text. Phase deliverables name a road-design standard and a
+   * reviewing authority; those are named only when this text names them.
+   */
+  sourceText?: string;
+}): string {
+  const phases = canonicalWorkPlan({ sector: opts.primarySector, totalDays: opts.totalDays, sourceText: opts.sourceText });
   const rows = phases.map(
     (p) => `| ${escCell(p.title)} | ${escCell(p.deliverables)} | ${escCell(p.responsibleRole)} | ${escCell(p.durationLabel)} |`,
   );

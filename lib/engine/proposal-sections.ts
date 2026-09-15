@@ -45,6 +45,7 @@ import {
   TENDER_FOCUS_METHODOLOGY,
   TENDER_FOCUS_EVALUATION,
 } from "./tender-context-selection";
+import { resolveJurisdictionTokens } from "./jurisdiction-instruments";
 
 // ─── Section-specific system prompts ─────────────────────────────────────────
 // Each persona is the EXACT senior bid-team specialist who would write
@@ -152,7 +153,7 @@ export const SECTOR_METHODOLOGY_GUIDANCE: ReadonlyArray<SectorGuidanceBullet> = 
   { label: "Contract administration / FIDIC", bullet: "   - Contract administration / FIDIC → variation order, Engineer's Instruction, extension of time (EOT), time-impact analysis, final account, payment certificate, retention, performance bond, claims determination, FIDIC Clause references" },
   { label: "Heritage conservation / adaptive reuse", bullet: "   - Heritage conservation / adaptive reuse → ICOMOS reversibility principle, condition survey, significance assessment, conservation plan, lime mortar compatibility, XRF/petrographic testing, heritage authority approval, photogrammetric survey, historic fabric, minimum-intervention doctrine, conservation philosophy statement, reversible materials specification" },
   { label: "Industrial & manufacturing", bullet: "   - Industrial & manufacturing → process flow diagram, value-stream mapping (VSM), lean layout design, industrial flooring specification, HVAC/exhaust ventilation, fire suppression, effluent treatment plant, FAT (factory acceptance test), EHS management plan, cleaner production assessment, commissioning sequencing plan, occupational safety assessment" },
-  { label: "High-rise / multi-storey buildings", bullet: "   - High-rise / multi-storey buildings → ETABS/SAP2000 structural analysis, shear wall, core-frame system, seismic design per EBCS/ES EN 1998, wind load analysis, independent structural peer review, AA City Authority structural approval, curtain wall specification, post-tensioned slab, BIM LOD 300+, pile/mat foundation, lift/car-lift system design, BMS architecture, generator/UPS sizing" },
+  { label: "High-rise / multi-storey buildings", bullet: "   - High-rise / multi-storey buildings → ETABS/SAP2000 structural analysis, shear wall, core-frame system, seismic design per {{JURISDICTION:SEISMIC_CODE_FAMILY}}, wind load analysis, independent structural peer review, {{JURISDICTION:STRUCTURAL_APPROVAL_AUTHORITY}} structural approval, curtain wall specification, post-tensioned slab, BIM LOD 300+, pile/mat foundation, lift/car-lift system design, BMS architecture, generator/UPS sizing" },
   { label: "Hospitality & tourism", bullet: "   - Hospitality & tourism → FF&E (furniture, fixtures and equipment), brand standard compliance matrix, RevPAR benchmarking, development programme (room mix, F&B, BOH), guestroom HVAC (VRF/fan-coil), kitchen ventilation, pool/spa mechanical, mock room prototype, pre-opening punch list, GSTC criteria, Green Globe audit, brand-operator sign-off" },
   { label: "Feasibility studies / pre-feasibility / options analysis / business case", bullet: "   - Feasibility studies / pre-feasibility / options analysis / business case → options comparison matrix (at least three alternatives + do-nothing), technical feasibility (site, engineering, capacity), financial viability (CAPEX/OPEX estimation, NPV, IRR, payback period, sensitivity analysis on key assumptions), economic analysis (cost-benefit ratio, economic rate of return), social and environmental screening, demand/traffic/uptake projections, implementation roadmap with milestones, recommended preferred option with rationale, ToR compliance matrix." },
   { label: "Government / public procurement (ministry tenders, national procurement board, public tender announcement)", bullet: "   - Government / public procurement (ministry tenders, national procurement board, public tender announcement) → cite applicable public procurement proclamation/regulation by number; address local content and domestic preference rules; acknowledge bid security (amount and form) and performance bond requirements; include government-issued form numbers and annex references by exact name; confirm format restrictions (single/two-envelope, sealed, numbered pages); reference GoE/Ministry standard BOQ or schedule of rates where applicable; address PPPA/PPSD/comparable authority submission portal requirements." },
@@ -227,7 +228,7 @@ export function selectSectorGuidance(
   const scored = catalogue
     .map((entry, order) => ({ entry, order, score: scoreSectorGuidance(entry, haystack) }))
     .filter((row) => row.score > 0);
-  if (scored.length === 0) return catalogue.slice();
+  if (scored.length === 0) return catalogue.map((entry) => ({ ...entry, bullet: resolveJurisdictionTokens(entry.bullet, tenderText) }));
   scored.sort((a, b) => (b.score - a.score) || (a.order - b.order));
   // A bullet that matched on one incidental word — "JORC-compliant" against a
   // tender that says "compliant", "target operating model" against "operating
@@ -239,7 +240,10 @@ export function selectSectorGuidance(
   const floor = scored[0].score * SECTOR_GUIDANCE_RELATIVE_FLOOR;
   const chosen = scored.filter((row) => row.score >= floor).slice(0, Math.max(1, max));
   chosen.sort((a, b) => a.order - b.order);
-  return chosen.map((row) => row.entry);
+  // Catalogue bullets carry {{JURISDICTION:...}} where a named code or authority
+  // would otherwise be asserted for every tender. Selection is the first point
+  // that holds the tender's own text, so it is where those resolve.
+  return chosen.map((row) => ({ ...row.entry, bullet: resolveJurisdictionTokens(row.entry.bullet, tenderText) }));
 }
 
 /** The guidance block as it appears inside the Section C system prompt. */
@@ -1103,7 +1107,7 @@ export function buildSectionFallback(spec: ProposalSectionSpec, input: AIBidWrit
       const SECTOR_SCOPE_ITEMS: Record<string, string[]> = {
         healthcare: ["Clinical Brief Review and Space Programming", "Site Investigation and Clinical Zoning", "Infection Prevention and Control (IPC) Design", "MEP Engineering — Medical Gas, HVAC, Emergency Power", "Structural and Fire Safety Design", "Regulatory Approval and Permit Documentation", "Equipment Planning and Biomedical Coordination", "Tender Documentation and BOQ Preparation", "Construction Supervision and QA", "Commissioning and Handover"],
         water: ["Hydrology and Source Investigation", "Hydraulic Modelling (WaterCAD / EPANET)", "Water Treatment Process Design", "Pipe Network and Storage Design", "Pump Station and Civil Works Design", "ESMP and Environmental Compliance", "Construction Supervision", "Commissioning and O&M Training"],
-        road: ["Topographic Survey and Alignment Study", "Geotechnical Investigation (CBR, Proctor)", "Pavement Design (AASHTO / ERA Standards)", "Drainage and Culvert Design", "Road Safety Audit", "Environmental and Social Management Plan", "BOQ and Cost Estimate", "Construction Supervision and Materials Testing", "As-Built Documentation", "Defects Liability Inspection"],
+        road: ["Topographic Survey and Alignment Study", "Geotechnical Investigation (CBR, Proctor)", "Pavement Design ({{JURISDICTION:ROAD_DESIGN_STANDARD}})", "Drainage and Culvert Design", "Road Safety Audit", "Environmental and Social Management Plan", "BOQ and Cost Estimate", "Construction Supervision and Materials Testing", "As-Built Documentation", "Defects Liability Inspection"],
         environmental: ["Baseline Environmental and Social Survey", "Impact Identification and ESIA Matrices", "Mitigation Hierarchy and ESMP Preparation", "Stakeholder Engagement and Consultation Plan", "Donor Safeguard Alignment (ESF / IFC)", "Monitoring and Evaluation Framework", "Grievance Redress Mechanism Design", "Final ESIA Report and Regulatory Approval Support"],
         ict: ["Requirements Analysis and Business Process Mapping", "System Architecture Design (App / Database / Network)", "Data Security, RBAC and Privacy Framework", "Integration Plan and API Specifications", "User Acceptance Testing (UAT) Protocol", "Training and Change Management Plan", "Go-Live Cutover Strategy", "SLA and Post-Launch Support"],
         financial: ["Regulatory Framework and Licensing Compliance Review", "AML / KYC and Risk Management Framework Design", "Core Banking System Architecture", "Credit Risk Assessment Methodology", "IFRS and Basel Compliance Mapping", "IT Infrastructure and Cybersecurity Design", "Staff Training and Capacity Building", "Implementation Roadmap and Phased Rollout"],
@@ -1149,7 +1153,9 @@ export function buildSectionFallback(spec: ProposalSectionSpec, input: AIBidWrit
         "Documentation and Knowledge Transfer",
         "Post-Completion Advisory Support",
       ];
-      const EFFECTIVE_SCOPE_ITEMS = SECTOR_SCOPE_ITEMS[detectedFallbackSector] ?? GENERIC_SCOPE_ITEMS;
+      const EFFECTIVE_SCOPE_ITEMS = (SECTOR_SCOPE_ITEMS[detectedFallbackSector] ?? GENERIC_SCOPE_ITEMS).map((item) =>
+        resolveJurisdictionTokens(item, input.tenderText ?? ""),
+      );
       // Build methodology sections — scale to tender's actual scope item count, minimum 6
       const maxReqs = Math.max(6, Math.min(reqLines.length, EFFECTIVE_SCOPE_ITEMS.length));
       const normalizedReqs = reqLines.slice(0, maxReqs);

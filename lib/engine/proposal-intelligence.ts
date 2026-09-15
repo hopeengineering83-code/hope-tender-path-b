@@ -2,6 +2,7 @@ import { logger } from "../observability";
 import { extractProjectFacts, extractProjectAmounts, extractServicesProvided } from "./project-fact-extractor";
 import { tidyTruncation, factualCardOrEmpty } from "./vault-prose";
 import { detectFinancialProposalRequiredFromText, buildTenderDocumentTypeAdvisory, type TenderDocumentTypeAdvisory } from "../document-generation/generation-integration";
+import { resolveJurisdictionTokens } from "./jurisdiction-instruments";
 export type TenderRequirementLite = { title: string; description: string; priority: string; requirementType: string };
 export type TenderLite = { title: string; reference?: string | null; clientName?: string | null; procuringEntityName?: string | null; country?: string | null; description?: string | null; intakeSummary?: string | null; analysisSummary?: string | null; evaluationMethodology?: string | null; deadline?: Date | string | null; submissionMethod?: string | null; submissionAddress?: string | null; clientContactName?: string | null };
 export type CompanyLite = { name: string; legalName?: string | null; description?: string | null; profileSummary?: string | null; serviceLines: string; sectors: string; email?: string | null; phone?: string | null; website?: string | null; address?: string | null };
@@ -119,7 +120,7 @@ export const PROPOSAL_THEMES: ProposalTheme[] = [
       "radiation shielding design for imaging rooms: shielding calculations, material specification, and regulatory sign-off documentation",
       "medical gas system coordination: oxygen, medical air, vacuum, nitrous oxide, and AGSS layout integrated with MEP from schematic stage",
       "medical-grade electrical design: UPS/generator for life-critical loads, isolated power systems for theatres/ICU, nurse call, BMS, and fire alarm",
-      "Ethiopian Health Authority licensing documentation: design drawings, specifications, and compliance evidence package",
+      "{{JURISDICTION:HEALTH_FACILITY_REGULATOR}} licensing documentation: design drawings, specifications, and compliance evidence package",
     ],
   },
   {
@@ -174,8 +175,8 @@ export const PROPOSAL_THEMES: ProposalTheme[] = [
     triggers: [/structural/i, /foundation/i, /geotechnical/i, /soil.*investigation/i, /borehole.*investigation/i, /seismic/i, /EBCS/i],
     proofTerms: [/structural/i, /foundation/i, /geotechnical/i, /soil/i, /ETABS/i, /SAP2000/i, /seismic/i, /EBCS/i],
     methodologyBullets: [
-      "geotechnical investigation: borehole drilling, soil sampling, laboratory testing (EBCS/ASTM compliant), and bearing capacity recommendation",
-      "structural analysis using ETABS/SAP2000/SAFE: seismic detailing to EBCS-8, foundation engineering for site-specific soil conditions",
+      "geotechnical investigation: borehole drilling, soil sampling, laboratory testing ({{JURISDICTION:MATERIALS_TESTING_STANDARD}} compliant), and bearing capacity recommendation",
+      "structural analysis using ETABS/SAP2000/SAFE: seismic detailing to {{JURISDICTION:SEISMIC_DESIGN_CODE}}, foundation engineering for site-specific soil conditions",
       "staged design review from schematic to working-drawing level with independent peer check before construction-document issue",
     ],
   },
@@ -209,7 +210,7 @@ export const PROPOSAL_THEMES: ProposalTheme[] = [
     proofTerms: [/road/i, /bridge/i, /pavement/i, /highway/i, /culvert/i, /drainage/i, /transport/i, /ERA/i, /AASHTO/i],
     methodologyBullets: [
       "route survey and alignment design: topographic survey, geotechnical investigation (CBR, proctor, borehole/test pit), traffic count and ESAL design traffic calculation",
-      "pavement design per ERA/AASHTO standard: layer thicknesses, surfacing specification, drainage design (culverts, side drains), bridge/structure design and safety audit",
+      "pavement design per {{JURISDICTION:ROAD_DESIGN_STANDARD}} standard: layer thicknesses, surfacing specification, drainage design (culverts, side drains), bridge/structure design and safety audit",
       "construction supervision: materials testing programme (CBR, compaction, aggregate quality), progress reporting, variation control, payment certification, as-built documentation",
     ],
   },
@@ -404,7 +405,7 @@ export const PROPOSAL_THEMES: ProposalTheme[] = [
     methodologyBullets: [
       "Process brief and production-flow analysis (value-stream mapping) before layout design — lean principles embedded in material-flow corridors",
       "Integrated design package: industrial structural design, HVAC/exhaust ventilation, industrial flooring, fire suppression, effluent treatment",
-      "Regulatory and environmental approvals: EIA/ESIA, effluent treatment design to Ethiopian EPA/WHO standards, occupational safety assessment",
+      "Regulatory and environmental approvals: EIA/ESIA, effluent treatment design to {{JURISDICTION:EFFLUENT_STANDARD}}, occupational safety assessment",
       "Factory acceptance test (FAT) protocol for all production equipment; commissioning sequencing plan; operator training programme",
       "Digital 3D plant model for clash detection and installation sequencing; as-built drawings for O&M manual",
     ],
@@ -415,9 +416,9 @@ export const PROPOSAL_THEMES: ProposalTheme[] = [
     triggers: [/high.rise/i, /high_rise/i, /multi.stor/i, /tower.*building/i, /mixed.use.*tower/i, /G\+\d{2,}/i, /basement.*podium/i, /tall building/i],
     proofTerms: [/ETABS/i, /SAP2000/i, /shear wall/i, /seismic/i, /curtain wall/i, /post.tension/i, /BIM/i, /LOD 300/i, /pile foundation/i, /mat foundation/i],
     methodologyBullets: [
-      "Structural system selection (shear wall / core-frame / hybrid) with ETABS/SAP2000 analysis incorporating Ethiopian seismic zone and wind loads per EBCS/ES EN 1998",
+      "Structural system selection (shear wall / core-frame / hybrid) with ETABS/SAP2000 analysis incorporating {{JURISDICTION:SEISMIC_ZONE}} and wind loads per {{JURISDICTION:SEISMIC_CODE_FAMILY}}",
       "BIM-coordinated design at LOD 300+: architecture, structure, and MEP clash detection eliminates field RFIs for riser routing and structural penetrations",
-      "Independent structural peer review before construction documents; structural calculation package formatted to AA City Authority checklist",
+      "Independent structural peer review before construction documents; structural calculation package formatted to the {{JURISDICTION:STRUCTURAL_APPROVAL_AUTHORITY}} checklist",
       "Specialist systems integration: aluminium curtain wall specification, lift/car-lift design, BMS, fire alarm and suppression, generator/UPS sizing",
       "Construction supervision with hold-point inspections at foundation, shear walls, and curtain wall installation; concrete cube tests and rebar pull-out at every pour",
     ],
@@ -733,14 +734,28 @@ function detectSubmissionRules(tender: TenderLite, tenderText: string): string[]
   return Array.from(new Set(rules));
 }
 
-function detectThemes(tenderText: string): ProposalTheme[] {
+/**
+ * Exported so the jurisdiction rule can be tested at its own boundary: this is
+ * the only place a theme is selected, and the only place its bullets resolve.
+ */
+export function detectThemes(tenderText: string): ProposalTheme[] {
   const scored = PROPOSAL_THEMES.map((t) => ({ theme: t, score: t.triggers.filter((p) => p.test(tenderText)).length }))
     .filter((s) => s.score > 0)
     .sort((a, b) => b.score - a.score);
   // Return only matched themes. An empty array is correct when no themes
   // trigger — forcing donor-compliance on an unrelated tender (e.g. road
   // design) injects irrelevant methodology bullets and hurts quality.
-  return scored.map((s) => s.theme);
+  //
+  // A theme's bullets are written once, for every jurisdiction, and carry
+  // {{JURISDICTION:...}} tokens where a named regulator, code or standard would
+  // otherwise be asserted. This is the only place a theme is selected, and it
+  // is the first place the tender's own text is available, so it is where the
+  // tokens resolve: a source that names EBCS gets EBCS, and a source that does
+  // not gets the instrument described by its function instead.
+  return scored.map((s) => ({
+    ...s.theme,
+    methodologyBullets: s.theme.methodologyBullets.map((b) => resolveJurisdictionTokens(b, tenderText)),
+  }));
 }
 
 export function inferSector(tenderText: string): string {

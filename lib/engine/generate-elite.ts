@@ -2291,7 +2291,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     }
   }
   if (!upstreamCheck("D.1 Value Framework") && !upstreamCheck(`D.1 Value Framework — What ${intelligence.clientName} Gains`) && !upstreamCheck("Value Framework")) {
-    round2Sections.push(buildValueFrameworkTable({ primarySector: intelligence.primarySector, clientName: intelligence.clientName }));
+    round2Sections.push(buildValueFrameworkTable({ primarySector: intelligence.primarySector, clientName: intelligence.clientName, sourceText: tenderText }));
   }
   // Submission Checklist — an evaluator-facing confirmation of what this
   // package contains, not the bid team's internal pre-send reminders
@@ -2369,6 +2369,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     round2Sections.push(buildWorkPlanTable({
       primarySector: intelligence.primarySector,
       totalDays: tenderTotalDays(tenderText),
+      sourceText: tenderText,
     }));
   }
   if (!upstreamCheck("E.1 Bid Compliance Mapping — Tender Requirements to Proposal Sections") && !upstreamCheck("Bid Compliance Mapping") && !upstreamCheck("Tender Requirements Mapping")) {
@@ -2519,6 +2520,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   const enriched = enrichSectorVocabulary({
     markdown: throughline.markdown,
     primarySector: intelligence.primarySector,
+    sourceText: tenderText,
   });
   // Round-7: reorder all sections into canonical proposal sequence (Cover Letter → Cover Page →
   // TOC → Executive Summary → Why Us → A.x → B.x → C.x → D.x → E.x → Submission Control Sheet)
@@ -2658,6 +2660,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // `<!-- section-c-amplifier:C.X -->` markers.
   const sectionCAmp = amplifySectionCDepth(humanizedMarkdown, {
     primarySector: intelligence.primarySector,
+    sourceText: tenderText,
     projects: evidenceLibrary,
     companyName: company.name,
     evaluationCriteria: intelligence.evaluationCriteria,
@@ -2694,6 +2697,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
 
   const methodologyTables = injectMethodologyTables(humanizedMarkdown, {
     primarySector: intelligence.primarySector,
+    sourceText: tenderText,
     experts: allSelectedExperts as unknown as Parameters<typeof injectMethodologyTables>[1]["experts"],
     projects: evidenceLibrary,
     totalDays,
@@ -2741,6 +2745,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // Sector-aware row content; idempotent via marker comments.
   const beyondSpec = injectBeyondSpecTables(humanizedMarkdown, {
     primarySector: intelligence.primarySector,
+    sourceText: tenderText,
   });
   const beyondSpecAdded = beyondSpec.injected.filter((i) => i.reason === "MISSING").map((i) => i.key);
   if (beyondSpecAdded.length > 0) {

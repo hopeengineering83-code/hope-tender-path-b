@@ -4,6 +4,7 @@ import { recordFactsFor } from "./portfolio-card-repair";
 import { withoutSourceProvenance, factualCardOrEmpty } from "./vault-prose";
 import { inlineEvidenceValue } from "./proposal-intelligence";
 import { withoutPersonalCvFields, withoutCvDocumentFurniture, truncateAtWordBoundary } from "./proposal-intelligence";
+import { resolveJurisdictionTokens } from "./jurisdiction-instruments";
 
 /**
  * Benchmark-quality tabular sections built deterministically from the
@@ -779,7 +780,7 @@ export function buildClientReferencesTable(projects: ProjectRecord[]): string {
 
 type ValueFrameworkPillar = { pillar: string; clientGains: string };
 
-function valueFrameworkPillars(primarySector: string, clientName: string): ValueFrameworkPillar[] {
+function valueFrameworkPillars(primarySector: string, clientName: string, sourceText?: string): ValueFrameworkPillar[] {
   const isHealthcare = /health|hospital|medical|clinic/i.test(primarySector);
   const isWater = /water|borehole|hydraulic|sanitary/i.test(primarySector);
   const isRoad = /road|bridge|highway|pavement|transport/i.test(primarySector);
@@ -807,7 +808,7 @@ function valueFrameworkPillars(primarySector: string, clientName: string): Value
     { pillar: "O&M Sustainability", clientGains: "Spare parts catalog, operator training materials, monitoring instrumentation, and lifecycle cost projections included with handover — not afterthoughts." },
   ];
   if (isRoad) return [
-    { pillar: "Survey & Design Certainty", clientGains: `${clientName} starts construction with verified topographic, geotechnical, traffic, and ESAL data. Pavement layers designed to ERA/AASHTO with documented assumptions.` },
+    { pillar: "Survey & Design Certainty", clientGains: `${clientName} starts construction with verified topographic, geotechnical, traffic, and ESAL data. Pavement layers designed to {{JURISDICTION:ROAD_DESIGN_STANDARD}} with documented assumptions.` },
     { pillar: "Drainage & Safety Engineering", clientGains: "Cross-drainage, side drains, culverts and structures designed for return-period storms. Safety audit completed before issue." },
     { pillar: "Construction Supervision Discipline", clientGains: "Materials testing schedule (CBR, compaction, aggregate), progress reporting, variation control, and payment certification follow FIDIC discipline." },
     { pillar: "Asset Lifecycle Management", clientGains: "As-built drawings, materials register, and O&M recommendations support the asset for the design life — not just the contract period." },
@@ -887,8 +888,16 @@ function valueFrameworkPillars(primarySector: string, clientName: string): Value
   ];
 }
 
-export function buildValueFrameworkTable(opts: { primarySector: string; clientName: string }): string {
-  const pillars = valueFrameworkPillars(opts.primarySector, opts.clientName);
+export function buildValueFrameworkTable(opts: {
+  primarySector: string;
+  clientName: string;
+  /**
+   * The tender's own text. One pillar names a road-design standard; it is named
+   * only when this text names it, and described by function otherwise.
+   */
+  sourceText?: string;
+}): string {
+  const pillars = valueFrameworkPillars(opts.primarySector, opts.clientName, opts.sourceText).map((p) => ({ ...p, clientGains: resolveJurisdictionTokens(p.clientGains, opts.sourceText) }));
   const rows = pillars.map((p) => `| ${escCell(p.pillar)} | ${escCell(p.clientGains)} |`);
 
   return [

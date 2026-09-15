@@ -52,6 +52,7 @@
 
 import type { ExpertRecord, ProjectRecord } from "./benchmark-tables";
 import { canonicalWorkPlan } from "./canonical-work-plan";
+import { resolveJurisdictionTokens } from "./jurisdiction-instruments";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
 
@@ -278,8 +279,8 @@ function sectorRiskRows(sector: string): RiskRow[] {
   if (/high.rise|high_rise|multi.stor|tower.*building|mixed.use.*tower|\bG\+\d{2,}\b|basement.*podium/i.test(s)) {
     return [
       ...generic,
-      { category: "Structural", risk: "Seismic or wind load exceedance detected after structural analysis — re-design required", likelihood: "Low", impact: "High", mitigation: "ETABS/SAP2000 analysis includes Ethiopian seismic zone and topographic wind factor; peer review by independent structural engineer before construction documents", owner: "Lead Structural Engineer" },
-      { category: "Authority Approval", risk: "Structural calculations rejected by AA City Authority — re-submission delay", likelihood: "Medium", impact: "High", mitigation: "Pre-submission coordination meeting with reviewing authority; calculations package formatted to authority checklist; 3-week re-submission buffer in programme", owner: "Lead Structural Engineer" },
+      { category: "Structural", risk: "Seismic or wind load exceedance detected after structural analysis — re-design required", likelihood: "Low", impact: "High", mitigation: "ETABS/SAP2000 analysis includes {{JURISDICTION:SEISMIC_ZONE}} and topographic wind factor; peer review by independent structural engineer before construction documents", owner: "Lead Structural Engineer" },
+      { category: "Authority Approval", risk: "Structural calculations rejected by the {{JURISDICTION:STRUCTURAL_APPROVAL_AUTHORITY}} — re-submission delay", likelihood: "Medium", impact: "High", mitigation: "Pre-submission coordination meeting with reviewing authority; calculations package formatted to authority checklist; 3-week re-submission buffer in programme", owner: "Lead Structural Engineer" },
     ];
   }
   if (/hotel|hospitality|resort|lodge|guesthouse|five.star|luxury.*accommodat/i.test(s)) {
@@ -336,7 +337,7 @@ function sectorQARows(sector: string): QAItpRow[] {
     return [
       ...generic,
       { checkpoint: "Subgrade Acceptance", criterion: "CBR ≥ design value; compaction ≥ 95% MDD", method: "In-situ CBR + sand-cone density tests", frequency: "Every 200 m", responsible: "Geotechnical Engineer", type: "Hold" },
-      { checkpoint: "Asphalt Mix Design", criterion: "Marshall stability, flow, void content within ERA spec", method: "Marshall mix design + JMF approval", frequency: "Per mix change", responsible: "Highway Engineer", type: "Hold" },
+      { checkpoint: "Asphalt Mix Design", criterion: "Marshall stability, flow, void content within the {{JURISDICTION:ROAD_DESIGN_STANDARD}} specification", method: "Marshall mix design + JMF approval", frequency: "Per mix change", responsible: "Highway Engineer", type: "Hold" },
       { checkpoint: "Drainage Construction", criterion: "Culvert invert levels, longitudinal slopes match design", method: "Survey check before backfill", frequency: "Each structure", responsible: "Resident Engineer", type: "Witness" },
     ];
   }
@@ -414,11 +415,11 @@ function commsRows(): CommsRow[] {
 
 // ─── Table builders ──────────────────────────────────────────────────────
 
-function buildPhasingTable(sector: string, totalDays?: number): string {
+function buildPhasingTable(sector: string, totalDays?: number, sourceText?: string): string {
   // The phase spine lives in canonical-work-plan.ts. It used to live here, and
   // deliverable-and-phases.ts had a different one, so the same proposal claimed
   // five phases in this table and six in the narrative nine pages later.
-  const rows = canonicalWorkPlan({ sector, totalDays });
+  const rows = canonicalWorkPlan({ sector, totalDays, sourceText });
   const head = "| # | Phase | Key Deliverables | Indicative Duration | Responsible |";
   const sep = "|---|-------|------------------|---------------------|-------------|";
   const body = rows.map((r) => `| ${r.index} | ${r.title} | ${r.deliverables} | ${r.durationLabel} | ${r.responsibleRole} |`);
@@ -474,8 +475,8 @@ function buildRACITable(experts: ExpertRecord[]): string {
   ].join("\n");
 }
 
-function buildRiskRegister(sector: string): string {
-  const rows = sectorRiskRows(sector);
+function buildRiskRegister(sector: string, sourceText?: string): string {
+  const rows = sectorRiskRows(sector).map((r) => ({ ...r, risk: resolveJurisdictionTokens(r.risk, sourceText), mitigation: resolveJurisdictionTokens(r.mitigation, sourceText) }));
   const head = "| # | Category | Risk | Likelihood | Impact | Mitigation | Owner |";
   const sep = "|---|----------|------|------------|--------|------------|-------|";
   const body = rows.map((r, i) => `| ${i + 1} | ${r.category} | ${r.risk} | ${r.likelihood} | ${r.impact} | ${r.mitigation} | ${r.owner} |`);
@@ -492,8 +493,8 @@ function buildRiskRegister(sector: string): string {
   ].join("\n");
 }
 
-function buildQAItpTable(sector: string): string {
-  const rows = sectorQARows(sector);
+function buildQAItpTable(sector: string, sourceText?: string): string {
+  const rows = sectorQARows(sector).map((r) => ({ ...r, criterion: resolveJurisdictionTokens(r.criterion, sourceText), method: resolveJurisdictionTokens(r.method, sourceText) }));
   const head = "| # | Checkpoint | Criterion | Method | Frequency | Responsible | Type |";
   const sep = "|---|------------|-----------|--------|-----------|-------------|------|";
   const body = rows.map((r, i) => `| ${i + 1} | ${r.checkpoint} | ${r.criterion} | ${r.method} | ${r.frequency} | ${r.responsible} | ${r.type} |`);
@@ -581,6 +582,13 @@ export function injectMethodologyTables(
     // phasing table renders "Day 1–3" / "Day 4–8" cells instead of
     // generic "Weeks 1–2". Pass the parsed total here.
     totalDays?: number;
+    /**
+     * The tender's own text. Risk and QA rows name a seismic zone, a reviewing
+     * authority and a road-design standard; those are named only when this
+     * text names them, and described by function otherwise. Optional so an
+     * un-plumbed caller degrades to the generic wording, never to a false one.
+     */
+    sourceText?: string;
   },
 ): MethodologyTablesResult {
   const present = detectExisting(markdown);
@@ -589,7 +597,7 @@ export function injectMethodologyTables(
   const blocks: string[] = [];
 
   if (!present.has("phasing")) {
-    blocks.push(buildPhasingTable(opts.primarySector, opts.totalDays));
+    blocks.push(buildPhasingTable(opts.primarySector, opts.totalDays, opts.sourceText));
     injected.push({ key: "phasing", reason: "MISSING" });
   } else {
     injected.push({ key: "phasing", reason: "SKIPPED_PRESENT" });
@@ -603,14 +611,14 @@ export function injectMethodologyTables(
   }
 
   if (!present.has("risk-register")) {
-    blocks.push(buildRiskRegister(opts.primarySector));
+    blocks.push(buildRiskRegister(opts.primarySector, opts.sourceText));
     injected.push({ key: "risk-register", reason: "MISSING" });
   } else {
     injected.push({ key: "risk-register", reason: "SKIPPED_PRESENT" });
   }
 
   if (!present.has("qa-itp")) {
-    blocks.push(buildQAItpTable(opts.primarySector));
+    blocks.push(buildQAItpTable(opts.primarySector, opts.sourceText));
     injected.push({ key: "qa-itp", reason: "MISSING" });
   } else {
     injected.push({ key: "qa-itp", reason: "SKIPPED_PRESENT" });

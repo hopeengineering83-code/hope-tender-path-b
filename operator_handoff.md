@@ -195,7 +195,72 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
-### 2026-09-15 UTC (latest) — A regulator is named only when a source names it
+### 2026-09-15 UTC (latest) — A deterministic table names a regulator only when a source names it
+
+- **Tool / branch / PR:** Claude Code · `release/consolidated-recovery-20260717` · PR #1175 (open, draft, unmerged).
+- **Scope:** closes the gap the previous entry left open. The writer prompts in
+  `lib/ai.ts` were made source-driven; the DETERMINISTIC builders were not,
+  because their tables are static module constants and the functions emitting
+  them never received the tender text. So the same fabricated compliance claim
+  kept shipping by the other route — a Kenyan bid could still read "rejected by
+  AA City Authority", "seismic detailing to EBCS-8", "within ERA spec",
+  "Ethiopian EPA/WHO standards".
+
+  One authority now owns the question, `lib/engine/jurisdiction-instruments.ts`:
+  the evidence patterns (shared with the prompt sites so the two cannot drift),
+  a catalogue of eight instrument phrases in prose register, and a
+  `{{JURISDICTION:KEY}}` token resolver. A static table carries the token;
+  whichever function SELECTS the entry — and therefore already holds the tender
+  text — resolves it. `detectThemes`, `selectSectorGuidance`,
+  `injectMethodologyTables`, `canonicalWorkPlan`, `injectBeyondSpecTables`,
+  `enrichSectorVocabulary`, `buildValueFrameworkTable`,
+  `injectDeliverableQaChecklist` and `amplifySectionCDepth` all resolve now;
+  `sourceText` is threaded from `generate-elite.ts`, which already had
+  `tenderText` in scope. An un-plumbed caller resolves to the GENERIC wording,
+  so a missed route degrades to a true sentence, never to a false one.
+
+  Zero depth traded, verified both directions on the same discipline in two
+  countries: an Ethiopian G+14 still gets `Ethiopian seismic zone`,
+  `EBCS / ES EN 1998`, `AA City Authority` and `ERA / AASHTO` verbatim; the
+  Kenyan equivalent gets none of them and no stray braces.
+
+- **Three defects the test found that my reading had missed:** a further
+  hard-coded `Ethiopian EPA/WHO` effluent row in `beyond-spec-tables.ts` that
+  was not on the deferred list at all; the water glossary entry whose TERM is
+  literally `EBCS`, where tokenising only its context would still have printed
+  `**EBCS** —` as a heading on a tender EBCS does not govern (such an entry is
+  now DROPPED unless a source names the instrument); and my own scan counting
+  the catalogue's `{{JURISDICTION:KEY}}` docstring example as a shipped token —
+  the same comment-versus-code trap this repository has hit before, fixed by
+  stripping comments before scanning.
+- **Files changed:** `lib/engine/jurisdiction-instruments.ts` (new),
+  `lib/engine/proposal-intelligence.ts`, `lib/engine/methodology-tables.ts`,
+  `lib/engine/proposal-sections.ts`, `lib/engine/canonical-work-plan.ts`,
+  `lib/engine/beyond-spec-tables.ts`, `lib/engine/sector-vocabulary-enricher.ts`,
+  `lib/engine/benchmark-tables.ts`, `lib/engine/deliverable-qa-checklist.ts`,
+  `lib/engine/section-c-depth-amplifier.ts`, `lib/engine/work-plan-timeline.ts`,
+  `lib/engine/deliverable-and-phases.ts`, `lib/engine/generate-elite.ts`,
+  `tests/a-deterministic-table-names-a-regulator-only-when-a-source-names-it.test.ts`
+  (new), `operator_handoff.md`.
+- **Tests actually run:** targeted 10/10; vacuity-probed (forcing the resolver
+  to always return the specific phrase fails 7 of the 10, so the suite is not
+  passing on its own shape); full suite with DB integration **12,132 / 12,132
+  pass, 0 fail, 0 cancelled**; `tsc` clean; `next lint` clean.
+- **CI:** exact-head CI on `cf153e51` verified by CONCLUSION, not status —
+  CI push run 6591 **success**, CI pull_request run 6592 **success**,
+  Dependency Security Audit **success**, Exact-head route/screenshot audit
+  **success**.
+- **Known risk:** the token indirection would silently delete a clause if a key
+  were mistyped, so the suite walks every `.ts` under `lib/` and fails on any
+  token key the catalogue does not define. A tenth test also re-scans the nine
+  builders as source text, so a new hard-coded assertion fails even on a route
+  the fixtures do not reach.
+- **Next action:** #48 — monetary-statement classification audit (A–G) on
+  delivered bytes. The model-backed acceptance chain (#46, #51) remains blocked
+  externally on provider credit, not on code.
+- **Merge status:** not reviewed. Do not merge. Do not promote Production.
+
+### 2026-09-15 UTC — A regulator is named only when a source names it
 
 - **Tool / branch / PR:** Claude Code · `release/consolidated-recovery-20260717` · PR #1175 (open, draft, unmerged).
 - **Scope:** the previous entry deferred the hard-coded jurisdiction work as
