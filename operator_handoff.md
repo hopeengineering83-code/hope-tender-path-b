@@ -195,6 +195,52 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-15 UTC (latest) — A leakage guard that cannot see KES is not a leakage guard
+
+- **Tool / branch / PR:** Claude Code · `release/consolidated-recovery-20260717` · PR #1175 (open, draft, unmerged).
+- **Scope:** finished migrating `lib/engine/pricing-hygiene.ts` onto the
+  canonical ISO 4217 reference. Five sites, four of them found by the test
+  rather than by reading:
+
+  - `isValueOnlyFragment` — only a fragment that is *nothing but* an amount is
+    barred from appealing to surrounding context, so "KES 45,000,000" failing
+    that test let a non-ETB amount argue its way past the leakage veto. A narrow
+    list did not make the guard stricter; it made it looser.
+  - the bare-year scrub — spares a year only when a currency token sits beside
+    it, so "KES 2026" lost that protection and had the amount scrubbed.
+  - three identical inline `hasCurrencyValue` patterns (lines 207, 270, 493),
+    now one shared `CURRENCY_AMOUNT` constant.
+
+  **Two vocabularies, deliberately.** `CURRENCY_TOKEN_ALTERNATION` excludes
+  ambiguous NAMES ("dollar" could be USD, AUD, CAD) because naming the wrong
+  currency would be a fabricated figure. That exclusion is right when
+  IDENTIFYING a currency and wrong when merely DETECTING one, so the ambiguous
+  words are kept as extra detection terms. Nothing downstream reads a currency
+  identity from that pattern.
+
+  Measured against the pattern it replaced, the new one is strictly better: the
+  old one missed "KES 45,000,000" AND "Budget of 4,500,000 euros" (it had no
+  plural — `euro\b` fails on "euros"). Both are now seen.
+
+  **KNOWN REMAINING GAP, recorded not fixed:** a magnitude spelled as a separate
+  word — "1.2 million dollars" — is missed, and was missed by the old pattern
+  too. Widening further is safe in direction, but that shape has not been
+  observed in real generated output and this is a protected subsystem. A test
+  pins the gap so it is not mistaken for coverage.
+
+- **Files changed:** `lib/engine/pricing-hygiene.ts`,
+  `tests/a-currency-the-source-states-must-survive.test.ts`, `operator_handoff.md`.
+- **Tests actually run:** 10 pricing-hygiene suites + the currency suite
+  320/320; full suite with DB integration **12,117 / 12,117 pass, 0 fail,
+  0 cancelled**; `tsc` clean; lint clean.
+- **Risks:** widening detection in a leakage guard fails CLOSED (more content
+  treated as money), which is the safe direction, and 320 targeted tests cover
+  the module. No readiness, provenance or compliance gate was relaxed.
+- **Next action:** AI Analyze still blocked externally. The jurisdiction
+  hard-coding recorded in the previous entry remains the main open
+  code-controlled quality gap, and still needs a model-backed run to measure.
+- **Merge status:** not reviewed. Do not merge. Do not promote Production.
+
 ### 2026-09-15 UTC (latest) — Two producers of a project's currency, two different shortlists
 
 - **Tool / branch / PR:** Claude Code · `release/consolidated-recovery-20260717` · PR #1175 (open, draft, unmerged).

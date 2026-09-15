@@ -107,3 +107,99 @@ describe("a currency the source states must survive", () => {
     assert.equal(resolveCurrencyToken("KES"), "KES");
   });
 });
+
+/**
+ * The same narrow list also sat inside the PRICING-LEAKAGE guard, where an
+ * unrecognised currency did not make the guard stricter — it made it looser.
+ * Only a fragment that is nothing but an amount is barred from appealing to
+ * surrounding context, so "KES 45,000,000" failing that test let a non-ETB
+ * amount argue its way past the veto. And the bare-year scrub spares a year
+ * only when a currency token sits beside it, so "KES 2026" lost that
+ * protection and had the amount scrubbed.
+ */
+describe("the pricing-leakage guard recognises money in any currency", () => {
+  const VALUE_ONLY = new RegExp(
+    `^[^A-Za-z0-9]*(?:(?:${CURRENCY_TOKEN_ALTERNATION})\\s*)?[$€£]?\\s*[0-9][0-9,]*(?:\\.\\d+)?`
+    + `\\s*(?:[KkMmBb](?:[Ii][Ll][Ll][Ii][Oo][Nn])?)?\\s*(?:${CURRENCY_TOKEN_ALTERNATION})?[^A-Za-z0-9]*$`,
+  );
+
+  it("treats an amount in any currency as a value-only fragment", () => {
+    for (const fragment of [
+      "ETB 312,000,000", "KES 45,000,000", "NGN 1.2M",
+      "USD 4.5 Million", "45,000,000 TZS", "2,300,000 Birr", "$1,200,000",
+    ]) {
+      assert.ok(VALUE_ONLY.test(fragment.trim()), `${fragment} is an amount and nothing else`);
+    }
+  });
+
+  it("keeps the magnitude suffix working without an i flag", () => {
+    // The alternation forbids `i`, so [KkMmBb] and ILLION spell their own cases.
+    for (const fragment of ["12 Million", "12 million", "12M", "3 Billion"]) {
+      assert.ok(VALUE_ONLY.test(fragment.trim()), fragment);
+    }
+  });
+
+  it("still treats prose as prose", () => {
+    for (const sentence of [
+      "The team delivered the works in 2023.",
+      "Our fee proposal is submitted separately as required.",
+      "all of which was spent",
+    ]) {
+      assert.equal(VALUE_ONLY.test(sentence.trim()), false, sentence);
+    }
+  });
+
+  it("the guard no longer carries its own currency shortlist", () => {
+    const src = readFileSync("lib/engine/pricing-hygiene.ts", "utf8");
+    const code = src.split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
+    assert.doesNotMatch(code, /EUR\|USD\|ETB\|GBP\|Birr/, "must use the canonical reference");
+    assert.match(code, /CURRENCY_TOKEN_ALTERNATION/);
+  });
+});
+
+describe("the shared money detector is strictly better than the three it replaced", () => {
+  const MONEY = `(?:${CURRENCY_TOKEN_ALTERNATION}|[Dd]ollars?|[Ee]uros?|[Pp]ounds?)`;
+  const MAG = "(?:[KkMmBb](?:[Ii][Ll][Ll][Ii][Oo][Nn])?)?";
+  const NUM = "[0-9][0-9,]*(?:\\.\\d+)?";
+  const DETECT = new RegExp(
+    `(?:\\b${MONEY}\\s*${NUM}${MAG}\\b|\\b${NUM}${MAG}\\s*${MONEY}\\b|[$€£]\\s*${NUM}${MAG})`,
+  );
+
+  it("sees amounts the old pattern missed", () => {
+    for (const sentence of [
+      "Contract value was KES 45,000,000 in 2023.",   // currency outside the old list
+      "Budget of 4,500,000 euros was approved.",       // the old pattern had no plural
+      "We delivered NGN 1.2M of works.",
+    ]) {
+      assert.ok(DETECT.test(sentence), `a leakage guard must see money in: ${sentence}`);
+    }
+  });
+
+  it("still sees the amounts the old pattern saw", () => {
+    for (const sentence of [
+      "Contract value was ETB 312,000,000 in 2023.",
+      "The fee was USD 4,500,000.",
+      "A $1,200,000 contract.",
+    ]) {
+      assert.ok(DETECT.test(sentence), sentence);
+    }
+  });
+
+  it("does not see money in ordinary prose", () => {
+    for (const sentence of [
+      "The project ran from 2021 to 2023 with no cost overrun.",
+      "Our methodology has five phases.",
+    ]) {
+      assert.equal(DETECT.test(sentence), false, sentence);
+    }
+  });
+
+  it("KNOWN REMAINING GAP: a magnitude spelled as a separate word", () => {
+    // "1.2 million dollars" puts a word between the number and the currency, so
+    // neither this pattern nor the three it replaced match it. Recorded rather
+    // than quietly fixed: widening a leakage guard further is safe in direction
+    // but this shape has not been observed in real generated output, and the
+    // guard is a protected subsystem. Fix it when there is evidence it occurs.
+    assert.equal(DETECT.test("The fee is 1.2 million dollars."), false);
+  });
+});

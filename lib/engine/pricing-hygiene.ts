@@ -1,5 +1,6 @@
 import type { ExportReadyDocument } from "./export-readiness";
 import { segmentSentences } from "./sentence-segmentation";
+import { CURRENCY_TOKEN_ALTERNATION } from "./currency-reference";
 
 function labelOf(doc?: Pick<ExportReadyDocument, "name" | "exactFileName" | "documentType" | "format">): string {
   return `${doc?.name ?? ""} ${doc?.exactFileName ?? ""} ${doc?.documentType ?? ""} ${doc?.format ?? ""}`.toLowerCase();
@@ -96,7 +97,13 @@ function withoutIdentifiers(sentence: string): string {
     // Requirement and clause IDs: TRB-10, ITB-4, SEC-12.
     .replace(/\b[A-Za-z]{2,6}-\d+\b/g, " ")
     // A bare year, only when no currency token is adjacent.
-    .replace(/(?<!\b(?:EUR|USD|ETB|GBP|Birr)\s{0,3})\b(?:19|20)\d{2}\b(?!\s{0,3}(?:EUR|USD|ETB|GBP|Birr))/gi, " ")
+    //
+    // The adjacency guard is what keeps "ETB 2026" from being stripped as a
+    // year when it is priced content. It listed five tokens, so "KES 2026" or
+    // "NGN 2026" lost that protection and the amount was scrubbed. The tokens
+    // now come from the canonical ISO 4217 reference; see the note on
+    // VALUE_ONLY_FRAGMENT below for why no `i` flag may be used with it.
+    .replace(BARE_YEAR_WITHOUT_ADJACENT_CURRENCY, " ")
     // Deliverable codes: D1, D7, A4. A single letter with one or two digits
     // names an item; it never states a price.
     .replace(/\b[A-Za-z]\d{1,2}\b/g, " ")
@@ -167,13 +174,65 @@ const CLIENT_ORGANISATION_RE =
  */
 const REFERENCE_CONTEXT_FRAGMENTS = 5;
 
-/** A fragment carrying a currency amount and essentially nothing else. */
+const BARE_YEAR_WITHOUT_ADJACENT_CURRENCY = new RegExp(
+  `(?<!\\b(?:${CURRENCY_TOKEN_ALTERNATION})\\s{0,3})\\b(?:19|20)\\d{2}\\b`
+  + `(?!\\s{0,3}(?:${CURRENCY_TOKEN_ALTERNATION}))`,
+  "g",
+);
+
+/**
+ * A fragment carrying a currency amount and essentially nothing else.
+ *
+ * The currency tokens come from the canonical ISO 4217 reference rather than a
+ * five-token list. An unrecognised currency did not make this stricter, it made
+ * it LOOSER: a fragment holding only "KES 45,000,000" failed this test, and the
+ * comment above records that only a value-only fragment is barred from
+ * appealing to context. So the narrow list quietly let non-ETB amounts argue
+ * their way past the leakage veto.
+ *
+ * CURRENCY_TOKEN_ALTERNATION is case-sensitive by contract -- several ISO codes
+ * are also ordinary lower-case English words -- so this pattern carries no `i`
+ * flag, and the magnitude suffix spells its own cases instead.
+ */
+const VALUE_ONLY_FRAGMENT = new RegExp(
+  `^[^A-Za-z0-9]*(?:(?:${CURRENCY_TOKEN_ALTERNATION})\\s*)?[$€£]?\\s*[0-9][0-9,]*(?:\\.\\d+)?`
+  + `\\s*(?:[KkMmBb](?:[Ii][Ll][Ll][Ii][Oo][Nn])?)?\\s*(?:${CURRENCY_TOKEN_ALTERNATION})?[^A-Za-z0-9]*$`,
+);
+
 function isValueOnlyFragment(sentence: string): boolean {
-  return /^[^A-Za-z0-9]*(?:(?:EUR|USD|ETB|GBP|Birr)\s*)?[$€£]?\s*[0-9][0-9,]*(?:\.\d+)?\s*(?:[KkMmBb](?:illion)?)?\s*(?:EUR|USD|ETB|GBP|Birr)?[^A-Za-z0-9]*$/i.test(sentence.trim());
+  return VALUE_ONLY_FRAGMENT.test(sentence.trim());
 }
+/**
+ * "This sentence contains a money amount" — used by the leakage guards below.
+ *
+ * The same regex was written inline three times with a five-token currency
+ * list, so an amount in KES, NGN or TZS was not seen as money at all by a guard
+ * whose whole job is to see money. Detection is the safe direction to widen: a
+ * guard that misses an amount fails open.
+ *
+ * Two vocabularies, deliberately. CURRENCY_TOKEN_ALTERNATION is the canonical
+ * ISO 4217 set, which excludes ambiguous NAMES ("dollar" could be USD, AUD,
+ * CAD...) because naming the wrong currency would be a fabricated figure. That
+ * exclusion is right when IDENTIFYING a currency and wrong when merely
+ * DETECTING one, so the ambiguous words are kept here as extra detection terms.
+ * Nothing downstream reads a currency identity from this pattern.
+ *
+ * No `i` flag: the alternation is case-sensitive by contract, so the English
+ * words and the magnitude suffix spell their own cases.
+ */
+const AMBIGUOUS_MONEY_WORDS = "[Dd]ollars?|[Ee]uros?|[Pp]ounds?";
+const MONEY_TOKEN = `(?:${CURRENCY_TOKEN_ALTERNATION}|${AMBIGUOUS_MONEY_WORDS})`;
+const MAGNITUDE = "(?:[KkMmBb](?:[Ii][Ll][Ll][Ii][Oo][Nn])?)?";
+const NUMBER = "[0-9][0-9,]*(?:\\.\\d+)?";
+const CURRENCY_AMOUNT = new RegExp(
+  `(?:\\b${MONEY_TOKEN}\\s*${NUMBER}${MAGNITUDE}\\b`
+  + `|\\b${NUMBER}${MAGNITUDE}\\s*${MONEY_TOKEN}\\b`
+  + `|[$€£]\\s*${NUMBER}${MAGNITUDE})`,
+);
+
 
 function isHistoricalReferenceValueSentence(sentence: string): boolean {
-  const hasCurrencyValue = /(?:\b(?:EUR|USD|ETB|GBP|Birr|dollar|euro)\s*[0-9][0-9,]*(?:\.\d+)?(?:[KkMmBb](?:illion)?)?\b|\b[0-9][0-9,]*(?:\.\d+)?(?:[KkMmBb](?:illion)?)?\s*(?:EUR|USD|ETB|GBP|Birr|dollar|euro)\b|[$€£]\s*[0-9][0-9,]*(?:\.\d+)?(?:[KkMmBb](?:illion)?)?)/i.test(sentence);
+  const hasCurrencyValue = CURRENCY_AMOUNT.test(sentence);
   if (!hasCurrencyValue) return false;
 
   const currentOfferPricing = /\b(this\s+(?:proposal|bid|assignment|tender)|our\s+(?:fee|price|rate|quotation|financial|commercial)|bid\s+price|proposal\s+price|total\s+price|unit\s+price|consultancy\s+fee|professional\s+fee|daily\s+rate|monthly\s+rate|hourly\s+rate|lump\s+sum|price\s+schedule|fee\s+schedule|rate\s+card|quotation|quoted\s+(?:amount|price)|amount\s+payable|payment\s+amount|budget\s+allocated|financial\s+proposal\s+(?:includes|totals|amount)|commercial\s+proposal\s+(?:includes|totals|amount))\b/i.test(sentence);
@@ -236,7 +295,7 @@ function isHistoricalReferenceValueSentence(sentence: string): boolean {
 const DELIVERED_WORK_VALUE_LABEL = /\b(construction\s+value(?:\s+of\s+works)?|value\s+of\s+(?:the\s+)?works|aggregate\s+value\s+of\s+projects(?:\s+delivered)?)\b/i;
 
 function isHistoricalReferenceValueContinuation(sentence: string, priorContext: string): boolean {
-  const hasCurrencyValue = /(?:\b(?:EUR|USD|ETB|GBP|Birr|dollar|euro)\s*[0-9][0-9,]*(?:\.\d+)?(?:[KkMmBb](?:illion)?)?\b|\b[0-9][0-9,]*(?:\.\d+)?(?:[KkMmBb](?:illion)?)?\s*(?:EUR|USD|ETB|GBP|Birr|dollar|euro)\b|[$€£]\s*[0-9][0-9,]*(?:\.\d+)?(?:[KkMmBb](?:illion)?)?)/i.test(sentence);
+  const hasCurrencyValue = CURRENCY_AMOUNT.test(sentence);
   if (!hasCurrencyValue) return false;
   // A labelled value ("Contract value: ETB …"), or a table cell that holds the
   // amount and nothing else. The second case appears once DOCX extraction
@@ -459,7 +518,7 @@ export function pricingLeakageFinding(text: string, doc?: Pick<ExportReadyDocume
     .join("\n");
   if (!scanText) return null;
 
-  const currencyAmount = /(?:\b(?:EUR|USD|ETB|GBP|Birr|dollar|euro)\s*[0-9][0-9,]*(?:\.\d+)?(?:[KkMmBb](?:illion)?)?\b|\b[0-9][0-9,]*(?:\.\d+)?(?:[KkMmBb](?:illion)?)?\s*(?:EUR|USD|ETB|GBP|Birr|dollar|euro)\b|[$€£]\s*[0-9][0-9,]*(?:\.\d+)?(?:[KkMmBb](?:illion)?)?)/i;
+  const currencyAmount = CURRENCY_AMOUNT;
   const pricedTermNumber = /\b(total price|unit price|price schedule|fee schedule|commercial offer|financial proposal|commercial proposal|daily rate|monthly rate|hourly rate|consultancy fee|professional fee|lump sum|contract amount|contract value|bill of quantities|BoQ|quoted amount|quoted price|invoice amount|payment amount|VAT amount|reimbursable amount)\b.{0,90}\b[0-9][0-9,]*(?:\.\d+)?\b/i;
   const numberPricedTerm = /\b[0-9][0-9,]*(?:\.\d+)?\b.{0,90}\b(total price|unit price|price schedule|fee schedule|commercial offer|financial proposal|commercial proposal|daily rate|monthly rate|hourly rate|consultancy fee|professional fee|lump sum|contract amount|contract value|bill of quantities|BoQ|quoted amount|quoted price|invoice amount|payment amount|VAT amount|reimbursable amount)\b/i;
   const standaloneFinancialTerm = /\b(bill of quantities|BoQ|commercial proposal|financial proposal|rate card|price schedule|fee schedule|quotation|quoted price|lump sum price|contract price|contract fee|reimbursable\s+(?:cost|expense)|percentage.{0,5}based\s+fee|unit\s+price\s+list|price\s+breakdown|cost\s+breakdown|budget\s+breakdown|payment\s+schedule|invoice\s+schedule|commercial\s+envelope|financial\s+envelope)\b/i;
