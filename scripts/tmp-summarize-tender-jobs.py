@@ -31,5 +31,22 @@ else:
             j.get("jobType"), j.get("status"), j.get("id"),
             j.get("createdAt"), j.get("finishedAt"),
         ))
-        if j.get("status") == "FAILED":
-            print("    error={0}".format(j.get("error") or j.get("result") or "(no failure detail returned)"))
+        if j.get("status") in ("FAILED", "CANCELED"):
+            # GET /api/ai-jobs serialises the durable cause as `errorMessage` --
+            # listUserJobs in lib/ai-jobs.ts selects exactly that column and the
+            # route returns the rows unchanged. This read asked for `error` and
+            # `result`, neither of which that payload has ever carried, so every
+            # failed job printed "(no failure detail returned)" regardless of
+            # what the worker actually recorded.
+            #
+            # That is not a cosmetic loss. The provider-exhaustion text -- which
+            # names each provider contacted and why it failed, and which the
+            # whole AI-routing investigation turns on -- is written to exactly
+            # this field, and the acceptance run reported it as absent every
+            # time. A diagnostic that silently answers "nothing to report" is
+            # worse than one that is missing, because it ends the enquiry.
+            #
+            # The previous keys stay as alternates rather than being swapped for
+            # one new guess, so a payload shaped either way still reads.
+            detail = j.get("errorMessage") or j.get("error") or j.get("result")
+            print("    error={0}".format(detail or "(job recorded no failure detail)"))

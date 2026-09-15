@@ -271,6 +271,59 @@ jobs:
           curl -sS --connect-timeout 15 --max-time 30 -H "Cookie: hope_session=$SESSION_COOKIE" \
             "$BASE_URL/api/tenders/$TENDER_ID/workflow-center" | tee /tmp/workflow-center-after-analyze.json
 
+      - name: Require AI Analyze to be release-ready before Run Engine
+        if: inputs.confirm == 'accept'
+        run: |
+          # The wait above settles on TERMINALITY, and FAILED is terminal. So on
+          # run 34978972693 that step passed, readiness was snapshotted, a
+          # baseline artifact hash was recorded -- and the run only died twenty
+          # seconds later at Run Engine with HTTP 422 CURRENT_ANALYSIS_REQUIRED.
+          # A failure inside AI Analyze was reported as an engine error, two
+          # steps and three successful-looking green ticks away from where it
+          # happened.
+          #
+          # The verdict is not re-derived here. tender-release-snapshot.ts
+          # already decides release-readiness (state must be AI_SUCCEEDED, with
+          # a promoted canonical job and a matching content hash) and publishes
+          # it on the workflow-center payload just fetched. Reading the
+          # product's own answer keeps this harness from enforcing a policy
+          # stricter or looser than the engine it is supposed to be testing.
+          #
+          # The durable per-job cause is printed alongside it, because the
+          # snapshot says an analysis is not usable while only the AiJob row
+          # says why.
+          curl -sS --connect-timeout 15 --max-time 45 -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/ai-jobs?tenderId=$TENDER_ID&take=25" > /tmp/jobs-after-analyze.json
+          python3 - <<'PYEOF'
+          import json, os
+
+          started = os.environ['RUN_STARTED_AT']
+          snapshot = json.load(open('/tmp/workflow-center-after-analyze.json', encoding='utf-8'))
+          analysis = (snapshot.get('snapshot') or snapshot).get('analysis') or {}
+          state = str(analysis.get('state') or '(absent)')
+          blocker = analysis.get('blocker')
+          print(f"analysis state after AI Analyze: {state}")
+
+          jobs = (json.load(open('/tmp/jobs-after-analyze.json', encoding='utf-8')) or {}).get('jobs') or []
+          mine = [j for j in jobs
+                  if j.get('jobType') == 'AI_ANALYZE' and str(j.get('createdAt') or '') >= started]
+          for j in sorted(mine, key=lambda j: str(j.get('createdAt') or '')):
+              print(f"  AI_ANALYZE {j.get('status')} id={j.get('id')} created={j.get('createdAt')}")
+              if j.get('status') in ('FAILED', 'CANCELED'):
+                  print(f"    durable cause: {j.get('errorMessage') or '(job recorded no failure detail)'}")
+
+          if not mine:
+              print("  (this run's manual-ai-analyze enqueued a job, but no AI_ANALYZE row "
+                    f"created at or after {started} came back)")
+
+          if blocker:
+              raise SystemExit(
+                  f"AI Analyze is not release-ready, so Run Engine cannot run and nothing below "
+                  f"this point would describe work this run produced.\n  blocker: {blocker}"
+              )
+          print("AI Analyze is release-ready; Run Engine may proceed.")
+          PYEOF
+
       - name: Record the artifact this run starts from
         if: inputs.confirm == 'accept'
         run: |
