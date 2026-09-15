@@ -5,6 +5,7 @@ const { GoogleGenerativeAI } = require("@google/generative-ai") as typeof import
 import { recordProviderSuccess as recordProviderSuccessRaw, recordProviderFailure as recordProviderFailureRaw, recordProviderAnalysisSuccess as recordProviderAnalysisSuccessRaw, recordProviderCapabilityResult, classifyAiError, isProviderCooledDown, isBillingLockedOut, getProviderRuntimeSnapshot, getProviderStateSnapshot, getDeepSeekApiKey, isDeepSeekConfigured, getDeepSeekModel, getMistralApiKey, isMistralConfigured, getMistralProposalModel, getMistralAnalysisModel, getMistralFastModel, getMistralBaseUrl, getGroqApiKey, isGroqConfigured, getGroqBaseUrl, getTogetherApiKey, isTogetherConfigured, getTogetherProposalModel, getTogetherAnalysisModel, getTogetherFastModel, getTogetherBaseUrl, getOpenRouterApiKey, isOpenRouterConfigured, getOpenRouterModel, getOpenRouterBaseUrl, getOpenRouterSiteUrl, getOpenRouterAppName, getZaiApiKey, getZaiBaseUrl, getCerebrasApiKey, getCerebrasBaseUrl, getAnthropicApiKey, type AiProviderName } from "./ai-provider-health";
 import { CANONICAL_AI_PROVIDER_ORDER, getAutomaticProviderOrder, automaticallyEligibleProviders, readProviderKey, getProviderModel, getProviderOutputCap, getProviderTimeoutMs, isProviderConfigured as registryIsProviderConfigured, providerAutomaticEligibility, automaticChainDisplay, type AiUseCase } from "./ai-provider-registry";
 import { preflightProvider } from "./ai-preflight";
+import { resolveCurrencyToken } from "./engine/currency-reference";
 import { protectPrompt, protectPromptWithBoundary } from "./ai-trust-boundary";
 import { redactSecrets } from "./sanitize-error";
 import { GEMINI_TIMEOUT_MS, DEEPSEEK_DEFAULT_TIMEOUT_MS, MISTRAL_EXTRACTION_TIMEOUT_MS, OPENAI_COMPAT_DEFAULT_TIMEOUT_MS, O1_O3_TIMEOUT_MS, PROPOSAL_SECTION_TIMEOUT_MS, PROPOSAL_SECTION_TIMEOUT_CEILING_MS, PROPOSAL_SECTION_MS_PER_OUTPUT_TOKEN, PROPOSAL_SECTION_BASE_OVERHEAD_MS, PROPOSAL_SECTION_STITCH_RESERVE_MS, PROPOSAL_AI_TIMEOUT_MS, REFINEMENT_CALL_TIMEOUT_MS } from "./timeout-config";
@@ -3291,7 +3292,7 @@ Return ONLY a valid JSON array — no explanation, no markdown. Each element:
   "serviceAreas": ["services provided e.g. Structural Engineering, Urban Planning"],
   "summary": "1-2 sentence description of project and firm's role",
   "contractValue": number_or_null (plain number, no symbols),
-  "currency": "USD|ETB|EUR|GBP|AED|SAR or null",
+  "currency": "ISO 4217 alphabetic code exactly as the document states it (e.g. USD, ETB, KES, NGN, TZS, INR, AED) or null",
   "sourceSnippet": "verbatim extract ≤500 chars proving this project"
 }
 
@@ -3309,9 +3310,21 @@ ${text.slice(0, 60_000)}`;
   try {
     const parsed = JSON.parse(jsonMatch[0]);
     if (!Array.isArray(parsed)) return [];
-    return (parsed as AIExtractedProject[]).filter(
-      (p) => p && typeof p === "object" && typeof p.name === "string" && p.name.trim().length > 3,
-    );
+    return (parsed as AIExtractedProject[])
+      .filter(
+        (p) => p && typeof p === "object" && typeof p.name === "string" && p.name.trim().length > 3,
+      )
+      // The schema above used to enumerate six currencies, so a project stated
+      // in KES, NGN or TZS came back as null and its value was reported with no
+      // denomination at all -- a real, source-stated fact discarded because the
+      // instruction had no way to express it. Widening the instruction means the
+      // answer now has to be CHECKED rather than trusted: anything that is not a
+      // real ISO 4217 code becomes null, which is what an unrecognised
+      // denomination honestly is.
+      .map((p) => ({
+        ...p,
+        currency: resolveCurrencyToken(typeof p.currency === "string" ? p.currency.trim().toUpperCase() : null),
+      }));
   } catch {
     logger.warn("[extractProjectsFromText] JSON parse failed, returning empty");
     return [];

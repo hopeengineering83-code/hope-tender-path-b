@@ -195,6 +195,68 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-15 UTC (latest) — Two producers of a project's currency, two different shortlists
+
+- **Tool / branch / PR:** Claude Code · `release/consolidated-recovery-20260717` · PR #1175 (open, draft, unmerged).
+- **Scope:** a vault project's currency is produced by two independent paths,
+  and each carried its own hand-written list — which did not even agree:
+
+    `lib/ai.ts` (AI extraction schema)      `"USD|ETB|EUR|GBP|AED|SAR or null"`
+    `company-knowledge-safety-import.ts`    `(ETB|USD|EUR|GBP|CHF|KES|AED)`
+
+  A project stated in NGN, TZS, INR or ZAR was therefore read as having NO
+  currency, and a fact the source printed in plain sight was thrown away. That
+  matters more now that an unknown currency no longer defaults to ETB: the value
+  renders with no denomination at all — honest, but strictly less than the
+  source said.
+
+  `lib/engine/currency-reference.ts` was written for exactly this and names the
+  failure: "a hand-written regional list standing in for general knowledge, and
+  a system that is meant to work for any tender in any country quietly working
+  for one region." `project-fact-extractor.ts` had already been migrated onto
+  it; these two paths had been missed. Both now use it.
+
+  The alternation is CASE-SENSITIVE by contract, because several ISO codes are
+  also ordinary lower-case English words, so a pattern built from it must not
+  carry the `i` flag. The label words therefore spell their own case classes,
+  exactly as `project-fact-extractor.ts` already does. Measured: "Budget: 1,000
+  all of which was spent" yields no currency rather than a thousand Albanian lek.
+
+  The AI schema now asks for an ISO 4217 code instead of enumerating a region,
+  and — because a widened instruction has to be checked rather than trusted —
+  the model's answer is resolved through `resolveCurrencyToken`, so anything
+  that is not a real code becomes null.
+
+- **Files changed:** `lib/ai.ts`, `lib/company-knowledge-safety-import.ts`,
+  `tests/a-currency-the-source-states-must-survive.test.ts` (new),
+  `operator_handoff.md`.
+- **Tests actually run:** targeted 7/7; 41 suites touching currency/extraction
+  439/439; full suite with DB integration **12,109 / 12,109 pass, 0 fail,
+  0 cancelled**; `npx tsc --noEmit` clean; `npx next lint` clean.
+- **Deliberately NOT changed, and why:** ~15 sites across 9 files hard-code
+  Ethiopian regulators, codes and city authorities into GENERATED proposal
+  content — `Ethiopian Health Authority`, `EBCS-8 / ES EN 1998`, `Ethiopian
+  EPA/WHO standards`, `AA City Authority`, `ERA` — in `lib/ai.ts`,
+  `proposal-intelligence.ts`, `methodology-tables.ts`, `canonical-work-plan.ts`,
+  `proposal-sections.ts`, `benchmark-tables.ts`, `deliverable-qa-checklist.ts`,
+  `sector-vocabulary-enricher.ts`. These are asserted unconditionally regardless
+  of the tender's country and are a real cross-sector defect (dimensions 12 and
+  17). They are NOT the same class as the `triggers`/`proofTerms` regexes or
+  `tender-facts-extractor`'s place names, which only DETECT and assert nothing.
+
+  Left alone on purpose: rewriting them changes client-facing technical content,
+  the benchmark tender is itself Ethiopian (so these strings are currently
+  correct for it), and with no reachable AI provider the 17-dimension score
+  cannot be re-measured. Changing unmeasurable proposal content while the
+  benchmark is dark risks trading dimension 8 (technical depth) for dimension 12
+  with no way to see it. Do this with a model-backed run available, and keep the
+  technical substance while making the INSTRUMENT source-driven.
+- **Next action:** AI Analyze is still blocked externally — six consecutive
+  acceptance runs, most recently 35007527823, all ending "Contacted 0 of 10
+  configured provider(s)". Resume the end-to-end benchmark when a provider
+  answers.
+- **Merge status:** not reviewed. Do not merge. Do not promote Production.
+
 ### 2026-09-15 UTC (latest) — A probe may observe a provider; it may not heal it
 
 - **Tool / branch / PR:** Claude Code · `release/consolidated-recovery-20260717` · PR #1175 (open, draft, unmerged).

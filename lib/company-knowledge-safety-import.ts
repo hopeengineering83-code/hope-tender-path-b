@@ -1,5 +1,6 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { COMPANY_DOCUMENT_PENDING_DELETE_MARKER } from "./company-document-durable-deletion";
+import { CURRENCY_TOKEN_ALTERNATION, resolveCurrencyToken } from "./engine/currency-reference";
 
 function clean(value: string | null | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim();
@@ -495,13 +496,38 @@ function firstMatch(text: string, patterns: RegExp[]): string | null {
   return null;
 }
 
+// Currency tokens come from the canonical ISO 4217 reference, not a hand-written
+// shortlist.
+//
+// This recognised seven codes (ETB, USD, EUR, GBP, CHF, KES, AED) and the AI
+// schema in lib/ai.ts recognised a DIFFERENT six — so the two paths that both
+// produce a project's currency disagreed about which currencies exist, and a
+// value stated in NGN, TZS, INR or ZAR was read as no currency at all.
+// currency-reference.ts was written for exactly this and says so: "a
+// hand-written regional list standing in for general knowledge, and a system
+// that is meant to work for any tender in any country quietly working for one
+// region." project-fact-extractor.ts was migrated onto it; this path was missed.
+//
+// The alternation is CASE-SENSITIVE by contract — three-letter codes are also
+// ordinary English words in lower case ("all", "top", "try"), so the reference
+// requires that no `i` flag be applied to a pattern built from it. The label
+// words therefore spell their own case classes instead, exactly as
+// project-fact-extractor.ts does.
+const CONTRACT_VALUE_PATTERN = new RegExp(
+  `(?:[Cc]ontract\\s+[Vv]alue|[Pp]roject\\s+[Vv]alue|[Bb]udget|[Aa]mount)`
+  + `\\s*[:\\-]?\\s*(${CURRENCY_TOKEN_ALTERNATION})?\\s*([\\d,.]+)\\s*(${CURRENCY_TOKEN_ALTERNATION})?`,
+);
+
 function parseContractValue(text: string): { value: number | null; currency: string | null } {
-  const match = text.match(/(?:contract\s+value|project\s+value|budget|amount)\s*[:\-]?\s*(ETB|USD|EUR|GBP|CHF|KES|AED)?\s*([\d,.]+)\s*(ETB|USD|EUR|GBP|CHF|KES|AED)?/i);
+  const match = text.match(CONTRACT_VALUE_PATTERN);
   if (!match) return { value: null, currency: null };
   const value = Number((match[2] ?? "").replace(/,/g, ""));
   return {
     value: Number.isFinite(value) ? value : null,
-    currency: clean(match[1] || match[3]).toUpperCase() || null,
+    // resolveCurrencyToken normalises an alias to its code ("Birr" -> ETB) and
+    // refuses anything that is not a real currency, so an unrecognised token
+    // stays null rather than becoming a fabricated denomination.
+    currency: resolveCurrencyToken(clean(match[1] || match[3])),
   };
 }
 
