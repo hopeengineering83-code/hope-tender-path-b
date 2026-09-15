@@ -195,6 +195,62 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-15 UTC (latest) — A regulator is named only when a source names it
+
+- **Tool / branch / PR:** Claude Code · `release/consolidated-recovery-20260717` · PR #1175 (open, draft, unmerged).
+- **Scope:** the previous entry deferred the hard-coded jurisdiction work as
+  "unmeasurable without a provider". That judgement was too cautious and is
+  now reversed for the writer-prompt sites.
+
+  Four blocks injected into the proposal writer's prompt asserted Ethiopian
+  instruments for EVERY tender: `Ethiopian Health Authority licensing, EBCS
+  compliance`; `effluent treatment design to Ethiopian EPA/WHO standards`;
+  `Ethiopian seismic zone (EBCS-8/ES EN 1998)`; `structural calculation
+  submission to AA City/regional authority`. A Kenyan hospital or a Nigerian
+  factory was instructed to answer to a regulator that does not govern it — a
+  fabricated compliance claim in a bid.
+
+  The fix needs no benchmark measurement because it changes nothing for the
+  benchmark. The INSTRUMENT is source-driven: named when the tender, the
+  analysis, or the company's own evidence names it, otherwise the guidance asks
+  for the applicable national instrument without inventing which one. Measured
+  both ways: an Ethiopian tender still gets `Ethiopian Health Authority
+  licensing and EBCS compliance` and `the Ethiopian seismic zone (EBCS-8/ES EN
+  1998)` verbatim — zero depth traded — and a Kenyan tender gets neither.
+
+  It reuses `allText`, the same variable the sector triggers already read, so
+  there is no new plumbing. `triggers`/`proofTerms` and
+  `tender-facts-extractor`'s place names are untouched: they DETECT Ethiopian
+  terms and assert nothing, which is correct and must stay.
+
+- **Two defects I introduced and caught here, recorded because they were mine:**
+  a heredoc double-escaped `\\bEHA\\b` and `\\bEPA\\b` into the source, so those
+  regex branches matched a literal backslash and never fired (the alternation
+  still worked via `EBCS`/`Ethiopian Health Authority`, so it was silent).
+  Fixed and verified: `\bEHA\b` matches "the EHA" and not "SHEHAB". And my
+  first vacuity check reported a pass because the mutation string did not match
+  and the revert silently did nothing — the check now ASSERTS the mutation
+  applied before running the test, and with that the guard fails as it should.
+
+- **Files changed:** `lib/ai.ts`,
+  `tests/a-regulator-is-named-only-when-a-source-names-it.test.ts` (new),
+  `operator_handoff.md`.
+- **Tests actually run:** targeted 5/5; full suite with DB integration
+  **12,122 / 12,122 pass, 0 fail, 0 cancelled**; `tsc` clean; lint clean.
+- **Still open (same class, NOT done):** roughly eleven further sites assert
+  Ethiopian instruments inside DETERMINISTIC builders rather than the writer
+  prompt — `proposal-intelligence.ts` (122, 177, 178, 407, 418),
+  `methodology-tables.ts` (281, 282, 339), `canonical-work-plan.ts` (64, 191),
+  `proposal-sections.ts` (83, 155, 1106), `benchmark-tables.ts` (810),
+  `deliverable-qa-checklist.ts` (102), `sector-vocabulary-enricher.ts` (32, 37).
+  Those builders do not currently receive the tender text, so making them
+  source-driven needs plumbing rather than a one-line condition. Same fix
+  shape; larger change.
+- **CI note:** CI on `ee2d8cfe` and `af2a2d36` was CANCELLED by the next push
+  (concurrency supersession), which is why only the final SHA's CI counts.
+  Batch related changes rather than pushing repeatedly.
+- **Merge status:** not reviewed. Do not merge. Do not promote Production.
+
 ### 2026-09-15 UTC (latest) — A leakage guard that cannot see KES is not a leakage guard
 
 - **Tool / branch / PR:** Claude Code · `release/consolidated-recovery-20260717` · PR #1175 (open, draft, unmerged).

@@ -3909,6 +3909,30 @@ export async function generateBenchmarkProposalWithAI(params: AIBidWriterInput):
 
   const allText = params.tenderText + params.analysisSummary;
 
+  // ─── Jurisdiction instruments: named only when a source names them ──────────
+  //
+  // These guidance blocks asserted Ethiopian instruments unconditionally --
+  // "Ethiopian Health Authority licensing, EBCS compliance", "effluent
+  // treatment design to Ethiopian EPA/WHO standards", "Ethiopian seismic zone
+  // (EBCS-8/ES EN 1998)", "submission to AA City/regional authority". Every
+  // tender got them, so a Kenyan hospital or a Nigerian factory was instructed
+  // to answer to a regulator that does not govern it. That is a fabricated
+  // compliance claim in a bid, and it is exactly the kind of permanent
+  // country-specific rule this codebase is not allowed to carry.
+  //
+  // The fix is not to delete the substance. For an Ethiopian tender EBCS really
+  // is the governing code, and dropping it would cost real technical depth. So
+  // the INSTRUMENT is source-driven: it is named when the tender text, the
+  // analysis, or the company's own evidence names it, and otherwise the
+  // guidance asks for the applicable national instrument without inventing
+  // which one that is. Same mechanism the sector triggers already use -- read
+  // the source, do not assume the country.
+  const jurisdictionSource = `${allText}\n${params.compliance}\n${params.companyProfile}\n${params.projects}`;
+  const sourceNames = (pattern: RegExp): boolean => pattern.test(jurisdictionSource);
+  /** Name `specific` only when the source does; otherwise fall back to `generic`. */
+  const instrument = (pattern: RegExp, specific: string, generic: string): string =>
+    sourceNames(pattern) ? specific : generic;
+
   // Universal sector detection — multiple sectors can be active simultaneously
   const isHealthcare = /health|hospital|medical|clinic|pharma|radiology|laboratory|biomedical/i.test(allText);
   const isFacilityAssessment = /facility identification|shortlisted propert|site assessment|suitable.*propert|premises|renovation.*exist/i.test(params.tenderText);
@@ -3968,7 +3992,7 @@ HEALTHCARE-SPECIFIC PROPOSAL GUIDANCE (mandatory for this tender):
 - Include a Team-to-Project Experience Mapping section showing expert → previous hospital project → role performed.
 - Technical Approach must address: clinical zone segregation (Emergency/OPD/In-patient/Laboratory/Imaging/Pharmacy), patient-staff-supply flow, IPC compliance, radiation shielding for imaging, medical gas coordination, accessible design.
 - MEP section must cover: medical-grade electrical load planning, UPS/generator backup for life-critical loads, ICT/nurse call/BMS/fire alarm, medical gas, clinical waste stream segregation.
-- Regulatory: Ethiopian Health Authority licensing, EBCS compliance, World Bank ESF documentation (if applicable).
+- Regulatory: ${instrument(/EBCS|Ethiopian Health Authority|\bEHA\b/i, "Ethiopian Health Authority licensing and EBCS compliance", "the health-facility licensing authority and building code that govern the project location, named exactly as the tender or the company's own compliance evidence names them — do not name a regulator or code that no source mentions")}, World Bank ESF documentation (if applicable).
 - Biomedical engineering integration must be addressed even if naming a specialist-to-be-engaged.
 - QA: staged design review (conceptual → schematic → detailed → construction documents).`
     : "";
@@ -4169,7 +4193,7 @@ HERITAGE CONSERVATION & ADAPTIVE REUSE GUIDANCE (mandatory for this tender):
     ? `
 INDUSTRIAL & MANUFACTURING FACILITY GUIDANCE (mandatory for this tender):
 - Cover letter and Executive Summary MUST cite the company's strongest comparable industrial/factory project by name, production type, client, and ETB/contract value from the evidence.
-- Technical Approach must address: process brief and production-flow analysis (value-stream mapping, lean principles), utility demand assessment (power, water, compressed air, waste streams), industrial structural design (heavy loading), HVAC/exhaust ventilation system, industrial flooring specification, fire suppression system, effluent treatment design to Ethiopian EPA/WHO standards.
+- Technical Approach must address: process brief and production-flow analysis (value-stream mapping, lean principles), utility demand assessment (power, water, compressed air, waste streams), industrial structural design (heavy loading), HVAC/exhaust ventilation system, industrial flooring specification, fire suppression system, effluent treatment design to ${instrument(/Ethiopian EPA|\bEPA\b|WHO standard/i, "Ethiopian EPA/WHO standards", "the national environmental authority's effluent standards for the project location (WHO guidance where no national standard is stated)")}.
 - Environmental approvals: EIA/ESIA scope, effluent treatment design, waste management plan, occupational safety assessment.
 - Equipment integration: factory acceptance test (FAT) protocol; commissioning sequencing plan; operator training programme.
 - Digital 3D plant model for clash detection and installation sequencing; as-built drawings for O&M manual.`
@@ -4179,10 +4203,10 @@ INDUSTRIAL & MANUFACTURING FACILITY GUIDANCE (mandatory for this tender):
     ? `
 HIGH-RISE / MULTI-STOREY BUILDING GUIDANCE (mandatory for this tender):
 - Cover letter and Executive Summary MUST cite the company's strongest comparable high-rise or multi-storey project by name, floor count (G+N), structural system, client, and ETB/contract value from the evidence.
-- Technical Approach must address: structural system selection (shear wall/core-frame/hybrid) with ETABS/SAP2000 analysis incorporating Ethiopian seismic zone (EBCS-8/ES EN 1998) and wind loads, shear wall and core layout, transfer beam/slab design, foundation design (mat/pile), independent structural peer review.
+- Technical Approach must address: structural system selection (shear wall/core-frame/hybrid) with ETABS/SAP2000 analysis incorporating ${instrument(/EBCS|ES EN 199|Ethiopian seismic/i, "the Ethiopian seismic zone (EBCS-8/ES EN 1998)", "the seismic zone and design code applicable to the project location as stated in the tender")} and wind loads, shear wall and core layout, transfer beam/slab design, foundation design (mat/pile), independent structural peer review.
 - BIM coordination: LOD 300+ full architectural/structural/MEP coordination; clash detection for MEP riser routing and structural penetrations.
 - Specialist systems: aluminium curtain wall specification, lift/car-lift design, BMS, fire alarm and suppression, generator/UPS sizing.
-- Regulatory: structural calculation submission to AA City/regional authority formatted to authority checklist.
+- Regulatory: structural calculation submission to ${instrument(/AA City|Addis Ababa|Ethiopian/i, "the AA City/regional authority", "the municipal or regional authority that reviews structural calculations for the project location")} formatted to that authority's checklist.
 - Construction supervision: hold-point inspections at foundation, shear wall pours, curtain wall installation, and lift acceptance test.`
     : "";
 
