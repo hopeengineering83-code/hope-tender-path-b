@@ -149,6 +149,37 @@ describe("a failed job must say why, where it failed", () => {
     );
   });
 
+  it("the gate identifies its job by id, because a re-run keeps its original timestamp", () => {
+    // manual-ai-analyze can answer with an EXISTING AiJob row rather than
+    // inserting one. Run 34983687383 was handed a job created 42 minutes
+    // earlier, so a `createdAt >= RUN_STARTED_AT` filter matched nothing: the
+    // gate stopped in the right place and then declined to say why — the very
+    // failure it was added to prevent, reproduced one level down.
+    const gate = workflow.slice(
+      workflow.indexOf("Require AI Analyze to be release-ready before Run Engine"),
+    );
+    const body = codeOnly(gate.slice(0, gate.indexOf("- name:", 1)));
+    assert.doesNotMatch(
+      body,
+      /createdAt[^\n]*>=\s*started/,
+      "selecting this run's analysis by creation time misses a re-run row",
+    );
+    assert.match(body, /ai-analyze-job-id\.txt/, "the gate must read the id the trigger recorded");
+    assert.match(
+      body,
+      /analyses\[0\]/,
+      "and must still report the newest analysis when no id was returned",
+    );
+  });
+
+  it("the trigger records the job id it was handed", () => {
+    const trigger = workflow.slice(
+      workflow.indexOf("Trigger AI Analyze (manual, owner-authorized)"),
+    );
+    const body = trigger.slice(0, trigger.indexOf("- name:", 1));
+    assert.match(body, /ai-analyze-job-id\.txt/, "the trigger must persist the returned jobId");
+  });
+
   it("the gate takes the product's verdict instead of re-deriving one", () => {
     const gate = workflow.slice(
       workflow.indexOf("Require AI Analyze to be release-ready before Run Engine"),

@@ -260,6 +260,13 @@ jobs:
             echo "::error::manual-ai-analyze failed (HTTP $status)."
             exit 1
           fi
+          # Record WHICH job this run is waiting on. The route may hand back an
+          # EXISTING row rather than insert one -- run 34983687383 was answered
+          # with a job created 42 minutes earlier -- so "the job this run owns"
+          # cannot be recovered afterwards from a timestamp.
+          echo "$resp" | grep -oE '"jobId":"[^"]+"' | head -1 | cut -d'"' -f4 \
+            > /tmp/ai-analyze-job-id.txt || true
+          echo "this run is waiting on AI_ANALYZE id=$(cat /tmp/ai-analyze-job-id.txt 2>/dev/null || echo '(not returned)')"
 
       - name: Wait for AI Analyze to reach a terminal state
         if: inputs.confirm == 'accept'
@@ -305,16 +312,34 @@ jobs:
           print(f"analysis state after AI Analyze: {state}")
 
           jobs = (json.load(open('/tmp/jobs-after-analyze.json', encoding='utf-8')) or {}).get('jobs') or []
-          mine = [j for j in jobs
-                  if j.get('jobType') == 'AI_ANALYZE' and str(j.get('createdAt') or '') >= started]
-          for j in sorted(mine, key=lambda j: str(j.get('createdAt') or '')):
-              print(f"  AI_ANALYZE {j.get('status')} id={j.get('id')} created={j.get('createdAt')}")
+          analyses = [j for j in jobs if j.get('jobType') == 'AI_ANALYZE']
+
+          # Select by the id the route returned. Filtering on createdAt >= this
+          # run's start looked equivalent and is not: manual-ai-analyze can
+          # answer with an EXISTING row, which keeps its original createdAt. On
+          # run 34983687383 that filter matched nothing, so the gate stopped in
+          # the right place and then declined to say why -- the exact failure
+          # this whole step was added to prevent, reproduced one level down.
+          try:
+              wanted = open('/tmp/ai-analyze-job-id.txt', encoding='utf-8').read().strip()
+          except Exception:
+              wanted = ''
+          mine = [j for j in analyses if wanted and j.get('id') == wanted]
+          if not mine and analyses:
+              # The list is newest-first; the newest analysis is the one the
+              # snapshot's verdict describes.
+              mine = [analyses[0]]
+              print(f"  (no job id returned by the trigger; reporting the newest AI_ANALYZE row)")
+
+          for j in mine:
+              reused = str(j.get('createdAt') or '') < started
+              note = "  [pre-existing row, re-run by this run]" if reused else ""
+              print(f"  AI_ANALYZE {j.get('status')} id={j.get('id')} created={j.get('createdAt')}{note}")
               if j.get('status') in ('FAILED', 'CANCELED'):
                   print(f"    durable cause: {j.get('errorMessage') or '(job recorded no failure detail)'}")
 
           if not mine:
-              print("  (this run's manual-ai-analyze enqueued a job, but no AI_ANALYZE row "
-                    f"created at or after {started} came back)")
+              print("  (no AI_ANALYZE row came back for this tender at all)")
 
           if blocker:
               raise SystemExit(
