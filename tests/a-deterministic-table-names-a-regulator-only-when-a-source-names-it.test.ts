@@ -150,6 +150,7 @@ describe("a deterministic table names a regulator only when a source names it", 
       }
     };
     walk("lib");
+    walk("app");
     assert.ok(seen.size > 0, "expected the shipped tables to carry jurisdiction tokens");
     for (const [key, files] of seen) {
       assert.ok(key in JURISDICTION_PHRASES, `unknown token key ${key} in ${files.join(", ")}`);
@@ -278,7 +279,7 @@ describe("a deterministic table names a regulator only when a source names it", 
     assert.equal(geo("testing in Nairobi"), "standards (ASTM / BS / the applicable national standard)");
   });
 
-  it("no module anywhere in lib/ still asserts an instrument outside the catalogue", () => {
+  it("no module in lib/ or app/ still asserts an instrument outside the catalogue", () => {
     // The point of the fix is that there is ONE place a jurisdiction instrument
     // is named. Checking only the builders the fixtures reach is how three more
     // sites — a risk mitigation, a geotech QA line, and a cover-page example
@@ -313,6 +314,10 @@ describe("a deterministic table names a regulator only when a source names it", 
       }
     };
     walk("lib");
+    // app/ as well: a route handler or a panel string can assert a regulator
+    // just as easily as a table can, and nothing about the defect is confined
+    // to lib/.
+    walk("app");
     assert.deepEqual(offenders, [], `modules asserting a jurisdiction instrument directly:\n${offenders.join("\n")}`);
   });
 

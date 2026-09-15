@@ -237,6 +237,11 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
   `operator_handoff.md`.
 - **Tests actually run:** targeted 12/12; full suite with DB integration
   **12,134 / 12,134 pass, 0 fail, 0 cancelled**; `tsc` clean; `next lint` clean.
+- **Guard widened to `app/` as well** (separate commit). A route handler or a
+  panel string can assert a regulator exactly as a table can, and nothing about
+  the defect is confined to `lib/`. Vacuity-probed by planting
+  `"Ethiopian Health Authority licensing"` in `app/error.tsx`: the suite drops
+  to 11/12 with the probe present and returns to 12/12 once it is removed.
 - **CI:** exact-head CI on `cf153e51` verified green by CONCLUSION (CI push
   6591, CI pull_request 6592, dependency audit, route/screenshot audit — all
   `success`). CI on `5e2518ca` was still running when this was written; the
