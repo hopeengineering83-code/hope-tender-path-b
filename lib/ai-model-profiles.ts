@@ -35,8 +35,13 @@ export type ModelCapabilityProfile = {
    * tighter than the context window. null when TPM is not the binding limit.
    */
   freeTierTpmLimit: number | null;
-  /** How the profile was determined — "family" (pattern hit) or "conservative". */
-  source: "family" | "conservative";
+  /**
+   * How the profile was determined — "family" (the provider's own rule hit),
+   * "family-cross-vendor" (no rule of this provider's matched, but another
+   * provider describes the same model family), or "conservative" (genuinely
+   * unrecognised).
+   */
+  source: "family" | "family-cross-vendor" | "conservative";
 };
 
 type FamilyRule = {
@@ -169,6 +174,59 @@ const OPENROUTER_VENDOR_ALIASES: Record<string, AiProviderName> = {
  * Genuinely unrecognised models still fall through to the conservative
  * profile, which remains the safe direction.
  */
+/**
+ * Find a family rule for `model` among providers OTHER than `provider`.
+ *
+ * THE DEFECT THIS FIXES, read off durable AiJob 01b06b0f.
+ * ------------------------------------------------------
+ * That analysis contacted ZERO of ten configured providers. Two of the ten
+ * were refused before contact like this:
+ *
+ *   cerebras: Prompt exceeds the configured model context budget (7242 input tokens).
+ *   together: Prompt exceeds the configured model context budget (7242 input tokens).
+ *
+ * 7,242 tokens is a small request. No model in the chain has a context window
+ * anywhere near that low — but an UNRECOGNISED one does, because
+ * CONSERVATIVE_PROFILE describes it as an 8K model, and 8K minus an extraction
+ * output floor leaves less than 7,242. Cerebras is configured with
+ * `qwen-3.8-27b`, and cerebras has exactly one family rule, `^(gpt-oss|llama)`.
+ * Nothing matched, so a capable provider was skipped on every run, for every
+ * real tender, with a message that reads like a genuine provider limit.
+ *
+ * The answer already existed in this file, one function down: OpenRouter
+ * identities are resolved by matching the model against EVERY provider's
+ * families, because a model family is a property of the model rather than of
+ * the road taken to reach it. The comment there names the consequence of not
+ * doing it — "the configuration, not the account, was what made the provider
+ * impossible" — and that is exactly what happened here. The scan was simply
+ * never reached by the other nine providers.
+ *
+ * A cross-vendor match is weaker evidence than the provider's own rule, so it
+ * is only consulted after that rule misses, and it never carries another
+ * vendor's free-tier throughput ceiling: Groq's 8,000 TPM is a fact about
+ * Groq's account, not about every deployment of the families Groq lists. The
+ * same reasoning already nulls it on the OpenRouter path.
+ */
+function scanOtherVendorFamilies(
+  provider: AiProviderName,
+  normalizedModel: string,
+): FamilyRule | null {
+  if (!normalizedModel) return null;
+  // `openai/gpt-oss` shows that a family can be written with a vendor prefix,
+  // so both spellings are tried, exactly as the OpenRouter path does.
+  const candidates = [normalizedModel, normalizedModel.slice(normalizedModel.indexOf("/") + 1)];
+  for (const [name, rules] of Object.entries(FAMILY_RULES)) {
+    if (name === provider || name === "openrouter") continue;
+    for (const candidate of candidates) {
+      if (!candidate) continue;
+      for (const rule of rules ?? []) {
+        if (rule.pattern.test(candidate)) return rule;
+      }
+    }
+  }
+  return null;
+}
+
 function resolveOpenRouterProfile(model: string): { rule: FamilyRule; free: boolean } | null {
   const normalized = (model ?? "").trim().toLowerCase();
   if (!normalized) return null;
@@ -259,6 +317,19 @@ export function resolveModelProfile(
       };
     }
   }
+  const crossVendor = scanOtherVendorFamilies(provider, normalized);
+  if (crossVendor) {
+    return {
+      provider,
+      model,
+      contextTokens: crossVendor.contextTokens,
+      maxOutputTokens: crossVendor.maxOutputTokens,
+      // Never inherited across vendors — see scanOtherVendorFamilies.
+      freeTierTpmLimit: null,
+      source: "family-cross-vendor",
+    };
+  }
+
   return {
     provider,
     model,
