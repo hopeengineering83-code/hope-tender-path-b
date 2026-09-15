@@ -94,10 +94,14 @@ function textOf(...values: Array<string | null | undefined>): string {
 
 function money(value?: number | null, currency?: string | null): string | null {
   if (!value) return null;
-  const label = currency || "ETB";
-  if (value >= 1_000_000_000) return `${label} ${(value / 1_000_000_000).toFixed(1)}B`;
-  if (value >= 1_000_000) return `${label} ${(value / 1_000_000).toFixed(1)}M`;
-  return `${label} ${value.toLocaleString()}`;
+  // Defaulted to "ETB" on a nullable column — see the note on fmtMoney in
+  // benchmark-tables.ts. A value whose denomination was never recorded is
+  // printed as a magnitude, not re-denominated into someone's currency.
+  const label = (currency ?? "").trim();
+  const withLabel = (amount: string) => (label ? `${label} ${amount}` : amount);
+  if (value >= 1_000_000_000) return withLabel(`${(value / 1_000_000_000).toFixed(1)}B`);
+  if (value >= 1_000_000) return withLabel(`${(value / 1_000_000).toFixed(1)}M`);
+  return withLabel(value.toLocaleString());
 }
 
 // ─── Proposal themes ──────────────────────────────────────────────────────────

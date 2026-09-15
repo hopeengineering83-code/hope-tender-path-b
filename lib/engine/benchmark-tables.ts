@@ -95,9 +95,24 @@ function fmtMoney(value: number | null | undefined, currency: string | null | un
   // hasContractValue() to decide whether to render the parenthetical at
   // all.
   if (value === null || value === undefined || Number.isNaN(value) || value <= 0) return "";
-  const cur = currency || "ETB";
+  // An absent currency is NOT a licence to pick one.
+  //
+  // This defaulted to "ETB". Project.currency is nullable, so every vault
+  // project whose currency was never recorded had its contract value printed
+  // to the client as Ethiopian Birr -- a denomination its source never stated.
+  // fmtMoney feeds the "Contract Value" and "Construction Value of Works" table
+  // rows and the inline "(CUR 350,000,000, Client)" parenthetical, so the
+  // invented denomination reached the delivered PDF, and a project in Kenya,
+  // Nigeria or Jordan was re-denominated on the way to the page.
+  //
+  // currency-reference.ts already settled this question for AMBIGUOUS currency
+  // names, in those words: "Naming no currency is correct where naming the
+  // wrong one is a fabricated figure in a bid." An ABSENT currency is the same
+  // case. The magnitude is source-grounded and is still printed; the
+  // denomination is not known and so is not asserted.
+  const cur = (currency ?? "").trim();
   const formatted = Math.round(value).toLocaleString("en-US");
-  return `${cur} ${formatted}`;
+  return cur ? `${cur} ${formatted}` : formatted;
 }
 
 function hasContractValue(value: number | null | undefined): boolean {
