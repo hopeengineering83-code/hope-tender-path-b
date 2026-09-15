@@ -1123,6 +1123,18 @@ jobs:
           PYEOF
         continue-on-error: true
 
+      # The authorship answer is the reason this job is usually run, and it was
+      # printed in the middle of a 3,600-line log, behind a provider sweep whose
+      # echoed script alone is ~60 lines. Reading it back cost several large log
+      # fetches that each missed it by a few lines. Re-print it last: the most
+      # important line in the report should not be the hardest one to find.
+      - name: Repeat the authorship verdict at the end of the log
+        if: always()
+        run: |
+          echo "================ AUTHORSHIP VERDICT (repeat) ================"
+          cat /tmp/authorship.txt 2>/dev/null || echo "authorship.txt was not produced"
+          echo "============================================================="
+
       - name: Upload inspection report
         uses: actions/upload-artifact@v4
         with:
