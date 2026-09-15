@@ -988,9 +988,14 @@ jobs:
           curl -sS --connect-timeout 15 --max-time 45 \
             -H "Cookie: hope_session=$SESSION_COOKIE" \
             "$BASE_URL/api/tenders/$tid/analysis-quality" > /tmp/analysis-quality.json || true
+          # /api/tenders/<id>/documents has no route handler -- only
+          # documents/[docId] and documents/bulk-review exist -- so it 404s with
+          # an empty body and the read reported "NOT READ (Expecting value:
+          # line 1 column 1)". The generated documents, with the contentSummary
+          # that names their author, hang off the tender detail endpoint.
           curl -sS --connect-timeout 15 --max-time 45 \
             -H "Cookie: hope_session=$SESSION_COOKIE" \
-            "$BASE_URL/api/tenders/$tid/documents" > /tmp/documents.json || true
+            "$BASE_URL/api/tenders/$tid" > /tmp/documents.json || true
           python3 - <<'PYEOF' | tee /tmp/authorship.txt
           import json
 
@@ -1013,7 +1018,12 @@ jobs:
           if "__unreadable__" in d:
               print(f"DOCUMENT AUTHORSHIP: NOT READ ({d['__unreadable__']})")
               raise SystemExit(0)
-          docs = d.get("documents") or d.get("items") or (d if isinstance(d, list) else [])
+          docs = (
+              d.get("generatedDocuments")
+              or d.get("documents")
+              or d.get("items")
+              or (d if isinstance(d, list) else [])
+          )
           if not docs:
               print(f"DOCUMENT AUTHORSHIP: no documents; top-level keys = {sorted(d) if isinstance(d, dict) else type(d).__name__}")
               raise SystemExit(0)
