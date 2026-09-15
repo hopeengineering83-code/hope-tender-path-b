@@ -84,6 +84,8 @@ export type InternalState = {
   lastFailureMessage: string | null;
   consecutiveFailures: number;
   cooldownUntil: number | null;
+  /** Resolved model identifiers in force when the failure state was recorded. */
+  failureConfigFingerprint?: string | null;
   latestAnalysisResult?: ProviderCapabilityResult | null;
   latestGenerationResult?: ProviderCapabilityResult | null;
 };
@@ -360,6 +362,83 @@ export function clearBillingLockout(provider?: AiProviderName): void {
   else for (const name of ALL_PROVIDER_NAMES) clearOne(name);
 }
 
+/**
+ * The resolved model identifiers for a provider, as one comparable string.
+ *
+ * MODELS ONLY. Never the key, never a base URL, never a prompt — this value is
+ * persisted and surfaced in health output, so it must carry nothing secret. Two
+ * different keys with the same models produce the same fingerprint, which is
+ * correct for its purpose: it answers "is this the same request shape we failed
+ * on", not "is this the same account".
+ */
+export function providerConfigFingerprint(
+  provider: AiProviderName,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  return (["proposal", "extraction", "fast"] as const)
+    .map((useCase) => `${useCase}=${getProviderModel(provider, useCase, env) || "-"}`)
+    .join("|");
+}
+
+/**
+ * Does the recorded failure still describe the configuration we would send now?
+ *
+ * THE DEFECT THIS FIXES.
+ * ----------------------
+ * Failure state is keyed by provider alone. Mistral is configured with
+ * `mistral-large-latest` and answers "This model is not available in your
+ * subscription tier" (HTTP 403, AUTH). That records an AUTH failure, and with
+ * `consecutiveFailures` backoff the cooldown reaches 5 minutes x 16 = 80
+ * minutes. The cooldown and the failure count both persist to the database and
+ * are restored on every cold start.
+ *
+ * Now the operator does the obvious thing and switches the model to
+ * `mistral-small-latest`, which their tier does allow. The provider stays
+ * skipped for up to 80 more minutes, because the state that suppresses it was
+ * earned by a model no longer in use. Their fix appears not to work, and the
+ * natural next conclusion is that the provider needs paying for.
+ *
+ * A failure is evidence about a (provider, model) pair. "That model is not in
+ * your tier" says nothing about a different model on the same key. So when the
+ * resolved models change, failure state recorded under the previous models no
+ * longer suppresses the provider.
+ *
+ * WHAT THIS DELIBERATELY DOES NOT DO. It does not clear SUCCESS history — a
+ * provider that really did answer still did. And it is not a way to escape a
+ * genuine account-level condition: an account-scoped limit reasserts itself on
+ * the very next attempt, costing one attempt that the chain absorbs. Paying
+ * that once is the right trade against suppressing a provider that now works.
+ */
+function failureStateAppliesToCurrentConfig(
+  provider: AiProviderName,
+  s: InternalState,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  // No recorded fingerprint: either no failure, or a row written before this
+  // existed. Behave exactly as before rather than inventing a mismatch.
+  if (!s.failureConfigFingerprint) return true;
+  return s.failureConfigFingerprint === providerConfigFingerprint(provider, env);
+}
+
+/**
+ * Drop failure state that was earned under models no longer configured.
+ * Returns true when something was cleared, so callers can report it.
+ */
+export function clearFailureStateOrphanedByConfigChange(
+  provider: AiProviderName,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  const s = state.get(provider);
+  if (!s || failureStateAppliesToCurrentConfig(provider, s, env)) return false;
+  s.cooldownUntil = null;
+  s.consecutiveFailures = 0;
+  s.lastFailureAt = null;
+  s.lastFailureCategory = null;
+  s.lastFailureMessage = null;
+  s.failureConfigFingerprint = null;
+  return true;
+}
+
 export function recordProviderFailure(provider: AiProviderName, error: unknown): AiProviderFailureCategory {
   const s = ensureState(provider);
   const category = classifyAiError(error);
@@ -369,6 +448,7 @@ export function recordProviderFailure(provider: AiProviderName, error: unknown):
   s.lastFailureAt = now;
   s.lastFailureCategory = category;
   s.lastFailureMessage = message;
+  s.failureConfigFingerprint = providerConfigFingerprint(provider);
   s.consecutiveFailures++;
 
   const baseCooldown = COOLDOWN_PER_CATEGORY_MS[category];
@@ -462,6 +542,11 @@ export function isProviderCooledDown(provider: AiProviderName): boolean {
     s.cooldownUntil = null;
     return false;
   }
+  // A cooldown earned by models that are no longer configured is not evidence
+  // about the request we would send now. Clearing it here — rather than only in
+  // an explicit operator action — is what makes an operator's own model fix
+  // take effect on their next run instead of up to 160 minutes later.
+  if (clearFailureStateOrphanedByConfigChange(provider)) return false;
   return true;
 }
 

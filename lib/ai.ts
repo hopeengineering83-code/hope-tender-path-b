@@ -740,7 +740,7 @@ export class NoAiProviderReadyError extends Error {
           ? `AI_PROVIDERS_RATE_LIMITED: all ${params.providerAttempts.filter((a) => a.coolingDown).length} configured provider(s) are in cooldown after recent rate-limit/quota errors for use-case "${params.useCase}". Details: ${failureDetails.join(" | ")}. Wait for cooldowns to expire and re-run.`
           : params.errorKind === "ATTEMPT_BUDGET_EXHAUSTED"
             ? `ATTEMPT_BUDGET_EXHAUSTED: the per-request provider attempt budget (${MAX_PROVIDER_ATTEMPTS_PER_REQUEST}) was consumed for use-case "${params.useCase}" before a provider succeeded (tried: ${params.providerAttempts.filter((a) => a.tried).map((a) => a.provider).join(", ") || "none"}). Eligible providers may remain untried. Provider errors: ${failureDetails.join(" | ") || "none captured"}.`
-            : `All configured AI providers exhausted for use-case "${params.useCase}" (tried: ${params.providerAttempts.filter((a) => a.tried).map((a) => a.provider).join(", ") || "none — all in cooldown"}). Provider errors: ${failureDetails.join(" | ") || "none captured"}.`
+            : `Contacted ${params.providerAttempts.filter((a) => a.tried).length} of ${params.providerAttempts.length} configured provider(s) for use-case "${params.useCase}" and none succeeded (tried: ${params.providerAttempts.filter((a) => a.tried).map((a) => a.provider).join(", ") || "none — all skipped"}). Provider errors: ${failureDetails.join(" | ") || "none captured"}.${describeUncontactedProviders(params.providerAttempts)}`
     );
     super(message);
     this.name = "NoAiProviderReadyError";
@@ -750,6 +750,58 @@ export class NoAiProviderReadyError extends Error {
     this.errorKind = params.errorKind;
     this.nextAction = params.nextAction;
   }
+}
+
+/**
+ * Why a provider was NOT contacted, in the words the reader needs.
+ *
+ * THE DEFECT THIS FIXES, read off the owner's AiJob 5c44d156.
+ * ----------------------------------------------------------
+ * The durable error said:
+ *
+ *   All configured AI providers exhausted for use-case "extraction"
+ *   (tried: gemini, zai). Provider errors: <gemini 503> | <zai 429>
+ *
+ * Ten providers are configured. Two were contacted. The message accounted for
+ * those two and said nothing whatsoever about the other EIGHT — not that they
+ * were skipped, not why, not for how long. "All configured AI providers
+ * exhausted" reads as though ten were tried and ten refused; in fact eight were
+ * never asked, most of them because a cooldown earned earlier that day had not
+ * expired.
+ *
+ * The information was already there. Every skip pushes an `AiProviderAttempt`
+ * with a `skipReason`, and the message dropped the field before reading it —
+ * the same shape of loss as the per-provider pairing in the panel summary and
+ * the real cause in the Claude adapter.
+ *
+ * It matters because the two readings imply opposite actions. "Ten tried and
+ * refused" means the chain is exhausted and there is nothing to do but pay
+ * someone. "Eight never asked, six still cooling" means waiting, or fixing one
+ * configured model, restores the chain for free.
+ */
+function describeUncontactedProviders(attempts: readonly AiProviderAttempt[]): string {
+  const reasonText: Record<NonNullable<AiProviderAttempt["skipReason"]>, string> = {
+    NOT_CONFIGURED: "not configured",
+    AUTOMATICALLY_INELIGIBLE: "not in the automatic chain",
+    BILLING_LOCKOUT: "billing lockout",
+    COOLDOWN: "cooling down after an earlier failure",
+    PREFLIGHT: "this request does not fit its budget",
+    THROUGHPUT_WINDOW: "its throughput window is already reserved by this job",
+    ATTEMPT_BUDGET: "attempt budget spent before reaching it",
+    DEADLINE: "not enough time left in the request",
+  };
+  const skipped = attempts.filter((a) => !a.tried && a.skipReason);
+  if (skipped.length === 0) return "";
+  const parts = skipped.map((a) => {
+    const base = reasonText[a.skipReason as NonNullable<AiProviderAttempt["skipReason"]>];
+    // A preflight refusal is the one skip whose numbers the reader can act on:
+    // it says the request shape, not the provider, is what excluded it.
+    const detail = a.skipReason === "PREFLIGHT" && typeof a.estimatedInputTokens === "number"
+      ? `${base} (${a.preflightReason}, ${a.estimatedInputTokens} input tokens)`
+      : base;
+    return `${a.provider}: ${detail}`;
+  });
+  return ` Not contacted: ${parts.join(" | ")}.`;
 }
 
 function isProviderEnabled(name: AiProviderName): boolean {

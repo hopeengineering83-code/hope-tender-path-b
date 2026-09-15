@@ -1158,6 +1158,16 @@ model ProviderHealthSnapshot {
   lastSafeErrorMessage      String?         // already redacted by recordProviderFailure
   consecutiveFailures       Int       @default(0)
   cooldownUntil             DateTime?
+  // The resolved MODEL IDENTIFIERS in force when this failure state was
+  // recorded — never a key, never a prompt. A failure is evidence about a
+  // (provider, model) pair: "this model is not in your subscription tier" says
+  // nothing about a different model on the same key. Without this, a cooldown
+  // earned by a model the operator has since replaced goes on suppressing a
+  // provider that would now succeed, for as long as the backoff lasts (up to
+  // 160 minutes), so the operator's own fix appears not to work.
+  // Nullable: rows written before this column existed simply carry no
+  // fingerprint and behave exactly as they did.
+  failureConfigFingerprint  String?
   updatedAt                 DateTime  @updatedAt
 }
 

@@ -82,6 +82,7 @@ export async function restoreHealthFromDb(): Promise<ProviderHealthRestoreResult
         lastFailureCategory: failureIsStale ? null : ((snap.lastFailureCategory as AiProviderFailureCategory | null) ?? null),
         lastFailureMessage: failureIsStale ? null : (snap.lastSafeErrorMessage ?? null),
         consecutiveFailures: failureIsStale ? 0 : snap.consecutiveFailures,
+        failureConfigFingerprint: failureIsStale ? null : (snap.failureConfigFingerprint ?? null),
         cooldownUntil: cooldownUntilMs,
         // Capability-result detail was introduced without a schema migration:
         // cold starts retain the existing durable success timestamps, while a
@@ -165,6 +166,12 @@ export async function persistAllHealthToDb(): Promise<void> {
         lastSafeErrorMessage: s.lastFailureMessage,
         consecutiveFailures: s.consecutiveFailures,
         cooldownUntil: s.cooldownUntil ? new Date(s.cooldownUntil) : null,
+        // Model identifiers only — the value is persisted and surfaced, so it
+        // must carry nothing secret. Without it, a cold start restores a
+        // cooldown with no record of which configuration earned it, and a
+        // model the operator has since replaced goes on suppressing the
+        // provider for the rest of its backoff.
+        failureConfigFingerprint: s.failureConfigFingerprint ?? null,
       };
       await prisma.providerHealthSnapshot.upsert({
         where: { provider },
