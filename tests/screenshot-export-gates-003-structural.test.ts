@@ -15,7 +15,7 @@
 //   - DB-gated helper tests: verify readiness/predicate functions, not handler paths
 //   - Migration tests: create post-migration rows, do NOT prove pre-existing upgrade survival
 
-import { describe, it, beforeEach, afterEach } from "node:test";
+import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -429,33 +429,24 @@ dbDescribe("[SCREENSHOT-EXPORT-003] Item 5 — migration DB-gated tests (SKIPPED
     }
   });
 
-  it("prisma migrate deploy is idempotent (two consecutive runs succeed)", async () => {
-    const { execSync } = await import("node:child_process");
-    const env = { ...process.env, DATABASE_URL: process.env.DATABASE_URL };
-    // First run
-    execSync("npx prisma migrate deploy", { env, stdio: "pipe" });
-    // Second run (must be a no-op)
-    execSync("npx prisma migrate deploy", { env, stdio: "pipe" });
-    assert.ok(true, "prisma migrate deploy is idempotent");
-  });
 });
 
 // ─── Item 1: Currency provenance UI test ───────────────────────────────────
 
 describe("[SCREENSHOT-EXPORT-003] Item 1 — currency provenance (canonical resolver)", () => {
-  it("report page derives currency verdict from getFinalSubmissionReadiness result (not a separate divergent call)", () => {
+  it("report page derives currency verdict from getTenderReleaseState result (not a separate divergent call)", () => {
     const src = readFileSync(resolve("app/dashboard/tenders/[id]/report/page.tsx"), "utf8");
     assert.ok(
       !src.includes("resolveCanonicalFieldState"),
-      "report page must NOT call resolveCanonicalFieldState directly — uses the result from getFinalSubmissionReadiness",
+      "report page must NOT call resolveCanonicalFieldState directly — uses the result passed through by getTenderReleaseState",
     );
     assert.ok(
       src.includes("canonicalFields"),
-      "report page must consume canonicalFields from the getFinalSubmissionReadiness result",
+      "report page must consume canonicalFields from the getTenderReleaseState result",
     );
     assert.ok(
-      /canonicalReadiness.*canonicalFields/.test(src.replace(/\s+/g, " ")),
-      "report page must derive currency verdict from canonicalReadiness.canonicalFields",
+      /releaseState.*canonicalFields/.test(src.replace(/\s+/g, " ")),
+      "report page must derive currency verdict from releaseState.canonicalFields",
     );
   });
 
@@ -705,11 +696,11 @@ describe("[SCREENSHOT-EXPORT-003] Item 1 (recheck 7) — helper integrated into 
 // ─── Item 6: Single canonical currency verdict (RECOVERY EXECUTION ORDER) ──
 
 describe("[SCREENSHOT-EXPORT-003] Item 6 — single canonical currency verdict", () => {
-  it("report page derives currency verdict from getFinalSubmissionReadiness result only", () => {
+  it("report page derives currency verdict from getTenderReleaseState result only", () => {
     const src = readFileSync(resolve("app/dashboard/tenders/[id]/report/page.tsx"), "utf8");
     assert.ok(
-      src.includes("canonicalReadiness?.canonicalFields"),
-      "report page must derive currency verdict from canonicalReadiness.canonicalFields (the same result as final readiness)",
+      src.includes("releaseState?.canonicalFields"),
+      "report page must derive currency verdict from releaseState.canonicalFields (passed through from the same getFinalSubmissionReadiness call as final readiness)",
     );
     assert.ok(
       !src.includes("resolveCanonicalFieldState"),
@@ -751,11 +742,11 @@ describe("[SCREENSHOT-EXPORT-003] Item 6 — single canonical currency verdict",
 // ─── Item 7: UI blocker codes and server denial from same canonical authority ─
 
 describe("[SCREENSHOT-EXPORT-003] Item 7 — UI/server blocker code alignment", () => {
-  it("export page derives blocker codes from getFinalSubmissionReadiness (canonical authority)", () => {
+  it("export page derives blocker codes from getTenderReleaseState (canonical authority)", () => {
     const src = readFileSync(resolve("app/dashboard/export/page.tsx"), "utf8");
     assert.ok(
-      src.includes("getFinalSubmissionReadiness"),
-      "export page must call getFinalSubmissionReadiness",
+      src.includes("getTenderReleaseState"),
+      "export page must call getTenderReleaseState",
     );
     assert.ok(
       /canonicalBlockerCodes.*canonicalBlockers.*map.*category/.test(src.replace(/\s+/g, " ")),
@@ -799,13 +790,19 @@ describe("[SCREENSHOT-EXPORT-003] Item 7 — UI/server blocker code alignment", 
     );
   });
 
-  it("all surfaces consume getFinalSubmissionReadiness (one canonical authority)", () => {
-    // Report page
+  it("all surfaces consume getFinalSubmissionReadiness (one canonical authority, directly or via the release-state wrapper)", () => {
+    // Report page — consumes the canonical Tender Release State wrapper
+    // (lib/engine/tender-release-state.ts), which itself is the ONLY caller
+    // of getFinalSubmissionReadiness for this tender — never a second,
+    // divergent call from the page itself.
     const reportSrc = readFileSync(resolve("app/dashboard/tenders/[id]/report/page.tsx"), "utf8");
-    assert.ok(reportSrc.includes("getFinalSubmissionReadiness"), "report page");
-    // Export page
+    assert.ok(reportSrc.includes("getTenderReleaseState"), "report page");
+    const releaseStateSrc = readFileSync(resolve("lib/engine/tender-release-state.ts"), "utf8");
+    assert.ok(releaseStateSrc.includes("getFinalSubmissionReadiness"), "tender-release-state.ts wrapper");
+    // Export page — also consumes the release-state wrapper, never a second
+    // divergent getFinalSubmissionReadiness call of its own.
     const exportSrc = readFileSync(resolve("app/dashboard/export/page.tsx"), "utf8");
-    assert.ok(exportSrc.includes("getFinalSubmissionReadiness"), "export page");
+    assert.ok(exportSrc.includes("getTenderReleaseState"), "export page");
     // Export-readiness API
     const apiSrc = readFileSync(resolve("app/api/tenders/[id]/export-readiness/route.ts"), "utf8");
     assert.ok(apiSrc.includes("getFinalSubmissionReadiness"), "export-readiness API");

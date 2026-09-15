@@ -3,30 +3,27 @@
 // The dashboard's "Evidence coverage" metric used to count any matrix
 // row with supportLevel SUPPORTED / EVIDENCE_PENDING_REVIEW / PARTIAL
 // — a lenient view that made coverage look healthier than it actually
-// was. After the Gap 14 helper landed, the snapshot should compute
-// "strong" coverage from FULL / SUBSTANTIAL links only. This test
-// pins the composition by running computeEvidenceCoverage with the
-// same shape the snapshot uses.
+// was. The snapshot now computes "strong" coverage from FULL /
+// SUBSTANTIAL links and delegates final GO/REVIEW/NO_GO authority to the
+// canonical final-package readiness model.
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 import { computeEvidenceCoverage } from "../lib/engine/requirement-evidence-profile";
 
-// Mirror the shape ExecutiveSnapshot constructs from the Prisma tender
-// row when it groups complianceMatrix rows by requirementId.
 function snapshotShape(reqs: Array<{ id: string; rows?: Array<{ id: string; supportLevel: string }> }>) {
-  return reqs.map((r) => ({
-    id: r.id,
-    title: `r-${r.id}`,
+  return reqs.map((requirement) => ({
+    id: requirement.id,
+    title: `r-${requirement.id}`,
     description: "",
     requirementType: "TECHNICAL",
     priority: "MANDATORY",
-    complianceMatrixRows: r.rows ?? [],
+    complianceMatrixRows: requirement.rows ?? [],
   }));
 }
 
-describe("ExecutiveSnapshot canonical evidence coverage", () => {
+describe("canonical evidence coverage (lib/engine/requirement-evidence-profile)", () => {
   it("FULL/SUBSTANTIAL links count toward strong coverage", () => {
     const report = computeEvidenceCoverage(snapshotShape([
       { id: "r1", rows: [{ id: "m1", supportLevel: "FULL" }] },
@@ -50,8 +47,6 @@ describe("ExecutiveSnapshot canonical evidence coverage", () => {
   });
 
   it("matches without requirementId are ignored (cannot be grouped)", () => {
-    // This emulates the snapshot's grouping: matrix rows lacking
-    // requirementId are skipped, so they cannot contribute to coverage.
     const report = computeEvidenceCoverage(snapshotShape([
       { id: "r1", rows: [{ id: "m1", supportLevel: "FULL" }] },
     ]));
@@ -69,13 +64,18 @@ describe("ExecutiveSnapshot canonical evidence coverage", () => {
   });
 });
 
-
-describe("ExecutiveSnapshot stale workflow progress isolation", () => {
-  it("uses canonical evidence score for GO/REVIEW decision, not tender.readinessScore", () => {
-    const source = readFileSync("app/dashboard/tenders/[id]/executive-snapshot.tsx", "utf8");
-    assert.match(source, /const workflowProgress = tender\.readinessScore \?\? evidenceScore/);
-    assert.match(source, /const canonicalDecisionScore = evidenceScore/);
-    assert.match(source, /canonicalDecisionScore >= 85/);
-    assert.doesNotMatch(source, /readiness >= 85/);
+// app/dashboard/tenders/[id]/executive-snapshot.tsx was removed entirely —
+// it was a fourth independent GO/REVIEW/NO_GO verdict on the tender detail
+// page (built on the canonical-tender-readiness.ts engine), now superseded
+// by the canonical Tender Release State's verdict. The property this test
+// protected — never trust the stale scalar tender.readinessScore column —
+// still holds structurally in the replacement: lib/engine/tender-release-state.ts's
+// readinessScore is derived exclusively from the gated evaluateBidDecision()
+// result and never reads the tender.readinessScore column.
+describe("canonical Tender Release State never reads the stale tender.readinessScore column", () => {
+  it("readinessScore is derived from the gated bid-decision result, not a scalar column", () => {
+    const source = readFileSync("lib/engine/tender-release-state.ts", "utf8");
+    assert.match(source, /readinessScore = decision\.score/);
+    assert.doesNotMatch(source, /tender\.readinessScore/);
   });
 });

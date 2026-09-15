@@ -1,6 +1,19 @@
 export function polishBenchmarkOutput(markdown: string): string {
   return markdown
-    .replace(/=+\s*PAGE\s+\d+\s*=+/gi, "")
+    // "===== SOURCE PAGE 136 =====" did not match: the rule required the digits
+    // to follow "PAGE" immediately after the equals run, and real extraction
+    // markers name the source first. The markers reached a client proposal
+    // verbatim inside an expert's printed profile.
+    .replace(/=+\s*(?:[A-Z]+\s+)?PAGE\s+\d+\s*=+/gi, "")
+    // The vault's own trust marker. persistOnce prefixes an unverified record's
+    // profile/summary with "[REGEX_DRAFT — AUTOMATIC SOURCE VERIFICATION
+    // PENDING]" so the app can see the state; a real proposal printed it to the
+    // client, including inside a table cell where the surrounding newlines had
+    // already been collapsed so the standalone-bracket rule could not catch it.
+    .replace(/\[\s*(?:REGEX_DRAFT|AI_DRAFT|MANUAL_DRAFT|SOURCE_VERIFIED|REVIEWED)\s*[—-]\s*AUTOMATIC SOURCE VERIFICATION PENDING\s*\]\s*/gi, "")
+    // Extraction bookkeeping that belongs to the vault, not to the evaluator.
+    .replace(/\bSource pages:\s*[\d]+\s*[-–]\s*[\d]+\s*/gi, "")
+    .replace(/\bExtraction method:[^.\n]*\.\s*/gi, "")
     .replace(/<PARSED TEXT FOR PAGE:[^>]+>/gi, "")
     .replace(/\bPARSED TEXT FOR PAGE\b[^\n]*/gi, "")
     .replace(/Senior-level requirement bundle consolidating \d+ extracted tender instruction\(s\)\.?/gi, "")
@@ -27,7 +40,20 @@ export function polishBenchmarkOutput(markdown: string): string {
     .replace(/\bworld-class\b/gi, "technically proven")
     .replace(/\bstate-of-the-art\b/gi, "proven")
     .replace(/\bsecond to none\b/gi, "evidenced by our portfolio")
-    .replace(/\s+\|\s+#/g, " — ")
+    // Horizontal whitespace only. `\s` matches newlines, so this rule used to
+    // reach across the blank line between a markdown table and the section
+    // after it: the table row's closing "|", the paragraph break and the next
+    // heading's "#" were all replaced by " — ", which swallowed a whole
+    // section into the last table cell.
+    //
+    // Measured on a real generated proposal: "## A.6 Biomedical Engineering
+    // Specialist Engagement Plan" — the section that tells the evaluator the
+    // firm will engage a licensed specialist for a discipline its own team does
+    // not hold — was absorbed into the last row of the A.5 Team-to-Project
+    // Mapping table. It never appeared as a heading, never reached the table of
+    // contents, and the one honest statement about the tender's biomedical
+    // requirement was invisible while its text corrupted a table.
+    .replace(/[ \t]+\|[ \t]+#/g, " — ")
     .replace(/\n{4,}/g, "\n\n\n")
     .replace(/[ \t]{2,}/g, " ")
     .trim();

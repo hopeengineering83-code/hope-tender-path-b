@@ -13,7 +13,7 @@ import { describe, it, beforeEach, afterEach } from "node:test";
 import { strict as assert } from "node:assert";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { evaluateEnv, isAIConfigured } from "../lib/env-check";
+import { evaluateEnv } from "../lib/env-check";
 import { __testing__ as featureFlagTesting } from "../lib/engine/feature-flags";
 import { AI_ANALYSIS_TIMEOUT_MS, AI_PROPOSAL_TIMEOUT_MS } from "../lib/timeout-config";
 
@@ -51,24 +51,24 @@ describe("Environment Variable Reconciliation", () => {
   describe("Canonical Provider Order Preservation", () => {
     it("preserves exact provider order: ZAI → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic", () => {
       const order = [
+        "gemini",
+        "groq",
+        "mistral",
         "zai",
         "cerebras",
-        "mistral",
-        "groq",
         "openrouter",
-        "gemini",
         "openai",
         "together",
         "deepseek",
         "anthropic",
       ];
       const envKeyNames = [
-        "ZAI_API_KEY",
-        "CEREBRAS_API_KEY",
-        "MISTRAL_API_KEY",
-        "GROQ_API_KEY",
-        "OPENROUTER_API_KEY",
         "GEMINI_API_KEY",
+        "GROQ_API_KEY",
+        "MISTRAL_API_KEY",
+        "ZAI_API_KEY",
+        "OPENROUTER_API_KEY",
+        "CEREBRAS_API_KEY",
         "OPENAI_API_KEY",
         "TOGETHER_API_KEY",
         "DEEPSEEK_API_KEY",
@@ -102,8 +102,8 @@ describe("Environment Variable Reconciliation", () => {
         DATABASE_URL: "postgresql://localhost/test",
         SESSION_SECRET: "a".repeat(32),
         ZAI_API_KEY: "zai-test-key",
-        ZAI_PROPOSAL_MODEL: "glm-4-flash",
-        ZAI_ANALYSIS_MODEL: "glm-4-flash",
+        ZAI_PROPOSAL_MODEL: "glm-4.7-flash",
+        ZAI_ANALYSIS_MODEL: "glm-4.7-flash",
       };
 
       const envWithoutKey = {
@@ -111,14 +111,14 @@ describe("Environment Variable Reconciliation", () => {
         DATABASE_URL: "postgresql://localhost/test",
         SESSION_SECRET: "a".repeat(32),
         // ZAI_API_KEY intentionally absent
-        ZAI_PROPOSAL_MODEL: "glm-4-flash", // Should be ignored
+        ZAI_PROPOSAL_MODEL: "glm-4.7-flash", // Should be ignored
       };
 
       const resultWith = evaluateEnv(envWithKey);
       assert.ok(resultWith.ok);
 
       const resultWithout = evaluateEnv(envWithoutKey);
-      assert.ok(resultWithout.warnings.some((w) => w.includes("ZAI")));
+      assert.ok(resultWithout.warnings.some((w) => w.includes("normally configured AI provider")));
     });
 
     it("ANTHROPIC_TIER correctly gates ANTHROPIC_MAX_OUTPUT_TOKENS and timeout defaults", () => {
@@ -155,7 +155,7 @@ describe("Environment Variable Reconciliation", () => {
         MISTRAL_API_KEY: "mistral-key",
         MISTRAL_PROPOSAL_MODEL: "mistral-small-latest",
         GROQ_API_KEY: "gsk-test",
-        GROQ_PROPOSAL_MODEL: "llama-3.3-70b-versatile",
+        GROQ_PROPOSAL_MODEL: "llama-3.1-8b-instant",
         TOGETHER_API_KEY: "together-key",
         TOGETHER_PROPOSAL_MODEL: "NousResearch/Nous-Hermes-2-Mixtral-8x7B-DPO",
       };
@@ -515,18 +515,16 @@ describe("Environment Variable Reconciliation", () => {
       assert.ok(result.ok);
     });
 
-    it("bootstrap-admin enforcement lives in lib/prisma.ts (dev-only + password strength)", () => {
-      // Real check: the guard must exist in source. lib/prisma.ts is responsible
-      // for refusing bootstrap-admin in production and enforcing password rules.
+    it("runtime bootstrap enforcement is delegated to the explicit policy resolver", () => {
+      const policySrc = readFileSync(join(process.cwd(), "lib/bootstrap-admin-policy.ts"), "utf8");
       const prismaSrc = readFileSync(join(process.cwd(), "lib/prisma.ts"), "utf8");
-      assert.ok(
-        /BOOTSTRAP_ADMIN_ENABLED/.test(prismaSrc),
-        "lib/prisma.ts must reference BOOTSTRAP_ADMIN_ENABLED to gate bootstrap admin",
-      );
-      assert.ok(
-        /BOOTSTRAP_ADMIN_PASSWORD/.test(prismaSrc),
-        "lib/prisma.ts must reference BOOTSTRAP_ADMIN_PASSWORD for password enforcement",
-      );
+
+      assert.match(policySrc, /resolveRuntimeBootstrapAdminPolicy/);
+      assert.match(policySrc, /envFlag\("BOOTSTRAP_ADMIN_ENABLED"\)/);
+      assert.match(policySrc, /readEnv\("BOOTSTRAP_ADMIN_PASSWORD"\)/);
+      assert.match(policySrc, /validateProductionBootstrapPassword/);
+      assert.match(prismaSrc, /resolveRuntimeBootstrapAdminPolicy/);
+      assert.doesNotMatch(prismaSrc, /process\.env\.BOOTSTRAP_ADMIN_PASSWORD/);
     });
   });
 

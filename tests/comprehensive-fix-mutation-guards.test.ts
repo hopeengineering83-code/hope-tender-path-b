@@ -1,85 +1,59 @@
-// Mutation guards for the comprehensive release-safety fix commit.
-// Each test verifies a specific protection. If anyone reverts any of these,
-// the corresponding test fails.
-
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { evaluateGenerationReadiness } from "../lib/engine/generation-readiness-gate";
-import { buildDraftBuildPlan, computeTenderBuildPlanHash, validateBuildPlanForConfirmation, type BuildPlanItem } from "../lib/engine/build-plan";
-import { computeBuildPlanHash, buildPlanHashInputFromTender } from "../lib/engine/build-plan-hash";
 
-// ─── Fix 1: ONE authoritative BuildPlan hash ────────────────────────────────
+const read = (path: string) => readFileSync(path, "utf8");
 
-describe("Fix 1 — ONE authoritative BuildPlan hash", () => {
-  it("build-plan.ts uses computeBuildPlanHash from build-plan-hash.ts (not hashBuildPlanState)", () => {
-    const src = readFileSync("lib/engine/build-plan.ts", "utf8");
-    assert.match(src, /computeBuildPlanHash/, "build-plan.ts MUST use computeBuildPlanHash");
-    assert.match(src, /buildCanonicalBuildPlanHashInput/, "build-plan.ts MUST use buildCanonicalBuildPlanHashInput");
-    // The old hashBuildPlanState function MUST be gone.
-    assert.ok(
-      !src.includes("export function hashBuildPlanState"),
-      "build-plan.ts MUST NOT export hashBuildPlanState (old competing hash)",
-    );
+describe("one authoritative Build Plan hash and service", () => {
+  it("build-plan.ts uses the canonical hash implementation", () => {
+    const source = read("lib/engine/build-plan.ts");
+    assert.match(source, /computeBuildPlanHash/);
+    assert.match(source, /buildCanonicalBuildPlanHashInput/);
+    assert.doesNotMatch(source, /export function hashBuildPlanState/);
   });
 
-  it("submission-plan/build route does NOT import computeBuildPlanHash directly", () => {
-    const src = readFileSync("app/api/tenders/[id]/submission-plan/build/route.ts", "utf8");
-    // The route MUST call buildDraftBuildPlan (the canonical service) instead
-    // of computing its own hash.
-    assert.match(src, /buildDraftBuildPlan/, "submission-plan/build MUST call buildDraftBuildPlan");
-    assert.ok(
-      !/import.*computeBuildPlanHash.*from.*build-plan-hash/.test(src),
-      "submission-plan/build MUST NOT import computeBuildPlanHash directly — use the canonical service",
-    );
+  it("both public build routes delegate to automatic verification", () => {
+    for (const path of [
+      "app/api/tenders/[id]/build-plan/route.ts",
+      "app/api/tenders/[id]/submission-plan/build/route.ts",
+    ]) {
+      const source = read(path);
+      assert.match(source, /buildAndVerifyBuildPlan/);
+      assert.doesNotMatch(source, /import.*computeBuildPlanHash.*from.*build-plan-hash/);
+      assert.match(source, /authorizesGeneration: true/);
+    }
   });
 });
 
-// ─── Fix 2: Transaction-safe rebuild after confirmation ─────────────────────
-
-describe("Fix 2 — Transaction-safe rebuild after confirmation", () => {
-  it("buildDraftBuildPlan uses upsert (not findFirst+create)", () => {
-    const src = readFileSync("lib/engine/build-plan.ts", "utf8");
-    assert.match(src, /buildPlan\.upsert/, "buildDraftBuildPlan MUST use upsert for race safety");
-    assert.ok(
-      !/buildPlan\.findFirst\(\{\s*where:\s*\{\s*tenderId,\s*status:\s*"DRAFT"/.test(src),
-      "buildDraftBuildPlan MUST NOT use findFirst with status:DRAFT (must rebuild ANY existing row)",
-    );
+describe("transaction-safe automatic confirmation", () => {
+  it("draft construction remains race-safe and clears old confirmation identity", () => {
+    const source = read("lib/engine/build-plan.ts");
+    assert.match(source, /buildPlan\.upsert/);
+    assert.doesNotMatch(source, /buildPlan\.findFirst\(\{\s*where:\s*\{\s*tenderId,\s*status:\s*"DRAFT"/);
+    for (const field of ["confirmedRevision", "confirmedContentHash", "confirmedById", "confirmedAt"]) {
+      assert.match(source, new RegExp(`${field}:\\s*null`));
+    }
   });
 
-  it("confirm route does NOT delete confirmed plans", () => {
-    const src = readFileSync("app/api/tenders/[id]/build-plan/confirm/route.ts", "utf8");
-    assert.ok(
-      !/deleteMany/.test(src),
-      "confirm route MUST NOT call deleteMany — never delete a confirmed plan",
-    );
-    assert.match(src, /buildPlan\.update/, "confirm route MUST use update on the same DRAFT row");
-  });
-
-  it("buildDraftBuildPlan clears all confirmed* fields on rebuild", () => {
-    const src = readFileSync("lib/engine/build-plan.ts", "utf8");
-    assert.match(src, /confirmedRevision:\s*null/);
-    assert.match(src, /confirmedContentHash:\s*null/);
-    assert.match(src, /confirmedById:\s*null/);
-    assert.match(src, /confirmedAt:\s*null/);
+  it("the legacy confirm route delegates instead of deleting or directly approving rows", () => {
+    const source = read("app/api/tenders/[id]/build-plan/confirm/route.ts");
+    assert.doesNotMatch(source, /deleteMany|confirmedById:\s*actor\.id/);
+    assert.match(source, /buildAndVerifyBuildPlan\(prisma, id, actor\.id, \{ reuseCurrent: true \}\)/);
+    assert.match(source, /state: "CONFIRMED"/);
+    assert.match(source, /confirmationMode/);
   });
 });
 
-// ─── Fix 6: Quote containment check in central gate ────────────────────────
-
-describe("Fix 6 — Quote containment check in central gate", () => {
-  it("gate has REQUIREMENT_QUOTE_NOT_IN_FILE blocker code", () => {
-    const src = readFileSync("lib/engine/generation-readiness-gate.ts", "utf8");
-    assert.match(src, /REQUIREMENT_QUOTE_NOT_IN_FILE/);
+describe("quote containment in the central generation gate", () => {
+  it("declares and applies REQUIREMENT_QUOTE_NOT_IN_FILE", () => {
+    const source = read("lib/engine/generation-readiness-gate.ts");
+    assert.match(source, /REQUIREMENT_QUOTE_NOT_IN_FILE/);
+    assert.match(source, /sourceFileExtractedText/);
+    assert.match(source, /fileText\.includes\(normalizedQuote\)/);
   });
 
-  it("gate checks that quote is contained in sourceFileExtractedText", () => {
-    const src = readFileSync("lib/engine/generation-readiness-gate.ts", "utf8");
-    assert.match(src, /sourceFileExtractedText/);
-    assert.match(src, /fileText\.includes\(normalizedQuote\)/);
-  });
-
-  it("blocks when quote is NOT in the extracted text", () => {
+  it("blocks a quote absent from current source text", () => {
     const result = evaluateGenerationReadiness({
       purpose: "generate",
       tenderExistsAndOwned: true,
@@ -98,7 +72,7 @@ describe("Fix 6 — Quote containment check in central gate", () => {
         sourcePageNumber: 1,
         sourceExactQuote: "This quote does not appear in the file text",
         sourceFileActiveInTender: true,
-        sourceFileExtractedText: "Completely different text that does not contain the quote at all.",
+        sourceFileExtractedText: "Completely different current source text.",
       }],
       criticalMetadataOk: true,
       hasCurrentConfirmedBuildPlan: true,
@@ -110,7 +84,7 @@ describe("Fix 6 — Quote containment check in central gate", () => {
     assert.equal(result.blockerCode, "REQUIREMENT_QUOTE_NOT_IN_FILE");
   });
 
-  it("allows when quote IS in the extracted text", () => {
+  it("allows a contained source quote", () => {
     const quote = "The bidder shall submit audited financial statements.";
     const result = evaluateGenerationReadiness({
       purpose: "generate",
@@ -130,7 +104,7 @@ describe("Fix 6 — Quote containment check in central gate", () => {
         sourcePageNumber: 1,
         sourceExactQuote: quote,
         sourceFileActiveInTender: true,
-        sourceFileExtractedText: `Some context. ${quote} More context after the quote.`,
+        sourceFileExtractedText: `Context. ${quote} More context.`,
       }],
       criticalMetadataOk: true,
       hasCurrentConfirmedBuildPlan: true,
@@ -142,18 +116,11 @@ describe("Fix 6 — Quote containment check in central gate", () => {
   });
 });
 
-// ─── Fix 9: Fail-closed migration verification ─────────────────────────────
-
-describe("Fix 9 — Fail-closed migration verification", () => {
-  it("migrate-deploy-safe.mjs throws on retroactive-init verification failure", () => {
-    const src = readFileSync("scripts/migrate-deploy-safe.mjs", "utf8");
-    // The old code had "Don't throw - migrations are deployed; verification warnings are non-fatal"
-    // The new code MUST throw.
-    assert.ok(
-      !/Don't throw.*non-fatal/.test(src),
-      "migrate-deploy-safe MUST NOT have non-fatal verification warnings",
-    );
-    assert.match(src, /throw new Error.*retroactive init verification/, "MUST throw on retroactive-init failure");
-    assert.match(src, /throw new Error.*critical schema verification/, "MUST throw on critical-schema failure");
+describe("fail-closed migration verification", () => {
+  it("throws on retroactive-init or critical-schema verification failure", () => {
+    const source = read("scripts/migrate-deploy-safe.mjs");
+    assert.doesNotMatch(source, /Don't throw.*non-fatal/);
+    assert.match(source, /throw new Error.*retroactive init verification/);
+    assert.match(source, /throw new Error.*critical schema verification/);
   });
 });

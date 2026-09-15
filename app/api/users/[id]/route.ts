@@ -150,15 +150,37 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
 
   const target = await prisma.user.findUnique({ where: { id } });
   if (!target) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (target.deletedAt) {
+    return NextResponse.json({ error: "User is already deactivated" }, { status: 409 });
+  }
 
-  await prisma.user.delete({ where: { id } });
+  // Audit C-5: soft-delete instead of hard delete. Setting deletedAt:
+  //   - preserves the User row (and therefore all FK references from Tender,
+  //     AuditLog, DocumentReview, etc.)
+  //   - causes getCurrentUser() to reject the user as no longer authenticated
+  //   - is reversible (a future admin can clear deletedAt to restore access)
+  // We also atomically revoke all active sessions so stolen cookies stop
+  // working immediately. The Tender.user FK is now onDelete: Restrict, so
+  // a direct prisma.user.delete() would throw if the user has tenders — the
+  // soft-delete path sidesteps that constraint entirely.
+  await prisma.$transaction([
+    prisma.user.update({
+      where: { id },
+      data: {
+        deletedAt: new Date(),
+        deletedBy: actor.id,
+      },
+    }),
+    prisma.session.deleteMany({ where: { userId: id } }),
+  ]);
 
   await logAction({
     userId: actor.id,
     action: "DELETE",
     entityType: "User",
     entityId: id,
-    description: `Admin deleted user ${target.email}`,
+    description: `Admin deactivated user ${target.email} (soft-delete — sessions revoked, records preserved)`,
+    metadata: { deactivatedEmail: target.email, deactivatedBy: actor.id },
   });
 
   return NextResponse.json({ success: true });

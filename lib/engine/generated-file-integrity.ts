@@ -84,7 +84,23 @@ export type ManifestValidationItem = {
   stale?: boolean;
 };
 
-export function validatePackageManifest(items: ManifestValidationItem[], opts: { requireAllRequired?: boolean } = {}) {
+export function validatePackageManifest(
+  items: ManifestValidationItem[],
+  opts: {
+    requireAllRequired?: boolean;
+    /**
+     * Skip the two assertions that read bytes, for a caller that did not load
+     * them. byteSize 0 and sha256 "" then mean "not measured", not "measured
+     * and empty" — reporting them as zero-byte and bad-hash produced hard
+     * blockers for verified, downloadable documents.
+     *
+     * Only these two checks are skipped. Filenames, duplicates, ordering,
+     * staleness and the required/valid rule still run, and the byte-level
+     * guarantee is unchanged everywhere the bytes are actually loaded.
+     */
+    skipContentChecks?: boolean;
+  } = {},
+) {
   const blockers: string[] = [];
   const warnings: string[] = [];
   const seen = new Set<string>();
@@ -94,8 +110,8 @@ export function validatePackageManifest(items: ManifestValidationItem[], opts: {
     if (seen.has(normalized)) blockers.push(`${item.filename}: duplicate filename`);
     seen.add(normalized);
     if (item.required && opts.requireAllRequired !== false && !item.valid) blockers.push(`${item.filename}: required file invalid`);
-    if (item.byteSize <= 0) blockers.push(`${item.filename}: zero-byte file`);
-    if (!/^[a-f0-9]{64}$/i.test(item.sha256)) blockers.push(`${item.filename}: invalid sha256`);
+    if (!opts.skipContentChecks && item.byteSize <= 0) blockers.push(`${item.filename}: zero-byte file`);
+    if (!opts.skipContentChecks && !/^[a-f0-9]{64}$/i.test(item.sha256)) blockers.push(`${item.filename}: invalid sha256`);
     if (item.stale) blockers.push(`${item.filename}: stale document`);
     if (!item.valid && !item.required) warnings.push(`${item.filename}: optional file invalid${item.problem ? ` (${item.problem})` : ""}`);
     if (item.problem && item.valid) warnings.push(`${item.filename}: ${item.problem}`);

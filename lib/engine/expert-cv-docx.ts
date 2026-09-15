@@ -56,8 +56,13 @@ function safeArr(json: string | null | undefined): string[] {
 // export. We now strip the same set of patterns the validator looks for
 // PRIOR to rendering, so the generated CV cannot trip the gate.
 //
-// The patterns mirror app/api/tenders/[id]/download/route.ts:77 exactly.
-// Keep the two lists in sync.
+// This list is a pre-render sanitizer, not the authority. The authoritative
+// detector is AI_TRACE_PATTERNS / PLACEHOLDER_PATTERNS in
+// lib/engine/detection-patterns.ts, enforced at export time by
+// validateGeneratedDocumentQuality() via checkFullExportReadiness(), which
+// extracts the DOCX visible text and fails the export closed. Anything this
+// sanitizer misses is therefore blocked rather than shipped — keep it broad
+// enough that a legitimately generated CV never trips that gate.
 const FORBIDDEN_TRACE_PATTERNS: RegExp[] = [
   /=+\s*PAGE\s+\d+\s*=+/gi,
   /PARSED TEXT FOR PAGE[^\n]*/gi,
@@ -69,6 +74,15 @@ const FORBIDDEN_TRACE_PATTERNS: RegExp[] = [
   /sample text/gi,
   /lorem ipsum/gi,
   /as an AI/gi,
+  // "As an AI language model, ..." — /as an AI/ alone removes only the
+  // prefix and leaves "language model, ..." rendered in the CV. The sibling
+  // sanitizers (lib/engine/export-gap-repair.ts and
+  // app/api/tenders/[id]/repair-export-gaps/route.ts) already strip
+  // "language model" for exactly this reason, and AI_TRACE_PATTERNS in
+  // lib/engine/detection-patterns.ts detects "as a language model", so the
+  // export quality gate rejects any CV that still carries it.
+  /as a language model/gi,
+  /\blanguage model\b/gi,
   /AI-generated/gi,
   /source snippet/gi,
   /deterministic safety import/gi,

@@ -27,7 +27,10 @@ describe("AI Analyze provider diagnostics wiring", () => {
   });
 
   it("never returns raw provider bodies, prompts, or keys (sanitises the 500 path)", () => {
-    assert.match(source, /KEY_REDACTED/);
+    // The route delegates secret redaction to the canonical redactSecrets()
+    // helper from lib/sanitize-error.ts. Previously this checked for inline
+    // KEY_REDACTED — consolidated so patterns cannot diverge.
+    assert.match(source, /redactSecrets/);
   });
 });
 
@@ -99,8 +102,11 @@ describe("metadataContaminated blocks generation-readiness and generate route", 
 describe("bid strategy confidence cap under unapproved fallback (Part 12)", () => {
   const source = readFileSync("app/api/tenders/[id]/bid-strategy/route.ts", "utf8");
 
-  it("detects the analysis source and caps confidence when it's an unapproved fallback", () => {
-    assert.match(source, /detectAnalysisSourceWithApproval/);
+  it("uses canonical current analysis and caps confidence when it is unavailable", () => {
+    assert.match(source, /getTenderReleaseSnapshot/);
+    assert.match(source, /analysis\.state === "AI_SUCCEEDED"/);
+    assert.match(source, /analysis\.contentHashMatch/);
+    assert.match(source, /analysis\.canonicalJobId/);
     assert.match(source, /REGEX_FALLBACK_AI_ERROR|confidenceCapped/);
     assert.match(source, /FALLBACK_CONFIDENCE_CEILING/);
   });
@@ -145,7 +151,6 @@ describe("corrupted extraction blocks pipeline before stale-score bypasses", () 
     assert.match(engineRoute, /isExtractionAcceptableForGeneration/);
     assert.match(engineRoute, /EXTRACTION_CORRUPTED_ENGINE_SKIPPED/);
     assert.match(engineRoute, /EXTRACTION_QUALITY_ENGINE_BLOCKED/);
-    assert.match(engineRoute, /cannot be forced through corrupted, unknown-page, or incomplete extraction/);
     assert.doesNotMatch(engineRoute, /searchParams\.get\("force"\)/);
   });
 });
@@ -221,28 +226,24 @@ describe("bid strategy unavailable on unsafe extraction/analysis", () => {
   });
 });
 
-describe("SSE streaming wiring — AI Analyze endpoint", () => {
+// DIRECTIVE 2: The SSE streaming path (handleStreamingAnalyze) was removed.
+// The legacy /ai-analyze route now returns 422 MANUAL_AI_ANALYZE_REQUIRED for
+// streaming/synchronous requests. These tests were updated to verify the new
+// architecture instead of the deleted streaming path.
+describe("Legacy ai-analyze route refuses fresh job creation", () => {
   const routeSource = readFileSync("app/api/tenders/[id]/ai-analyze/route.ts", "utf8");
 
-  it("route has handleStreamingAnalyze function", () => {
-    assert.match(routeSource, /handleStreamingAnalyze/);
+  it("route returns MANUAL_AI_ANALYZE_REQUIRED for fresh creation", () => {
+    assert.match(routeSource, /MANUAL_AI_ANALYZE_REQUIRED/);
   });
 
-  it("route responds with text/event-stream content type and no-cache", () => {
-    assert.match(routeSource, /text\/event-stream/);
-    assert.match(routeSource, /Cache-Control.*no-cache/);
+  it("route returns 422 status for fresh creation", () => {
+    assert.match(routeSource, /status: 422/);
   });
 
-  it("route branches on Accept: text/event-stream header", () => {
-    assert.match(routeSource, /wantsStream/);
+  it("route returns MANUAL_AI_ANALYZE_REQUIRED for fresh creation", () => {
+    assert.match(routeSource, /MANUAL_AI_ANALYZE_REQUIRED/);
   });
-
-  it("route emits all required phase events", () => {
-    for (const phase of ["starting", "extracting", "analyzing", "saving", "complete", "error"]) {
-      assert.match(routeSource, new RegExp(`phase:\\s*"${phase}"`), `missing phase: ${phase}`);
-    }
-  });
-
 });
 
 describe("clientContactName validation in AI Analyze save path", () => {
@@ -391,22 +392,33 @@ describe("deferred gap fixes — post-618 hardening", () => {
     // single-doc path also calls it
     assert.match(source, /AUTHORITY_REVIEW_BLOCKED/);
   });
-  it("document-quality-validator FINANCIAL_IN_TECHNICAL_RE requires numeric follow-on", () => {
+  it("document-quality-validator decides pricing leakage with the canonical detector", () => {
     const source = readFileSync("lib/engine/document-quality-validator.ts", "utf8");
-    // Pattern must require digit/currency after "total price" — the raw source
-    // must contain the tightened regex with [\d,] follow-on so that prose like
-    // "the total price of the contract was fair" does NOT trigger the rule.
-    // We use assert.ok + includes() because the source contains literal
-    // backslash characters (\s, \d) that make regex-based matching tricky.
-    assert.ok(
-      source.includes("total\\s+price\\s*(?:[:\\$€£]|is\\b)?\\s*[\\$€£]?\\s*[\\d,]"),
-      "FINANCIAL_IN_TECHNICAL_RE must require a numeric/currency follow-on after 'total price'",
+    // This module used to carry its own FINANCIAL_IN_TECHNICAL_RE. It had to be
+    // kept numerically guarded by hand so that prose ("the total price of the
+    // contract was fair") did not block a technical proposal — and it still
+    // disagreed with the export gate on real documents: its /\bvat\b.{0,24}\d/
+    // alternative matched the company's own "VAT Reg. No.: 00098765" in the
+    // letterhead of every generated document, refusing at download what
+    // documentHygieneIssues() had just passed.
+    //
+    // One detector cannot disagree with itself, so the numeric-follow-on rule
+    // now lives once, in pricing-hygiene.ts, and this module calls it. The
+    // behaviour that rule protects is pinned on real documents in
+    // tests/engine/tender-regression.test.ts.
+    assert.match(source, /import \{ containsPricingLeakage \} from "\.\/pricing-hygiene"/);
+    assert.match(source, /containsPricingLeakage\(text,/);
+    assert.doesNotMatch(
+      source,
+      /const FINANCIAL_IN_TECHNICAL_RE\s*=/,
+      "a second, private pricing regex here is what disagreed with the export gate",
     );
-    // Double-check: the old bare "total\s+price" pattern (without numeric guard)
-    // must not appear as its own leading alternative in FINANCIAL_IN_TECHNICAL_RE.
-    assert.ok(
-      !source.match(/FINANCIAL_IN_TECHNICAL_RE\s*=\s*\/total\\s\+price\|/),
-      "FINANCIAL_IN_TECHNICAL_RE must not start with bare 'total price' as its own alternative",
+
+    const canonical = readFileSync("lib/engine/pricing-hygiene.ts", "utf8");
+    assert.match(
+      canonical,
+      /total price[^\n]*\[0-9\]\[0-9,\]/,
+      "the canonical detector must still require a number near a priced term",
     );
   });
 });

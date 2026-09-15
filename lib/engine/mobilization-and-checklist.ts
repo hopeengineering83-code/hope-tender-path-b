@@ -60,7 +60,11 @@ interface MobilizationRow {
 
 function mobilizationRows(experts: ExpertRecord[]): MobilizationRow[] {
   const teamSize = experts.length;
-  const teamLabel = teamSize > 0 ? `${teamSize} reviewed expert(s) from the firm's vault` : "Bid-Team Action: confirm team selection before mobilization";
+  // "the firm's vault" is this application's internal name for the evidence
+  // store. It reached a delivered client proposal as "3 reviewed expert(s)
+  // from the firm's supervision vault", which tells an evaluator nothing about
+  // the team and reveals how the document was assembled.
+  const teamLabel = teamSize > 0 ? `${teamSize} named specialist(s) from the firm's permanent staff` : "Bid-Team Action: confirm team selection before mobilization";
 
   return [
     {
@@ -133,13 +137,20 @@ interface ChecklistGroup {
   items: { item: string; mandatory: boolean }[];
 }
 
-function checklistGroups(): ChecklistGroup[] {
+// `financialProposalRequired === false` means the tender asks for no financial
+// proposal at this stage. Checklist wording must not then point the reader at a
+// financial document that is not part of the submission. Nothing changes for
+// tenders that do require one.
+function checklistGroups(financialProposalRequired: boolean): ChecklistGroup[] {
+  const stampTargets = financialProposalRequired
+    ? "cover letter, declaration, financial proposal"
+    : "cover letter, declaration";
   return [
     {
       group: "Identity & Authorization",
       items: [
         { item: "Cover letter signed by authorized signatory (typically GM)", mandatory: true },
-        { item: "Company stamp affixed where required (cover letter, declaration, financial proposal)", mandatory: true },
+        { item: `Company stamp affixed where required (${stampTargets})`, mandatory: true },
         { item: "Power of Attorney attached if signatory is not GM", mandatory: false },
         { item: "Authorised representative contact details correct on cover", mandatory: true },
       ],
@@ -200,8 +211,8 @@ function checklistGroups(): ChecklistGroup[] {
   ];
 }
 
-function buildChecklist(): string {
-  const groups = checklistGroups();
+function buildChecklist(financialProposalRequired: boolean): string {
+  const groups = checklistGroups(financialProposalRequired);
   const blocks: string[] = [
     MARKER_CHECKLIST,
     "## Submission Readiness Checklist",
@@ -276,7 +287,7 @@ export interface MobAndChecklistResult {
 
 export function injectMobilizationAndChecklist(
   markdown: string,
-  opts: { experts: ExpertRecord[] },
+  opts: { experts: ExpertRecord[]; financialProposalRequired?: boolean },
 ): MobAndChecklistResult {
   let result = markdown;
   const injected = { mobilization: false, checklist: false };
@@ -296,7 +307,7 @@ export function injectMobilizationAndChecklist(
   }
 
   if (!hasChecklist(result)) {
-    const block = buildChecklist();
+    const block = buildChecklist(opts.financialProposalRequired !== false);
     const insertAt = findChecklistInsertPoint(result);
     const lines = result.split("\n");
     result = [

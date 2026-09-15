@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import { subscribeTenderWorkflowSync } from "@/lib/ui/tender-workflow-sync";
 
 type CostLine = {
   id: string;
@@ -64,7 +65,7 @@ export function PricingWorkbookPanel({ tenderId, canMutate = false }: { tenderId
   const [draft, setDraft] = useState<DraftLine>(EMPTY_LINE);
   const [error, setError] = useState<string | null>(null);
 
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -73,11 +74,15 @@ export function PricingWorkbookPanel({ tenderId, canMutate = false }: { tenderId
       if (!res.ok) throw new Error(data.error ?? `Failed to load pricing workbook (${res.status})`);
       setWorkbook(data.workbook);
     } catch (err) {
-      setError("Failed to load pricing workbook".replace("failed", "failed. Refresh to retry."));
+      setError("Failed to load pricing workbook.");
     } finally {
       setLoading(false);
     }
-  }
+  }, [tenderId]);
+
+  // Auto-load on mount + auto-refresh on workflow sync — no manual Load button needed.
+  useEffect(() => { void load(); }, [load]);
+  useEffect(() => subscribeTenderWorkflowSync(tenderId, () => { void load(); }), [load, tenderId]);
 
   async function saveHeader(patch: Partial<PricingWorkbook>) {
     if (!workbook) return;
@@ -94,7 +99,7 @@ export function PricingWorkbookPanel({ tenderId, canMutate = false }: { tenderId
       setWorkbook(data.workbook);
       router.refresh();
     } catch (err) {
-      setError("Failed to save pricing workbook".replace("failed", "failed. Refresh to retry."));
+      setError("Failed to save pricing workbook.");
     } finally {
       setSaving(false);
     }
@@ -126,7 +131,7 @@ export function PricingWorkbookPanel({ tenderId, canMutate = false }: { tenderId
       await load();
       router.refresh();
     } catch (err) {
-      setError("Failed to add cost line".replace("failed", "failed. Refresh to retry."));
+      setError("Failed to add cost line.");
     } finally {
       setSaving(false);
     }
@@ -142,7 +147,7 @@ export function PricingWorkbookPanel({ tenderId, canMutate = false }: { tenderId
       await load();
       router.refresh();
     } catch (err) {
-      setError("Failed to delete cost line".replace("failed", "failed. Refresh to retry."));
+      setError("Failed to delete cost line.");
     } finally {
       setSaving(false);
     }
@@ -155,16 +160,14 @@ export function PricingWorkbookPanel({ tenderId, canMutate = false }: { tenderId
           <h3 className="text-sm font-semibold text-slate-900">Pricing Workbook</h3>
           <p className="mt-0.5 text-xs text-slate-500">Build the commercial workbook, validate price leakage status, and keep financial assumptions structured.</p>
         </div>
-        <button type="button" onClick={() => void load()} disabled={loading} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-60">
-          {loading ? "Loading…" : workbook ? "Refresh pricing" : "Load pricing"}
-        </button>
+        {/* Load/Refresh button removed — panel auto-loads on mount and auto-refreshes via workflow sync. */}
       </div>
 
       {error && <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">{error}</div>}
 
       {!workbook && !loading && (
         <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-600">
-          Load the pricing workbook to create line items, scenario, taxes, contingency, validity, and price-leakage status.
+          Pricing workbook will appear here once the tender pipeline creates it.
         </div>
       )}
 

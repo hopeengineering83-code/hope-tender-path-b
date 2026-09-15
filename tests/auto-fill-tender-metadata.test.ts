@@ -47,6 +47,29 @@ Budget is approximately USD 2,500,000. Proposal validity: 120 days.
 `.repeat(4);
 
 describe("autoFillTenderMetadata — fills missing fields", () => {
+  it("replaces the upload-time review placeholder with a source-derived title", async () => {
+    const prismaMock = makePrismaMock();
+    const tender = {
+      id: "t-title",
+      title: "[REVIEW NEEDED] rfp",
+      clientName: null,
+      reference: null,
+      category: "General",
+      country: null,
+      deadline: null,
+      submissionMethod: null,
+      submissionAddress: null,
+      files: [{ extractedText: RICH_TEXT, originalFileName: "rfp.pdf" }],
+    };
+
+    const result = await autoFillTenderMetadata(tender, prismaMock as never);
+    const patch = prismaMock.getLastPatch();
+
+    assert.ok(result.filled.includes("title"));
+    assert.equal(typeof patch?.title, "string");
+    assert.doesNotMatch(String(patch?.title), /^\[REVIEW NEEDED\]/);
+  });
+
   it("fills clientName when it is empty", async () => {
     const prismaMock = makePrismaMock();
     const tender = {
@@ -184,10 +207,59 @@ describe("autoFillTenderMetadata — fills missing fields", () => {
 
     const result: MetadataAutoFillResult = await autoFillTenderMetadata(tender, prismaMock as never);
     const patch = prismaMock.getLastPatch();
-    if (result.filled.includes("category")) {
-      assert.ok(patch && patch["category"] !== "General", "category should be upgraded from General");
+
+    // RICH_TEXT is a fixed fixture, so this outcome is deterministic. The
+    // assertion was previously wrapped in `if (result.filled.includes(...))`
+    // and followed by `assert.ok(true)`, so a regression that stopped
+    // inferring the category entirely would have passed silently.
+    assert.ok(result.filled.includes("category"), "category must be inferred from the fixture text");
+    assert.ok(patch, "a patch must be written");
+    assert.notEqual(patch!["category"], "General", "category must be upgraded away from the General default");
+    assert.equal(patch!["category"], "Healthcare", "the fixture text must infer the Healthcare category");
+  });
+});
+
+describe("autoFillTenderMetadata — preserves existing non-string values", () => {
+  it("does not throw or overwrite existing dates, numbers, or booleans", async () => {
+    const prismaMock = makePrismaMock();
+    const deadline = new Date("2026-07-31T12:00:00.000Z");
+    const tender = {
+      id: "t-existing-scalars",
+      clientName: "World Bank",
+      reference: "RFP-EXISTING",
+      category: "Healthcare",
+      country: "Ethiopia",
+      deadline,
+      submissionMethod: "Online Portal",
+      submissionAddress: "https://example.test/submit",
+      submissionEmails: "bid@example.test",
+      clientContactName: "Existing Contact",
+      clientContactTitle: "Procurement Lead",
+      clientContactEmail: "contact@example.test",
+      clientContactPhone: "+251900000000",
+      validityDays: 90,
+      pageLimit: 75,
+      bidBondAmount: 25000,
+      bidBondCurrency: "USD",
+      numberOfCopiesRequired: 3,
+      mandatorySiteVisit: false,
+      evaluationMethodology: "Quality and cost based selection",
+      files: [{ extractedText: RICH_TEXT, originalFileName: "rfp.pdf" }],
+    };
+
+    const result = await autoFillTenderMetadata(tender, prismaMock as never);
+    const patch = prismaMock.getLastPatch();
+
+    for (const field of [
+      "deadline",
+      "validityDays",
+      "pageLimit",
+      "bidBondAmount",
+      "numberOfCopiesRequired",
+      "mandatorySiteVisit",
+    ]) {
+      assert.ok(!result.filled.includes(field), `${field} must not be overwritten`);
+      assert.ok(!patch || patch[field] === undefined, `${field} must not be present in the update patch`);
     }
-    // It's OK if category wasn't changed — not all texts produce a specific category.
-    assert.ok(true);
   });
 });

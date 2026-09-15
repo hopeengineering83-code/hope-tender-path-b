@@ -10,7 +10,8 @@ const clear = {
   metadataFinalBlocker: null,
   requirementsBlocker: null,
   buildPlanGateBlocker: null,
-  vaultBlocker: null,
+  matchingVaultBlocker: null,
+  finalApprovalVaultBlocker: null,
   mandatoryRequirementCount: 0,
   evidenceCoveragePercent: 0,
   allMandatoryGrounded: true,
@@ -44,7 +45,6 @@ describe("release snapshot eligibility", () => {
 
   it("does not invent an evidence blocker when there are no mandatory requirements", () => {
     const result = buildReleaseSnapshotEligibility(clear);
-
     assert.equal(result.generationEligible, true);
     assert.equal(result.exportEligible, true);
     assert.equal(result.finalZipEligible, true);
@@ -72,7 +72,6 @@ describe("release snapshot eligibility", () => {
       analysisBlocker: "Run AI Analyze.",
       metadataFinalBlocker: "Run AI Analyze.",
     });
-
     assert.deepEqual(result.generationBlockers, ["Run AI Analyze."]);
     assert.deepEqual(result.exportBlockers, ["Run AI Analyze."]);
     assert.deepEqual(result.finalZipBlockers, ["Run AI Analyze."]);
@@ -92,12 +91,15 @@ describe("release snapshot wiring", () => {
     assert.match(source, /buildReleaseSnapshotEligibility\(\{/);
     assert.match(source, /buildPlan\.gateValid/);
     assert.match(source, /metadata\.gateValid/);
+    assert.doesNotMatch(source, /\.\.\.generationBlockers/);
   });
 
-  it("includes final audit authority and gate state in the snapshot revision", () => {
-    assert.match(source, /confirmationBasis: o\.confirmationBasis/);
-    assert.match(source, /authorityClass: o\.authorityClass/);
+  it("includes final audit authority, gate state, and purpose-specific Vault authority in the snapshot revision", () => {
+    assert.match(source, /confirmationBasis: override\.confirmationBasis/);
+    assert.match(source, /authorityClass: override\.authorityClass/);
     assert.match(source, /metadataGateValid: metadata\.gateValid/);
     assert.match(source, /buildPlanGateValid: buildPlan\.gateValid/);
+    assert.match(source, /matchingVaultBlocker,/);
+    assert.match(source, /finalApprovalVaultBlocker,/);
   });
 });

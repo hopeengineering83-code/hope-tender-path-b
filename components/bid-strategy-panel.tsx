@@ -9,12 +9,17 @@
 // the top 3 risks, the top 3 advantages, and a per-dimension score
 // breakdown.
 //
-// Drop into the tender workspace as a sticky right-rail card so the
-// bid team sees the verdict before clicking Generate Docs. Saves
-// 40+ person-hours per misjudged bid by surfacing structural issues
-// up-front.
+// Rendered once, in Stage 2 ("Analysis and engine") of the tender
+// workspace, right after requirement coverage is confirmed — see
+// app/dashboard/tenders/[id]/page.tsx. (This comment used to place the panel
+// "before Generate Docs". There is no Generate Docs action to be before:
+// generation runs automatically once Run Engine succeeds, and the button was
+// removed with the old GenerationActionPanel.) This is read-only decision
+// support; it does not gate, mutate, or own any workflow action.
 
 import { useState, useEffect, useCallback } from "react";
+import { severityBadgeClassesCompact, severityToUISeverity } from "../lib/ui-tokens";
+import { manualGateGuidanceFor } from "../lib/ui/manual-gate-guidance";
 
 type BidStrategy = {
   winProbability: number;
@@ -88,11 +93,8 @@ const POSTURE_LABEL: Record<BidStrategy["bidPosture"], string> = {
   DECLINE: "Decline",
 };
 
-const SEVERITY_BADGE: Record<"HIGH" | "MEDIUM" | "LOW", string> = {
-  HIGH: "bg-red-100 text-red-700",
-  MEDIUM: "bg-amber-100 text-amber-700",
-  LOW: "bg-slate-100 text-slate-600",
-};
+// SEVERITY_BADGE migrated to lib/ui-tokens.ts::severityBadgeClassesCompact(severityToUISeverity(...)).
+// Single source of truth for severity color mapping across all panels.
 
 const DIMENSION_LABEL: Record<keyof BidStrategy["dimensionScores"], string> = {
   capabilityCoverage: "Capability coverage",
@@ -174,10 +176,16 @@ export function BidStrategyPanel({ tenderId, defaultExpanded = true }: BidStrate
     return (
       <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
         <p className="font-semibold text-amber-800">Bid Strategy Unavailable</p>
-        <p className="text-sm text-amber-700 mt-1">
-          {blocked.message || "Bid strategy requires reliable extraction and analysis. Run OCR or re-run AI Analyze first."}
+        <p className="text-sm text-amber-800 mt-1">
+          {/* Gap A: the previous fallback promised that replacing the source
+              "re-runs both automatically". Extraction is automatic; AI Analyze
+              and Run Engine are authenticated manual actions, so an owner who
+              followed that sentence waited for a job nothing had queued. The
+              fallback now names the same first step the API would. */}
+          {blocked.message
+            || `Bid strategy requires reliable extraction and a current analysis. ${manualGateGuidanceFor("EXTRACTION_UNRELIABLE").message}`}
         </p>
-        <button onClick={() => void load()} className="mt-3 rounded border border-amber-300 bg-white px-2.5 py-1 text-xs text-amber-700 hover:bg-amber-100">
+        <button onClick={() => void load()} className="mt-3 rounded border border-amber-300 bg-white px-2.5 py-1 text-xs text-amber-800 hover:bg-amber-100">
           Retry
         </button>
       </div>
@@ -283,7 +291,7 @@ export function BidStrategyPanel({ tenderId, defaultExpanded = true }: BidStrate
                 {strategy.topRisks.map((risk, i) => (
                   <li key={i} className="rounded-lg border border-slate-100 bg-white p-2.5 text-xs">
                     <div className="flex items-start gap-2">
-                      <span className={`mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${SEVERITY_BADGE[risk.severity]}`}>
+                      <span className={`mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${severityBadgeClassesCompact(severityToUISeverity(risk.severity))}`}>
                         {risk.severity}
                       </span>
                       <div className="min-w-0">

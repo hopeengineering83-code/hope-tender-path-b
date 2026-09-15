@@ -1,4 +1,5 @@
 import { hasRestoredInlineFileContent, hasVisibleStoredFile } from "../restored-record-visibility";
+import { resolveArtifactIdentity } from "./artifact-identity";
 
 export type DocumentOutputState =
   | "CONTROL_RECORD_ONLY"
@@ -9,6 +10,8 @@ export type DocumentOutputState =
   | "SUPERSEDED"
   | "NEEDS_REVALIDATION"
   | "VALIDATED"
+  | "ARTIFACT_IDENTITY_MISMATCH"
+  | "QUALITY_BLOCKED"
   | "READY_FOR_EXPORT";
 
 export type DocumentLike = {
@@ -25,12 +28,42 @@ export type DocumentLike = {
    */
   hasInlineFileContent?: boolean | null;
   storagePath?: string | null;
+  /**
+   * The canonical narrative-quality verdict for this document, when the caller
+   * has computed it.
+   *
+   * Everything else on this type is metadata: statuses, format, byte identity.
+   * None of it can tell whether the document the client receives actually says
+   * anything, and so a document could be READY_FOR_EXPORT here while the
+   * Document Validator — which reads the bytes through
+   * lib/engine/current-document-quality.ts — called the same document BLOCKED.
+   * Reproduced on one snapshot, one document, one revision: validator "BLOCKED
+   * (14/100) QUALITY_FAILED", manifest "READY_FOR_EXPORT, In ZIP, Blocked 0".
+   * That is the contradiction the owner photographed, and it was not stale
+   * state — the two surfaces were answering the same question from different
+   * authorities.
+   *
+   * Optional so metadata-only callers keep their current behaviour; a surface
+   * that can afford the verdict passes it and cannot then contradict the
+   * validator.
+   */
+  qualityBlocked?: boolean | null;
   generationStatus?: string | null;
   validationStatus?: string | null;
   reviewStatus?: string | null;
+  /**
+   * Persisted byte-identity metadata. Present on every release-path selection.
+   * A row whose recorded byte format contradicts its name or declared format —
+   * "Technical Proposal.pdf" declared DOCX holding DOCX bytes — must never be
+   * an export candidate, however its statuses read.
+   */
+  contentMimeType?: string | null;
+  detectedFormat?: string | null;
+  integrityStatus?: string | null;
 };
 
 export const EXPORT_BLOCKING_STATES: readonly DocumentOutputState[] = [
+  "ARTIFACT_IDENTITY_MISMATCH",
   "CONTROL_RECORD_ONLY",
   "ORIGINAL_REQUIRED",
   "PDF_CONVERSION_REQUIRED",
@@ -42,9 +75,33 @@ export function normalizeStatus(value?: string | null): string {
   return (value ?? "").trim().toUpperCase();
 }
 
+/**
+ * The only values the validator ever writes to GeneratedDocument.validationStatus
+ * to mean "validation succeeded".
+ *
+ * lib/engine/validate.ts writes "PASSED" / "FAILED"; the auto-finalize
+ * continuation writes "VALIDATED" / "FAILED". Everything else that column ever
+ * holds is PENDING, SUPERSEDED or NEEDS_REVALIDATION.
+ *
+ * Exported as an array so Prisma `{ in: [...] }` filters and in-memory
+ * predicates read from one definition. Four call sites previously inlined this
+ * list and two of them disagreed — see isValidationPassed below.
+ */
+export const VALIDATION_PASSED_STATUSES = ["VALIDATED", "PASSED"] as const;
+
+/**
+ * Canonical answer to "did validation pass for this document?".
+ *
+ * Prefer this (or VALIDATION_PASSED_STATUSES for a database filter) over an
+ * inline literal list. Two gates used to accept a four-value list that included
+ * "APPROVED" and "READY_FOR_EXPORT" — reviewStatus vocabulary tested against
+ * the validationStatus column, which that column has never held in any version
+ * of this codebase, so those two alternatives could never match while making
+ * the four gates look like they disagreed about what "validated" means.
+ */
 export function isValidationPassed(value?: string | null): boolean {
   const status = normalizeStatus(value);
-  return status === "VALIDATED" || status === "PASSED";
+  return (VALIDATION_PASSED_STATUSES as readonly string[]).includes(status);
 }
 
 export function isReviewReadyForExport(value?: string | null): boolean {
@@ -74,8 +131,29 @@ const NON_CANDIDATE_GENERATION_STATES: readonly string[] = [
   "STALE",
 ];
 
+/**
+ * Does this row's identity hold up on its persisted metadata alone?
+ *
+ * Byte-level inspection happens on the export path; this is the metadata-only
+ * guard, so a row a previous inspection already recorded as mismatched cannot
+ * slip through a surface that never loads bytes.
+ */
+export function hasConsistentArtifactIdentity(doc: DocumentLike): boolean {
+  return resolveArtifactIdentity({
+    fileName: doc.exactFileName ?? doc.name ?? null,
+    format: doc.format ?? null,
+    contentMimeType: doc.contentMimeType ?? null,
+    detectedFormat: doc.detectedFormat ?? null,
+    integrityStatus: doc.integrityStatus ?? null,
+  }).agrees;
+}
+
 export function isFinalExportCandidateDocument(doc: DocumentLike): boolean {
   if (NON_CANDIDATE_GENERATION_STATES.includes(normalizeStatus(doc.generationStatus))) return false;
+  // A file that is not what it claims cannot be submitted: a .pdf that will not
+  // open is a failed bid. Checked before any status, because statuses are
+  // exactly what a mislabelled artifact used to pass on.
+  if (!hasConsistentArtifactIdentity(doc)) return false;
   if (normalizeStatus(doc.validationStatus) === "SUPERSEDED") return false;
   const rev = normalizeStatus(doc.reviewStatus);
   if (rev === "NOT_EXPORTABLE" || rev === "REPLACE_WITH_ORIGINAL") return false;
@@ -160,12 +238,31 @@ function requestedFormat(doc: DocumentLike): "pdf" | "docx" | "xlsx" | "zip" | "
 export function deriveDocumentOutputState(doc: DocumentLike): DocumentOutputState {
   const gen = normalizeStatus(doc.generationStatus);
   const val = normalizeStatus(doc.validationStatus);
-  const reviewReady = isReviewReadyForExport(doc.reviewStatus);
   const rev = normalizeStatus(doc.reviewStatus);
   const validationPassed = isValidationPassed(doc.validationStatus);
   const want = requestedFormat(doc);
 
   if (gen === "SUPERSEDED" || val === "SUPERSEDED") return "SUPERSEDED";
+  // A file that is not what it claims outranks every other state. Without this
+  // the derived state said READY_FOR_EXPORT while isFinalExportCandidateDocument
+  // said false — two surfaces disagreeing about the same row, which is how a
+  // mislabelled artifact stayed plausible everywhere it was displayed.
+  // A row that is still PLANNED and holds no bytes has no artifact yet, so it
+  // cannot be inconsistent with one. Without this, a planned "Technical
+  // Proposal.pdf" awaiting PDF finalization — created with no content at all —
+  // was reported as "file name, declared format and actual bytes disagree… a
+  // .pdf that does not contain PDF bytes will not open for the evaluator",
+  // which describes a corrupted file that does not exist and sends the owner
+  // looking for it. Narrow on purpose: the moment a row carries bytes, the
+  // identity check below runs exactly as before, which is what stops a
+  // mislabelled artifact from passing on its statuses.
+  const plannedWithoutBytes = gen === "PLANNED" && !hasVisibleStoredFile(doc);
+  if (!plannedWithoutBytes && !hasConsistentArtifactIdentity(doc)) return "ARTIFACT_IDENTITY_MISMATCH";
+  // Ranked below artifact identity — a file that is not what it claims is a
+  // worse problem than one that reads poorly — and above every "looks ready"
+  // state, so a quality-blocked document can never be reported as ready for
+  // export or as included in the ZIP.
+  if (doc.qualityBlocked === true) return "QUALITY_BLOCKED";
   // REPLACE_WITH_ORIGINAL takes priority over NEEDS_REVALIDATION — a doc that
   // must use the tender-issuer's original file is ORIGINAL_REQUIRED regardless
   // of whether a reconcile also flagged it for revalidation.
@@ -187,8 +284,9 @@ export function deriveDocumentOutputState(doc: DocumentLike): DocumentOutputStat
   // generated documents do not stay blocked after deterministic validation
   // already passed.
   if (content.length === 0 && (hasStorageContent || hasInlineContent)) {
-    if (validationPassed && reviewReady) return "READY_FOR_EXPORT";
-    if (validationPassed) return "VALIDATED";
+    // Gap C: VALIDATED is sufficient for the automatic path (Gap 5).
+    // Machine validation alone makes a routine document export-eligible.
+    if (validationPassed) return "READY_FOR_EXPORT";
     return want === "pdf" ? "PDF_GENERATED" : "DOCX_GENERATED";
   }
 
@@ -200,14 +298,14 @@ export function deriveDocumentOutputState(doc: DocumentLike): DocumentOutputStat
   if ((want === "xlsx" || want === "zip") && !isDocx && !isPdf) return "CONTROL_RECORD_ONLY";
 
   if (isPdf) {
-    if (validationPassed && reviewReady) return "READY_FOR_EXPORT";
-    if (validationPassed) return "VALIDATED";
+    // Gap C: VALIDATED is sufficient for the automatic path (Gap 5).
+    if (validationPassed) return "READY_FOR_EXPORT";
     return "PDF_GENERATED";
   }
 
   if (isDocx) {
-    if (validationPassed && reviewReady) return "READY_FOR_EXPORT";
-    if (validationPassed) return "VALIDATED";
+    // Gap C: VALIDATED is sufficient for the automatic path (Gap 5).
+    if (validationPassed) return "READY_FOR_EXPORT";
     return "DOCX_GENERATED";
   }
 
@@ -222,6 +320,10 @@ export function exportBlockReason(state: DocumentOutputState): string | null {
   switch (state) {
     case "READY_FOR_EXPORT":
       return null;
+    case "ARTIFACT_IDENTITY_MISMATCH":
+      return "File name, declared format and actual bytes disagree. A .pdf that does not contain PDF bytes will not open for the evaluator, so it can never be exported.";
+    case "QUALITY_BLOCKED":
+      return "The document failed the canonical narrative-quality rubric. The Document Validator shows the score and the specific issues; it must be regenerated or repaired before it can be exported.";
     case "CONTROL_RECORD_ONLY":
       return "Document is a control, placeholder, or text-only row. Generate or attach the real final file.";
     case "ORIGINAL_REQUIRED":
@@ -233,9 +335,9 @@ export function exportBlockReason(state: DocumentOutputState): string | null {
     case "NEEDS_REVALIDATION":
       return "Content needs revalidation after the latest analysis or plan change.";
     case "DOCX_GENERATED":
-      return "DOCX content exists but is not yet validated and review-approved for export.";
+      return "DOCX content exists but has not passed machine validation for export.";
     case "PDF_GENERATED":
-      return "PDF content exists but is not yet validated and review-approved for export.";
+      return "PDF content exists but has not passed machine validation for export.";
     case "VALIDATED":
       return "Document validated, but review status is not READY_FOR_EXPORT yet.";
     default:

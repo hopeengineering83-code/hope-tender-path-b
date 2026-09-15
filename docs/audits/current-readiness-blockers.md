@@ -1,70 +1,43 @@
 # Current Readiness Blockers
 
-Last updated: 2026-06-13
+## Scope
 
-This document records the current production-readiness controls for the Hope Tender Proposal Generator.
+This note records the remaining release-readiness boundaries for the consolidated recovery branch. It distinguishes Company Vault runtime authority from engineering release governance.
 
-## Merge policy
+## Company Vault runtime authority
 
-A pull request affecting tender analysis, generation, review, or export requires all of the following:
+Company Vault evidence does **not** require a human approval step before Run Engine.
 
-1. GitHub Actions CI: database migrations, typecheck, lint, tests, build, and Playwright smoke checks.
-2. Vercel preview deployment.
-3. Datadog Synthetic checks where configured.
-4. Human review of database migrations and canonical readiness/export gates.
+The runtime contract is:
 
-A Vercel build alone is not sufficient.
+1. Run Engine remaps missing Company Vault source links before matching.
+2. The system verifies each record's current exact values against an owned source document whose persisted bytes pass integrity checks.
+3. Successful records are promoted to `SOURCE_VERIFIED` automatically.
+4. Current `SOURCE_VERIFIED` evidence and current authenticated `REVIEWED` evidence are equally eligible for matching, generation, export, and Final ZIP.
+5. Draft, source-less, stale, altered, expired, or unmatched records remain fail-closed.
+6. Automatic verification never invents `REVIEWED`, a reviewer identity, or a human-review timestamp.
 
-## PR #714
+Human review remains available only as an optional authenticated audit trail or correction workflow. It is not bureaucracy between Company Vault and Run Engine.
 
-**Status:** Draft while automated verification is running.
+## Tender-specific gates that remain mandatory
 
-This PR addresses the June 2026 audit gaps:
+Removing the Company Vault human-approval dependency does not remove tender truth or package-integrity controls. The following remain enforced:
 
-- requirement-to-source-file linkage;
-- protection of canonical analysis during fallback failures;
-- structured submission-plan provenance;
-- removal of duplicate legacy tender controls;
-- staged tender workspace organization;
-- PostgreSQL-backed integration tests;
-- final ZIP archive regression tests;
-- lint and Playwright execution in CI;
-- removal of accidental repository marker files.
+- tender-file extraction quality and OCR completeness;
+- tender analysis and mandatory-requirement extraction;
+- Build Plan confirmation;
+- exact tender metadata and deadline truth;
+- requirement-to-evidence coverage;
+- technical/financial separation;
+- document validation and approval state;
+- required signature and stamp placement;
+- generated-file byte integrity;
+- Final ZIP manifest and package validation.
 
-## Source grounding
+## Engineering release governance
 
-TenderRequirement rows are linked to a TenderFile only when the source is unambiguous. Explicit file IDs are validated against the same tender. Exact-quote matches may resolve a source file. Missing or ambiguous matches remain unlinked and receive reduced confidence.
+Pull-request review, CI, migration verification, authenticated isolation testing, and deployment authorization are engineering governance controls. They are separate from Company Vault record authority and must not be described as a Company Vault human-approval prerequisite.
 
-A production verification must still run one authenticated multi-file tender and confirm that displayed filenames, pages, headings, and quotes match the uploaded documents.
+## Current release condition
 
-## Canonical analysis preservation
-
-The database rejects deletion of the final canonical requirement set unless a recent staged AI Analyze or Engine run exists. The integration suite verifies that an unstaged delete fails and preserves existing requirements.
-
-## Submission-plan provenance
-
-Structured plan state is stored in `SubmissionPlanState`, including provenance, confirmation status, active and derived document counts, and confirmation timestamps. The legacy content-summary marker remains only as a backward-compatible migration input.
-
-## Final ZIP flow
-
-The regression suite verifies valid ZIP bytes, exact filenames, exact order, exclusion of internal artifacts, duplicate-name rejection, missing-byte rejection, and technical/financial envelope separation.
-
-The runtime route must continue to enforce canonical readiness, authority review, document quality, file-signature validation, final-scope filtering, and strict two-envelope rules.
-
-## Tender workspace
-
-The active tender page now uses five stages:
-
-1. Intake and extraction.
-2. Analysis and engine.
-3. Evidence and matching.
-4. Generation and review.
-5. Final package and submission.
-
-Each major action appears once. Static regression tests prevent the return of hidden duplicate actions or MutationObserver-based button suppression.
-
-## CI and release decision
-
-CI provisions PostgreSQL, deploys Prisma migrations, runs typecheck, lint, unit and database integration tests, builds the application, and runs Playwright smoke tests against the built server.
-
-The application should still be described as operational with controlled human review until an authenticated preview workflow completes upload, extraction, engine, review, generation, and final ZIP download on a representative tender.
+A recovery change is ready for incorporation only when its exact head passes the repository's required migration, integrity, typecheck, lint, test, build, and authenticated-isolation workflow. No PR should be merged merely because Company Vault records are promoted automatically.

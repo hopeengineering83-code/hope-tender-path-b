@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { getCanonicalTenderReadiness } from "../../../../../lib/canonical-tender-readiness";
+import { getCanonicalReleaseDecision } from "../../../../../lib/canonical-release-decision";
 import { randomUUID } from "node:crypto";
 
 export const dynamic = "force-dynamic";
@@ -27,7 +28,11 @@ export async function GET(
     const readiness = await getCanonicalTenderReadiness(prisma, userId, tenderId);
     if (!readiness) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
-    return NextResponse.json({ readiness });
+    // Gap 5: include the CanonicalReleaseDecision so every consumer gets the
+    // same five-status classification from the single authority.
+    const releaseDecision = await getCanonicalReleaseDecision(prisma, userId, tenderId);
+
+    return NextResponse.json({ readiness, releaseDecision });
   } catch (error) {
     const diagnosticId = randomUUID();
     logger.error("[readiness]", {

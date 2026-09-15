@@ -1,0 +1,20 @@
+-- Zero-drift repair for PlanBStaging.updatedAt.
+--
+-- prisma/schema.prisma declares:
+--     updatedAt DateTime @default(now()) @updatedAt
+--
+-- but 20260804120000_plan_b_staging_model created the column as a bare
+-- `TIMESTAMP(3) NOT NULL`. Prisma's drift check compared the live database
+-- against the datamodel and reported:
+--
+--     [*] Changed the `PlanBStaging` table
+--       [*] Altered column `updatedAt` (default changed from `None` to `Some(Now)`)
+--
+-- which failed the CI zero-drift gate. The earlier migration is already
+-- applied, so it is left untouched and the default is added here instead.
+--
+-- Without the database-level default, any INSERT that does not name updatedAt
+-- violates NOT NULL. Prisma always supplies it, but raw SQL and psql inserts
+-- do not, so this also removes a real footgun rather than only silencing the
+-- drift report.
+ALTER TABLE "PlanBStaging" ALTER COLUMN "updatedAt" SET DEFAULT CURRENT_TIMESTAMP;

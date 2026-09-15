@@ -83,11 +83,36 @@ async function ensureMediaContentTypes(generatedZip: JSZip) {
  * parts into those generated parts so the original letterhead layout repeats
  * on every page of the generated document.
  */
-export async function applyUploadedDocxLetterheadTemplate(
+/** Why an uploaded letterhead did or did not reach the document. */
+export type LetterheadTemplateOutcome = {
+  buffer: Buffer;
+  applied: boolean;
+  /** Owner-readable explanation. Null only when the letterhead was applied. */
+  reason: string | null;
+};
+
+/**
+ * Same work as applyUploadedDocxLetterheadTemplate, but it says what happened.
+ *
+ * Reproduced defect: on tender 08e250af every PROPOSAL_GENERATION run recorded
+ * "letterhead applied to 0 file(s)" with an active, valid Word letterhead
+ * (LetterHead_repaired.docx, 126,100 bytes) and no branding prohibition. Five
+ * candidate causes were ruled out one at a time against live data over a whole
+ * session, because the only thing any surface reported was the number zero. An
+ * owner has strictly less information than that, and would simply see branding
+ * silently missing from their documents.
+ *
+ * This returns WHY. It changes no behaviour and weakens no gate — the same
+ * bytes come back in the same cases; the difference is that the caller can now
+ * tell the owner what to fix.
+ */
+export async function applyUploadedDocxLetterheadTemplateWithReason(
   generatedDocx: Buffer,
   letterheadDocx?: Buffer,
-): Promise<Buffer> {
-  if (!letterheadDocx?.length) return generatedDocx;
+): Promise<LetterheadTemplateOutcome> {
+  if (!letterheadDocx?.length) {
+    return { buffer: generatedDocx, applied: false, reason: "No letterhead template bytes were supplied." };
+  }
 
   try {
     const [generatedZip, templateZip] = await Promise.all([
@@ -97,10 +122,29 @@ export async function applyUploadedDocxLetterheadTemplate(
 
     const templateDocumentXml = await templateZip.file("word/document.xml")?.async("string");
     const templateDocumentRels = await templateZip.file("word/_rels/document.xml.rels")?.async("string");
-    if (!templateDocumentXml || !templateDocumentRels) return generatedDocx;
+    if (!templateDocumentXml || !templateDocumentRels) {
+      return {
+        buffer: generatedDocx,
+        applied: false,
+        reason: "The uploaded letterhead is not a readable Word document: it has no word/document.xml. Re-save it from Word as .docx and upload it again.",
+      };
+    }
 
     const templateHeaderPath = defaultPartTarget(templateDocumentXml, templateDocumentRels, "header");
     const templateFooterPath = defaultPartTarget(templateDocumentXml, templateDocumentRels, "footer");
+
+    // This is the case that is easy to get wrong and impossible to see. Word
+    // letterhead is only repeated on every page when it lives in the page
+    // HEADER or FOOTER. A letterhead whose logo and address sit in the
+    // document BODY is a perfectly valid .docx and looks correct to the owner,
+    // but there is no part to copy, so nothing can be applied.
+    if (!templateHeaderPath && !templateFooterPath) {
+      return {
+        buffer: generatedDocx,
+        applied: false,
+        reason: "The uploaded letterhead has no page header or footer. Word only repeats letterhead on every page when the logo and address sit in the header/footer area, so there was nothing to copy. Open the letterhead in Word, move the branding into Header & Footer, save, and upload it again.",
+      };
+    }
 
     const generatedHeaderPath = await firstGeneratedPart(generatedZip, "header");
     const generatedFooterPath = await firstGeneratedPart(generatedZip, "footer");
@@ -109,14 +153,31 @@ export async function applyUploadedDocxLetterheadTemplate(
     if (templateHeaderPath) applied = (await copyPart(templateZip, generatedZip, templateHeaderPath, generatedHeaderPath)) || applied;
     if (templateFooterPath) applied = (await copyPart(templateZip, generatedZip, templateFooterPath, generatedFooterPath)) || applied;
 
-    if (!applied) return generatedDocx;
+    if (!applied) {
+      return {
+        buffer: generatedDocx,
+        applied: false,
+        reason: `The uploaded letterhead names a header/footer part (${templateHeaderPath ?? templateFooterPath}) that is missing from the file. Re-save it from Word as .docx and upload it again.`,
+      };
+    }
 
     await copyTemplateMedia(templateZip, generatedZip);
     await ensureMediaContentTypes(generatedZip);
 
-    return await generatedZip.generateAsync({ type: "nodebuffer" });
+    return { buffer: await generatedZip.generateAsync({ type: "nodebuffer" }), applied: true, reason: null };
   } catch (error) {
     logger.error("[letterhead] Failed to apply uploaded Word letterhead. Falling back to generated letterhead.", { detail: error });
-    return generatedDocx;
+    return {
+      buffer: generatedDocx,
+      applied: false,
+      reason: `The uploaded letterhead could not be opened as a Word document (${error instanceof Error ? error.message : "unknown error"}).`,
+    };
   }
+}
+
+export async function applyUploadedDocxLetterheadTemplate(
+  generatedDocx: Buffer,
+  letterheadDocx?: Buffer,
+): Promise<Buffer> {
+  return (await applyUploadedDocxLetterheadTemplateWithReason(generatedDocx, letterheadDocx)).buffer;
 }

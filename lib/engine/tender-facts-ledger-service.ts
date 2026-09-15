@@ -22,27 +22,9 @@ import type { PrismaClient, TenderFactsLedger } from "@prisma/client";
 import { prisma, prismaReady } from "../prisma";
 import { logAction } from "../audit";
 import { containsMetadataPlaceholder } from "./metadata-validators";
-
-// ─── Email normalization (inlined to avoid #976 dependency) ──────────────────
-//
-// NOTE: PR #976 owns lib/engine/source-driven-tender-text-parser.ts which
-// exports normalizeEmailList. To avoid a cross-PR dependency while #976 is
-// open, we inline the same logic here. When #976 merges, this can be
-// replaced with: import { normalizeEmailList } from "./source-driven-tender-text-parser";
-/**
- * Normalize a raw submission-emails value into a clean array of valid emails.
- * Splits on |, ;, comma, "and", whitespace/newlines. Returns only valid emails.
- */
-function normalizeEmailList(value: unknown): string[] {
-  if (!value || typeof value !== "string") return [];
-  const parts = value
-    .replace(/\s+and\s+/gi, " ")
-    .split(/[|;,]|\s+/)
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  return parts.filter((p) => emailRe.test(p));
-}
+import { computeTenderMutationLockKey } from "./advisory-lock-key";
+import { locateQuoteProvenPage } from "./page-provenance";
+import { normalizeEmailList } from "./source-driven-tender-text-parser";
 
 // ─── Authority states ────────────────────────────────────────────────────────
 //
@@ -710,6 +692,19 @@ export async function backfillTenderFactsForTender(
       titleSourceFileId: true, titleSourcePage: true, titleSourceQuote: true,
       referenceSourceFileId: true, referenceSourcePage: true, referenceSourceQuote: true,
       submissionMethodSourceFileId: true, submissionMethodSourcePage: true, submissionMethodSourceQuote: true,
+      // Client / procuring-entity detail. These must be selected explicitly:
+      // buildBackfillCandidates reads them off the row, and an unselected column
+      // arrives as undefined, which would silently skip every one of them.
+      legalClientName: true, donorAgency: true, implementingAgency: true,
+      clientAddress: true, clientCity: true, clientContactName: true, clientContactTitle: true,
+      clientContactEmail: true, clientContactPhone: true, clientWebsite: true,
+      preBidChannel: true, clientRepresentative: true,
+      // Per-field source evidence for those client details. finalizeJob already
+      // resolves {fileId, page, quote} for every contactDetailsSource entry
+      // (attributeMetadataSourceFileId + locateQuoteProvenPage) and persists it
+      // here. Without selecting it the ledger cannot see provenance that the
+      // database already holds, and every client field would stay ungrounded.
+      contactDetailsSourceJson: true,
     },
     ...(options.limit ? { take: options.limit } : {}),
   });
@@ -808,6 +803,54 @@ type BackfillCandidate = {
   sourceQuote: string | null;
 };
 
+/**
+ * Read the per-field client-detail source evidence that promotion persisted on
+ * `Tender.contactDetailsSourceJson`.
+ *
+ * Fail-closed by construction: an entry is returned ONLY when it carries the
+ * complete triple — a source file id, a positive integer page, and a quote of
+ * meaningful length. `locateQuoteProvenPage` (used when this JSON is written)
+ * returns null whenever the quote cannot be located in the file, or when
+ * multiple occurrences resolve to different pages, so a non-null page here means
+ * the quote was actually found in that file. Anything partial or malformed is
+ * dropped, leaving the fact to land as CANDIDATE_NEEDS_REVIEW.
+ *
+ * This never invents provenance: it only surfaces evidence the database already
+ * holds.
+ */
+function parseContactDetailsSourceEvidence(
+  raw: string | null,
+): Map<string, { fileId: string; page: number; quote: string }> {
+  const out = new Map<string, { fileId: string; page: number; quote: string }>();
+  if (!raw) return out;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return out;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return out;
+
+  for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+    const entry = value as { fileId?: unknown; page?: unknown; quote?: unknown };
+
+    const fileId = typeof entry.fileId === "string" ? entry.fileId.trim() : "";
+    const page = typeof entry.page === "number" ? entry.page : NaN;
+    const quote = typeof entry.quote === "string" ? entry.quote.trim() : "";
+
+    if (!fileId) continue;
+    if (!Number.isInteger(page) || page < 1) continue;
+    // Matches the minimum meaningful-quote length the Build Plan gate enforces.
+    if (quote.length < 10) continue;
+
+    out.set(key, { fileId, page, quote });
+  }
+
+  return out;
+}
+
 function buildBackfillCandidates(tender: any): BackfillCandidate[] {
   const candidates: BackfillCandidate[] = [];
 
@@ -841,6 +884,86 @@ function buildBackfillCandidates(tender: any): BackfillCandidate[] {
       sourceFileId: tender.clientNameSourceFileId ?? null,
       sourcePage: tender.clientNameSourcePage ?? null,
       sourceQuote: tender.clientNameSourceQuote ?? null,
+    });
+  }
+
+  // ── Remaining client / procuring-entity detail ────────────────────────────
+  //
+  // CLAUDE.md requires a source page and source quote for EVERY extracted
+  // client field. These twelve were extracted and stored as Tender scalars but
+  // never given a ledger row, so they were invisible to every ledger consumer —
+  // readiness, gates, and the review surfaces — and no reviewer could trace them
+  // to a page and quote.
+  //
+  // They have no xSourceFileId/xSourcePage/xSourceQuote companions on Tender,
+  // but that does NOT mean they have no provenance: promotion resolves a
+  // {fileId, page, quote} triple for each of them into
+  // `Tender.contactDetailsSourceJson`, keyed by these same semanticKeys. That
+  // evidence is now read below, so a client field the AI genuinely traced to a
+  // page and quote can reach SOURCE_GROUNDED_CONFIRMED instead of being pinned
+  // to CANDIDATE_NEEDS_REVIEW forever.
+  //
+  // A field with no complete, defensible triple still carries null provenance,
+  // and that remains the point:
+  // upsertTenderFactFromSource derives SOURCE_GROUNDED_CONFIRMED only when the
+  // full triple is present and CANDIDATE_NEEDS_REVIEW otherwise, so these land
+  // as candidates needing review rather than as grounded facts. A field with a
+  // value but no traceable source must look exactly like that — visible, and
+  // visibly ungrounded — instead of being absent and therefore unnoticed.
+  const clientDetailFields: Array<{
+    value: unknown;
+    semanticKey: string;
+    displayLabel: string;
+    category: string;
+    valueType: string;
+    relevance: string;
+  }> = [
+    { value: tender.legalClientName, semanticKey: "legalClientName", displayLabel: "Full Legal Client Name", category: "procuring-entity", valueType: "TEXT", relevance: "advisory" },
+    { value: tender.donorAgency, semanticKey: "donorAgency", displayLabel: "Donor / Funding Agency", category: "procuring-entity", valueType: "TEXT", relevance: "advisory" },
+    { value: tender.implementingAgency, semanticKey: "implementingAgency", displayLabel: "Implementing Agency / Project Owner", category: "procuring-entity", valueType: "TEXT", relevance: "advisory" },
+    { value: tender.clientAddress, semanticKey: "clientAddress", displayLabel: "Client Address", category: "procuring-entity", valueType: "ADDRESS", relevance: "advisory" },
+    // CLAUDE.md item 9, "City / project location". AI Analyze extracts it and
+    // asks the provider for its page and quote alongside the other contact
+    // fields, and the tender detail panel displays it — the ledger was the only
+    // consumer that could not see it, which is precisely the surface a reviewer
+    // uses to ask whether a displayed value is traceable.
+    { value: tender.clientCity, semanticKey: "clientCity", displayLabel: "City / Project Location", category: "procuring-entity", valueType: "TEXT", relevance: "advisory" },
+    { value: tender.clientContactName, semanticKey: "clientContactName", displayLabel: "Client Contact Name", category: "procuring-entity", valueType: "TEXT", relevance: "advisory" },
+    { value: tender.clientContactTitle, semanticKey: "clientContactTitle", displayLabel: "Client Contact Title / Role", category: "procuring-entity", valueType: "TEXT", relevance: "informational" },
+    { value: tender.clientContactEmail, semanticKey: "clientContactEmail", displayLabel: "Client Contact Email", category: "procuring-entity", valueType: "EMAIL_LIST", relevance: "advisory" },
+    { value: tender.clientContactPhone, semanticKey: "clientContactPhone", displayLabel: "Client Contact Phone", category: "procuring-entity", valueType: "TEXT", relevance: "informational" },
+    { value: tender.clientWebsite, semanticKey: "clientWebsite", displayLabel: "Client Website / Portal", category: "procuring-entity", valueType: "URL", relevance: "informational" },
+    { value: tender.preBidChannel, semanticKey: "preBidChannel", displayLabel: "Pre-Bid / Contact Channel", category: "pre-bid", valueType: "TEXT", relevance: "advisory" },
+    { value: tender.clientRepresentative, semanticKey: "clientRepresentative", displayLabel: "Client Representative / Authorized Officer", category: "procuring-entity", valueType: "TEXT", relevance: "informational" },
+  ];
+
+  // Per-field source evidence resolved during promotion. finalizeJob binds each
+  // contactDetailsSource entry to a real ACTIVE TenderFile via
+  // attributeMetadataSourceFileId and proves the page via locateQuoteProvenPage,
+  // which returns null when the quote cannot be located. The keys used there are
+  // the same semanticKeys used below.
+  const contactSourceEvidence = parseContactDetailsSourceEvidence(
+    (tender as { contactDetailsSourceJson?: string | null }).contactDetailsSourceJson ?? null,
+  );
+
+  for (const field of clientDetailFields) {
+    const raw = typeof field.value === "string" ? field.value.trim() : "";
+    if (!raw) continue;
+    // Only a COMPLETE, defensible triple counts. A partial entry (quote without
+    // a proven page, or a page with no file) stays null so the fact lands as
+    // CANDIDATE_NEEDS_REVIEW. Never invent a page or a quote.
+    const evidence = contactSourceEvidence.get(field.semanticKey) ?? null;
+    candidates.push({
+      semanticKey: field.semanticKey,
+      displayLabel: field.displayLabel,
+      category: field.category,
+      valueType: field.valueType,
+      normalizedValue: raw,
+      rawSourceValue: raw,
+      relevance: field.relevance,
+      sourceFileId: evidence?.fileId ?? null,
+      sourcePage: evidence?.page ?? null,
+      sourceQuote: evidence?.quote ?? null,
     });
   }
 
@@ -947,6 +1070,245 @@ function buildBackfillCandidates(tender: any): BackfillCandidate[] {
   return candidates;
 }
 
+export type PersistedTenderFactSyncResult = {
+  synced: number;
+  grounded: number;
+  candidates: number;
+  skipped: number;
+};
+
+/**
+ * Persist the canonical scalar/source-evidence projection into the durable
+ * ledger after a successful analysis promotion or source enrichment.
+ *
+ * This is deliberately stricter than the legacy backfill:
+ * - it verifies ownership and ACTIVE source-file membership;
+ * - a quote must resolve to the stored page in the stored file text;
+ * - human-confirmed and not-applicable facts are never overwritten;
+ * - a grounded fact is never downgraded to an ungrounded candidate;
+ * - the tender mutation advisory lock serializes it with AI promotion.
+ */
+export async function syncPersistedTenderFactsToLedger(
+  prismaClient: PrismaClient,
+  tenderId: string,
+  userId: string,
+  options: { beforeRead?: (tx: any) => Promise<void> } = {},
+): Promise<PersistedTenderFactSyncResult> {
+  const result = await prismaClient.$transaction(async (tx) => {
+    const mutationLock = computeTenderMutationLockKey(tenderId);
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(${mutationLock})`;
+    await options.beforeRead?.(tx);
+
+    const tender = await tx.tender.findFirst({
+      where: { id: tenderId, userId },
+      select: {
+        id: true,
+        title: true,
+        reference: true,
+        clientName: true,
+        procuringEntityName: true,
+        deadline: true,
+        submissionMethod: true,
+        submissionEmails: true,
+        submissionAddress: true,
+        submissionEmailSubject: true,
+        country: true,
+        titleSourceFileId: true,
+        titleSourcePage: true,
+        titleSourceQuote: true,
+        clientNameSourceFileId: true,
+        clientNameSourcePage: true,
+        clientNameSourceQuote: true,
+        referenceSourceFileId: true,
+        referenceSourcePage: true,
+        referenceSourceQuote: true,
+        deadlineSourceFileId: true,
+        deadlineSourcePage: true,
+        deadlineSourceQuote: true,
+        submissionMethodSourceFileId: true,
+        submissionMethodSourcePage: true,
+        submissionMethodSourceQuote: true,
+        submissionEmailSourceFileId: true,
+        submissionEmailSourcePage: true,
+        submissionEmailSourceQuote: true,
+        submissionAddressSourceFileId: true,
+        submissionAddressSourcePage: true,
+        submissionAddressSourceQuote: true,
+        submissionEmailSubjectSourceFileId: true,
+        submissionEmailSubjectSourcePage: true,
+        submissionEmailSubjectSourceQuote: true,
+        contactDetailsSourceJson: true,
+        // Client / procuring-entity detail. The backfill select carries these
+        // with an explicit warning that "an unselected column arrives as
+        // undefined, which would silently skip every one of them" — but this
+        // LIVE sync path (the one finalizeJob calls after every promotion) did
+        // not select them. buildBackfillCandidates skips a candidate whose value
+        // is falsy, so all eleven client fields silently received no ledger row
+        // at all on the live path, while the backfill script produced them. Only
+        // the backfilled tenders had these facts; freshly analyzed ones did not.
+        legalClientName: true, donorAgency: true, implementingAgency: true,
+        clientAddress: true, clientContactName: true, clientContactTitle: true,
+        clientContactEmail: true, clientContactPhone: true, clientWebsite: true,
+        preBidChannel: true, clientRepresentative: true,
+        files: {
+          where: { deletionStatus: "ACTIVE" },
+          select: {
+            id: true,
+            extractedText: true,
+            totalPages: true,
+            contentSha256: true,
+            contentHash: true,
+          },
+        },
+      },
+    });
+    if (!tender) throw new Error("TENDER_FACT_SYNC_OWNERSHIP_MISMATCH");
+
+    type ReferenceFallback = { fileId?: string | null; page?: number | null; quote?: string | null };
+    let referenceFallback: ReferenceFallback | null = null;
+    if (tender.contactDetailsSourceJson) {
+      try {
+        const parsed = JSON.parse(tender.contactDetailsSourceJson) as Record<string, unknown>;
+        const candidate = parsed.procurementReferenceNumber;
+        if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) {
+          referenceFallback = candidate as ReferenceFallback;
+        }
+      } catch {
+        referenceFallback = null;
+      }
+    }
+
+    const candidates = buildBackfillCandidates({
+      ...tender,
+      referenceSourceFileId: tender.referenceSourceFileId ?? referenceFallback?.fileId ?? null,
+      referenceSourcePage: tender.referenceSourcePage ?? referenceFallback?.page ?? null,
+      referenceSourceQuote: tender.referenceSourceQuote ?? referenceFallback?.quote ?? null,
+    });
+    const emailCandidate = candidates.find((candidate) => candidate.semanticKey === "submissionEmails");
+    if (emailCandidate) {
+      emailCandidate.sourceFileId = tender.submissionEmailSourceFileId;
+      emailCandidate.sourcePage = tender.submissionEmailSourcePage;
+      emailCandidate.sourceQuote = tender.submissionEmailSourceQuote;
+    }
+    const addressCandidate = candidates.find((candidate) => candidate.semanticKey === "submissionAddress");
+    if (addressCandidate) {
+      addressCandidate.sourceFileId = tender.submissionAddressSourceFileId;
+      addressCandidate.sourcePage = tender.submissionAddressSourcePage;
+      addressCandidate.sourceQuote = tender.submissionAddressSourceQuote;
+    }
+    if (tender.submissionEmailSubject) {
+      candidates.push({
+        semanticKey: "submissionEmailSubject",
+        displayLabel: "Submission Email Subject",
+        category: "submission",
+        valueType: "TEXT",
+        normalizedValue: tender.submissionEmailSubject,
+        rawSourceValue: tender.submissionEmailSubject,
+        relevance: "critical",
+        sourceFileId: tender.submissionEmailSubjectSourceFileId,
+        sourcePage: tender.submissionEmailSubjectSourcePage,
+        sourceQuote: tender.submissionEmailSubjectSourceQuote,
+      });
+    }
+
+    const activeFiles = new Map(tender.files.map((file) => [file.id, file]));
+    let synced = 0;
+    let grounded = 0;
+    let ungroundedCandidates = 0;
+    let skipped = 0;
+
+    for (const candidate of candidates) {
+      if (isPlaceholderIsh(candidate.normalizedValue)) {
+        skipped++;
+        continue;
+      }
+
+      const existing = await tx.tenderFactsLedger.findUnique({
+        where: { tenderId_semanticKey: { tenderId, semanticKey: candidate.semanticKey } },
+        select: { authorityState: true },
+      });
+      const existingState = existing?.authorityState.toUpperCase() ?? null;
+      if (
+        existingState === AUTHORITY_STATE.USER_CONFIRMED ||
+        existingState === AUTHORITY_STATE.NOT_APPLICABLE
+      ) {
+        skipped++;
+        continue;
+      }
+
+      const file = candidate.sourceFileId ? activeFiles.get(candidate.sourceFileId) : null;
+      const provenPage = file && candidate.sourceQuote
+        ? locateQuoteProvenPage(file.extractedText ?? "", candidate.sourceQuote, file.totalPages)
+        : null;
+      const hasEvidence =
+        Boolean(file) &&
+        candidate.sourcePage !== null &&
+        candidate.sourcePage !== undefined &&
+        provenPage === candidate.sourcePage;
+      if (existingState === AUTHORITY_STATE.SOURCE_GROUNDED_CONFIRMED && !hasEvidence) {
+        skipped++;
+        continue;
+      }
+
+      const authorityState = hasEvidence
+        ? AUTHORITY_STATE.SOURCE_GROUNDED_CONFIRMED
+        : AUTHORITY_STATE.CANDIDATE_NEEDS_REVIEW;
+      await tx.tenderFactsLedger.upsert({
+        where: { tenderId_semanticKey: { tenderId, semanticKey: candidate.semanticKey } },
+        create: {
+          tenderId,
+          semanticKey: candidate.semanticKey,
+          displayLabel: candidate.displayLabel,
+          category: candidate.category,
+          valueType: candidate.valueType,
+          normalizedValue: candidate.normalizedValue,
+          rawSourceValue: candidate.rawSourceValue,
+          authorityState,
+          confidence: hasEvidence ? 0.9 : 0.5,
+          relevance: candidate.relevance,
+          applicability: "applies",
+          sourceFileId: hasEvidence ? candidate.sourceFileId : null,
+          sourcePage: hasEvidence ? candidate.sourcePage : null,
+          sourceQuote: hasEvidence ? candidate.sourceQuote : null,
+          sourceContentHash: hasEvidence ? file?.contentSha256 ?? file?.contentHash ?? null : null,
+          reviewState: "pending",
+          manuallyEntered: false,
+          createdBy: userId,
+        },
+        update: {
+          displayLabel: candidate.displayLabel,
+          category: candidate.category,
+          valueType: candidate.valueType,
+          normalizedValue: candidate.normalizedValue,
+          rawSourceValue: candidate.rawSourceValue,
+          authorityState,
+          confidence: hasEvidence ? 0.9 : 0.5,
+          relevance: candidate.relevance,
+          sourceFileId: hasEvidence ? candidate.sourceFileId : null,
+          sourcePage: hasEvidence ? candidate.sourcePage : null,
+          sourceQuote: hasEvidence ? candidate.sourceQuote : null,
+          sourceContentHash: hasEvidence ? file?.contentSha256 ?? file?.contentHash ?? null : null,
+        },
+      });
+      synced++;
+      if (hasEvidence) grounded++;
+      else ungroundedCandidates++;
+    }
+
+    return { synced, grounded, candidates: ungroundedCandidates, skipped };
+  }, { isolationLevel: "Serializable", timeout: 10_000 });
+
+  await logAction({
+    userId,
+    action: "TENDER_FACT_LEDGER_SYNC",
+    entityType: "Tender",
+    entityId: tenderId,
+    description: "Synchronized persisted tender facts into the canonical authority ledger",
+    metadata: result,
+  }).catch(() => {});
+  return result;
+}
+
 /**
  * Check if a value is placeholder-ish (Not, N/A, Unknown, TBD, etc.)
  */
@@ -1024,7 +1386,7 @@ export type SyncEffectiveFactsResult = {
 export async function syncEffectiveFactsToLedger(
   prismaClient: PrismaClient,
   tenderId: string,
-  effectiveFacts: { facts: Array<{ key: string; label: string; value: string | string[] | null; status: string; source: string; sourcePage?: number | null; sourceQuote?: string | null; }> },
+  effectiveFacts: { facts: Array<{ key: string; label: string; value: string | string[] | null; status: string; source: string; sourceFileId?: string | null; sourcePage?: number | null; sourceQuote?: string | null; }> },
   options: SyncEffectiveFactsOptions,
 ): Promise<SyncEffectiveFactsResult> {
   const { overwriteCandidates = false, userId } = options;
@@ -1034,11 +1396,10 @@ export async function syncEffectiveFactsToLedger(
 
   for (const fact of effectiveFacts.facts) {
     // Only sync facts resolved from source text (parser)
-    if (fact.source !== "parser" && fact.source !== "ledger") continue;
-    if (fact.status !== "resolved_from_source_text" && fact.status !== "resolved_from_ledger") continue;
+    if (fact.source !== "parser" || fact.status !== "resolved_from_source_text") continue;
 
     const value = Array.isArray(fact.value) ? fact.value.join(", ") : fact.value;
-    if (!value || typeof value !== "string") {
+    if (!value || typeof value !== "string" || isPlaceholderIsh(value)) {
       skipped++;
       continue;
     }
@@ -1053,7 +1414,11 @@ export async function syncEffectiveFactsToLedger(
       if (existing) {
         const ls = String(existing.authorityState).toUpperCase();
         // Never overwrite user-confirmed, user-edited, or not-applicable
-        if (ls === "HUMAN_CONFIRMED_OPERATIONAL" || ls === AUTHORITY_STATE.NOT_APPLICABLE) {
+        if (
+          ls === "HUMAN_CONFIRMED_OPERATIONAL" ||
+          ls === AUTHORITY_STATE.NOT_APPLICABLE ||
+          ls === AUTHORITY_STATE.SOURCE_GROUNDED_CONFIRMED
+        ) {
           skipped++;
           continue;
         }
@@ -1066,7 +1431,12 @@ export async function syncEffectiveFactsToLedger(
 
       // Determine authority state: SOURCE_GROUNDED_CONFIRMED if evidence exists,
       // otherwise CANDIDATE_NEEDS_REVIEW
-      const hasEvidence = !!(fact.sourcePage !== null && fact.sourcePage !== undefined && fact.sourceQuote);
+      const hasEvidence = !!(
+        fact.sourceFileId &&
+        fact.sourcePage !== null &&
+        fact.sourcePage !== undefined &&
+        fact.sourceQuote
+      );
       const authorityState = hasEvidence
         ? AUTHORITY_STATE.SOURCE_GROUNDED_CONFIRMED
         : AUTHORITY_STATE.CANDIDATE_NEEDS_REVIEW;
@@ -1085,8 +1455,9 @@ export async function syncEffectiveFactsToLedger(
           confidence: hasEvidence ? 0.9 : 0.5,
           relevance: "informational",
           applicability: "applies",
-          sourcePage: fact.sourcePage ?? null,
-          sourceQuote: fact.sourceQuote ?? null,
+          sourceFileId: hasEvidence ? fact.sourceFileId : null,
+          sourcePage: hasEvidence ? fact.sourcePage ?? null : null,
+          sourceQuote: hasEvidence ? fact.sourceQuote ?? null : null,
           reviewState: "pending",
           manuallyEntered: false,
           createdBy: userId,
@@ -1096,6 +1467,7 @@ export async function syncEffectiveFactsToLedger(
           rawSourceValue: value,
           authorityState,
           confidence: hasEvidence ? 0.9 : 0.5,
+          ...(hasEvidence ? { sourceFileId: fact.sourceFileId } : {}),
           ...(fact.sourcePage !== null && fact.sourcePage !== undefined ? { sourcePage: fact.sourcePage } : {}),
           ...(fact.sourceQuote ? { sourceQuote: fact.sourceQuote } : {}),
         },

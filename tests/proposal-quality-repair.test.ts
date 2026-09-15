@@ -24,8 +24,22 @@ describe("applyProposalQualityRepairAddenda", () => {
     const repaired = applyProposalQualityRepairAddenda("# Cover Letter\n\nWe submit this proposal.\n\n# Executive Summary\n\nHospital project response.", input);
 
     assert.match(repaired, /Section E: Compliance Matrix/i);
-    assert.match(repaired, /Section F: Evaluation Criteria Response Mirror/i);
-    assert.match(repaired, /Section G: Win Themes & Discriminators/i);
+    // Sections F and G ship under client-facing names. "Evaluation Criteria
+    // Response Mirror", "Win Themes" and "Discriminators" are bid-desk
+    // vocabulary and a real proposal shipped them to the procuring entity.
+    assert.match(repaired, /Section F: Response to Evaluation Criteria/i);
+    assert.match(repaired, /Section G: Why We Are Well Suited/i);
+    assert.doesNotMatch(repaired, /response\s+mirror/i);
+    assert.doesNotMatch(repaired, /win\s+themes?/i);
+    assert.doesNotMatch(repaired, /\bdiscriminators?\b/i);
+    // The third column of Section G used to print the engine's instruction to
+    // its own bid team ("Use reviewed evidence and remove unsupported claims
+    // before export.") in the cell reserved for the client's proof. Scope the
+    // check to Section G: Section H is an internal self-score that the
+    // internal-review stripper removes before render, and it legitimately
+    // talks about pre-export controls.
+    const sectionGBody = repaired.slice(repaired.search(/## Section G:/i), repaired.search(/## Section H:/i));
+    assert.doesNotMatch(sectionGBody, /before\s+export/i);
     assert.match(repaired, /Section H: Proposal Self-Score/i);
     assert.match(repaired, /FULLY MET|PARTIALLY MET|NOT MET/i);
     assert.match(repaired, /\d+\/10/i);

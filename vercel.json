@@ -1,11 +1,12 @@
 {
   "framework": "nextjs",
   "buildCommand": "npm run vercel-build",
-  "installCommand": "npm ci",
+  "installCommand": "npm ci --no-audit --no-fund",
   "git": {
     "deploymentEnabled": {
       "**": false,
-      "main": true
+      "main": true,
+      "release/consolidated-recovery-20260717": true
     }
   },
   "crons": [

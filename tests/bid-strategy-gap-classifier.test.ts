@@ -1,9 +1,9 @@
-// J — Bid-Strategy gap classifier + DECLINE-inhibition behaviour.
+// Bid-Strategy gap classifier + DECLINE-inhibition behaviour.
 //
-// Production screenshot: capabilityCoverage 0, recommendation DECLINE while
-// experienceFit 92, complianceReadiness 95, eligibilityClearance 100. The 0
-// was driven by an EVIDENCE_LINKING_GAP (no reviewed experts linked to this
-// tender even though the vault was full). DECLINE on that basis is wrong.
+// Production failure class: capability coverage can read 0/DECLINE while the
+// Company Vault already contains authoritative evidence. Both authenticated
+// REVIEWED and durable SOURCE_VERIFIED records must count; draft records must
+// never count.
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -71,10 +71,10 @@ describe("classifyBidStrategyGaps — pure unit", () => {
     });
     assert.equal(r.capabilityGapCause, "PROVIDER_RATE_LIMIT_GAP");
     assert.equal(r.inhibitDecline, true);
-    assert.match(r.explanation, /regex fallback/i);
+    assert.match(r.explanation, /regex\/deterministic fallback/i);
   });
 
-  it("EVIDENCE_LINKING_GAP when vault has experts but none are linked to this tender", () => {
+  it("EVIDENCE_LINKING_GAP when vault has authoritative experts but none are linked to this tender", () => {
     const r = classifyBidStrategyGaps({
       tender: { requirements: { length: 5 }, expertMatches: [], analysisSource: "AI_VERIFIED", evidenceCoverageRatio: 0 },
       company: { expertCount: 25 },
@@ -82,16 +82,16 @@ describe("classifyBidStrategyGaps — pure unit", () => {
     });
     assert.equal(r.capabilityGapCause, "EVIDENCE_LINKING_GAP");
     assert.equal(r.inhibitDecline, true);
-    assert.match(r.explanation, /linked \/ reviewed for THIS tender/i);
+    assert.match(r.explanation, /authoritative source-backed experts/i);
   });
 
-  it("EVIDENCE_LINKING_GAP when vault has experts and matches exist but NONE are reviewed", () => {
+  it("EVIDENCE_LINKING_GAP when matches exist but all are drafts", () => {
     const r = classifyBidStrategyGaps({
       tender: {
         requirements: { length: 5 },
         expertMatches: [
-          { expert: { trustLevel: "DRAFT" } },
-          { expert: { trustLevel: "DRAFT" } },
+          { expert: { trustLevel: "AI_DRAFT" } },
+          { expert: { trustLevel: "REGEX_DRAFT" } },
         ],
         analysisSource: "AI_VERIFIED",
         evidenceCoverageRatio: 0.5,
@@ -103,7 +103,21 @@ describe("classifyBidStrategyGaps — pure unit", () => {
     assert.equal(r.inhibitDecline, true);
   });
 
-  it("TRUE_CAPABILITY_GAP when vault is empty AND no other system-readiness signals", () => {
+  it("does not treat SOURCE_VERIFIED linked experts as unreviewed/linking gaps", () => {
+    const r = classifyBidStrategyGaps({
+      tender: {
+        requirements: { length: 5 },
+        expertMatches: [{ expert: { trustLevel: "SOURCE_VERIFIED" } }],
+        analysisSource: "AI_VERIFIED",
+        evidenceCoverageRatio: 0.8,
+      },
+      company: { expertCount: 25 },
+      capabilityScore: 20,
+    });
+    assert.equal(r.signals.vaultHasExpertsButNoneReviewed, false);
+  });
+
+  it("TRUE_CAPABILITY_GAP when authoritative vault is empty and no other system-readiness signals exist", () => {
     const r = classifyBidStrategyGaps({
       tender: { requirements: { length: 5 }, expertMatches: [], analysisSource: "AI_VERIFIED", evidenceCoverageRatio: 0.5 },
       company: { expertCount: 0 },
@@ -111,7 +125,7 @@ describe("classifyBidStrategyGaps — pure unit", () => {
     });
     assert.equal(r.capabilityGapCause, "TRUE_CAPABILITY_GAP");
     assert.equal(r.inhibitDecline, false);
-    assert.match(r.explanation, /lacks reviewed experts/i);
+    assert.match(r.explanation, /lacks authoritative source-backed experts/i);
   });
 
   it("the granular signal flags reflect input state", () => {
@@ -132,46 +146,62 @@ describe("classifyBidStrategyGaps — pure unit", () => {
   });
 });
 
-describe("computeBidStrategy honours inhibitDecline", () => {
-  it("Pharo-style screenshot: regex fallback + no linked evidence ⇒ NOT DECLINE", () => {
-    const input = baseInput({
+describe("computeBidStrategy honours runtime-authoritative Company Vault evidence", () => {
+  it("regex fallback + no linked evidence cannot collapse to DECLINE", () => {
+    const strategy = computeBidStrategy(baseInput({
       analysisSource: "REGEX_FALLBACK_AI_ERROR",
       evidenceCoverageRatio: 0,
       expertMatches: [],
       projectMatches: [],
-    });
-    const strategy = computeBidStrategy(input);
-    assert.notEqual(strategy.recommendation, "DECLINE", "must not collapse to DECLINE when the cause is system-readiness");
-    assert.ok(strategy.gapAnalysis);
-    assert.equal(strategy.gapAnalysis!.inhibitDecline, true);
+    }));
+    assert.notEqual(strategy.recommendation, "DECLINE");
+    assert.equal(strategy.gapAnalysis?.inhibitDecline, true);
     assert.match(strategy.rationale, /Gap analysis:/);
   });
 
-  it("TRUE capability gap (empty vault, AI-verified, no linking gap) ⇒ DECLINE allowed", () => {
-    const input = baseInput(
+  it("TRUE capability gap may still DECLINE when authoritative Vault is empty", () => {
+    const strategy = computeBidStrategy(baseInput(
       { analysisSource: "AI_VERIFIED", evidenceCoverageRatio: 0.5, expertMatches: [], projectMatches: [] },
       { expertCount: 0, projectCount: 0 },
-    );
-    const strategy = computeBidStrategy(input);
-    assert.ok(strategy.gapAnalysis);
-    assert.equal(strategy.gapAnalysis!.capabilityGapCause, "TRUE_CAPABILITY_GAP");
-    assert.equal(strategy.gapAnalysis!.inhibitDecline, false);
-    // DECLINE is allowed here (engine may still choose BID_CAREFULLY based on
-    // other dimensions; the rule is that DECLINE is NOT inhibited).
+    ));
+    assert.equal(strategy.gapAnalysis?.capabilityGapCause, "TRUE_CAPABILITY_GAP");
+    assert.equal(strategy.gapAnalysis?.inhibitDecline, false);
   });
 
-  it("healthy capability ⇒ gapAnalysis.capabilityGapCause is NO_CAPABILITY_GAP", () => {
-    const input = baseInput({
+  it("SOURCE_VERIFIED experts contribute capability exactly like REVIEWED experts", () => {
+    const shared = {
+      analysisSource: "AI_VERIFIED",
+      evidenceCoverageRatio: 0.9,
+      projectMatches: [],
+    };
+    const reviewed = computeBidStrategy(baseInput({
+      ...shared,
       expertMatches: [
         { expert: { trustLevel: "REVIEWED", fullName: "Dr A", disciplines: "[\"public health\",\"epidemiology\"]" }, score: 0.9, isSelected: true },
         { expert: { trustLevel: "REVIEWED", fullName: "Dr B", disciplines: "[\"methodology\",\"public health\"]" }, score: 0.85, isSelected: true },
       ],
+    }));
+    const sourceVerified = computeBidStrategy(baseInput({
+      ...shared,
+      expertMatches: [
+        { expert: { trustLevel: "SOURCE_VERIFIED", fullName: "Dr A", disciplines: "[\"public health\",\"epidemiology\"]" }, score: 0.9, isSelected: true },
+        { expert: { trustLevel: "SOURCE_VERIFIED", fullName: "Dr B", disciplines: "[\"methodology\",\"public health\"]" }, score: 0.85, isSelected: true },
+      ],
+    }));
+    assert.equal(sourceVerified.dimensionScores.capabilityCoverage, reviewed.dimensionScores.capabilityCoverage);
+  });
+
+  it("SOURCE_VERIFIED projects contribute experience fit exactly like REVIEWED projects", () => {
+    const baseProjects = [
+      { score: 0.9, isSelected: true, project: { name: "A", trustLevel: "REVIEWED", sector: "health", serviceAreas: "[]" } },
+      { score: 0.8, isSelected: true, project: { name: "B", trustLevel: "REVIEWED", sector: "health", serviceAreas: "[]" } },
+    ];
+    const reviewed = computeBidStrategy(baseInput({ analysisSource: "AI_VERIFIED", projectMatches: baseProjects }));
+    const sourceVerified = computeBidStrategy(baseInput({
       analysisSource: "AI_VERIFIED",
-      evidenceCoverageRatio: 0.9,
-    });
-    const strategy = computeBidStrategy(input);
-    assert.ok(strategy.gapAnalysis);
-    assert.equal(strategy.gapAnalysis!.capabilityGapCause, "NO_CAPABILITY_GAP");
+      projectMatches: baseProjects.map((project) => ({ ...project, project: { ...project.project, trustLevel: "SOURCE_VERIFIED" } })),
+    }));
+    assert.equal(sourceVerified.dimensionScores.experienceFit, reviewed.dimensionScores.experienceFit);
   });
 });
 
@@ -183,6 +213,9 @@ describe("BidStrategy output exposes the gap analysis", () => {
   it("computeBidStrategy inhibits DECLINE when the classifier asks it to", () => {
     assert.match(src, /gapAnalysis\.inhibitDecline\s*&&\s*recommendation === "DECLINE"/);
     assert.match(src, /recommendation = "BID_CAREFULLY"/);
+  });
+  it("SOURCE_VERIFIED is explicitly part of strategy authority", () => {
+    assert.match(src, /SOURCE_VERIFIED/);
   });
 });
 

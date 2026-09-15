@@ -1,44 +1,33 @@
 // Next Required Action panel — server component.
 //
-// CONSUMES THE CANONICAL WORKFLOW DECISION. This panel must NOT compute its
-// own "next action" truth — every other panel (workflow-center, generation
-// action, export readiness, submission plan, requirement coverage, authority
-// review) reads the same `getCanonicalTenderWorkflowDecision` result so the
-// user sees ONE primary blocker, ONE next action, and a coherent set of
-// per-stage states.
-//
-// If you need to add a new stage or change the blocker priority, edit
-// `lib/engine/canonical-workflow-decision.ts` — do not branch the truth here.
+// The canonical workflow decision remains authoritative. A narrow source
+// reconciliation layer removes only duplicate-representation extraction
+// blockers after a separate canonical source has verified bytes, complete page
+// coverage, and acceptable extraction quality.
 
 import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
 import { assessTenderMetadataCompleteness } from "../lib/engine/tender-metadata-completeness";
 import { getCanonicalTenderWorkflowDecision } from "../lib/engine/canonical-workflow-decision";
+import { presentTwoActionWorkflowDecision } from "../lib/engine/two-action-workflow-presentation";
+import { getTenderReleaseState } from "../lib/engine/tender-release-state";
+import { getTenderReleaseSnapshot } from "../lib/engine/tender-release-snapshot";
+import { assessCanonicalTenderSourceReadiness } from "../lib/tender/canonical-source-files";
+import { scoreTone, verdictLabel } from "../lib/ui/tender-release-state-presentation";
 import { CheckCircleIcon, WarningIcon, ArrowRightIcon } from "./icons";
-
-const STEPS = [
-  "Upload Tender",
-  "Fix Extraction",
-  "Run AI Analyze",
-  "Confirm Requirements",
-  "Build Plan",
-  "Match Evidence",
-  "Generate Docs",
-  "Validate & Approve Docs",
-  "Review Manifest",
-  "Export ZIP",
-] as const;
+import { StatusBadge } from "./status-badge";
+import { WorkflowStepLinks } from "./workflow-step-links";
+import { TENDER_WORKFLOW_STAGE_LABEL_LIST as STEPS } from "../lib/tender-workflow-stages";
 
 type WorkflowStep =
   | "UPLOAD_TENDER"
   | "FIX_EXTRACTION"
   | "RUN_AI_ANALYZE"
-  | "CONFIRM_REQUIREMENTS"
-  | "BUILD_PLAN"
+  | "EDIT_TENDER_METADATA"
+  | "BUILD_SUBMISSION_PLAN"
   | "MATCH_EVIDENCE"
   | "GENERATE_DOCUMENTS"
-  | "VALIDATE_DOCUMENTS"
-  | "REVIEW_MANIFEST"
+  | "VALIDATE_DOCS"
   | "EXPORT_ZIP"
   | "COMPLETE";
 
@@ -46,43 +35,29 @@ const STEP_INDEX: Record<WorkflowStep, number> = {
   UPLOAD_TENDER: 0,
   FIX_EXTRACTION: 1,
   RUN_AI_ANALYZE: 2,
-  CONFIRM_REQUIREMENTS: 3,
-  BUILD_PLAN: 4,
+  EDIT_TENDER_METADATA: 3,
+  BUILD_SUBMISSION_PLAN: 4,
   MATCH_EVIDENCE: 5,
   GENERATE_DOCUMENTS: 6,
-  VALIDATE_DOCUMENTS: 7,
-  REVIEW_MANIFEST: 8,
-  EXPORT_ZIP: 9,
-  COMPLETE: 10,
+  VALIDATE_DOCS: 7,
+  EXPORT_ZIP: 8,
+  COMPLETE: 9,
 };
 
-const STEP_TARGETS = [
-  "#tender-files",
-  "#tender-files",
-  "#ai-analyze-section",
-  "#requirement-coverage",
-  "#submission-plan",
-  "#requirement-coverage",
-  "#generated-documents",
-  "#generated-documents",
-  "#final-package-manifest",
-  "#export-readiness",
-] as const;
-
-// Map the canonical decision's nextRequiredAction to the panel's step index.
-// This MUST agree with workflow-center's stageStates — both read the same
-// decision object, so they cannot disagree.
 function stepFromCanonicalAction(action: string): WorkflowStep {
   switch (action) {
     case "UPLOAD_TENDER": return "UPLOAD_TENDER";
     case "FIX_EXTRACTION": return "FIX_EXTRACTION";
     case "RESUME_AI_ANALYZE":
     case "RUN_AI_ANALYZE": return "RUN_AI_ANALYZE";
-    case "REVIEW_REQUIREMENTS": return "CONFIRM_REQUIREMENTS";
-    case "BUILD_SUBMISSION_PLAN": return "BUILD_PLAN";
+    case "EDIT_TENDER_METADATA": return "EDIT_TENDER_METADATA";
+    case "RUN_ENGINE":
+    case "BUILD_SUBMISSION_PLAN": return "BUILD_SUBMISSION_PLAN";
     case "LINK_VAULT_EVIDENCE": return "MATCH_EVIDENCE";
     case "GENERATE_DOCUMENTS": return "GENERATE_DOCUMENTS";
-    case "FIX_EXPORT_BLOCKERS": return "VALIDATE_DOCUMENTS";
+    case "AUTOMATIC_PROCESSING":
+    case "FIX_EXPORT_BLOCKERS":
+    case "VALIDATE_DOCS": return "VALIDATE_DOCS";
     case "EXPORT_READY": return "EXPORT_ZIP";
     default: return "UPLOAD_TENDER";
   }
@@ -90,16 +65,14 @@ function stepFromCanonicalAction(action: string): WorkflowStep {
 
 function stepColor(step: WorkflowStep) {
   if (step === "COMPLETE" || step === "EXPORT_ZIP") return "border-emerald-200 bg-emerald-50";
-  if (step === "RUN_AI_ANALYZE" || step === "BUILD_PLAN" || step === "GENERATE_DOCUMENTS" || step === "REVIEW_MANIFEST" || step === "MATCH_EVIDENCE") return "border-amber-200 bg-amber-50";
-  if (step === "FIX_EXTRACTION" || step === "CONFIRM_REQUIREMENTS" || step === "VALIDATE_DOCUMENTS") return "border-red-200 bg-red-50";
+  if (step === "RUN_AI_ANALYZE" || step === "BUILD_SUBMISSION_PLAN" || step === "GENERATE_DOCUMENTS" || step === "MATCH_EVIDENCE") return "border-amber-200 bg-amber-50";
+  if (step === "FIX_EXTRACTION" || step === "VALIDATE_DOCS") return "border-red-200 bg-red-50";
   return "border-amber-200 bg-amber-50";
 }
 
 function stepIcon(step: WorkflowStep) {
-  // SVG icons replace raw Unicode (✓ ⚠ →) for consistent rendering across
-  // all browsers and font stacks. Per spec rule 3 & 7.
   if (step === "COMPLETE" || step === "EXPORT_ZIP") return <CheckCircleIcon />;
-  if (step === "FIX_EXTRACTION" || step === "CONFIRM_REQUIREMENTS" || step === "VALIDATE_DOCUMENTS") return <WarningIcon />;
+  if (step === "FIX_EXTRACTION" || step === "VALIDATE_DOCS") return <WarningIcon />;
   return <ArrowRightIcon />;
 }
 
@@ -109,8 +82,6 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
 
   await prismaReady;
 
-  // Tender is fetched only for metadata advisory (deadline). The canonical
-  // decision is the SINGLE source of workflow truth — no local decision logic.
   const tender = await prisma.tender.findFirst({
     where: { id: tenderId, userId },
     select: {
@@ -120,22 +91,70 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
       submissionAddress: true, submissionEmails: true,
       submissionMethod: true, deadline: true, currency: true,
       metadataOverrides: { select: { field: true, fieldState: true, overrideValue: true } },
+      files: {
+        select: {
+          id: true,
+          fileName: true,
+          originalFileName: true,
+          deletionStatus: true,
+          contentSha256: true,
+          integrityStatus: true,
+          extractionScore: true,
+          extractionMethod: true,
+          totalPages: true,
+          extractedPages: true,
+          failedPages: true,
+          extractedText: true,
+          createdAt: true,
+        },
+      },
     },
   }).catch(() => null);
 
   if (!tender) return null;
 
-  const decision = await getCanonicalTenderWorkflowDecision(prisma, userId, tenderId);
+  const [rawDecision, releaseState, snapshot] = await Promise.all([
+    getCanonicalTenderWorkflowDecision(prisma, userId, tenderId),
+    getTenderReleaseState(prisma, tenderId, userId),
+    getTenderReleaseSnapshot(prisma, tenderId, userId).catch(() => null),
+  ]);
+
+  const sourceReadiness = assessCanonicalTenderSourceReadiness(tender.files);
+  const analysisCurrent = Boolean(
+    snapshot?.analysis.state === "AI_SUCCEEDED"
+    && snapshot.analysis.contentHashMatch
+    && snapshot.analysis.canonicalJobId,
+  );
+
+  // The legacy release snapshot may still list a weak/pending duplicate as an
+  // extraction blocker. Override only that top-level blocker when a different
+  // canonical representation is fully ready; genuine canonical extraction
+  // failures continue to block fail-closed.
+  const reconciledRawDecision = rawDecision
+    && rawDecision.currentBlockingStage === "EXTRACTION_UNSAFE"
+    && sourceReadiness.analysisReady
+    ? {
+        ...rawDecision,
+        currentBlockingStage: analysisCurrent ? "NO_CONFIRMED_BUILD_PLAN" as const : "AI_ANALYZE_NOT_RUN" as const,
+        nextRequiredAction: analysisCurrent ? "RUN_ENGINE" : "RUN_AI_ANALYZE",
+        nextRequiredActionLabel: analysisCurrent ? "Run Engine" : "Run AI Analyze",
+        nextRequiredActionReason: analysisCurrent
+          ? "Current-revision AI Analyze is complete. Select Run Engine; valid later stages continue automatically."
+          : "Canonical extraction is complete. Select AI Analyze to create the current grounded analysis.",
+        blockingStageCode: analysisCurrent ? "RUN_ENGINE_REQUIRED" : "AI_ANALYZE_NOT_RUN",
+        blockerCodes: rawDecision.blockerCodes.filter((code) => code !== "EXTRACTION_UNSAFE"),
+        blockerDetails: rawDecision.blockerDetails.filter((detail) => !/extraction|ocr/i.test(detail)),
+        downstreamSuppressedBy: analysisCurrent ? "RUN_ENGINE_REQUIRED" : "AI_ANALYZE_NOT_RUN",
+      }
+    : rawDecision;
+
+  const decision = presentTwoActionWorkflowDecision(reconciledRawDecision);
   if (!decision) return null;
 
   const step = stepFromCanonicalAction(decision.nextRequiredAction);
-  const label = decision.nextRequiredActionLabel;
-  const reason = decision.nextRequiredActionReason;
   const blockers = decision.blockerDetails;
   const currentIndex = STEP_INDEX[step];
 
-  // Metadata advisory — never a blocker per the unified runtime model, but
-  // still surfaced so the user knows a deadline is approaching/passed.
   const metaReport = assessTenderMetadataCompleteness({
     clientName: (tender.clientName || tender.procuringEntityName) ?? null,
     country: tender.country ?? null,
@@ -150,16 +169,50 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
     requirementCount: 0,
   }, tender.metadataOverrides);
 
+  const tone = releaseState?.readinessCalculable && releaseState.readinessScore != null
+    ? scoreTone(releaseState.readinessScore)
+    : { text: "text-slate-500", bg: "bg-slate-50 border-slate-200", bar: "bg-slate-300" };
+  const verdict = verdictLabel(releaseState?.verdict ?? null);
+
   return (
-    <section className={`mb-4 rounded-2xl border p-5 shadow-sm ${stepColor(step)}`} aria-labelledby="next-required-action-title">
+    <section id="workflow-state" className={`mb-4 rounded-2xl border p-5 shadow-sm ${stepColor(step)}`} aria-labelledby="next-required-action-title">
+      <div className="mb-4 flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-black/5 pb-4">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Tender status</p>
+          <div className="mt-1"><StatusBadge status={tender.status} /></div>
+        </div>
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Readiness score</p>
+          <p className="mt-1">
+            {releaseState?.readinessCalculable && releaseState.readinessScore != null ? (
+              <span className={`text-2xl font-bold ${tone.text}`}>{releaseState.readinessScore}<span className="text-sm font-normal text-slate-500"> / 100</span></span>
+            ) : (
+              <span className="text-sm font-semibold text-slate-500">Not calculated</span>
+            )}
+          </p>
+        </div>
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Bid verdict</p>
+          <span className={`mt-1 inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-bold ${verdict.tone}`}>{verdict.label}</span>
+        </div>
+      </div>
+
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Next required action</p>
           <h2 id="next-required-action-title" className="mt-1 text-xl font-bold text-slate-900">
             <span className="mr-2 text-slate-400" aria-hidden="true">{stepIcon(step)}</span>
-            {label}
+            {decision.nextRequiredActionLabel}
           </h2>
-          <p className="mt-1 max-w-2xl text-sm text-slate-700">{reason}</p>
+          <p className="mt-1 max-w-2xl text-sm text-slate-700">{decision.nextRequiredActionReason}</p>
+          <p className="mt-2 max-w-2xl text-xs text-slate-600">
+            Source verification and extraction are automatic. AI Analyze and Run Engine are the two normal user actions. After Run Engine, matching, Build Plan, generation, validation, finalization and package reconciliation continue on the server.
+          </p>
+          {sourceReadiness.duplicateFileCount > 0 ? (
+            <p className="mt-2 max-w-2xl text-xs text-slate-500">
+              {sourceReadiness.duplicateFileCount} duplicate or alternate source representation(s) were excluded from the current workflow decision.
+            </p>
+          ) : null}
         </div>
         <div className="text-right">
           <p className="text-xs text-slate-500">Step {Math.min(currentIndex + 1, STEPS.length)} of {STEPS.length}</p>
@@ -167,39 +220,17 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
         </div>
       </div>
 
-      <nav className="mt-4 flex flex-wrap gap-1.5" aria-label="Tender workflow shortcuts">
-        {STEPS.map((s, i) => {
-          const done = i < currentIndex;
-          const active = i === currentIndex;
-          const baseClass = done ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-200" :
-            active ? "bg-slate-900 text-white hover:bg-slate-800" :
-            "bg-slate-100 text-slate-500 hover:bg-slate-200";
-          return (
-            <a
-              key={s}
-              href={STEP_TARGETS[i]}
-              aria-current={active ? "step" : undefined}
-              className={`rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors ${baseClass}`}
-              title={`Go to ${s}`}
-            >
-              <span aria-hidden="true" className="inline-flex items-center">{done ? <CheckCircleIcon className="mr-0.5" /> : active ? <ArrowRightIcon className="mr-0.5" /> : null}</span>{s}
-            </a>
-          );
-        })}
-      </nav>
+      <WorkflowStepLinks currentIndex={currentIndex} currentAction={decision.nextRequiredAction} />
 
       {blockers.length > 0 && (
         <div className="mt-3 rounded-lg border border-red-200 bg-white px-4 py-2.5 text-sm">
           <p className="text-xs font-semibold uppercase text-red-700">Blockers to resolve</p>
           <ul className="mt-1 list-disc space-y-0.5 pl-5 text-xs text-red-700">
-            {blockers.slice(0, 5).map((b) => <li key={b}>{b}</li>)}
+            {blockers.slice(0, 5).map((blocker) => <li key={blocker}>{blocker}</li>)}
           </ul>
         </div>
       )}
 
-      {/* Requirement trust split — surfaces raw-vs-trusted distinction without
-          recomputing local truth. The counts come from the canonical decision,
-          which itself reads the snapshot's gate-aligned grounding check. */}
       {decision.mandatoryRequirementCount > 0 && (
         <div className="mt-3 rounded-lg border border-amber-200 bg-white px-4 py-2.5 text-sm text-amber-800">
           <p className="text-xs font-semibold uppercase">Requirement trust split</p>
@@ -211,25 +242,25 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
 
       {decision.currentBlockingStage === "EXTRACTION_UNSAFE" && (
         <div className="mt-3 rounded-lg border border-amber-200 bg-white px-4 py-2.5 text-sm text-amber-800">
-          <strong>Fix Extraction First.</strong> Run OCR, re-extract, or upload a clearer PDF before running AI Analyze. AI analysis on weak extraction can produce incomplete requirements and unsafe downstream guidance.
+          <strong>Fix Extraction First.</strong> Upload a clearer, text-based copy of the canonical source. Extraction reruns automatically; then select AI Analyze.
         </div>
       )}
 
       {decision.currentBlockingStage === "REQUIRED_DOCS_NOT_GENERATED" && (
         <div className="mt-3 rounded-lg border border-emerald-200 bg-white px-4 py-2.5 text-sm text-emerald-800">
-          <strong>All pre-generation gates pass.</strong> You can now generate the proposal. Draft generation proceeds with available data. Optional tender details are omitted from output. Final submission requires strict validation.
+          <strong>Processing automatically.</strong> Run Engine has handed generation, validation, finalization and package assembly to the durable workflow. Intervene only if a specific fail-closed blocker is reported.
         </div>
       )}
 
       {decision.currentBlockingStage === "EXPORT_ZIP_READY" && (
         <div className="mt-3 rounded-lg border border-emerald-200 bg-white px-4 py-2.5 text-sm text-emerald-800">
-          <strong>Export ready.</strong> Review the Final Package Manifest below, then click Export to create the submission ZIP.
+          <strong>Ready to download.</strong> Review the Final Package Manifest, then download the exact reconciled ZIP package.
         </div>
       )}
 
       {metaReport.deadlinePassed && (
         <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-800">
-          <strong>Submission deadline has passed.</strong> {metaReport.notes.find((n) => n.includes("deadline has passed")) ?? "Confirm with the client whether an extension has been granted before proceeding."}
+          <strong>Submission deadline has passed.</strong> {metaReport.notes.find((note) => note.includes("deadline has passed")) ?? "Confirm with the client whether an extension has been granted before proceeding."}
         </div>
       )}
     </section>

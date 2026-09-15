@@ -68,7 +68,15 @@ export type GroundingActiveFile = {
  * Normalize text for quote-containment comparison: lowercase + collapse
  * whitespace + trim. Matches the normalization the gate uses.
  */
-function normalizeForContainment(text: string): string {
+/**
+ * The one containment normalization every grounding check must use.
+ *
+ * Extracted PDF text re-wraps lines and the model re-cases the first word of a
+ * quote it lifts, so a raw substring test rejects quotes that are genuinely in
+ * the document. Anything deciding whether a quote is grounded must compare
+ * through this, or two checks will disagree about the same requirement.
+ */
+export function normalizeForContainment(text: string): string {
   return text.toLowerCase().replace(/\s+/g, " ").trim();
 }
 

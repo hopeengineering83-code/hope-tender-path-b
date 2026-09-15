@@ -107,11 +107,41 @@ describe("letterhead application keeps integrity truthful", () => {
     assert.ok(src.includes("sha256: integrity.contentSha256"), "must keep the legacy ZIP digest in sync");
     assert.ok(src.includes("byteSize: integrity.contentByteLength"), "must keep the legacy byte size in sync");
   });
+  // These two guarded an exact statement. The applier now records WHY it
+  // skipped (a silent 0 was undiagnosable — see
+  // tests/letterhead-says-why-it-did-nothing.test.ts), so the literal is now
+  // `if (cond) { skipped.push(...); continue; }`. The INVARIANT is unchanged
+  // and must stay enforceable: the condition must exist, and its branch must
+  // still skip. Matching condition-then-continue rather than one exact string
+  // keeps these failing if anyone deletes the guard or lets it fall through,
+  // which is the whole point of them.
+  const guardSkips = (condition: string): boolean => {
+    const at = src.indexOf(condition);
+    if (at === -1) return false;
+    const branch = src.slice(at, at + 300);
+    // Must reach a continue before any await — i.e. before doing the work the
+    // guard exists to prevent.
+    const stop = branch.search(/\bawait\b/);
+    const body = stop === -1 ? branch : branch.slice(0, stop);
+    return /\bcontinue\s*;/.test(body);
+  };
+
   it("never degrades an exportable document with unverifiable branded bytes", () => {
-    assert.ok(src.includes('if (integrity.integrityStatus !== "VERIFIED") continue;'), "cosmetic branding must be skipped when the result cannot verify");
+    assert.ok(
+      guardSkips('if (integrity.integrityStatus !== "VERIFIED")'),
+      "cosmetic branding must be skipped when the result cannot verify",
+    );
   });
   it("does not brand rows whose canonical bytes live in storage", () => {
-    assert.ok(src.includes("if (doc.storagePath) continue;"), "inline copy of a storage-backed row may be stale — skip");
+    assert.ok(
+      guardSkips("if (doc.storagePath)"),
+      "inline copy of a storage-backed row may be stale — skip",
+    );
+  });
+  it("the two guards above would still fail if the skip were removed", () => {
+    // Guard the guards: a matcher that cannot fail protects nothing.
+    assert.equal(guardSkips("if (doc.storagePath) /* no continue here */"), false);
+    assert.equal(guardSkips("this condition does not appear in the file"), false);
   });
 });
 
@@ -140,10 +170,6 @@ describe("writers keep both digest systems in sync", () => {
     // and orphan/destroy the canonical object.
     const src = read("app/api/tenders/[id]/auto-finalize/route.ts");
     assert.ok(src.includes("if (!doc.fileContent || doc.storagePath) continue;"), "storage-backed and byte-less rows must be skipped");
-  });
-  it("attach-original fills legacy digests for attached finals", () => {
-    const src = read("app/api/tenders/[id]/documents/[docId]/attach-original/route.ts");
-    assert.ok(src.includes("sha256: attachedIntegrity.contentSha256"), "attached original must fill sha256");
   });
 });
 

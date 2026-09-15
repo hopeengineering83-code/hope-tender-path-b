@@ -21,7 +21,7 @@ function formatTimestamp(date: Date): string {
 function actionBadge(action: string): { label: string; className: string } {
   const a = action.toUpperCase();
   if (a.includes("CREATE")) return { label: "CREATE", className: "bg-blue-100 text-blue-700" };
-  if (a.includes("UPDATE")) return { label: "UPDATE", className: "bg-amber-100 text-amber-700" };
+  if (a.includes("UPDATE")) return { label: "UPDATE", className: "bg-amber-100 text-amber-800" };
   if (a.includes("DELETE")) return { label: "DELETE", className: "bg-red-100 text-red-700" };
   if (a.includes("ANALYZE") || a.includes("ANALYSIS")) return { label: "ANALYZE", className: "bg-violet-100 text-violet-700" };
   if (a.includes("EXPORT")) return { label: "EXPORT", className: "bg-emerald-100 text-emerald-700" };

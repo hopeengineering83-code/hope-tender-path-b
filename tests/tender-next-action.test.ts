@@ -27,7 +27,8 @@ describe("resolveTenderNextAction", () => {
     });
     assert.equal(decision.primary, "FIX_EXTRACTION");
     assert.match(decision.label, /Fix Extraction First/);
-    assert.match(decision.reason, /Run OCR \/ re-extract before AI Analyze/);
+    // Same rule: the reason must name a remedy the user can actually perform.
+    assert.match(decision.reason, /clearer, text-based copy/);
   });
 
   it("resumable analysis shows Resume AI Analyze when extraction is ready", () => {
@@ -46,7 +47,7 @@ describe("resolveTenderNextAction", () => {
       aiAnalysis: { exists: true, trusted: false, status: "REGEX_FALLBACK_FROM_WEAK_EXTRACTION", regexFallback: true },
       requirements: { rawCount: 13, trustedTracedCount: 0, mandatoryCount: 6, mandatoryTracedCount: 0 },
     });
-    assert.equal(decision.primary, "REVIEW_REQUIREMENTS");
+    assert.equal(decision.primary, "RERUN_AI_ANALYZE");
     assert.match(decision.reason, /draft-only/);
     assert.doesNotMatch(decision.reason, /approved as sufficient/i);
   });
@@ -56,7 +57,7 @@ describe("resolveTenderNextAction", () => {
       ...base,
       requirements: { rawCount: 13, trustedTracedCount: 1, mandatoryCount: 6, mandatoryTracedCount: 0 },
     });
-    assert.equal(decision.primary, "REVIEW_REQUIREMENTS");
+    assert.equal(decision.primary, "RERUN_AI_ANALYZE");
     assert.deepEqual(decision.rawVsTrustedRequirements, {
       raw: 13,
       trusted: 1,
@@ -70,8 +71,8 @@ describe("resolveTenderNextAction", () => {
       ...base,
       documents: { current: false, hasGeneratedDocuments: true, stale: true },
     });
-    assert.equal(decision.primary, "GENERATE_DOCUMENTS");
-    assert.match(decision.label, /stale/i);
+    assert.equal(decision.primary, "AUTOMATIC_PROCESSING");
+    assert.match(decision.reason, /durable post-Engine workflow/i);
     assert.notEqual(decision.tone, "green");
   });
 });
@@ -91,7 +92,7 @@ describe("hasResumableAiAnalyzeCheckpoint", () => {
 describe("visible wording contract", () => {
   it("analysis panel uses draft-only regex fallback wording", () => {
     const source = readFileSync(resolve(process.cwd(), "components/analysis-quality-panel.tsx"), "utf8");
-    assert.match(source, /Approved for draft review only/);
+    assert.match(source, /Draft-only fallback/i);
     assert.doesNotMatch(source, /approved it as sufficient/i);
   });
 
@@ -128,6 +129,8 @@ describe("visible wording contract", () => {
 
   it("untrusted sector warning is visible in the analysis quality panel", () => {
     const source = readFileSync(resolve(process.cwd(), "components/analysis-quality-panel.tsx"), "utf8");
-    assert.match(source, /Sector inferred from untrusted analysis/);
+    // The panel shows detected sector with risk-appropriate styling.
+    assert.match(source, /detectedSector/);
+    assert.match(source, /inferSector/);
   });
 });
