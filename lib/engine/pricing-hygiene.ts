@@ -347,6 +347,112 @@ function isHistoricalReferenceValueSentence(sentence: string): boolean {
  */
 const DELIVERED_WORK_VALUE_LABEL = /\b(construction\s+value(?:\s+of\s+works)?|value\s+of\s+(?:the\s+)?works|aggregate\s+value\s+of\s+projects(?:\s+delivered)?)\b/i;
 
+/**
+ * Labels the portfolio cards actually print for a PAST project's itemised
+ * costs.
+ *
+ * DELIVERED_WORK_VALUE_LABEL knows "construction value of works". The delivered
+ * PDF states the same facts as a numbered list instead:
+ *
+ *   1. Construction Cost: 550,074,678.02 ETB
+ *   2. Feasibility Study, Geotechnical & New Design Cost: 1,100,000 ETB
+ *   3. Contract Administration & Construction Supervision Cost: 110,000 ETB/month  2015-2018
+ *
+ * Every one of those is a fact about work already delivered, and the document
+ * separates the construction cost from the consultancy fee line by line —
+ * exactly the distinction the standing rule requires. The vocabulary simply did
+ * not know these labels.
+ *
+ * "cost" alone is deliberately NOT here: it is the most common word in a
+ * technical proposal and would exempt almost anything.
+ */
+const PAST_PROJECT_COST_LABEL =
+  /\b(construction\s+cost|design\s+cost|supervision\s+cost|feasibility\s+study[^.]{0,60}?cost|modification\s+design\s+cost|contract\s+administration[^.]{0,60}?cost)\b/i;
+
+/**
+ * The integer part of every amount in a fragment, as a comparable key.
+ *
+ * "550,074,678.02 ETB" and "ETB 550,074,678" are the same figure written twice;
+ * the cents and the separators are presentation. Magnitude shorthand
+ * ("ETB 550.1M") normalises too, and simply fails to match the exact form,
+ * which is the safe direction: an amount only ever gains an exemption by
+ * matching, never by failing to.
+ */
+function amountKeys(fragment: string): string[] {
+  const keys: string[] = [];
+  for (const match of fragment.matchAll(new RegExp(CURRENCY_AMOUNT.source, "g"))) {
+    const raw = match[0];
+    const numeric = raw.replace(/[^0-9.,]/g, "").replace(/,/g, "");
+    if (!numeric) continue;
+    const magnitude = /\b[Mm](?:illion)?\b/.test(raw) ? 1e6 : /\b[Bb](?:illion)?\b/.test(raw) ? 1e9 : 1;
+    const value = Number.parseFloat(numeric);
+    if (!Number.isFinite(value)) continue;
+    keys.push(String(Math.trunc(value * magnitude)));
+  }
+  return keys;
+}
+
+/**
+ * Amounts this document has ALREADY established, in its own words, as the cost
+ * of work already delivered.
+ *
+ * THE DEFECT THIS FIXES.
+ * ----------------------
+ * The delivered technical proposal states every one of its 26 monetary figures
+ * as a past-project fact, with named clients and dates, and separates
+ * construction cost from consultancy fee on its own numbered lines. It quotes
+ * no price for the current engagement anywhere. It was nevertheless refused
+ * PRICING_LEAKAGE, because the text EXTRACTOR (lib/extract-text.ts) reconstructs
+ * table columns imperfectly and emitted two rows in which the amount sits beside
+ * unrelated cell text:
+ *
+ *   "workflow | patient-flow planning operate, reducing | ETB 550,074,678 —"
+ *   "clinical brief | freeze at 30% gate; | ... USD 18,900,000 —"
+ *
+ * Those rows carry no label, no client, no year, and are neither a labelled
+ * value nor a value-only cell — so both existing exemptions reject them before
+ * prior context is even consulted (verified: they stay flagged with a historic
+ * cue, a named client AND a delivered-work label placed directly above them).
+ *
+ * But ETB 550,074,678 and USD 18,900,000 are the SAME amounts the document
+ * elsewhere states as "1. Construction Cost:". One figure is one fact, and a
+ * gate that reads it as a past project's cost on one line and as this bid's
+ * price on another is contradicting itself about the same number.
+ *
+ * WHY THIS DOES NOT WEAKEN THE CONTROL. An amount enters this set only from a
+ * fragment that BOTH carries an explicit delivered-work or past-project cost
+ * label AND survives the current-offer veto. A sentence that quotes a price for
+ * the current engagement is vetoed on its own wording before the set is ever
+ * consulted, so a live offer cannot borrow a past project's figure — and if a
+ * document genuinely priced this bid, that price would appear in no
+ * past-cost-labelled line and so would be in no set at all.
+ */
+function establishedPastProjectAmounts(fragments: string[]): Set<string> {
+  const established = new Set<string>();
+  for (const fragment of fragments) {
+    const labelled = DELIVERED_WORK_VALUE_LABEL.test(fragment) || PAST_PROJECT_COST_LABEL.test(fragment);
+    if (!labelled) continue;
+    if (namesCurrentEngagementAsItsOwn(fragment)) continue;
+    if (/\b(our\s+(?:fee|price|rate|quotation|financial|commercial)|bid\s+price|total\s+price|lump\s+sum|price\s+schedule)\b/i.test(fragment)) continue;
+    for (const key of amountKeys(fragment)) established.add(key);
+  }
+  return established;
+}
+
+/**
+ * A fragment whose every amount is one this document already established as a
+ * delivered project's cost, and which says nothing about pricing the current
+ * engagement, is restating a known past fact.
+ */
+function restatesEstablishedPastAmount(fragment: string, established: Set<string>): boolean {
+  if (established.size === 0) return false;
+  const keys = amountKeys(fragment);
+  if (keys.length === 0) return false;
+  if (!keys.every((key) => established.has(key))) return false;
+  if (namesCurrentEngagementAsItsOwn(fragment)) return false;
+  return !/\b(our\s+(?:fee|price|rate|quotation|financial|commercial)|bid\s+price|proposal\s+price|total\s+price|unit\s+price|consultancy\s+fee|professional\s+fee|daily\s+rate|monthly\s+rate|hourly\s+rate|lump\s+sum|price\s+schedule|fee\s+schedule|quoted\s+(?:amount|price)|amount\s+payable)\b/i.test(fragment);
+}
+
 function isHistoricalReferenceValueContinuation(sentence: string, priorContext: string): boolean {
   const hasCurrencyValue = CURRENCY_AMOUNT.test(sentence);
   if (!hasCurrencyValue) return false;
@@ -559,11 +665,16 @@ export function pricingLeakageFinding(text: string, doc?: Pick<ExportReadyDocume
   // fragment and "ETB" at the head of the next still reads as one amount.
   // Within-fragment detection is byte-for-byte unchanged, which keeps every
   // existing single-sentence leak test passing.
+  // Computed from the ORIGINAL fragments, before any filtering, so what the
+  // document establishes about a figure does not depend on which neighbours
+  // happened to survive exemption — the same rule the context window follows.
+  const established = establishedPastProjectAmounts(textSentences);
   const scanText = textSentences
     .filter((s, index) => {
       if (isSafeNoPriceSentence(s)) return false;
       if (isBoqDeliverableSentence(s)) return false;
       if (isHistoricalReferenceValueSentence(s)) return false;
+      if (restatesEstablishedPastAmount(s, established)) return false;
       const priorContext = textSentences
         .slice(Math.max(0, index - REFERENCE_CONTEXT_FRAGMENTS), index)
         .join(" ");
