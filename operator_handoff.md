@@ -48,9 +48,17 @@ as superseded on the owner's explicit instruction — closed, never merged, neve
 cherry-picked. Do not reopen it and do not create a replacement PR: all future
 application fixes belong on #1175 alone.
 
+**This table's Status column is re-verified on 2026-09-16, not inherited.** It
+previously still named head `e59eca99` and CI green on `d3aa3b9f`, both long
+superseded — the exact failure mode CLAUDE.md warns about, and one that sends
+the next session to verify a commit that is no longer the head. Anyone editing
+this row must quote a conclusion they actually read, and a cancelled run is not
+a pass: two intermediate SHAs on this branch (`5e2518ca`, `20d2d7db`) show
+`cancelled` because later pushes superseded them.
+
 | Owner tool | Branch / PR | Scope | Locked files or areas | Status | Next action |
 |---|---|---|---|---|---|
-| Codex → Claude Code | `release/consolidated-recovery-20260717` (PR #1175, draft, base `integration/controlled-recovery`) | Consolidated release recovery: 10-provider fallback chain, provider-diversity request planning, durable fallback staging, canonical readiness/export convergence, artifact identity, real DOCX/PDF/ZIP bytes | `lib/ai.ts`, `lib/ai-jobs/analysis-job-service.ts`, `lib/ai-analyze/retry-service.ts`, `lib/engine/*`, `app/api/tenders/[id]/*`, `docs/pr1175-frozen-regression-ledger.md` | Open (draft). Head `e59eca99`; CI **verified green on `d3aa3b9f`** (run 34849659336, all 61 steps, incl. DB integration, build, Playwright isolation); Preview deployment READY; **Preview database unreachable** | **BLOCKED — OWNER ACTION** (see the two blockers below). Do not merge; do not promote Production. |
+| Codex → Claude Code | `release/consolidated-recovery-20260717` (PR #1175, draft, base `integration/controlled-recovery`) | Consolidated release recovery: 10-provider fallback chain, provider-diversity request planning, durable fallback staging, canonical readiness/export convergence, artifact identity, real DOCX/PDF/ZIP bytes | `lib/ai.ts`, `lib/ai-jobs/analysis-job-service.ts`, `lib/ai-analyze/retry-service.ts`, `lib/engine/*`, `app/api/tenders/[id]/*`, `docs/pr1175-frozen-regression-ledger.md` | Open (draft). Head **`f809f4d2`**; exact-head CI **verified green by CONCLUSION on `f809f4d2`** — CI push run 6597 `success`, CI pull_request run 6598 `success`, Dependency Security Audit `success`, Exact-head route/screenshot audit run 1265 `success`; Vercel Preview READY. Hosted acceptance still FAILS on external provider exhaustion (7 consecutive runs, `Contacted 0 of 10 configured provider(s) … tried: none — all skipped`) | **BLOCKED — OWNER ACTION** (see the two blockers below). Do not merge; do not promote Production. |
 
 #### CURRENT STATE — as of 2026-09-14T15:25Z (head `e59eca99`)
 
