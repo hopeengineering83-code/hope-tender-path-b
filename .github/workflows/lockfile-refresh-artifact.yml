@@ -1171,6 +1171,18 @@ jobs:
                   f"(error={d.get('error') or d.get('message') or d!r})")
           print(f"DOCUMENT QUALITY: {d.get('documentCount')} document(s), "
                 f"{d.get('failureCount')} failing")
+          # validate returned 422 (blocked) while reporting 0 document failures
+          # and 0 tender-level blockers, so the reason it blocked is in neither
+          # list. Print its own verdict and every remaining list, or the next
+          # reader repeats this round trip.
+          print(f"  validate says: {d.get('message') or d.get('error') or '(no message)'}")
+          for key, value in sorted(d.items()):
+              if key in {'documentFailures', 'tenderLevelBlockers'}:
+                  continue
+              if isinstance(value, list) and value:
+                  print(f"  {key}: {json.dumps(value)[:600]}")
+              elif isinstance(value, (bool, int)) or (isinstance(value, str) and key.lower().endswith('code')):
+                  print(f"  {key}={value!r}")
           for f in (d.get('documentFailures') or []):
               print(f"  {f.get('name')}  id={f.get('documentId')}")
               for r in (f.get('reasons') or []):
