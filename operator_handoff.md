@@ -203,7 +203,58 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
-### 2026-09-16 UTC (latest) — The pricing fix worked; what it uncovered is NOT another false positive
+### 2026-09-16 UTC (latest) — THE PACKAGE EXPORTS. First ZIP this tender has produced.
+
+- **Tool / branch / PR:** Claude Code · `release/consolidated-recovery-20260717` · PR #1175 (open, draft, unmerged). Head `dcf8a396`.
+- **Run 35142818593, `confirm=export`, conclusion SUCCESS.** Every step that had
+  never run before ran and passed:
+
+  ```
+  Require real final readiness with zero blockers        success
+  Require the audit surface to agree with export-readiness success
+  Trigger export readiness build (POST /export)          success
+  Download the final ZIP                                 success
+  Render every page of the final PDF and check the layout success
+  Audit the delivered PDF for embedded brand-asset bytes  success
+  Dump the final PDF's visible text                      success
+  ```
+
+  Artifact `preview-hosted-acceptance` 7,812,392 bytes, 53 files, including
+  `preview-final.zip`, `pdf-pages/`, `delivered-technical-proposal.pdf` and
+  `final-pdf-text.txt`.
+- **THE FIX IS VINDICATED BY THE DELIVERED BYTES.** The fragment that refused
+  the package for three sessions appears on page 37 in its real context — a
+  **Section G evidence column**:
+
+  ```
+  1  Healthcare facility  Departmental      Layouts reflect how  G+6 General Hospital
+     design and clinical  adjacency and     the centre will      – Dr Abdul Seid —
+     workflow             patient-flow      actually operate,    ETB 550,074,678 —
+                          planning          reducing…            2018
+  ```
+
+  A past project, its construction value and its year, cited as EVIDENCE for a
+  capability claim. PDF column reconstruction interleaved the columns into
+  `workflow | patient-flow planning operate, reducing | ETB 550,074,678`, which
+  is what the pricing gate saw. Legitimate content; correctly exempted now.
+- **Delivered-document facts worth keeping** (from `final-pdf-text.txt`):
+  39 pages; letterhead + `Page N of 39` on every page; "Submitted to Pharo
+  Ventures"; submission emails `edessalegn@pharoventures.com` /
+  `fgetachewdesta@pharoventures.com`; deadline 25 August 2026;
+  **"Deliverable Format PDF"** (the earlier docx/PDF contradiction is gone);
+  Declaration, Anti-Bribery/Ethics/COI and signature block present.
+  Anti-corruption law cited is Ethiopian (Proclamations 433/2005, 657/2009) and
+  this IS an Ethiopian tender, so it is source-grounded, not a hardcoded
+  jurisdiction.
+- **WHAT THIS IS NOT.** This package was generated at 14:31, BEFORE today's
+  fixes. Export proves the GATE now passes clean bytes; it does not prove a
+  freshly generated proposal passes. A `confirm=accept` run is dispatched to
+  settle that, and the contract's own standard — a FRESH model-backed proposal,
+  exported, inspected and benchmarked — is not met until it lands.
+- **Providers at 19:27Z:** groq and zai both `ANALYSIS_VERIFIED` and routable.
+- **Merge status:** not reviewed. Do not merge. Do not promote Production.
+
+### 2026-09-16 UTC — The pricing fix worked; what it uncovered is NOT another false positive
 
 - **Tool / branch / PR:** Claude Code · `release/consolidated-recovery-20260717` · PR #1175 (open, draft, unmerged). Head `d237790d`.
 - **THE ENGAGEMENT-VETO FIX IS CONFIRMED ON REAL BYTES.** Run 35140476920 against
