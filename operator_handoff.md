@@ -203,7 +203,41 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
-### 2026-09-16 UTC (latest) — The blocker is PDF_REQUIRED_NOT_READY, and two verdicts disagree
+### 2026-09-16 UTC (latest) — A blocker must not name a check that passed
+
+- **Tool / branch / PR:** Claude Code · `release/consolidated-recovery-20260717` · PR #1175 (open, draft, unmerged).
+- **Fix shipped for the misattribution traced in the entry below.**
+  `exportBlockReason(state)` asserted "The document failed the canonical
+  narrative-quality rubric" for every QUALITY_BLOCKED document, while
+  `qualityBlocked` only records THAT one of two ORed checks refused — never
+  which. On the first model-backed package the rubric had PASSED
+  (`failureCount=0`) and `validateDocumentQuality` had refused, so the message
+  named the one authority that cleared the document.
+- **What changed (application code, deliberately minimal):**
+  - `DocumentLike.qualityBlockReasons?: string[] | null` — the verdict's own
+    HIGH-severity reasons.
+  - `exportBlockReason(state, detail?)` — QUALITY_BLOCKED now renders those
+    reasons; with none supplied it says so honestly instead of naming a rubric.
+  - `final-package-readiness-model.ts` builds `qualityBlockReasonsById` from the
+    same verdicts that set `qualityBlocked`, and both call sites pass the
+    document through.
+- **NOT done, on purpose:** neither check was weakened to make them agree. Both
+  were behaving correctly — the rubric passed, the validator refused. Making a
+  gate quieter to resolve a reporting bug would teach an export gate to pass a
+  document it should refuse.
+- **Tests:** `tests/a-blocker-must-not-name-a-check-that-passed.test.ts` 5/5,
+  including a guard that naming the reason does NOT make the document
+  exportable, and a wiring assertion so the new parameter cannot silently go
+  dead. Full suite **12,143 / 12,143 pass, 0 fail, 0 cancelled**; tsc and lint
+  clean.
+- **STILL UNKNOWN and not guessed:** which of the five `validateDocumentQuality`
+  conditions (placeholder / AI trace / empty body / envelope mismatch /
+  boilerplate >= 5) fires on `Technical Proposal.pdf`. The next acceptance or
+  inspect run now prints it. THAT is the content defect to fix next, if the
+  reason turns out to be a real content problem rather than an over-broad rule.
+- **Merge status:** not reviewed. Do not merge. Do not promote Production.
+
+### 2026-09-16 UTC — The blocker is PDF_REQUIRED_NOT_READY, and two verdicts disagree
 
 - **Tool / branch / PR:** Claude Code · `release/consolidated-recovery-20260717` · PR #1175 (open, draft, unmerged). Head `b916e2dc`.
 - **The model-backed chain is now REPRODUCIBLE.** Two independent runs, 25 min

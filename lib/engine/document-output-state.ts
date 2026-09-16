@@ -48,6 +48,28 @@ export type DocumentLike = {
    * validator.
    */
   qualityBlocked?: boolean | null;
+  /**
+   * WHY the verdict blocked, in the verdict's own words.
+   *
+   * THE DEFECT THIS FIXES.
+   * ----------------------
+   * `resolveCurrentDocumentVerdict` ORs two independent checks: the narrative
+   * rubric (`assessGeneratedDocumentQuality`) and `validateDocumentQuality`,
+   * which blocks on placeholders, AI traces, an empty body, an envelope
+   * mismatch or boilerplate density. `qualityBlocked` records that ONE of them
+   * refused, not which.
+   *
+   * On 2026-09-16 the first model-backed package was refused with
+   * `failureCount=0` — the narrative rubric had PASSED — while the blocker text
+   * read "The document failed the canonical narrative-quality rubric". The
+   * message named the one authority that had just cleared the document, so the
+   * only actionable reading was to rewrite prose for what may well have been a
+   * placeholder or an envelope mismatch.
+   *
+   * The reasons already exist on the verdict. Carrying them here is what stops
+   * a blocker from attributing itself to the wrong check.
+   */
+  qualityBlockReasons?: string[] | null;
   generationStatus?: string | null;
   validationStatus?: string | null;
   reviewStatus?: string | null;
@@ -316,14 +338,31 @@ export function isExportReady(doc: DocumentLike): boolean {
   return deriveDocumentOutputState(doc) === "READY_FOR_EXPORT";
 }
 
-export function exportBlockReason(state: DocumentOutputState): string | null {
+export function exportBlockReason(
+  state: DocumentOutputState,
+  /**
+   * The blocking verdict's own reasons, when the caller has them. Only
+   * QUALITY_BLOCKED uses them today: it is the one state whose fixed sentence
+   * asserted a specific authority it could not actually know.
+   */
+  detail?: { qualityBlockReasons?: string[] | null } | null,
+): string | null {
   switch (state) {
     case "READY_FOR_EXPORT":
       return null;
     case "ARTIFACT_IDENTITY_MISMATCH":
       return "File name, declared format and actual bytes disagree. A .pdf that does not contain PDF bytes will not open for the evaluator, so it can never be exported.";
-    case "QUALITY_BLOCKED":
-      return "The document failed the canonical narrative-quality rubric. The Document Validator shows the score and the specific issues; it must be regenerated or repaired before it can be exported.";
+    case "QUALITY_BLOCKED": {
+      // Say which check refused and why, when the caller knows. Naming a
+      // specific rubric that may have passed sends the reader to fix the wrong
+      // thing; naming nothing sends them to a UI panel an automated operator
+      // cannot open.
+      const reasons = (detail?.qualityBlockReasons ?? []).filter((reason) => reason.trim().length > 0);
+      if (reasons.length > 0) {
+        return `The document failed a quality check and must be repaired or regenerated before export: ${reasons.slice(0, 4).join("; ")}`;
+      }
+      return "The document failed a quality check (narrative rubric or document validation) and must be repaired or regenerated before export. The blocking reasons were not supplied to this surface.";
+    }
     case "CONTROL_RECORD_ONLY":
       return "Document is a control, placeholder, or text-only row. Generate or attach the real final file.";
     case "ORIGINAL_REQUIRED":

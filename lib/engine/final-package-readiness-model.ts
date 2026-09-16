@@ -401,7 +401,7 @@ function partialVerificationWarnings(
 }
 
 function documentOutputBlockReason(document: DocumentLike): string | null {
-  return exportBlockReason(deriveDocumentOutputState(document));
+  return exportBlockReason(deriveDocumentOutputState(document), document);
 }
 
 function chooseBestGeneratedDocument(documents: GeneratedDocLike[]): GeneratedDocLike | null {
@@ -453,7 +453,7 @@ function generatedDocumentExclusionReason(
   if (!isValidationPassed(document.validationStatus)) return "not validated";
   if (!isReviewReadyForExport(document.reviewStatus)) return "not approved";
   if (byteSize(document) === 0) return "zero-byte or missing file bytes";
-  return exportBlockReason(state) ?? "not export-ready";
+  return exportBlockReason(state, document) ?? "not export-ready";
 }
 
 function plannedStatusFor(
@@ -1121,9 +1121,27 @@ export async function getFinalPackageReadinessModel(
       .map((verdict) => (verdict.doc as { id?: string }).id)
       .filter((id): id is string => typeof id === "string"),
   );
+  // The verdict's own reasons, keyed by document id. `qualityBlocked` records
+  // THAT a check refused; without these the blocker cannot say WHICH, and the
+  // fixed sentence it used instead named the narrative rubric even when the
+  // narrative rubric had passed.
+  const qualityBlockReasonsById = new Map<string, string[]>(
+    qualityVerdicts
+      .filter((verdict) => verdict.score === "BLOCKED" && verdict.report.wordCount > 0)
+      .map((verdict): [string, string[]] => [
+        (verdict.doc as { id?: string }).id ?? "",
+        (verdict.reasons ?? [])
+          .filter((reason: { severity?: string }) => reason.severity === "HIGH")
+          .map((reason: { code?: string; message?: string }) =>
+            reason.code ? `[${reason.code}] ${reason.message ?? ""}`.trim() : (reason.message ?? ""))
+          .filter((message: string) => message.length > 0),
+      ])
+      .filter(([id]: [string, string[]]) => id.length > 0),
+  );
   const generatedDocumentsWithQuality = tender.generatedDocuments.map((document: { id: string }) => ({
     ...document,
     qualityBlocked: qualityBlockedIds.has(document.id),
+    qualityBlockReasons: qualityBlockReasonsById.get(document.id) ?? null,
   }));
 
   const planned = buildPlanAuthority.confirmed
