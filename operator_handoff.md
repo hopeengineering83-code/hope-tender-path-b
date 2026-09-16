@@ -203,7 +203,61 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
-### 2026-09-16 UTC (latest) — First model-backed run; blocker moved to the quality rubric
+### 2026-09-16 UTC (latest) — The blocker is PDF_REQUIRED_NOT_READY, and two verdicts disagree
+
+- **Tool / branch / PR:** Claude Code · `release/consolidated-recovery-20260717` · PR #1175 (open, draft, unmerged). Head `b916e2dc`.
+- **The model-backed chain is now REPRODUCIBLE.** Two independent runs, 25 min
+  apart, both reached AUTO_FINALIZE and both failed there:
+  run 35105947665 (AI_ANALYZE 35.4s / ENGINE_RUN 80s / PROPOSAL_GENERATION 91s)
+  and run 35108883411 (`AI_ANALYZE SUCCEEDED id=bb181032` in 7.5s, ENGINE_RUN
+  14:30:40→14:31:42, AUTO_FINALIZE RUNNING→FAILED). Deterministic, not a fluke.
+- **VERBATIM verdict from `POST /api/tenders/{id}/validate` at 14:34:41Z:**
+
+  ```
+  validate HTTP 422
+  DOCUMENT QUALITY: 1 document(s), 0 failing
+  validate says: Validation is blocked by 2 canonical or document issue(s).
+  blockers: [{"code": "PDF_REQUIRED_NOT_READY", "message": "The document failed
+    the canonical narrative-quality rubric. ..."}]
+  canonicalPackageBlockers: [{"area":"documents","code":"PDF_REQUIRED_NOT_READY",
+    "title":"Technical Proposal.pdf",
+    "generatedDocumentId":"e015f90f-e962-465e-9f66-1c918da4b513", ...}]
+  advisoryWarnings: [{"category":"DEADLINE_PASSED","severity":"HIGH",
+    "title":"Submission deadline passed 23 days ago (2026-08-25)..."}]
+  documentCount=1  failureCount=0  exportReadyDocumentsTotal=0
+  ```
+
+- **READ THE CODE, NOT THE MESSAGE.** The blocker code is
+  `PDF_REQUIRED_NOT_READY`, and `failureCount=0` — the narrative rubric found
+  NOTHING wrong. The quality sentence is not a rubric finding: it is
+  `exportBlockReason("QUALITY_BLOCKED")` from `document-output-state.ts:326`,
+  rendered because `deriveDocumentOutputState` hit `doc.qualityBlocked === true`
+  at line 265. Chasing "the narrative rubric" is chasing a label.
+- **`qualityBlocked` is set in ONE place:**
+  `final-package-readiness-model.ts:1118` — score `BLOCKED` AND `wordCount > 0`,
+  from `resolveCurrentDocumentVerdicts(...)`.
+- **THE OPEN QUESTION, and it is not yet answered.** `validate.ts:264` calls the
+  SAME `resolveCurrentDocumentVerdict` with the SAME `tender.requirements` and
+  the SAME selected expert/project names, and reports the document as NOT
+  failing. Same function, equivalent inputs, opposite verdicts in one response.
+  A hypothesis that the two paths read different text (DB row vs storage bytes)
+  was TESTED AND REJECTED: both go through `assessCurrentDocumentQuality`, which
+  calls `resolveDocumentVisibleText`.
+- **Next action:** instrument or unit-test both verdict paths on the SAME
+  document id within one request and diff their inputs and outputs — including
+  the content-digest cache in `generated-document-text.ts`, which is the one
+  remaining asymmetry not yet ruled out. Do not patch either gate until the
+  divergence is explained; the wrong fix here silently lets a genuinely bad
+  document through an export gate.
+- **DEADLINE_PASSED is advisory, not the blocker.** The tender's deadline passed
+  2026-08-25. It does not block export and must not be confused with one.
+- **Provider state (14:25Z / 14:34Z):** `PROBE PASSED ['gemini','groq']`,
+  `ELIGIBLE NOW ['gemini','groq']`. Free-tier gemini-3.5-flash carried both full
+  runs. Cooldowns are per-serverless-instance and die with the instance, so a
+  redeploy — not waiting — is what reopens a window.
+- **Merge status:** not reviewed. Do not merge. Do not promote Production.
+
+### 2026-09-16 UTC — First model-backed run; blocker moved to the quality rubric
 
 - **Tool / branch / PR:** Claude Code · `release/consolidated-recovery-20260717` · PR #1175 (open, draft, unmerged). Head `20f24eb6`.
 - **THE CHAIN RAN MODEL-BACKED FOR THE FIRST TIME** (run 35105947665, tender
