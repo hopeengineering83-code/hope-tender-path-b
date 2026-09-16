@@ -52,7 +52,36 @@ async function main(): Promise<void> {
  * not in the pattern, so "USD 3.5M" is not lost for being short. */
   const CANDIDATE = /([A-Za-z$£€¥₦][A-Za-z$£€¥₦.]{0,24})?\s?([0-9][0-9,.]*)\s?(?:(million|billion|bn|M|B)\b)?\s?([A-Za-z]{1,24})?/g;
 
-  const money: string[] = [];
+  // A FIGURE WITHOUT ITS CONTEXT CANNOT BE CLASSIFIED.
+  //
+  // This list used to print bare amounts. That is enough to notice that the
+  // delivered PDF states 26 monetary figures, and not enough to answer the only
+  // question that matters about any of them: does the document present this as
+  // a PAST PROJECT'S CONSTRUCTION COST, or as a fee for the current engagement?
+  // Those are the two readings the standing rule separates -- construction cost
+  // must never be represented as consultancy revenue unless the source says so
+  // -- and a bare number supports neither reading over the other.
+  //
+  // Printing the line each figure sits on makes the classification readable
+  // instead of inferred. The LABELLED/UNLABELLED tag is a reading aid over that
+  // line, never a substitute for it: the line is the evidence.
+  const VALUE_LABEL = /\b(contract value|construction value|project value|aggregate value|value of (?:the )?(?:works|projects))\b/i;
+  const FEE_LABEL = /\b(fee|fees|price|priced|pricing|rate|rates|quotation|remuneration|payable|lump sum|budget)\b/i;
+
+  const lineStarts: number[] = [0];
+  for (let i = 0; i < text.length; i += 1) if (text[i] === "\n") lineStarts.push(i + 1);
+  const lineAt = (index: number): string => {
+    let lo = 0, hi = lineStarts.length - 1;
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      if (lineStarts[mid] <= index) lo = mid; else hi = mid - 1;
+    }
+    const start = lineStarts[lo];
+    const end = text.indexOf("\n", start);
+    return text.slice(start, end === -1 ? text.length : end).replace(/\s+/g, " ").trim();
+  };
+
+  const money: Array<{ figure: string; context: string }> = [];
   for (const match of text.matchAll(CANDIDATE)) {
     const [, before, amount, magnitude, after] = match;
     // A currency is a currency whichever side of the amount it sits.
@@ -61,11 +90,24 @@ async function main(): Promise<void> {
     const digits = amount.replace(/[^0-9]/g, "");
     // Four digits or a magnitude word. "USD 12" is a page reference, not a value.
     if (digits.length < 4 && !magnitude) continue;
-    money.push(match[0].replace(/\s+/g, " ").trim());
+    money.push({
+      figure: match[0].replace(/\s+/g, " ").trim(),
+      context: lineAt(match.index ?? 0),
+    });
   }
 
   console.log(`MONETARY FIGURES IN THE DELIVERED PDF: ${money.length}`);
-  for (const sample of money.slice(0, 15)) console.log(`  ${sample}`);
+  for (const { figure, context } of money.slice(0, 40)) {
+    const labelled = VALUE_LABEL.test(context)
+      ? "LABELLED-PAST-VALUE"
+      : FEE_LABEL.test(context)
+        ? "FEE-WORDED"
+        : "UNLABELLED";
+    console.log(`  [${labelled}] ${figure}`);
+    console.log(`      in: ${context.slice(0, 220)}`);
+  }
+  const unlabelled = money.filter(({ context }) => !VALUE_LABEL.test(context) && !FEE_LABEL.test(context));
+  console.log(`  FIGURES WHOSE LINE CARRIES NO VALUE OR FEE LABEL: ${unlabelled.length} of ${money.length}`);
 
   const areas = [...text.matchAll(/[0-9][0-9,]{2,}\s?m(?:2|²)/g)].map((m) => m[0]);
   console.log(`SCALE FIGURES (area) IN THE DELIVERED PDF: ${areas.length}`);
