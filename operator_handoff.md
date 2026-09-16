@@ -203,7 +203,65 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
-### 2026-09-15 UTC (latest) — The guard that finds the sites my reading missed
+### 2026-09-16 UTC (latest) — A passing probe is not a routing decision
+
+- **Tool / branch / PR:** Claude Code · `release/consolidated-recovery-20260717` · PR #1175 (open, draft, unmerged).
+- **Live state established first, not assumed:** head `414cc18c`; exact-head CI
+  `success` (push 6599, pull_request 6600), Dependency Security Audit
+  `success`, route/screenshot `capture` `success`, Vercel Preview `success`.
+- **CURRENT provider state, read live 2026-09-16T13:33Z** (`confirm=inspect`,
+  inside `runAsDiagnostic()` so reading it imposes no cooldown):
+
+  | provider | effective analysis model | probe | eligible | cause |
+  |---|---|---|---|---|
+  | gemini | gemini-3.5-flash | ANALYSIS_VERIFIED | **no at 13:37** | in cooldown |
+  | groq | openai/gpt-oss-120b | ANALYSIS_VERIFIED | n/a for this source | TPM_LIMIT at 7242 input tokens |
+  | mistral | mistral-large-latest | fail | no | AUTH 403 `tier_not_allowed` |
+  | zai | glm-4.7-flash | fail | no | RATE_LIMIT 429 overloaded (NOT billing) |
+  | together | Qwen/Qwen2.5-72B-Instruct-Turbo | fail | no | AUTH 401 invalid key |
+  | cerebras / openrouter / openai / deepseek / anthropic | — | fail | no | BILLING 402/402/429/402/400 |
+
+- **THE DEFECT, and it is mine as much as the code's.** At 13:33Z the report
+  said `gemini ANALYSIS_VERIFIED analyze=True`. I read that as "eligible" and
+  triggered the acceptance. At 13:37Z the real AI Analyze recorded `Contacted 0
+  of 10 ... (tried: none — all skipped). gemini: in cooldown`. Both statements
+  were true: the probe proves key/route/model on a tiny payload, routing also
+  requires no active cooldown from earlier REAL failures.
+  `ProviderCapabilityReport.eligible` already carried that distinction and the
+  PRINTED report dropped it, so the only visible signal was the probe. Three
+  consecutive sessions have now mistaken one for the other.
+- **Fix (reporting only; routing untouched):** the capability report carries
+  `coolingDown`, `cooldownUntil`, `lastFailureAt`, `lastFailureCategory`,
+  `consecutiveFailures`, read from `getProviderRuntimeSnapshot` — the same
+  authority routing reads. The sweep prints `PROBE PASSED` and `ELIGIBLE NOW`
+  as separate lines, plus `PROBE-OK BUT NOT ROUTABLE` with the cooldown expiry.
+- **Two hypotheses tested and DISCARDED rather than reported as findings:**
+  1. *Diagnostics leak into real health.* Disproved: the `recordProviderFailure`
+     wrapper at `lib/ai.ts:642` returns early inside a diagnostic capture. The
+     isolation invariant is intact.
+  2. *DB vs in-memory cooldown tables diverge.* They genuinely do —
+     `REQUEST_TOO_LARGE` is deliberately `0` in memory but absent from
+     `COOLDOWN_SECONDS`, falling to `UNKNOWN`=60s, and `BILLING`,
+     `PROVIDER_ERROR`, `PROVIDER_OVERLOAD`, `CONFIGURATION_INVALID` are absent
+     too. **But `markProviderFailed` has no caller outside its own module**, so
+     the path is unreached. LATENT finding, not the cause; deliberately NOT
+     "fixed" on speculation.
+- **Still unexplained, and needs the new numbers to answer:** why gemini,
+  mistral, zai and together were cooling at 13:37 when every documented cooldown
+  maximum is ≤80 min and the last real failures were ~19 h earlier. The next
+  `confirm=inspect` prints `cooldownUntil`/`lastFailureAt` and settles it.
+- **Files changed:** `lib/ai-provider-capability-test.ts`,
+  `.github/workflows/lockfile-refresh-artifact.yml`,
+  `tests/a-passing-probe-is-not-a-routing-decision.test.ts` (new),
+  `operator_handoff.md`.
+- **Tests actually run:** targeted 4/4; full suite with DB integration
+  **12,138 / 12,138 pass, 0 fail, 0 cancelled**; `tsc` clean; `next lint` clean.
+  A FIRST run reported 100 failed / 409 cancelled in 276s — `pg_isready` said
+  "no response". That is the environment failure CLAUDE.md documents, not a
+  regression; Postgres was restarted and the clean re-run is the result above.
+- **Merge status:** not reviewed. Do not merge. Do not promote Production.
+
+### 2026-09-15 UTC — The guard that finds the sites my reading missed
 
 - **Tool / branch / PR:** Claude Code · `release/consolidated-recovery-20260717` · PR #1175 (open, draft, unmerged).
 - **Scope:** the previous entry's guard checked only the NINE builders its

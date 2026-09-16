@@ -47,6 +47,7 @@ import {
   recordDiagnosticObservation,
   recordProviderProbeCapability,
   isBillingLockedOut,
+  getProviderRuntimeSnapshot,
 } from "./ai-provider-health";
 import { classifyProviderError, isBillingBlocked, type AiProviderFailureCategory } from "./ai-provider-classification";
 import { redactSecrets } from "./sanitize-error";
@@ -95,6 +96,29 @@ export type ProviderCapabilityReport = {
   maxAnalysisInputTokens: number | null;
   analysisInputLimitedBy: "context" | "throughput" | null;
   usableForGeneration: boolean;
+  /**
+   * REAL-WORK eligibility, not probe capability, and the numbers behind it.
+   *
+   * THE DEFECT THIS FIXES.
+   * ----------------------
+   * On 2026-09-16 at 13:33Z this report said `gemini ANALYSIS_VERIFIED
+   * analyze=true`. Four minutes later the owner's real AI Analyze recorded
+   * "gemini: in cooldown" and contacted nobody. Both were true: the probe
+   * proves the key, the route and the model on a tiny payload, while routing
+   * additionally requires the provider not to be cooling down from earlier
+   * REAL failures. `eligible` already carried that distinction and the printed
+   * operator report dropped it, so three consecutive sessions read a green
+   * probe as "AI Analyze will run" — including the one that wrote this.
+   *
+   * `cooldownUntil` is the single field that turns "skipped" into a decision:
+   * it says whether waiting is the answer, and until when. Nothing here
+   * CHANGES routing; it reports the routing decision that is already made.
+   */
+  coolingDown: boolean;
+  cooldownUntil: string | null;
+  lastFailureAt: string | null;
+  lastFailureCategory: string | null;
+  consecutiveFailures: number;
   availableModels: string[] | null;
   /** Exact per-capability resolutions; analysis remains `resolvedModel` for compatibility. */
   resolvedModels: Record<EffectiveModelUseCase, string | null>;
@@ -551,6 +575,7 @@ export async function testProviderCapabilities(
   const eligibility = providerAutomaticEligibility(provider, env);
   const capabilities = opts?.capabilities ?? (["connectivity", "analysis", "generation"] as const);
 
+  const runtime = getProviderRuntimeSnapshot(provider);
   const base = {
     provider,
     displayName: entry.displayName,
@@ -558,6 +583,13 @@ export async function testProviderCapabilities(
     access: entry.access,
     eligible: eligibility.eligible,
     eligibilityReason: eligibility.safeMessage,
+    // Read once, from the same authority routing reads, so the report cannot
+    // describe a different provider state than the one that skipped it.
+    coolingDown: runtime.coolingDown,
+    cooldownUntil: runtime.cooldownUntil,
+    lastFailureAt: runtime.lastFailureAt,
+    lastFailureCategory: runtime.lastErrorCategory,
+    consecutiveFailures: runtime.consecutiveFailures,
     ...configuredModelFacts(provider, env),
   };
 

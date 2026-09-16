@@ -1175,15 +1175,44 @@ jobs:
                   f"{unreadable} unreadable response(s))")
           verified = {'CONNECTIVITY_VERIFIED', 'ANALYSIS_VERIFIED', 'GENERATION_VERIFIED'}
           ok = [r for r in rows if r.get('diagnosticState') in verified]
-          analysis_ok = [r for r in rows if r.get('usableForAiAnalyze')]
+          # TWO DIFFERENT QUESTIONS, PRINTED SEPARATELY.
+          #
+          # `usableForAiAnalyze` is the PROBE: this key, route and model did a
+          # real structured extraction on a tiny payload.
+          # `eligible` is ROUTING: the provider is in the chain AND not cooling
+          # down from earlier REAL failures.
+          #
+          # On 2026-09-16 this report printed only the first. It said
+          # "gemini ANALYSIS_VERIFIED analyze=True" at 13:33Z, and at 13:37Z the
+          # real AI Analyze recorded "gemini: in cooldown" and contacted nobody.
+          # Both were true. Printing one of them is what made three sessions in
+          # a row predict a run that could not happen.
+          probe_ok = [r for r in rows if r.get('usableForAiAnalyze')]
+          routable = [r for r in rows if r.get('usableForAiAnalyze') and r.get('eligible')]
           print(f"PROVIDER CHAIN: {len(ok)}/{len(rows)} verified, "
-                f"{len(analysis_ok)} usable for AI Analyze"
+                f"{len(probe_ok)} passed the analysis PROBE, "
+                f"{len(routable)} ELIGIBLE FOR REAL WORK NOW"
                 + (f", {unreadable} unreadable batch(es)" if unreadable else ""))
-          print(f"  USABLE FOR AI ANALYZE: {[r.get('provider') for r in analysis_ok] or 'NONE'}")
+          print(f"  PROBE PASSED:       {[r.get('provider') for r in probe_ok] or 'NONE'}")
+          print(f"  ELIGIBLE NOW:       {[r.get('provider') for r in routable] or 'NONE'}"
+                + ("   <-- AI Analyze can run" if routable else "   <-- AI Analyze CANNOT run yet"))
+          blocked = [r for r in rows if r.get('usableForAiAnalyze') and not r.get('eligible')]
+          for r in blocked:
+              print(f"  PROBE-OK BUT NOT ROUTABLE: {r.get('provider')} -- {r.get('eligibilityReason')}"
+                    f" (cooldownUntil={r.get('cooldownUntil')})")
           for r in rows:
               print(f"  {str(r.get('provider')):<12} {str(r.get('diagnosticState')):<22}"
-                    f" analyze={r.get('usableForAiAnalyze')}"
+                    f" probe={r.get('usableForAiAnalyze')} eligible={r.get('eligible')}"
                     f" model={r.get('resolvedModel')} keyPresent={r.get('keyPresent')}")
+              # The number that turns "skipped" into a decision: whether waiting
+              # is the answer, and until when.
+              if r.get('coolingDown') or r.get('cooldownUntil'):
+                  print(f"      cooldownUntil={r.get('cooldownUntil')}"
+                        f" lastFailureAt={r.get('lastFailureAt')}"
+                        f" lastFailureCategory={r.get('lastFailureCategory')}"
+                        f" consecutiveFailures={r.get('consecutiveFailures')}")
+              elif not r.get('eligible'):
+                  print(f"      not eligible: {r.get('eligibilityReason')}")
               # Per-use-case models, because "configured" is not one question.
               # Groq is dropped from the analysis CHUNK PLANNER unless proposal,
               # extraction AND fast all resolve non-empty (isProviderConfigured),
