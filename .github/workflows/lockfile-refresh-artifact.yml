@@ -1143,18 +1143,32 @@ jobs:
           # readiness model the blocker comes from) and it already returns
           # documentFailures[].reasons carrying "(score/100): reason; reason".
           # Reading it here turns "failed the rubric" into a named rule.
+          # Origin header is REQUIRED: the app enforces a same-origin CSRF check on
+          # POST, and without it this returned 403 and printed
+          # "None document(s), None failing" -- a diagnostic that silently said
+          # nothing was wrong with a package the gate was refusing. Every other
+          # POST in this workflow already sends it.
           code=$(curl -sS -o /tmp/validate.json -w '%{http_code}' -X POST \
-            -H "Cookie: hope_session=$SESSION_COOKIE" \
+            -H "Cookie: hope_session=$SESSION_COOKIE" -H "Origin: $BASE_URL" \
             -H 'Content-Type: application/json' -d '{}' \
             --connect-timeout 15 --max-time 90 \
             "$BASE_URL/api/tenders/$TENDER_ID/validate" || echo 000)
           echo "validate HTTP $code   (422 = blocked, which is the case we want to read)"
+          if [ "$code" != "200" ] && [ "$code" != "422" ]; then
+            echo "::warning::validate returned $code — the quality report below is NOT a verdict on the package."
+          fi
           python3 - <<'PYEOF' | tee /tmp/document-quality-blockers.txt
           import json
           try:
               d = json.load(open('/tmp/validate.json', encoding='utf-8'))
           except Exception as e:
               raise SystemExit(f"DOCUMENT QUALITY: validate response unreadable: {e}")
+          # An auth/CSRF refusal has no documentCount at all. Saying "0 failing"
+          # for that is worse than saying nothing: it reads as a clean package.
+          if d.get('documentCount') is None:
+              raise SystemExit(
+                  "DOCUMENT QUALITY: NOT MEASURED — validate did not return a document report "
+                  f"(error={d.get('error') or d.get('message') or d!r})")
           print(f"DOCUMENT QUALITY: {d.get('documentCount')} document(s), "
                 f"{d.get('failureCount')} failing")
           for f in (d.get('documentFailures') or []):
