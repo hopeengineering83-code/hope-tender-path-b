@@ -637,14 +637,37 @@ jobs:
 
       - name: Require real final readiness with zero blockers
         run: |
+          # A COUNT IS NOT A REASON. This step used to fail with
+          # "blockers=3" and nothing else, so every diagnosis of a refused
+          # package cost an extra full run just to discover WHICH three --
+          # the same defect the export blocker itself had, in the workflow
+          # that reads it. The reasons are already in the response.
           python3 - <<'PYEOF'
           import json
           with open('/tmp/export-readiness-final.json', encoding='utf-8') as stream:
               result = json.load(stream)
           blockers = result.get('blockers') or []
-          if result.get('ok') is not True or blockers:
-              raise SystemExit(f"Hosted readiness did not pass: ok={result.get('ok')!r}, blockers={len(blockers)}")
           print(f"export-readiness: ok={result.get('ok')} status={result.get('status')} blockers={len(blockers)}")
+          for blocker in blockers:
+              if isinstance(blocker, dict):
+                  print(f"  [{blocker.get('code') or blocker.get('area')}] "
+                        f"{blocker.get('documentName') or blocker.get('title') or ''}"
+                        .rstrip())
+                  print(f"      {blocker.get('reason') or blocker.get('message') or '(no reason given)'}")
+                  if blocker.get('nextAction'):
+                      print(f"      next: {blocker['nextAction']}")
+              else:
+                  print(f"  {blocker}")
+          # Anything else the response carries that names a rule, so a new
+          # blocker shape cannot go silent here the way the count did.
+          for key in ('documentFailures', 'tenderLevelBlockers', 'missingRequiredFiles', 'warnings'):
+              values = result.get(key) or []
+              if values:
+                  print(f"  {key}: {json.dumps(values)[:900]}")
+          if result.get('ok') is not True or blockers:
+              raise SystemExit(
+                  f"Hosted readiness did not pass: ok={result.get('ok')!r}, "
+                  f"blockers={len(blockers)} (each named above)")
           PYEOF
 
       - name: Require the audit surface to agree with export-readiness
