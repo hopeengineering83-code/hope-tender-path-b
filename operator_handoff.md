@@ -203,7 +203,49 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
-### 2026-09-16 UTC (latest) — The chain is green end to end. The proposal was NOT model-backed.
+### 2026-09-16 UTC (latest) — WHY generation falls back: AI_SECTION_PARTIAL_FALLBACK, an all-or-nothing guard
+
+- **Tool / branch / PR:** Claude Code · `release/consolidated-recovery-20260717` · PR #1175 (open, draft, unmerged). Head `c5ad5226`.
+- **THE NAMED CAUSE, run 35149237506, verbatim:**
+
+  ```
+  DOCUMENT AUTHORSHIP: 1 document(s)
+    - 'Technical Proposal.pdf'
+        mode='deterministic benchmark fallback + ...'
+        FELL BACK BECAUSE: AI_SECTION_PARTIAL_FALLBACK: one or more sections
+        used deterministic fallback. Output is not fully AI-generated.
+  ```
+
+- **THIS IS NOT A PROVIDER CONDITION.** `groq` was `GENERATION_VERIFIED`
+  (`proposal='openai/gpt-oss-120b'`, `eligible=True`) minutes before the run, and
+  the generation-capability sweep confirms it independently. The writer reached
+  the model, produced sections, and then **threw on its own guard**:
+  `generate-elite.ts` assigns the deterministic label ONLY inside its `catch`,
+  so the AI path ran and raised `AI_SECTION_PARTIAL_FALLBACK`.
+- **WHAT THE GUARD DOES.** If ANY section falls back, the WHOLE AI output is
+  discarded and replaced by the fully deterministic draft. A proposal that was
+  mostly model-written is therefore delivered as 100% deterministic, and the
+  authorship record correctly says so.
+- **THE OPEN QUESTION, and it is NOT yet answered: WHICH section(s) fell back and
+  why.** The likely neighbourhood is per-section provider budget under full
+  parallel load — the same area as the settled Workboard items on TPM budget
+  covering input AND output, and on fencing the per-section writer prompt — but
+  that is a hypothesis, not a finding. Do not act on it without the per-section
+  evidence.
+- **AND THE GUARD ITSELF IS A DESIGN DECISION TO PUT TO THE OWNER, not something
+  to quietly change.** All-or-nothing is defensible (never ship a mixed document
+  while implying it is AI-written) and it is also why one weak section costs the
+  entire model-backed proposal. Options: keep it; or keep the AI output and
+  record per-section authorship honestly; or retry only the failed sections.
+  **Financial/authorship integrity is under the preservation lock, so this is an
+  owner call.**
+- **CONSEQUENCE FOR #51.** The 17-dimension benchmark still has no
+  model-backed proposal to score. The blocker is now a NAMED, code-controlled
+  guard rather than provider availability — a different and more tractable
+  problem than every previous session recorded.
+- **Merge status:** not reviewed. Do not merge. Do not promote Production.
+
+### 2026-09-16 UTC — The chain is green end to end. The proposal was NOT model-backed.
 
 - **Tool / branch / PR:** Claude Code · `release/consolidated-recovery-20260717` · PR #1175 (open, draft, unmerged). Head `8afcb344`.
 - **THE FULL AUTOMATIC CHAIN WORKS, AND IT REPRODUCES.** Two `confirm=accept`
