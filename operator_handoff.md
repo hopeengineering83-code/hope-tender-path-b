@@ -203,16 +203,82 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
-### 2026-09-16 UTC (latest) — A blocker must not name a check that passed
+### 2026-09-16 UTC (latest) — A blocked verdict must always name a blocking reason
+
+- **Tool / branch / PR:** Claude Code · `release/consolidated-recovery-20260717` · PR #1175 (open, draft, unmerged). Head `56035509`.
+- **CORRECTION — carry this forward. `failureCount=0` does NOT mean the
+  narrative rubric passed.** Two entries below assert that it does. It is wrong,
+  and it was load-bearing for a wrong conclusion. `failureCount` is
+  `checkFullExportReadinessWithQualityGate().failures.length`
+  (`export-readiness.ts:1207`) → `checkDocumentQualityGate` →
+  `validateGeneratedDocumentQuality` in **`lib/document-generation/`** — a THIRD
+  assessor that the readiness blocker never consults. `POST /validate` reports
+  two independent authorities side by side: `failureCount`/`documentFailures`
+  from that third assessor, and `canonicalPackageBlockers` from
+  `getFinalPackageReadinessModel`. `failureCount` is silent about BOTH checks
+  inside `resolveCurrentDocumentVerdict`. **Which of them refused
+  `Technical Proposal.pdf` remains unproven and is still not guessed.**
+- **The previous fix was incomplete, found by reading the code that produces the
+  reasons.** Two conditions BLOCK a document while emitting no HIGH reason, and
+  every consumer filters to HIGH — so the blocker would still have printed "the
+  blocking reasons were not supplied to this surface":
+  1. `validateDocumentQuality` blocks at `boilerplateHits.length >= 5`, but only
+     emitted a MEDIUM `qualityWarning` at `>= 3`.
+  2. The rubric returns `QUALITY_FAILED` on `severityFromScore(score) ===
+     "FAILED"` (score < 35) even when every contributing issue is MEDIUM.
+- **What changed:**
+  - `validationReasons()` states the density rule as a HIGH
+    `BOILERPLATE_DENSITY` reason that QUOTES the phrases, and no longer repeats
+    it as a MEDIUM warning.
+  - `resolveCurrentDocumentVerdict` carries an INVARIANT: a `BLOCKED` verdict
+    always names ≥1 HIGH reason. A future condition that forgets its reason
+    degrades to `QUALITY_BLOCKED_UNATTRIBUTED` naming the authority and its
+    score — never to silence.
+  - `aiTrace` / `boilerplateHits` report the MATCHED PHRASE instead of
+    `re.source` with metacharacters stripped, which rendered
+    `/\bbest practices\b/i` as `"bbest practicesb"` — a string appearing
+    nowhere in the document an owner is asked to fix. One entry per matching
+    pattern, deliberately NOT de-duplicated, so the `>= 5` threshold counts
+    exactly what it counted before.
+- **NOT done, on purpose:** no threshold and no verdict was changed. Naming a
+  reason must never make a blocked document exportable.
+- **Watch this one:** `GENERIC_BOILERPLATE_PATTERNS` contains ordinary
+  professional language — "best practices", "proven track record",
+  "innovative solutions", "world-class", "state-of-the-art". Five of seventeen
+  is very reachable for a model-written proposal, so density is a plausible
+  cause of the refusal. **Plausible is not proven — do not act on it until a run
+  prints it.**
+- **Tests:** `tests/a-blocked-verdict-must-always-name-a-blocking-reason.test.ts`
+  7/7, on deliberately non-benchmark sectors (a municipal water-utility
+  condition assessment and a rail resignalling assignment), with a vacuity guard
+  that a specific document is still not accused of boilerplate. **4 of the 7
+  fail against the pre-fix code.** Full suite **12,150 / 12,150 pass, 0 fail,
+  0 cancelled**; tsc and lint clean.
+  - An earlier run of the same suite reported 100 failed / 409 cancelled.
+    `pg_isready` said "no response": Postgres died mid-run. Restarted,
+    `prisma migrate deploy`, re-ran clean. Environment failure, not a
+    regression — exactly the signature CLAUDE.md documents.
+- **DEPLOYMENT HAZARD, newly observed.** `2de09f9a` was pushed at 14:51:17Z and
+  **Vercel created no deployment for it at all** — the newest Preview build
+  remained `ffd8b112` (14:41:47Z) more than 16 minutes later. The 15:01 inspect
+  therefore measured PRE-FIX code, and its blocker sentence is not evidence
+  about the fix. `vercel.json` enables this branch and deployment volume is far
+  below the plan's daily cap, so the webhook was simply dropped. The next push
+  (`56035509`) deployed normally, so it was a one-off — but **always confirm the
+  Preview's deployed SHA before reading a hosted diagnostic as evidence.**
+- **Merge status:** not reviewed. Do not merge. Do not promote Production.
+
+### 2026-09-16 UTC — A blocker must not name a check that passed
 
 - **Tool / branch / PR:** Claude Code · `release/consolidated-recovery-20260717` · PR #1175 (open, draft, unmerged).
 - **Fix shipped for the misattribution traced in the entry below.**
   `exportBlockReason(state)` asserted "The document failed the canonical
   narrative-quality rubric" for every QUALITY_BLOCKED document, while
   `qualityBlocked` only records THAT one of two ORed checks refused — never
-  which. On the first model-backed package the rubric had PASSED
-  (`failureCount=0`) and `validateDocumentQuality` had refused, so the message
-  named the one authority that cleared the document.
+  which. The message was asserted without consulting either check.
+  (SUPERSEDED: this entry originally read "the rubric had PASSED
+  (`failureCount=0`)". See the CORRECTION in the entry above — `failureCount`
+  counts a third assessor and says nothing about the rubric.)
 - **What changed (application code, deliberately minimal):**
   - `DocumentLike.qualityBlockReasons?: string[] | null` — the verdict's own
     HIGH-severity reasons.
@@ -262,8 +328,11 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
   ```
 
 - **READ THE CODE, NOT THE MESSAGE.** The blocker code is
-  `PDF_REQUIRED_NOT_READY`, and `failureCount=0` — the narrative rubric found
-  NOTHING wrong. The quality sentence is not a rubric finding: it is
+  `PDF_REQUIRED_NOT_READY`. (SUPERSEDED: this entry originally read
+  "`failureCount=0` — the narrative rubric found NOTHING wrong". `failureCount`
+  counts a third assessor in `lib/document-generation/`; it is silent about the
+  rubric. See the CORRECTION in the newest entry.)
+  The quality sentence is not a rubric finding: it is
   `exportBlockReason("QUALITY_BLOCKED")` from `document-output-state.ts:326`,
   rendered because `deriveDocumentOutputState` hit `doc.qualityBlocked === true`
   at line 265. Chasing "the narrative rubric" is chasing a label.
@@ -292,8 +361,11 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
   `placeholders.length > 0 || aiTrace.length > 0 || isEmpty ||
   envelopeMismatch != null || boilerplateHits.length >= 5`.
 
-  So the observed state is fully consistent: the narrative rubric PASSED
-  (`failureCount=0`), the second validator BLOCKED, the verdict became BLOCKED,
+  So the observed state is consistent with ONE of the two checks having
+  refused. (SUPERSEDED: this entry originally concluded the rubric PASSED on the
+  strength of `failureCount=0`. That inference does not hold — see the
+  CORRECTION in the newest entry. Which check refused is still unproven.)
+  The verdict became BLOCKED,
   `qualityBlocked` was set, and `exportBlockReason("QUALITY_BLOCKED")` then
   attributed the block to "the canonical narrative-quality rubric" — an
   authority that had just passed the document. The operator is sent to improve
