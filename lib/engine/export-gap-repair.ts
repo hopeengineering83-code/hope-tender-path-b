@@ -192,6 +192,19 @@ function rewriteParagraphVisibleText(paragraphXml: string, safeText: string): st
   );
 }
 
+/**
+ * Append the machine-repair note to a document's existing summary, preserving
+ * whatever came before it (notably the authorship clause generation writes).
+ * Idempotent: repeated repairs do not append the note twice.
+ */
+function appendRepairNote(existing: string | null | undefined, name: string): string {
+  const note = `Machine export repair completed for ${name}.`;
+  const prior = (existing ?? "").trim();
+  if (prior.length === 0) return note;
+  if (prior.includes(note)) return prior;
+  return `${prior} ${note}`;
+}
+
 export async function cleanDocxHygieneIssues(base64Content: string, doc: RepairDoc): Promise<string | null> {
   try {
     const buffer = Buffer.from(base64Content, "base64");
@@ -445,7 +458,7 @@ export async function runExportGapRepair(
   const docs = await prisma.generatedDocument.findMany({
     where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
     orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
-    select: { id: true, name: true, exactFileName: true, exactOrder: true, documentType: true, format: true, generationStatus: true, validationStatus: true, reviewStatus: true, reviewNotes: true, fileContent: true, storagePath: true },
+    select: { id: true, name: true, exactFileName: true, exactOrder: true, documentType: true, format: true, generationStatus: true, validationStatus: true, reviewStatus: true, reviewNotes: true, contentSummary: true, fileContent: true, storagePath: true },
   });
 
   const repaired: string[] = [];
@@ -557,7 +570,22 @@ export async function runExportGapRepair(
           // also lets a previously FAILED hygiene document recover on retry.
           validationStatus: "PENDING",
           reviewNotes: "machine:safe-export-repair — DOCX hygiene cleaned (AI traces, placeholders, pricing leakage). Awaiting canonical Document Validator.",
-          contentSummary: `Machine export repair completed for ${name}.`,
+          // A REPAIR MUST NOT ERASE THE RECORD OF WHO WROTE THE DOCUMENT.
+          //
+          // This replaced contentSummary outright. The summary's first clause
+          // is where generation states its authorship, and it is the field the
+          // acceptance inspection reads to answer "did a model write this, or
+          // the deterministic draft?". After any repair ran, every document
+          // reported `mode='Machine export repair completed for ...'` and the
+          // authorship of the proposal became unknowable from the outside --
+          // on a run whose whole purpose was to prove a fresh proposal was
+          // model-backed.
+          //
+          // Final authorship provenance is a preserved property, and a
+          // hygiene repair is not an authorship event. The repair note is
+          // appended so both facts survive, and appending is idempotent so
+          // repeated repairs do not grow the field without bound.
+          contentSummary: appendRepairNote(doc.contentSummary, name),
           updatedAt: new Date(),
         },
       });
