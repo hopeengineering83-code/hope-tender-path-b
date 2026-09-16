@@ -231,11 +231,64 @@ const CURRENCY_AMOUNT = new RegExp(
 );
 
 
+/**
+ * Naming the engagement is not quoting a price for it.
+ *
+ * THE DEFECT THIS FIXES.
+ * ----------------------
+ * Both current-offer vetoes below tested for a bare
+ * `this (proposal|bid|assignment|tender)`. So an evidence sentence explaining
+ * why its past references are relevant —
+ *
+ *   "…presents 3 project reference(s) directly relevant to THIS ASSIGNMENT:
+ *    G+6 General Hospital … Construction Value of Works ETB 550.1M"
+ *
+ * — was vetoed out of the comparable-projects exemption written for exactly
+ * that shape, and the package was refused PRICING_LEAKAGE on 2026-09-16
+ * (run 35136711233). The document quotes no price: "Construction Value of
+ * Works" is the cost of a delivered asset, already named in
+ * DELIVERED_WORK_VALUE_LABEL. Deleting the three words "relevant to this
+ * assignment" flipped the identical sentence to clean, which is how the veto
+ * was identified rather than guessed.
+ *
+ * WHAT DISTINGUISHES THE TWO, and it is not distance from a price word.
+ * A first attempt required the engagement noun to travel WITH pricing
+ * vocabulary, and tests/a-past-projects-construction-cost-is-not-this-bids-price
+ * immediately caught it letting through
+ *
+ *   "Construction Value of Works FOR THIS PROPOSAL is ETB 550,000,000"
+ *
+ * — a current-offer price wearing a historical label, which is the precise
+ * hazard this area exists to prevent. The real difference is GRAMMATICAL ROLE:
+ * there the engagement is what the amount BELONGS TO; in the evidence sentence
+ * it is merely the TARGET OF A RELEVANCE CLAIM about other, past work.
+ *
+ * So the veto is not narrowed at all. Every existing alternative still fires
+ * exactly as before. Only the relevance construction is removed from the text
+ * first, so a sentence is judged on what remains. A sentence that does both —
+ * "…relevant to this assignment. The price for this proposal is ETB 4.5M" —
+ * keeps its second occurrence and is still vetoed.
+ */
+const ENGAGEMENT_AS_RELEVANCE_TARGET = new RegExp(
+  String.raw`\b(?:relevant|relevance|applicable|pertinent|suited|suitable|related|comparable|similar|analogous|transferable|aligned|responsive)\b[^.]{0,40}?\b(?:to|for|with)\s+th(?:is|e\s+present)\s+(?:proposal|bid|assignment|tender)\b`,
+  "gi",
+);
+
+const BARE_ENGAGEMENT = /\bthis\s+(?:proposal|bid|assignment|tender)\b/i;
+
+/**
+ * Does this text name the CURRENT engagement other than as a relevance target?
+ */
+function namesCurrentEngagementAsItsOwn(text: string): boolean {
+  return BARE_ENGAGEMENT.test(text.replace(ENGAGEMENT_AS_RELEVANCE_TARGET, " "));
+}
+
 function isHistoricalReferenceValueSentence(sentence: string): boolean {
   const hasCurrencyValue = CURRENCY_AMOUNT.test(sentence);
   if (!hasCurrencyValue) return false;
 
-  const currentOfferPricing = /\b(this\s+(?:proposal|bid|assignment|tender)|our\s+(?:fee|price|rate|quotation|financial|commercial)|bid\s+price|proposal\s+price|total\s+price|unit\s+price|consultancy\s+fee|professional\s+fee|daily\s+rate|monthly\s+rate|hourly\s+rate|lump\s+sum|price\s+schedule|fee\s+schedule|rate\s+card|quotation|quoted\s+(?:amount|price)|amount\s+payable|payment\s+amount|budget\s+allocated|financial\s+proposal\s+(?:includes|totals|amount)|commercial\s+proposal\s+(?:includes|totals|amount))\b/i.test(sentence);
+  const currentOfferPricing = namesCurrentEngagementAsItsOwn(sentence)
+    || /\b(our\s+(?:fee|price|rate|quotation|financial|commercial)|bid\s+price|proposal\s+price|total\s+price|unit\s+price|consultancy\s+fee|professional\s+fee|daily\s+rate|monthly\s+rate|hourly\s+rate|lump\s+sum|price\s+schedule|fee\s+schedule|rate\s+card|quotation|quoted\s+(?:amount|price)|amount\s+payable|payment\s+amount|budget\s+allocated|financial\s+proposal\s+(?:includes|totals|amount)|commercial\s+proposal\s+(?:includes|totals|amount))\b/i.test(sentence);
   if (currentOfferPricing) return false;
 
   const strongHistoricCue = /\b(previous|prior|past|completed|delivered|managed|supervised|designed|implemented|reference\s+project|project\s+reference|relevant\s+experience|comparable\s+project|similar\s+project|portfolio|track\s+record)\b/i.test(sentence);
@@ -305,7 +358,8 @@ function isHistoricalReferenceValueContinuation(sentence: string, priorContext: 
   const labelled = /^\s*(?:project|contract)\s+value\b/i.test(sentence);
   if (!labelled && !isValueOnlyFragment(sentence)) return false;
 
-  const currentOfferContext = /\b(this\s+(?:proposal|bid|assignment|tender)|our\s+(?:fee|price|rate|quotation|financial|commercial)|current\s+(?:proposal|bid|assignment|tender))\b/i.test(priorContext);
+  const currentOfferContext = namesCurrentEngagementAsItsOwn(priorContext)
+    || /\b(our\s+(?:fee|price|rate|quotation|financial|commercial)|current\s+(?:proposal|bid|assignment|tender))\b/i.test(priorContext);
   if (currentOfferContext) return false;
 
   const explicitReferenceCue = /\b(previous|prior|past|reference\s+project|project\s+reference|relevant\s+experience|comparable\s+project|similar\s+project|portfolio|track\s+record)\b/i.test(priorContext);
