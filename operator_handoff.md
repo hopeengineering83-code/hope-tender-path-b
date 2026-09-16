@@ -243,12 +243,40 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
   A hypothesis that the two paths read different text (DB row vs storage bytes)
   was TESTED AND REJECTED: both go through `assessCurrentDocumentQuality`, which
   calls `resolveDocumentVisibleText`.
-- **Next action:** instrument or unit-test both verdict paths on the SAME
-  document id within one request and diff their inputs and outputs — including
-  the content-digest cache in `generated-document-text.ts`, which is the one
-  remaining asymmetry not yet ruled out. Do not patch either gate until the
-  divergence is explained; the wrong fix here silently lets a genuinely bad
-  document through an export gate.
+- **DIVERGENCE EXPLAINED — it is a MISATTRIBUTED MESSAGE, not two scorers
+  disagreeing.** `resolveCurrentDocumentVerdict` (current-document-quality.ts:238)
+  runs TWO independent checks and ORs them:
+
+  ```ts
+  const report     = assessGeneratedDocumentQuality({...});  // narrative rubric
+  const validation = validateDocumentQuality({...});         // second validator
+  score = qualityScore === "BLOCKED" || validation.status === "BLOCKED" ? "BLOCKED" : ...
+  ```
+
+  `validateDocumentQuality` (document-quality-validator.ts:42) blocks on ANY of
+  five conditions, none of which is the narrative rubric:
+  `placeholders.length > 0 || aiTrace.length > 0 || isEmpty ||
+  envelopeMismatch != null || boilerplateHits.length >= 5`.
+
+  So the observed state is fully consistent: the narrative rubric PASSED
+  (`failureCount=0`), the second validator BLOCKED, the verdict became BLOCKED,
+  `qualityBlocked` was set, and `exportBlockReason("QUALITY_BLOCKED")` then
+  attributed the block to "the canonical narrative-quality rubric" — an
+  authority that had just passed the document. The operator is sent to improve
+  prose for a placeholder, an AI trace, an empty body, an envelope mismatch or
+  boilerplate density.
+
+- **The reasons already exist and are already carried.** `resolveCurrentDocumentVerdict`
+  returns `reasons`, built from `validationReasons(validation)` plus the report's
+  issues. `validate.ts:273` uses them to build a real message. The readiness
+  blocker path does not, because `exportBlockReason(state)` takes only the state
+  enum and has no access to the verdict.
+- **Next action (generic, no Pharo/healthcare specifics):** give the
+  QUALITY_BLOCKED blocker the verdict's own reasons instead of a fixed sentence
+  naming one authority, so the block states which check failed and why. That
+  single change both fixes the misattribution AND reveals which of the five
+  conditions is firing on `Technical Proposal.pdf` — which is still UNKNOWN and
+  must not be guessed. Do not weaken either check to make them agree.
 - **DEADLINE_PASSED is advisory, not the blocker.** The tender's deadline passed
   2026-08-25. It does not block export and must not be confused with one.
 - **Provider state (14:25Z / 14:34Z):** `PROBE PASSED ['gemini','groq']`,
