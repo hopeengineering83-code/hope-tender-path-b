@@ -1132,6 +1132,45 @@ jobs:
           PYEOF
         continue-on-error: true
 
+      - name: Print WHY the quality gate refuses each document
+        run: |
+          # GENERATED_DOCUMENT_QUALITY_FAILED names no rule. The readiness
+          # blocker's own text says "The Document Validator shows the score and
+          # the specific issues" -- which is a dead end for an automated
+          # operator, because the score and the issues live behind a UI panel.
+          #
+          # /api/tenders/{id}/validate is the AUTHORITATIVE gate (the same
+          # readiness model the blocker comes from) and it already returns
+          # documentFailures[].reasons carrying "(score/100): reason; reason".
+          # Reading it here turns "failed the rubric" into a named rule.
+          code=$(curl -sS -o /tmp/validate.json -w '%{http_code}' -X POST \
+            -H "Cookie: hope_session=$SESSION_COOKIE" \
+            -H 'Content-Type: application/json' -d '{}' \
+            --connect-timeout 15 --max-time 90 \
+            "$BASE_URL/api/tenders/$TENDER_ID/validate" || echo 000)
+          echo "validate HTTP $code   (422 = blocked, which is the case we want to read)"
+          python3 - <<'PYEOF' | tee /tmp/document-quality-blockers.txt
+          import json
+          try:
+              d = json.load(open('/tmp/validate.json', encoding='utf-8'))
+          except Exception as e:
+              raise SystemExit(f"DOCUMENT QUALITY: validate response unreadable: {e}")
+          print(f"DOCUMENT QUALITY: {d.get('documentCount')} document(s), "
+                f"{d.get('failureCount')} failing")
+          for f in (d.get('documentFailures') or []):
+              print(f"  {f.get('name')}  id={f.get('documentId')}")
+              for r in (f.get('reasons') or []):
+                  # reasons carry the score and the named rule
+                  msg = r.get('message') if isinstance(r, dict) else r
+                  code = r.get('code') if isinstance(r, dict) else None
+                  print(f"      [{code}] {msg}")
+          for b in (d.get('tenderLevelBlockers') or []):
+              msg = b.get('message') if isinstance(b, dict) else b
+              code = b.get('code') if isinstance(b, dict) else None
+              print(f"  TENDER-LEVEL [{code}] {msg}")
+          PYEOF
+        continue-on-error: true
+
       - name: Run the live provider chain test and print WHY each one failed
         run: |
           # Same call the "Test provider chain" button makes -- the only surface
@@ -1251,6 +1290,7 @@ jobs:
             /tmp/ai-analyze-failures.txt
             /tmp/authorship.txt
             /tmp/provider-chain.txt
+            /tmp/document-quality-blockers.txt
             /tmp/provider-chain.jsonl
             /tmp/preview-health.txt
           if-no-files-found: error
