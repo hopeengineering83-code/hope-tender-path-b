@@ -203,7 +203,53 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
-### 2026-09-16 UTC (latest) — A passing probe is not a routing decision
+### 2026-09-16 UTC (latest) — First model-backed run; blocker moved to the quality rubric
+
+- **Tool / branch / PR:** Claude Code · `release/consolidated-recovery-20260717` · PR #1175 (open, draft, unmerged). Head `20f24eb6`.
+- **THE CHAIN RAN MODEL-BACKED FOR THE FIRST TIME** (run 35105947665, tender
+  `22b5e12e-2062-4c3c-9d38-23b38d445625`):
+
+  | job | result | duration |
+  |---|---|---|
+  | `AI_ANALYZE` | **SUCCEEDED** 14:04:31Z | 35.4 s |
+  | `ENGINE_RUN` | **SUCCEEDED** 14:06:38Z | 80 s |
+  | `PROPOSAL_GENERATION` | **SUCCEEDED** 14:08:10Z | 91 s |
+  | `AUTO_FINALIZE` | **FAILED** `GENERATED_DOCUMENT_QUALITY_FAILED` ref `85d4ea1d` | — |
+
+  `continuationReason: MANUAL_ENGINE_REQUIRED` after AI Analyze — the manual
+  owner gate held; the workflow supplied that authority explicitly.
+
+- **WHAT ACTUALLY UNBLOCKED IT — read this before waiting on a cooldown again.**
+  Provider health is IN-MEMORY PER SERVERLESS INSTANCE. At 13:37Z gemini was
+  "in cooldown"; at 13:59Z it was eligible. Nothing expired on a wall clock:
+  pushing `20f24eb6` redeployed the Preview, cold-started the instances and
+  discarded the in-memory state. Cooldowns do not age out on a clock you can
+  wait against — they die with the instance. A redeploy is the reliable way to
+  clear them, and the run window is however long the new instances stay warm.
+- **Provider state 13:59Z:** `PROBE PASSED ['gemini','groq']`,
+  `ELIGIBLE NOW ['gemini','groq']`, no provider cooling. gemini
+  `gemini-3.5-flash` carried the whole run on the free tier. The paid tail
+  (cerebras/openrouter/openai/deepseek/anthropic) is still BILLING-blocked;
+  mistral AUTH 403 `tier_not_allowed`; together AUTH 401; zai RATE_LIMIT 429.
+  **"The app requires paid provider credit" was never the right summary.**
+- **CURRENT BLOCKER — code-controlled, in scope:** `generatedDocumentsTotal: 1`,
+  `exportReadyDocumentsTotal: 0`. The one document, `Technical Proposal.pdf`
+  (`e015f90f-e962-465e-9f66-1c918da4b513`), `reviewStatus='PENDING'`,
+  `mode='Machine export repair completed for Technical Proposal'`, failed the
+  canonical narrative-quality rubric: *"The Document Validator shows the score
+  and the specific issues; it must be regenerated or repaired before it can be
+  exported."* `FINAL_ZIP_FILE_NOT_READY` follows from it.
+- **NOT yet established, do not assume:** the validator's actual score and its
+  specific issues (the inspect job does not fetch that endpoint), and whether
+  the document body is genuinely MODEL_BACKED — `mode='Machine export repair
+  completed'` does not settle authorship by itself.
+- **Next action:** read the Document Validator for that generatedDocumentId,
+  root-cause the rubric failure generically (no Pharo/healthcare special-casing),
+  fix, then re-run acceptance through export → byte inspection → 17-dimension
+  benchmark. Re-deploy first if the providers have gone cold.
+- **Merge status:** not reviewed. Do not merge. Do not promote Production.
+
+### 2026-09-16 UTC — A passing probe is not a routing decision
 
 - **Tool / branch / PR:** Claude Code · `release/consolidated-recovery-20260717` · PR #1175 (open, draft, unmerged).
 - **Live state established first, not assumed:** head `414cc18c`; exact-head CI
