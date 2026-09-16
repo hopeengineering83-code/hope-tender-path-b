@@ -1234,14 +1234,30 @@ jobs:
           #
           # Diagnostics run inside runAsDiagnostic(), so nothing here imposes a
           # cooldown on real work.
+          # BOTH CAPABILITIES, because they are different questions and this
+          # report answered only one of them.
+          #
+          # On 2026-09-16 the full chain ran end to end and the proposal came
+          # back "deterministic benchmark fallback" -- the deterministic draft
+          # wrote it, not a model -- while this sweep reported providers
+          # ANALYSIS_VERIFIED minutes earlier. Both were true. AI Analyze and
+          # proposal GENERATION use different models and payload sizes (a tiny
+          # structured extraction versus full narrative sections), so a
+          # provider can pass the analysis probe and still be unable to write
+          # the proposal. Measuring analysis and reporting it as "AI Analyze
+          # can run" says nothing about whether a MODEL-BACKED PROPOSAL can be
+          # produced, which is the question the acceptance exists to answer.
           : > /tmp/provider-chain.jsonl
-          for batch in "gemini,groq,mistral" "zai" "cerebras,openrouter,openai" "together,deepseek,anthropic"; do
-            echo "--- batch: $batch"
-            curl -sS --connect-timeout 15 --max-time 120 \
-              -H "Cookie: hope_session=$SESSION_COOKIE" \
-              "$BASE_URL/api/ai-providers/diagnostics?live=1&capability=analysis&provider=$batch" \
-              >> /tmp/provider-chain.jsonl || true
-            echo >> /tmp/provider-chain.jsonl
+          for capability in analysis generation; do
+            echo "=== capability: $capability"
+            for batch in "gemini,groq,mistral" "zai" "cerebras,openrouter,openai" "together,deepseek,anthropic"; do
+              echo "--- batch: $batch ($capability)"
+              curl -sS --connect-timeout 15 --max-time 120 \
+                -H "Cookie: hope_session=$SESSION_COOKIE" \
+                "$BASE_URL/api/ai-providers/diagnostics?live=1&capability=$capability&provider=$batch" \
+                >> /tmp/provider-chain.jsonl || true
+              echo >> /tmp/provider-chain.jsonl
+            done
           done
           python3 - <<'PYEOF' | tee /tmp/provider-chain.txt
           import json

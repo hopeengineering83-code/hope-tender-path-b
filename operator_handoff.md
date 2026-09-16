@@ -203,7 +203,56 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
-### 2026-09-16 UTC (latest) — THE PACKAGE EXPORTS. First ZIP this tender has produced.
+### 2026-09-16 UTC (latest) — The chain is green end to end. The proposal was NOT model-backed.
+
+- **Tool / branch / PR:** Claude Code · `release/consolidated-recovery-20260717` · PR #1175 (open, draft, unmerged). Head `8afcb344`.
+- **THE FULL AUTOMATIC CHAIN WORKS, AND IT REPRODUCES.** Two `confirm=accept`
+  runs, 35143112295 and 35145947108, both SUCCESS end to end: AI Analyze →
+  Run Engine → ENGINE_RUN → PROPOSAL_GENERATION → AUTO_FINALIZE → readiness →
+  POST /export → ZIP → 39-page render → brand audit → text dump. AUTO_FINALIZE
+  converged, which it had never done before. The gate passes the freshly
+  generated package: `validate HTTP 200`, `ok=True`, `exportReadyDocumentsTotal=1`,
+  `failureCount=0`.
+- **AND THE PROPOSAL WAS WRITTEN BY THE DETERMINISTIC DRAFT.** With authorship
+  provenance no longer destroyed by export repair, run 35146668874 states it:
+
+  ```
+  ANALYSIS AUTHORSHIP: analysisSource={'label': 'AI', 'risk': 'LOW',
+                                       'detail': 'AI (current AI Analyze output).'}
+  DOCUMENT AUTHORSHIP: 1 document(s)
+    - 'Technical Proposal.pdf'
+        mode='deterministic benchmark fallback + evaluator response matrix
+              + client-ready benchmark finalizer + professional DOCX polish
+              technical proposal generated'
+  ```
+
+  AI Analyze was model-backed. **Proposal generation was not.**
+- **SO #51 IS NOT SATISFIED BY THIS PACKAGE, and must not be scored as if it
+  were.** The standard is a FRESH MODEL-BACKED proposal exported, inspected and
+  benchmarked. Two of those three hold. Benchmarking a deterministic draft
+  against Claude.ai / ChatGPT references would measure the fallback writer and
+  report it as the app's quality.
+- **Exporting a deterministic draft is not a defect** — Workboard #27 records
+  the owner's decision NOT to gate export on model-backing. It is only a reason
+  this package cannot answer the benchmark question.
+- **PROVIDER STATE at 20:29Z, analysis capability:** zai `ANALYSIS_VERIFIED`
+  (recovered); groq `ANALYSIS_VERIFIED`; gemini RATE_LIMITED/503 earlier;
+  mistral AUTH 403 tier_not_allowed; together AUTH 401 invalid key;
+  cerebras / openrouter / openai / deepseek / anthropic all BILLING (402/429,
+  insufficient credit).
+- **THE REPORT MEASURED THE WRONG CAPABILITY, now fixed.** The sweep ran
+  `capability=analysis` only, so it could say "AI Analyze can run" minutes before
+  a run whose PROPOSAL fell back. Analysis and generation use different models
+  and payload sizes — a tiny structured extraction versus full narrative
+  sections — so passing one says nothing about the other. The sweep now runs
+  `analysis` AND `generation`, which makes "can this app produce a model-backed
+  proposal right now?" answerable in one read instead of a full accept run.
+- **NEXT SESSION, in order:** read the generation-capability sweep; if any
+  provider is generation-eligible, run `confirm=accept` and confirm
+  `mode=` no longer says deterministic; only then score the 17 dimensions.
+- **Merge status:** not reviewed. Do not merge. Do not promote Production.
+
+### 2026-09-16 UTC — THE PACKAGE EXPORTS. First ZIP this tender has produced.
 
 - **Tool / branch / PR:** Claude Code · `release/consolidated-recovery-20260717` · PR #1175 (open, draft, unmerged). Head `dcf8a396`.
 - **Run 35142818593, `confirm=export`, conclusion SUCCESS.** Every step that had
