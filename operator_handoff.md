@@ -203,7 +203,70 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
-### 2026-09-16 UTC (latest) — A blocked verdict must always name a blocking reason
+### 2026-09-16 UTC (latest) — The pricing fix worked; what it uncovered is NOT another false positive
+
+- **Tool / branch / PR:** Claude Code · `release/consolidated-recovery-20260717` · PR #1175 (open, draft, unmerged). Head `d237790d`.
+- **THE ENGAGEMENT-VETO FIX IS CONFIRMED ON REAL BYTES.** Run 35140476920 against
+  the deployed fix shows the flagged fragment has CHANGED:
+  - before: `"…presents 3 project reference(s) directly relevant to this assignment: G+6 General Hospital…"`
+  - now: `"workflow | patient-flow planning operate, reducing | ETB 550,074,678 —"`
+
+  The sentence that refused the package is clean. A DIFFERENT fragment now trips
+  the same rule, which is why the score is unchanged at 75 — one HIGH
+  PRICING_LEAKAGE either way. Progress, not a no-op.
+- **What now trips it, verbatim, from the delivered PDF (2 of 1215 fragments):**
+
+  ```
+  PRICING LEAKAGE ON THE AUDIT'S OWN TEXT: true
+    > Row 3: workflow | patient-flow planning operate, reducing | ETB 550,074,678 —
+    > Row 2: clinical brief | freeze at 30% gate; | functional-programming-aligned USD 18,900,000 —
+  ```
+
+- **MECHANISM, proven not guessed.** `isHistoricalReferenceValueContinuation`
+  admits a fragment to the comparable-projects exemption only when it is a
+  labelled value (`/^(project|contract) value/`) or a value-ONLY cell. A
+  pipe-joined row is neither, so it is rejected BEFORE prior context is
+  consulted. Verified locally: the rows stay flagged under a strong historic
+  cue, a named client organisation AND a delivered-work label placed directly
+  above them. Context cannot rescue them; the admission gate is what refuses.
+- **`Row N: a | b | c` is produced by `lib/extract-text.ts`** (five sites), the
+  text EXTRACTOR — not the document generator. So the garbled cells are
+  column-reconstruction artifacts from the PDF. The gate is making a release
+  decision on a lossy table reconstruction and cannot tell "this row has no
+  context" from "this row's context was lost in extraction".
+- **DO NOT REFLEXIVELY LOOSEN THE PRICING GATE HERE.** The obvious next move —
+  admit pipe-delimited table rows to the exemption — is probably WRONG, because
+  the delivered PDF's 26 monetary figures are not independent:
+
+  ```
+       945,000 USD /     18,900,000 USD =   5.0000%
+     1,100,000 ETB /    550,074,678 ETB =   0.2000%
+       110,000 ETB /      1,100,000 ETB =  10.0000%
+  ```
+
+  Exact 5%, 0.2% and 10% are DERIVED figures, not coincidences. Fee-shaped
+  numbers computed from construction values, inside a TECHNICAL envelope, are
+  precisely what this gate exists to catch, and financial-leakage controls are
+  under the standing HARD PRESERVATION LOCK.
+
+  **This does NOT yet prove the document misrepresents them.** They could be
+  legitimate past-project facts ("design supervision delivered at 5% of
+  construction value"). What it does prove is that relaxing the gate before
+  auditing what those figures CLAIM would be unsafe. That audit is the open
+  Workboard item on monetary-statement classification, and it must run on the
+  delivered bytes.
+- **Therefore the surviving HIGH issue is explained but deliberately NOT
+  "fixed".** Choosing between "the extractor mangles the row" and "the document
+  states a derived fee" changes what correct behaviour even is, and the
+  evidence currently supports the gate.
+- **Provider state at 19:27Z (2 of 10 routable, both verified):** groq
+  `ANALYSIS_VERIFIED` `openai/gpt-oss-120b`; zai `ANALYSIS_VERIFIED`
+  `glm-4.7-flash` (recovered from the earlier 429). gemini 503
+  PROVIDER_OVERLOAD; mistral 403 tier; cerebras/openrouter/openai/deepseek/
+  anthropic billing; together 401. A fresh model-backed run CAN run now.
+- **Merge status:** not reviewed. Do not merge. Do not promote Production.
+
+### 2026-09-16 UTC — A blocked verdict must always name a blocking reason
 
 - **Tool / branch / PR:** Claude Code · `release/consolidated-recovery-20260717` · PR #1175 (open, draft, unmerged). Head `56035509`.
 - **CORRECTION — carry this forward. `failureCount=0` does NOT mean the
