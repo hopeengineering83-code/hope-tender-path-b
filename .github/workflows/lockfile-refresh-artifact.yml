@@ -1137,6 +1137,21 @@ jobs:
               head = summary.split(".")[0][:160] if summary else "(no contentSummary)"
               print(f"  - {doc.get('fileName') or doc.get('name')!r}")
               print(f"      reviewStatus={doc.get('reviewStatus')!r} mode={head!r}")
+              # WHY IT FELL BACK, not just THAT it fell back.
+              #
+              # generate-elite.ts already appends "AI fallback reason: <error>" to
+              # contentSummary whenever the AI writer throws and the deterministic
+              # draft takes over, and the deterministic label is only ever set
+              # inside that catch -- so the writer WAS attempted and DID throw.
+              # This printer showed only summary.split(".")[0], the mode, so three
+              # accept runs reported "deterministic benchmark fallback" while the
+              # provider sweep said groq was GENERATION_VERIFIED, and the actual
+              # exception sat unread in the same field.
+              marker = "AI fallback reason:"
+              if marker in summary:
+                  print(f"      FELL BACK BECAUSE: {summary.split(marker, 1)[1].strip()[:400]}")
+              elif "deterministic" in head.lower():
+                  print("      FELL BACK BECAUSE: (no reason recorded -- the AI writer was never attempted)")
           PYEOF
 
       - name: Read Preview health
