@@ -39,6 +39,32 @@ const EMPTY_SECTION_RE = /^#{1,6}\s+.+(?:\r?\n[ \t]*)+(?=#{1,6}\s+\S|(?![\s\S]))
 // identifier with a quoted fee.
 export const TECHNICAL_IN_FINANCIAL_RE = /methodology|work\s+plan|staffing\s+plan|technical\s+approach/i;
 
+/**
+ * The phrase each pattern actually matched, one entry per matching pattern.
+ *
+ * These two lists used to report `re.source` with its metacharacters stripped,
+ * which turned /\bbest practices\b/i into "bbest practicesb" — a string no
+ * reader can act on and no search will find anywhere in the document. The
+ * placeholder list was moved to `documentPlaceholderMatches` for exactly this
+ * reason; these were the two remaining sites still printing mangled regex
+ * sources, and they are the ones a blocked export now quotes to the owner.
+ *
+ * One entry per MATCHING PATTERN, deliberately not de-duplicated by phrase:
+ * `boilerplateHits.length >= 5` is a gate threshold, and collapsing two
+ * patterns that happen to match the same words would lower the count and
+ * quietly weaken it.
+ */
+function matchedPhrases(text: string, patterns: RegExp[]): string[] {
+  const phrases: string[] = [];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (!match) continue;
+    const phrase = match[0].trim().replace(/\s+/g, " ").slice(0, 60);
+    phrases.push(phrase.length > 0 ? phrase : pattern.source.slice(0, 40));
+  }
+  return phrases;
+}
+
 export function validateDocumentQuality(doc: {
   name: string;
   documentType: string | null;
@@ -81,13 +107,9 @@ export function validateDocumentQuality(doc: {
     ? documentPlaceholderMatches(text)
     : [];
 
-  const aiTrace = hasContent && text
-    ? AI_TRACE_PATTERNS.filter((re) => re.test(text)).map((re) => re.source.replace(/[\\^$.*+?()[\]{}|]/g, "").slice(0, 40))
-    : [];
+  const aiTrace = hasContent && text ? matchedPhrases(text, AI_TRACE_PATTERNS) : [];
 
-  const boilerplateHits = hasContent && text
-    ? GENERIC_BOILERPLATE_PATTERNS.filter((re) => re.test(text)).map((re) => re.source.replace(/[\\^$.*+?()[\]{}|]/g, "").slice(0, 40))
-    : [];
+  const boilerplateHits = hasContent && text ? matchedPhrases(text, GENERIC_BOILERPLATE_PATTERNS) : [];
 
   const dtype = (doc.documentType ?? "").toUpperCase();
   let envelopeMismatch: string | null = null;

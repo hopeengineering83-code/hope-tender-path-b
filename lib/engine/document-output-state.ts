@@ -59,12 +59,15 @@ export type DocumentLike = {
    * mismatch or boilerplate density. `qualityBlocked` records that ONE of them
    * refused, not which.
    *
-   * On 2026-09-16 the first model-backed package was refused with
-   * `failureCount=0` — the narrative rubric had PASSED — while the blocker text
-   * read "The document failed the canonical narrative-quality rubric". The
-   * message named the one authority that had just cleared the document, so the
-   * only actionable reading was to rewrite prose for what may well have been a
-   * placeholder or an envelope mismatch.
+   * On 2026-09-16 the first model-backed package was refused while the blocker
+   * text read "The document failed the canonical narrative-quality rubric" — a
+   * fixed sentence, asserted without consulting either check. The only
+   * actionable reading was to rewrite prose for what may well have been a
+   * placeholder, an envelope mismatch or boilerplate density.
+   *
+   * (The `failureCount=0` in that same response is NOT evidence the rubric
+   * passed: it counts `checkDocumentQualityGate` failures, a third assessor in
+   * lib/document-generation that this blocker never consults.)
    *
    * The reasons already exist on the verdict. Carrying them here is what stops
    * a blocker from attributing itself to the wrong check.

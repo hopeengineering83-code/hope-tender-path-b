@@ -203,6 +203,13 @@ export type CurrentDocumentVerdict<T> = {
 
 type VerdictReason = CurrentDocumentVerdict<unknown>["reasons"][number];
 
+/**
+ * The boilerplate count at which validateDocumentQuality moves from warning to
+ * BLOCKED. Named here so the reason that explains the block and the condition
+ * that causes it cannot drift apart.
+ */
+const BOILERPLATE_BLOCK_THRESHOLD = 5;
+
 function validationReasons(validation: DocumentValidationResult): VerdictReason[] {
   const reasons: VerdictReason[] = [];
   if (validation.isEmpty) {
@@ -225,7 +232,23 @@ function validationReasons(validation: DocumentValidationResult): VerdictReason[
   if (validation.envelopeMismatch) {
     reasons.push({ severity: "HIGH", code: "ENVELOPE_MISMATCH", message: validation.envelopeMismatch });
   }
+  // The fifth blocking condition, which had no reason at all.
+  //
+  // validateDocumentQuality BLOCKS at `boilerplateHits.length >= 5`, but the
+  // only thing it emitted for boilerplate was a MEDIUM qualityWarning at >= 3.
+  // So a document blocked solely on boilerplate density produced a BLOCKED
+  // verdict carrying zero HIGH reasons, and every consumer that reports the
+  // blocking reasons — the readiness blocker included — had nothing to name.
+  if (validation.boilerplateHits.length >= BOILERPLATE_BLOCK_THRESHOLD) {
+    reasons.push({
+      severity: "HIGH",
+      code: "BOILERPLATE_DENSITY",
+      message: `Generic boilerplate detected (${validation.boilerplateHits.length} phrase(s)): ${validation.boilerplateHits.slice(0, 6).map((phrase) => `"${phrase}"`).join(", ")}. Replace them with specifics drawn from the tender and the company's own evidence.`,
+    });
+  }
   for (const warning of validation.qualityWarnings) {
+    // Already stated above, as the HIGH reason it actually is.
+    if (validation.boilerplateHits.length >= BOILERPLATE_BLOCK_THRESHOLD && warning.startsWith("High generic boilerplate density")) continue;
     reasons.push({ severity: "MEDIUM", code: "QUALITY_WARNING", message: warning });
   }
   return reasons;
@@ -279,6 +302,33 @@ export async function resolveCurrentDocumentVerdict<T extends QualityAssessableD
     push({ severity: issue.severity === "HIGH" ? "HIGH" : "MEDIUM", code: issue.code, message: issue.message });
   }
   reasons.sort((a, b) => (a.severity === b.severity ? 0 : a.severity === "HIGH" ? -1 : 1));
+
+  // INVARIANT: a BLOCKED verdict always names at least one blocking reason.
+  //
+  // Consumers filter to HIGH to report WHY an export is refused, and two
+  // blocking conditions could produce a BLOCKED verdict with no HIGH reason at
+  // all: boilerplate density (fixed above) and a narrative rubric that fails on
+  // `severityFromScore(score) === "FAILED"` alone, where every contributing
+  // issue is MEDIUM or LOW. The owner then reads "this document is blocked" and
+  // nothing else, which is the defect this whole area exists to prevent.
+  //
+  // This is a fail-safe, not a substitute for a specific reason: any future
+  // blocking condition that forgets its reason degrades to a sentence naming
+  // the authority and its score, never to silence.
+  if (score === "BLOCKED" && !reasons.some((reason) => reason.severity === "HIGH")) {
+    const blocking: string[] = [];
+    if (qualityScore === "BLOCKED") blocking.push(`narrative rubric scored ${report.score}/100 (${report.recommendedStatus})`);
+    if (validation.status === "BLOCKED") blocking.push(`document validator scored ${validation.score}/100`);
+    reasons.unshift({
+      severity: "HIGH",
+      code: "QUALITY_BLOCKED_UNATTRIBUTED",
+      message: `Blocked by ${blocking.join(" and ") || "a quality check"}, but no individual rule reported a blocking reason. ${
+        reasons.length > 0
+          ? `The findings recorded were: ${reasons.slice(0, 4).map((reason) => reason.message).join("; ")}`
+          : "No findings were recorded at all, which is itself a defect in the check that refused it."
+      }`,
+    });
+  }
 
   return { doc, report, validation, score, reasons };
 }

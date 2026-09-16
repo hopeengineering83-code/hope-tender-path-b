@@ -14,9 +14,19 @@ import { exportBlockReason, deriveDocumentOutputState } from "../lib/engine/docu
  *     failed the canonical narrative-quality rubric ..."}]
  *   documentCount=1  failureCount=0  exportReadyDocumentsTotal=0
  *
- * `failureCount=0`. The narrative rubric had PASSED. The sentence naming it was
- * `exportBlockReason("QUALITY_BLOCKED")` — a fixed string asserting a specific
- * authority that the function had no way to know was responsible.
+ * The sentence naming the rubric was `exportBlockReason("QUALITY_BLOCKED")` — a
+ * fixed string asserting a specific authority that the function had no way to
+ * know was responsible.
+ *
+ * CORRECTION to the reading first recorded here: `failureCount=0` does NOT mean
+ * the narrative rubric passed. That field is
+ * `checkFullExportReadinessWithQualityGate().failures.length`, which comes from
+ * `checkDocumentQualityGate` → `validateGeneratedDocumentQuality` in
+ * lib/document-generation — a THIRD assessor that the readiness blocker does not
+ * consult at all. The same response therefore reports two independent
+ * authorities, and `failureCount` is silent about both checks inside the
+ * verdict. Which of them refused is still unproven; that is precisely why the
+ * blocker must carry the verdict's own reasons rather than assert one.
  *
  * `resolveCurrentDocumentVerdict` ORs two independent checks:
  *
