@@ -2179,7 +2179,42 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           PROPOSAL_AI_TIMEOUT_MS,
         );
         if (sectionResult.anyFallback) {
-          throw new Error("AI_SECTION_PARTIAL_FALLBACK: one or more sections used deterministic fallback. Output is not fully AI-generated.");
+          // NAME THE SECTIONS. The guard is unchanged -- it still refuses a
+          // partially-AI document -- but it used to throw a boolean's worth of
+          // information and discard everything the section writer had just
+          // recorded.
+          //
+          // sectionResult.sections already carries, per section: id, source,
+          // the thrown error, the model, estimatedInputTokens, contextLimit,
+          // maxOutputTokens, failureCategory and attempts. That detail decides
+          // whether one section fails for a specific fixable reason (a budget,
+          // a context limit, one provider's rate limit) or whether the writer
+          // is broadly unable to produce a section -- two very different
+          // problems that "one or more sections used deterministic fallback"
+          // cannot tell apart. Three accept runs reported the deterministic
+          // draft without anyone being able to say which section caused it.
+          //
+          // This message reaches the operator: generate-elite appends it to
+          // contentSummary as "AI fallback reason: ...", which the acceptance
+          // inspection prints.
+          const failed = sectionResult.sections.filter((section) => section.source === "fallback");
+          const detail = failed
+            .map((section) => {
+              const parts = [section.id];
+              if (section.failureCategory) parts.push(section.failureCategory);
+              if (section.model) parts.push(`model=${section.model}`);
+              if (section.estimatedInputTokens !== undefined && section.contextLimit !== undefined) {
+                parts.push(`in=${section.estimatedInputTokens}/${section.contextLimit}`);
+              }
+              if (section.maxOutputTokens !== undefined) parts.push(`out<=${section.maxOutputTokens}`);
+              if (section.attempts) parts.push(`attempts=${section.attempts}`);
+              if (section.error) parts.push(`"${String(section.error).slice(0, 160)}"`);
+              return parts.join(" ");
+            })
+            .join(" | ");
+          throw new Error(
+            `AI_SECTION_PARTIAL_FALLBACK: ${failed.length} of ${sectionResult.sections.length} section(s) used deterministic fallback, so the whole AI output was discarded. Failed: ${detail || "(no per-section detail recorded)"}`,
+          );
         }
         sourceMarkdown = sectionResult.markdown;
       } else {
