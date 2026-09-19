@@ -203,6 +203,81 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-19 UTC (latest) — Fifth Preview database swap: provisioned and verified healthy; vault is empty
+
+- **Tool / branch / PR:** Claude Code · `release/consolidated-recovery-20260717` · PR #1175 (open, draft, unmerged). Head `86679600`.
+- **Trigger:** the owner replaced the Preview Neon database again — a new migration
+  (direct) connection string in `PREVIEW_DATABASE_URL_MIGRATION`, and the *pooled*
+  form set as the Vercel Preview `DATABASE_URL` — then redeployed.
+
+**Health BEFORE provision — run 35463409048, 19:09Z, verbatim:**
+
+```
+HTTP 503
+{"ok":false,"status":"database-unreachable", ... "databaseFingerprint":"e4e7863c77c3", ...}
+  tables present          = 0/8
+  migration secret host   = ep-withered-king-b5wgfgdq.c-7.us-east-2.aws.neon.tech
+  fingerprint (direct)    = 55c644ac2777
+  fingerprint (pooled)    = e4e7863c77c3   <-- what /api/health prints
+```
+
+The pooled fingerprint the Preview reports is **identical** to the pooled form of
+the migration URL, so the two secrets point at the same Neon endpoint and the
+same `neondb`. That is the check worth doing first after every swap: a mismatch
+here means migrations would land in one database while the app reads another.
+The 503 was simply an empty, never-migrated database.
+
+**Provision — run 35463714567, 19:15Z, verbatim:**
+
+```
+All migrations have been successfully applied.
+{"ok": true, "migration": "20260601000000_init", "mode": "applied",
+ "expectedTables": 41, "expectedColumns": 555, "expectedIndexes": 61,
+ "expectedConstraints": 87, "historyFailures": [], "schemaFailures": [], "failures": []}
+{"ok": true, "requiredTables": 30, "requiredColumnGroups": 10,
+ "requiredFunctions": 3, "migrationHistoryRequired": true, "failures": []}
+53 migrations found in prisma/migrations
+Database schema is up to date!
+Final Role row count: 4
+Owner provisioned.  role: ADMIN
+Vault baseline on this database:
+  users:    1
+  projects: 0
+  experts:  0
+  tenders:  0
+```
+
+**Health AFTER provision — run 35463811508, 19:16Z, verbatim:**
+
+```
+  ok                      = True
+  status                  = healthy
+  databaseFingerprint     = e4e7863c77c3   <-- POOLED (what Vercel uses)
+  schemaMatchesDeployedCode = True
+  tables present          = 8/8
+```
+
+**Where this leaves the pipeline.** The Preview is healthy and the schema matches
+the deployed code, but the database holds nothing except the owner account and
+the four Role rows. Tender `22b5e12e-2062-4c3c-9d38-23b38d445625` and document
+`e015f90f-e962-465e-9f66-1c918da4b513` **no longer exist** — every earlier run ID,
+job log and artifact in this file refers to a database that is gone. Do not
+dispatch `confirm=accept`, `export`, `inspect` or `enrich` against this Preview
+and do not quote a prior tender ID as if it still resolves; `confirm=ready` is the
+safe poll, and it reports zero of everything until the owner re-uploads.
+
+**The one remaining owner action:** upload Company Vault documents and Brand
+Assets (once), then the tender files. Nothing downstream — AI Analyze, Run Engine,
+generation, export, the 17-dimension benchmark — can run before that, and no
+amount of agent work substitutes for it.
+
+**Also confirmed:** head `86679600` has a READY Vercel deployment
+(`dpl_9NDkewYfvez9YxpREfGZxonG4SQE`). The 19:09Z health read was served by
+`dpl_3nGg93xWt1nuKaAA4mvu5ivNbyse` at release `d5594de8`, one commit behind,
+because the branch alias had not yet moved. Confirm the served release before
+treating any hosted output as evidence for a specific commit — that mistake has
+already cost this work one wrong conclusion.
+
 ### 2026-09-16 UTC (latest) — WHY generation falls back: AI_SECTION_PARTIAL_FALLBACK, an all-or-nothing guard
 
 - **Tool / branch / PR:** Claude Code · `release/consolidated-recovery-20260717` · PR #1175 (open, draft, unmerged). Head `c5ad5226`.
