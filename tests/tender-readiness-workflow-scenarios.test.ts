@@ -53,7 +53,7 @@ describe("Workflow Readiness Scenarios", () => {
     };
     const mockPrisma = { tender: { findFirst: async () => tender } };
     const state = await getCanonicalTenderWorkflowState(mockPrisma as any, "u1", "t1");
-    assert.equal(state.nextAction, "REVIEW_REQUIREMENTS");
+    assert.equal(state.nextAction, "RUN_AI_ANALYZE");
     assert.equal(state.readyForGeneration, false);
   });
 

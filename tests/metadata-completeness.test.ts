@@ -228,14 +228,28 @@ describe("metadata completeness — NOT_APPLICABLE override skips placeholder sc
 });
 
 describe("generate route — embedded placeholder in client name blocked", () => {
-  it("generate route source imports containsMetadataPlaceholder", () => {
-    const src = readFileSync(
+  it("embedded placeholder detection reaches the generate route through the canonical validation chain", () => {
+    // The route previously carried a DEAD import of containsMetadataPlaceholder
+    // (only isValidClientName's unused wrapper referenced the module); the real
+    // enforcement has always been the canonical chain:
+    //   generate route -> validateTenderBeforeGeneration
+    //     -> containsMetadataPlaceholder (pre-generation-validation)
+    // Assert that chain instead of a vacuous route-level import.
+    const routeSrc = readFileSync(
       resolve(process.cwd(), "app/api/tenders/[id]/generate/route.ts"),
       "utf8",
     );
     assert.ok(
-      src.includes("containsMetadataPlaceholder"),
-      "generate route must import and use containsMetadataPlaceholder for embedded placeholder detection",
+      routeSrc.includes("validateTenderBeforeGeneration"),
+      "generate route must run validateTenderBeforeGeneration",
+    );
+    const preGenSrc = readFileSync(
+      resolve(process.cwd(), "lib/engine/pre-generation-validation.ts"),
+      "utf8",
+    );
+    assert.ok(
+      preGenSrc.includes("containsMetadataPlaceholder"),
+      "pre-generation validation must use containsMetadataPlaceholder for embedded placeholder detection",
     );
   });
 

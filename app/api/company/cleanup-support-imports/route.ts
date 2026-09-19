@@ -77,7 +77,7 @@ export async function POST(req: Request) {
       // support filename in its profile/summary without being derived from that
       // document. Text matching would silently destroy real business data.
       // Only REGEX_DRAFT and AI_DRAFT records are removed. REVIEWED records are
-      // preserved because human review makes them authoritative.
+      // preserved because machine-verified review makes them authoritative.
       const REMOVABLE_TRUST_LEVELS = ["REGEX_DRAFT", "AI_DRAFT"];
       const directExpertDelete = supportDocIds.length > 0
         ? await tx.expert.deleteMany({

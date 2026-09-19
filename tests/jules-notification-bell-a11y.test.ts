@@ -96,7 +96,7 @@ describe("NotificationBell Accessibility and Non-Optimistic Behavior", () => {
     });
   });
 
-  it("provides specific meaningful accessible label for '✕' button on unread notification", async () => {
+  it("provides specific meaningful accessible label for the close-icon button on unread notification", async () => {
     const { container } = renderWithRouter(h(NotificationBell, { initialUnread: 2 }));
     const button = container.querySelector("button");
     assert.ok(button);
@@ -105,7 +105,7 @@ describe("NotificationBell Accessibility and Non-Optimistic Behavior", () => {
 
     await waitFor(() => {
       const closeButtons = container.querySelectorAll("#notification-popup button");
-      // Find the cross buttons (there should be '✕' close buttons with a specific aria-label)
+      // Find the cross buttons (there should be close buttons with a specific aria-label)
       const markReadBtn1 = Array.from(closeButtons).find(
         (btn) => btn.getAttribute("aria-label") === 'Mark "Tender Deadline Approaching" as read'
       );
@@ -114,7 +114,12 @@ describe("NotificationBell Accessibility and Non-Optimistic Behavior", () => {
       );
       assert.ok(markReadBtn1);
       assert.ok(markReadBtn2);
-      assert.equal(markReadBtn1.textContent?.trim(), "✕");
+      // The close mark is a real inline SVG icon (components/icons.tsx), not a raw
+      // Unicode glyph — glyph rendering depends on the viewer's OS/browser emoji
+      // font and shows blank "tofu" boxes in many environments. The accessible
+      // name still comes from the button's own aria-label above; this just
+      // confirms a real icon (not empty content) renders inside the button.
+      assert.ok(markReadBtn1.querySelector("svg"), "close button must render an icon");
     });
   });
 

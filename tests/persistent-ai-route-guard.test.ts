@@ -17,7 +17,13 @@ describe("persistent AI route guard", () => {
   });
 
   it("does not trust a user-supplied bypass header", () => {
-    expectContains(middleware, /suppliedToken === token/, "bypass requires the derived internal token");
+    // The bypass must compare against the server-derived token AND require it
+    // to exist — a null token (no SESSION_SECRET) must never satisfy the check.
+    expectContains(
+      middleware,
+      /guardToken !== null && req\.headers\.get\(INTERNAL_GUARD_HEADER\) === guardToken/,
+      "bypass requires the derived internal token and a non-null secret",
+    );
     expectContains(middleware, /requestHeaders\.delete\(INTERNAL_GUARD_HEADER\)/, "client bypass header must be removed before forwarding");
     expectContains(middleware, /crypto\.subtle\.digest\("SHA-256"/, "edge token must be derived from the server secret");
   });

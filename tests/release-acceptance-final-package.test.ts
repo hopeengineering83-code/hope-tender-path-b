@@ -77,14 +77,17 @@ describe("release-acceptance F — final package manifest", () => {
 });
 
 describe("release-acceptance F — final ZIP assembly", () => {
-  const entry = (id: string, name: string): ZipEntry => ({
+  const entry = (id: string, name: string, order = 1): ZipEntry => ({
     name,
     source: "GENERATED_DOC",
     generatedDocId: id,
+    order,
+    envelope: /financial/i.test(name) ? "FINANCIAL" : "TECHNICAL",
+    format: name.toLowerCase().endsWith(".pdf") ? "PDF" : "DOCX",
   });
 
   it("assembles scoped entries and the manifest matches the reopened ZIP", async () => {
-    const entries = [entry("d1", "01-Technical.docx"), entry("d2", "02-Financial.docx")];
+    const entries = [entry("d1", "01-Technical.docx"), entry("d2", "02-Financial.docx", 2)];
     const contents = [
       { generatedDocId: "d1", bytes: docBytes("tech") },
       { generatedDocId: "d2", bytes: docBytes("fin") },
@@ -108,7 +111,7 @@ describe("release-acceptance F — final ZIP assembly", () => {
     // Duplicate entry names
     await assert.rejects(
       assembleFinalSubmissionZip(
-        [entry("d1", "same.docx"), entry("d2", "same.docx")],
+        [entry("d1", "same.docx"), entry("d2", "same.docx", 2)],
         [{ generatedDocId: "d1", bytes: docBytes("a") }, { generatedDocId: "d2", bytes: docBytes("b") }],
       ),
       /duplicate|overwrite|same/i,

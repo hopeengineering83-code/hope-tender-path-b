@@ -4,24 +4,35 @@ import { canMutateTender } from "../lib/recovery-command-actions";
 import { getCurrentUser } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
 import { getTenderGenerationReadinessStrict } from "../lib/tender-generation-readiness-strict";
+import { getCanonicalTenderWorkflowDecision } from "../lib/engine/canonical-workflow-decision";
 import type { TenderGenerationReadiness } from "../lib/tender-generation-readiness";
 import { clientLogger } from "@/lib/ui/client-logger";
+
+function dedupeReadinessItems<T extends { code?: string; message: string }>(items: T[]): T[] {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const key = `${item.code ?? ""}|${item.message.trim().toLowerCase()}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
 
 function actionHref(tenderId: string, action?: string): string {
   if (action === "EDIT_TENDER") return `/dashboard/tenders/${tenderId}#tender-edit-form`;
   if (action === "EDIT_TENDER_METADATA") return `/dashboard/tenders/${tenderId}#tender-edit-form`;
   if (action === "OPEN_COMPANY_READINESS") return "/dashboard/company/readiness";
   if (action === "OPEN_EXTRACTION_QUALITY") return `/dashboard/tenders/${tenderId}#extraction-quality`;
-  if (action === "BUILD_SUBMISSION_PLAN") return `/dashboard/tenders/${tenderId}#submission-plan-reconciliation`;
+  if (action === "BUILD_SUBMISSION_PLAN") return `/dashboard/tenders/${tenderId}#submission-plan-completeness`;
   if (action === "OPEN_ANALYSIS_QUALITY") return `/dashboard/tenders/${tenderId}#analysis-quality`;
-  if (action === "OPEN_MATCHING_QUALITY") return `/dashboard/tenders/${tenderId}#matching-quality`;
-  if (action === "RUN_ENGINE") return `/dashboard/tenders/${tenderId}#run-engine-action`;
+  if (action === "OPEN_MATCHING_QUALITY") return `/dashboard/tenders/${tenderId}#matching-selected-evidence`;
+  if (action === "RUN_ENGINE") return `/dashboard/tenders/${tenderId}#matching-selected-evidence`;
   if (action === "REVIEW_MATCHES") return `/dashboard/tenders/${tenderId}#proposal-evidence-readiness`;
-  if (action === "OPEN_KNOWLEDGE_REVIEW") return "/dashboard/company/review-board";
+  if (action === "OPEN_KNOWLEDGE_REVIEW") return "/dashboard/company/review";
   if (action === "OPEN_COMPLIANCE_REVIEW") return "/dashboard/compliance";
   if (action === "RESOLVE_COMPLIANCE_GAPS") return "/dashboard/compliance";
-  if (action === "RUN_ENGINE_OR_APPROVE_ANALYSIS") return `/dashboard/tenders/${tenderId}#run-engine-action`;
-  if (action === "RETRY_AI_ANALYZE") return `/dashboard/tenders/${tenderId}#run-engine-action`;
+  if (action === "RUN_ENGINE_OR_APPROVE_ANALYSIS") return `/dashboard/tenders/${tenderId}#analysis-quality`;
+  if (action === "RETRY_AI_ANALYZE") return `/dashboard/tenders/${tenderId}#ai-analyze-section`;
   if (action === "REVIEW_ANALYSIS") return `/dashboard/tenders/${tenderId}#analysis-quality`;
   if (action === "REPAIR_OR_EDIT_TENDER") return `/dashboard/tenders/${tenderId}#tender-edit-form`;
   if (action === "OPEN_SETTINGS") return "/dashboard/settings";
@@ -35,14 +46,14 @@ function buildActionLabel(action?: string): string {
   if (action === "EDIT_TENDER_METADATA") return "Fill missing Tender Details";
   if (action === "OPEN_COMPANY_READINESS") return "Open company readiness";
   if (action === "OPEN_EXTRACTION_QUALITY") return "Check extraction quality";
-  if (action === "BUILD_SUBMISSION_PLAN") return "Build submission plan";
+  if (action === "BUILD_SUBMISSION_PLAN") return "Open exceptional Build Plan recovery";
   if (action === "OPEN_ANALYSIS_QUALITY") return "Open analysis quality";
   if (action === "OPEN_MATCHING_QUALITY") return "Open matching quality";
   if (action === "RUN_ENGINE") return "Run engine";
   if (action === "REVIEW_MATCHES") return "Review matches";
-  if (action === "OPEN_KNOWLEDGE_REVIEW") return "Open review board";
+  if (action === "OPEN_KNOWLEDGE_REVIEW") return "Open Automatic Verification";
   if (action === "OPEN_COMPLIANCE_REVIEW" || action === "RESOLVE_COMPLIANCE_GAPS") return "Open compliance";
-  if (action === "RUN_ENGINE_OR_APPROVE_ANALYSIS") return "Retry AI Analyze or approve fallback";
+  if (action === "RUN_ENGINE_OR_APPROVE_ANALYSIS") return "Approve fallback analysis";
   if (action === "RETRY_AI_ANALYZE") return "Retry AI Analyze";
   if (action === "REVIEW_ANALYSIS") return "Review analysis quality";
   if (action === "REPAIR_OR_EDIT_TENDER") return "Repair or edit Tender Details";
@@ -89,18 +100,25 @@ export async function GenerationReadinessPanel({
           return getTenderGenerationReadinessStrict(prisma, userId, tenderId);
         })()
       : providedReadiness;
+    await prismaReady;
+    const canonicalDecision = await getCanonicalTenderWorkflowDecision(prisma, userId, tenderId);
 
     if (!readiness) {
       return (
         <section className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-4 shadow-sm">
           <p className="text-xs font-semibold uppercase tracking-wide text-red-700">Generation readiness unavailable</p>
-          <p className="mt-1 text-sm text-red-800">Generation readiness is loading. Refresh to retry.</p>
+          <p className="mt-1 text-sm text-red-800">Generation readiness is loading.</p>
           <Link href={`/api/tenders/${tenderId}/generation-readiness`} className="mt-2 inline-block text-xs font-semibold text-red-700 underline">Open diagnostic endpoint</Link>
         </section>
       );
     }
 
-    const { blockers, fullProposalBlockers, warnings, score } = readiness;
+    const { score } = readiness;
+    const blockers = dedupeReadinessItems(readiness.blockers);
+    const blockerKeys = new Set(blockers.map((item) => `${item.code ?? ""}|${item.message.trim().toLowerCase()}`));
+    const fullProposalBlockers = dedupeReadinessItems(readiness.fullProposalBlockers ?? [])
+      .filter((item) => !blockerKeys.has(`${item.code ?? ""}|${item.message.trim().toLowerCase()}`));
+    const warnings = dedupeReadinessItems(readiness.warnings);
     const fullProposalReady = Boolean(readiness.fullProposalReady);
     const supportPackageReady = Boolean(readiness.supportPackageReady);
     // If there are full-proposal blockers, the proposal is NOT ready regardless
@@ -129,7 +147,14 @@ export async function GenerationReadinessPanel({
     const hasPdfRequiredUnavailable = blockers.some((b: { code?: string }) =>
       b.code === "PDF_REQUIRED_CONVERSION_UNAVAILABLE" || b.code === "PDF_CONVERSION_REQUIRED"
     );
-    const effectivelyReady = fullProposalReady && !hasFullProposalBlockers && !hasNoConfirmedPlan
+    const upstreamCanonicalStages = new Set([
+      "NO_TENDER_FILE", "EXTRACTION_UNSAFE", "PARTIAL_AI_ANALYSIS", "STALE_ANALYSIS",
+      "AI_ANALYZE_NOT_RUN", "ENGINE_RUN_FAILED", "CRITICAL_TENDER_DETAILS_INVALID",
+      "REQUIREMENTS_NOT_SOURCE_GROUNDED", "NO_CONFIRMED_BUILD_PLAN",
+      "MANDATORY_NO_COMPLIANCE_ROWS", "MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE",
+    ]);
+    const canonicalUpstreamBlocked = Boolean(canonicalDecision && upstreamCanonicalStages.has(canonicalDecision.currentBlockingStage));
+    const effectivelyReady = fullProposalReady && !canonicalUpstreamBlocked && !hasFullProposalBlockers && !hasNoConfirmedPlan
       && !hasStaleAnalysis && !hasNoComplianceRows && !hasPdfRequiredUnavailable;
     const panelClass = effectivelyReady
       ? "border-green-200 bg-green-50"
@@ -143,16 +168,22 @@ export async function GenerationReadinessPanel({
             <p className={`text-xs font-semibold uppercase tracking-wide ${statusClass}`}>Generation readiness</p>
             <h2 className="mt-1 text-lg font-bold text-slate-900">{effectivelyReady ? "Ready to generate full proposal" : "Full proposal generation blocked"}</h2>
             <p className="mt-1 text-sm text-slate-600">The server gate is authoritative. The numeric score is informational and cannot override blockers.</p>
+            {canonicalUpstreamBlocked && canonicalDecision && (
+              <p className="mt-2 rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-800">
+                Current canonical blocker: {canonicalDecision.nextRequiredActionReason}
+              </p>
+            )}
             {hasNoConfirmedPlan && (
-              <p className="mt-1 text-sm text-red-700 font-medium">No confirmed Build Plan. Build and confirm the submission plan before generating.</p>
+              <p className="mt-1 text-sm text-red-700 font-medium">No source-verified Build Plan for this revision. Run Engine uses the verified source and current AI analysis to create and verify it before generation.</p>
             )}
             {supportPackageReady && !effectivelyReady && (
-              <p className="mt-1 text-sm text-amber-700">Support packages may be generated, but the full proposal remains blocked.</p>
+              <p className="mt-1 text-sm text-amber-800">Support packages may be generated, but the full proposal remains blocked.</p>
             )}
           </div>
           <div className="flex items-center gap-3">
-            {/* When blockers exist, visually de-emphasize the score — it's misleading to show a high score next to "blocked" */}
-            <ScoreGauge score={effectivelyReady ? score : Math.min(score, 45)} />
+            {/* Keep the real score informational; canonical blockers, not a
+                cosmetically capped number, determine readiness. */}
+            <div className={effectivelyReady ? "" : "opacity-60"}><ScoreGauge score={score} /></div>
           </div>
         </div>
 
@@ -199,10 +230,9 @@ export async function GenerationReadinessPanel({
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span>{item.message}</span>
                   <span className="inline-flex items-center gap-2">
-                    {item.nextAction === "FINALIZE_REQUIRED_PDF" && canMutate && (
-                      <FinalizeRequiredPdfButton tenderId={tenderId} />
-                    )}
-                    <Link href={actionHref(tenderId, item.nextAction)} className="text-xs font-semibold text-amber-700 underline">{buildActionLabel(item.nextAction)}</Link>
+                    {canMutate && item.nextAction === "FINALIZE_REQUIRED_PDF"
+                      ? <FinalizeRequiredPdfButton tenderId={tenderId} />
+                      : <Link href={actionHref(tenderId, item.nextAction)} className="text-xs font-semibold text-amber-800 underline">{buildActionLabel(item.nextAction)}</Link>}
                   </span>
                 </div>
               </div>
@@ -220,7 +250,7 @@ export async function GenerationReadinessPanel({
     });
     return (
       <section className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-4 shadow-sm">
-        <p className="text-xs font-semibold text-red-700">Generation readiness failed to load. Generation remains blocked. Refresh to retry.</p>
+        <p className="text-xs font-semibold text-red-700">Generation readiness failed to load. Generation remains blocked.</p>
       </section>
     );
   }

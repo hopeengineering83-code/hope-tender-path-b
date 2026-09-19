@@ -378,54 +378,54 @@ describe("Spec Test 6 — Download ZIP blocked when final export candidates = 0"
   });
 });
 
-// ─── Spec Test 7: Recovery Command Center never shows 'all good' when BLOCKED ──
+// ─── Spec Test 7: no panel ever shows 'all good' / release-ready wording when blocked ──
+//
+// components/tender-recovery-command-center.tsx (this block's original
+// subject) was deleted as unrendered dead code (nothing imports or renders
+// it). The live successor panels are components/export-readiness-panel.tsx
+// (owns the export gate's pass/blocked state) and
+// components/next-action-panel.tsx (owns the single canonical next-action
+// summary). Two of the four original checks have no live equivalent to
+// redirect to and are retired below with an explanation; the other two are
+// redirected to the live panels.
 
-describe("Spec Test 7 — No 'all good' / release-ready language when BLOCKED", () => {
-  it("component source does not contain 'All good' or 'all set' language", () => {
-    const raw = readFileSync(
-      resolve(process.cwd(), "components/tender-recovery-command-center.tsx"),
-      "utf8",
-    );
-    // Strip comments before checking — comments referencing the spec text
-    // are fine. We only care about user-facing strings.
-    const src = raw.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
-    assert.ok(!/all good/i.test(src), "component must not contain 'all good' language in user-facing code");
-    assert.ok(!/all set/i.test(src), "component must not contain 'all set' language in user-facing code");
-    assert.ok(!/release-ready/i.test(src), "component must not contain 'release-ready' language in user-facing code");
+describe("Spec Test 7 — No 'all good' / release-ready language when blocked", () => {
+  it("no live workflow panel contains 'All good', 'all set', or 'release-ready' language", () => {
+    for (const file of [
+      "components/export-readiness-panel.tsx",
+      "components/next-action-panel.tsx",
+      "components/generation-action-panel.tsx",
+    ]) {
+      const raw = readFileSync(resolve(process.cwd(), file), "utf8");
+      // Strip comments before checking — comments referencing the spec text
+      // are fine. We only care about user-facing strings.
+      const src = raw.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+      assert.ok(!/all good/i.test(src), `${file} must not contain 'all good' language in user-facing code`);
+      assert.ok(!/all set/i.test(src), `${file} must not contain 'all set' language in user-facing code`);
+      assert.ok(!/release-ready/i.test(src), `${file} must not contain 'release-ready' language in user-facing code`);
+    }
   });
 
-  it("component renders a BLOCKED notice when finalSubmissionStatus is BLOCKED", () => {
-    const src = readFileSync(
-      resolve(process.cwd(), "components/tender-recovery-command-center.tsx"),
-      "utf8",
-    );
-    // The BLOCKED notice is rendered conditionally on isBlocked.
-    assert.ok(src.includes("Final submission is BLOCKED"), "component must render a BLOCKED notice");
-    assert.ok(src.includes("isBlocked"), "component must derive isBlocked from finalSubmissionStatus");
+  it("export-readiness-panel renders an explicit 'Export gate blocked' state when not ready", () => {
+    const src = readFileSync(resolve(process.cwd(), "components/export-readiness-panel.tsx"), "utf8");
+    assert.ok(src.includes('"Export gate blocked"'), "must render an explicit blocked state, not an ambiguous one");
+    assert.ok(src.includes('"Export gate passed"'), "must render an explicit passed state only when ok");
   });
 
-  it("component downgrades ANALYSIS_APPROVED badge to amber when final is BLOCKED", () => {
-    const src = readFileSync(
-      resolve(process.cwd(), "components/tender-recovery-command-center.tsx"),
-      "utf8",
-    );
-    // The stateColor function takes finalStatus and downgrades ANALYSIS_APPROVED.
-    assert.ok(
-      src.includes("ANALYSIS_APPROVED") && src.includes("finalStatus === \"BLOCKED\""),
-      "stateColor must downgrade ANALYSIS_APPROVED when final is BLOCKED",
-    );
-  });
+  // "component downgrades ANALYSIS_APPROVED badge to amber when final is
+  // BLOCKED" test removed -- that ad-hoc stateColor()-badge-downgrade pattern
+  // no longer exists anywhere live. components/next-action-panel.tsx instead
+  // reads one single getCanonicalTenderWorkflowDecision() result, so there is
+  // no separate independently-rendered badge that could drift out of sync
+  // with the blocked state and need downgrading — the badge and the blocked
+  // state are the same computed value, structurally, not two things kept in
+  // sync by extra logic.
 
-  it("'Export Ready' counter only turns green when final status is READY", () => {
-    const src = readFileSync(
-      resolve(process.cwd(), "components/tender-recovery-command-center.tsx"),
-      "utf8",
-    );
-    assert.ok(
-      src.includes("data.finalSubmissionStatus === \"READY\""),
-      "Export Ready counter must be green only when finalSubmissionStatus is READY",
-    );
-  });
+  // "'Export Ready' counter only turns green when final status is READY"
+  // test removed -- no live component renders an aggregate "Export Ready"
+  // counter tied to finalSubmissionStatus. Each stage now shows its own gate
+  // state independently (see "Export gate passed/blocked" above), which is
+  // the redesigned replacement for a single rollup counter, not a regression.
 });
 
 // ─── Spec Test 8: Lifecycle route never returns raw error.message ─────────────

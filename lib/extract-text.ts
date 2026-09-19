@@ -5,11 +5,12 @@ import { logger } from "./observability";
 
 import { isExtractionCorrupted } from "./engine/extraction-quality-gate";
 
-// Exported so limitExtractedText (lib/upload-security.ts) can DETECT that
-// this inner limiter fired: normalizeExtractedText slices to exactly this
-// length, so output text at this length means the document's tail was cut
-// and the extraction is partial (extractionTruncated must be true).
-export const MAX_EXTRACTED_TEXT_CHARS = 500_000;
+// Per Pillar 3: increased from 500K to 2M to avoid silently truncating large
+// multi-file tender packages. The Vercel 60s function timeout is the real
+// limit on extraction; this char cap is a safety guard against memory
+// exhaustion, not a data-loss gate. Extraction truncation is still reported
+// honestly via extractionTruncated when this limit is hit.
+export const MAX_EXTRACTED_TEXT_CHARS = 2_000_000;
 const LEGACY_TEXT_LIMIT = 80_000;
 
 export async function extractTextFromBuffer(
@@ -26,8 +27,17 @@ export async function extractTextFromBuffer(
     if (isCsv(mimeType, ext)) return extractCsv(buffer);
     if (isRtf(mimeType, ext)) return extractRtf(buffer);
     if (isText(mimeType, ext)) return buffer.toString("utf8").slice(0, MAX_EXTRACTED_TEXT_CHARS);
-    if (isImage(mimeType, ext)) return `[Image: ${fileName}]`;
-    return "";
+    if (isImage(mimeType, ext)) {
+      // Per Pillar 2: report unsupported/corrupt files honestly. Images
+      // cannot be text-extracted without OCR. Return an honest marker so
+      // downstream extraction-quality gates classify this as a weak
+      // extraction (not an empty one). The user sees "Image needs OCR"
+      // in the extraction quality dashboard instead of a silent placeholder.
+      return `[Image needs OCR: ${fileName}]`;
+    }
+    // Per Pillar 2: report unsupported formats honestly instead of silently
+    // returning an empty string that looks like "extraction succeeded".
+    return `[Unsupported format: ${ext || mimeType || "unknown"}]`;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logger.error(`[extract-text] ${fileName} (${mimeType}):`, { detail: err });
@@ -776,14 +786,39 @@ async function extractPdf(buffer: Buffer): Promise<string> {
   // the first non-corrupted result with > 1000 chars wins. If all fail or
   // return garbage, we fall through to the OCR path.
   const extractorTimeout = 10_000; // 10s per extractor
-  const extractors = [
+  // pdf2json is a LAST RESORT, not a peer.
+  //
+  // Reproduced on this checkout: parse one generated proposal PDF, then parse a
+  // second, structurally similar one (same page count, same layout, one
+  // paragraph different) in the same process, and pdf2json returns the FIRST
+  // document's text for the second document — every time, sequentially or
+  // concurrently, with a fresh `new PDFParser()` per call and even after
+  // deleting the module from require.cache. Two obviously different PDFs
+  // (different page counts and sizes) do not collide, which is why this stayed
+  // invisible: the case it breaks on is exactly the app's own regenerated
+  // proposals.
+  //
+  // It is not a scoring problem. The selection below picks the highest-quality
+  // non-corrupted text, and the wrong document's text is clean, well-formed and
+  // scores well — so it wins, and a validator then judges a proposal against
+  // the bytes of a previous version. Giving each generated PDF a unique trailer
+  // /ID (lib/engine/proposal-pdf.ts) did not change it either.
+  //
+  // So pdf2json is consulted only when both engines whose output can be trusted
+  // returned nothing usable. That keeps it available for the awkward PDFs it
+  // was added for, while making the bleed unreachable on the normal path. When
+  // all three fail the existing OCR fallback still runs; failing closed to OCR
+  // is correct, and returning another document's text never is.
+  const primaryExtractors = [
     { source: "pdf-parse", fn: () => extractPdfWithPdfParse(buffer) },
-    { source: "pdf2json", fn: () => extractPdfWithPdf2Json(buffer) },
     { source: "pdfjs", fn: () => extractPdfWithPdfJs(buffer) },
+  ];
+  const lastResortExtractors = [
+    { source: "pdf2json", fn: () => extractPdfWithPdf2Json(buffer) },
   ];
 
   const results: Array<{ source: string; text: string; pages: number }> = [];
-  await Promise.allSettled(
+  const runExtractors = async (extractors: Array<{ source: string; fn: () => Promise<{ text: string; pages: number }> }>) => await Promise.allSettled(
     extractors.map(async (ext) => {
       let timer: NodeJS.Timeout | undefined;
       try {
@@ -804,6 +839,10 @@ async function extractPdf(buffer: Buffer): Promise<string> {
       }
     }),
   );
+
+  await runExtractors(primaryExtractors);
+  const primaryUsable = results.some((r) => r.text && r.text.length >= 20);
+  if (!primaryUsable) await runExtractors(lastResortExtractors);
 
   // Pick the best extractor by quality score, not text length.
   // Previously: `results.sort((a, b) => b.text.length - a.text.length)[0]`
@@ -1273,7 +1312,7 @@ function decodeXmlEntities(s: string): string {
 // A cell looks like: <a:tc><a:txBody>...<a:p><a:r><a:t>Cell text</a:t></a:r></a:p>...</a:txBody></a:tc>
 // We gather every <a:t> run inside the fragment and join with spaces.
 function extractPptxCellText(cellXml: string): string {
-  //  after <a:t prevents matching <a:txBody> / <a:tcPr> / <a:tblPr> etc.
+  // \x08 after <a:t prevents matching <a:txBody> / <a:tcPr> / <a:tblPr> etc.
   // — <a:t is a prefix of those tags and without \b the regex would capture
   // their inner content as if it were a text run. This was the root cause of
   // PPTX table cells returning raw XML instead of decoded text.

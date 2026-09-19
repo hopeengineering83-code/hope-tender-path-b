@@ -228,6 +228,6 @@ export async function POST(
     });
   } catch (err) {
     logger.error("[document-quality-check] failed", { detail: err });
-    return jsonError("Document quality check failed. Refresh to retry.", 500);
+    return jsonError("Document quality check failed.", 500);
   }
 }

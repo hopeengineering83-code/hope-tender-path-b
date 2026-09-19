@@ -21,11 +21,12 @@ describe("requirement-coverage safe response boundary", () => {
     assert.match(source, /errorClass: error instanceof Error \? error\.constructor\.name : "UnknownError"/);
   });
 
-  it("keeps tender and Company Vault queries owner/company scoped", () => {
+  it("keeps tender and canonical readiness queries tenant scoped", () => {
     assert.match(source, /where: \{ id, userId: actor\.id \}/);
-    assert.match(source, /where: \{ userId: tender\.userId \}/);
-    assert.match(source, /where: \{ companyId: company\.id, deletedAt: null \}/);
+    assert.match(source, /getFinalPackageReadinessModel\(prisma, id, actor\.id\)/);
+    assert.match(source, /where: \{ tenderId: id, priority: \{ in: \["MANDATORY", "CRITICAL"\] \} \}/);
     assert.match(source, /TENDER_NOT_FOUND/);
+    assert.doesNotMatch(source, /prisma\.(?:company|expert|project)\./);
   });
 
   it("counts only mandatory and critical requirements", () => {
@@ -34,20 +35,30 @@ describe("requirement-coverage safe response boundary", () => {
     assert.match(source, /coverageRatio/);
   });
 
-  it("keeps auto-linked Vault evidence display-only and never fully covered", () => {
-    assert.match(source, /evidenceSource: "VAULT_AUTO_LINK"/);
-    assert.match(source, /supportLevel: "PARTIAL"/);
-    assert.match(source, /isReviewed: expert\.trustLevel === "REVIEWED"/);
-    assert.match(source, /isReviewed: project\.trustLevel === "REVIEWED"/);
-    assert.match(source, /hasOnlyAutoLinks/);
-    assert.match(source, /!hasOnlyAutoLinks/);
+  it("reports persisted automatic evidence without becoming a second writer", () => {
+    assert.match(source, /requirement\.complianceMatrixRows\.flatMap/);
+    assert.match(source, /row\.evidenceSource\.startsWith\("AUTO_"\) && !automatic/);
+    assert.match(source, /!automatic && !row\.evidenceReference\?\.trim\(\)/);
+    assert.match(source, /parseAutomaticRequirementEvidence\(row\.notes\)/);
+    assert.match(source, /VAULT_AUTO_LINK/);
+    assert.match(source, /autoLinked: Boolean\(automatic\)/);
+    assert.match(source, /linkageScore: automatic\?\.linkageScore \?\? null/);
+    assert.match(source, /linkageReasons: automatic\?\.linkageReasons \?\? \[\]/);
+    assert.match(source, /canonicalStatus\?\.displayStatus \?\? "NOT_MET"/);
+    assert.match(source, /canonicalStatus\?\.hasSourceTrace \?\? false/);
+    assert.match(source, /coverageStatus === "FULLY_MET"/);
+    assert.doesNotMatch(source, /evidenceLinks\.push\(/);
+    assert.doesNotMatch(source, /canUseVaultRecord/);
   });
 
   it("keeps source grounding required for full coverage", () => {
     assert.match(source, /sourcePageNumber/);
     assert.match(source, /sourceExactQuote/);
     assert.match(source, /sourceConfidence/);
-    assert.match(source, /&& hasSourceRef/);
+    assert.match(source, /canonicalStatus\?\.hasSourceTrace/);
+    const authority = readFileSync(join(rootDir, "lib/engine/final-package-readiness-model.ts"), "utf8");
+    assert.match(authority, /isGroundedEvidenceInActiveFiles/);
+    assert.match(authority, /displayStatus === "FULLY_MET"/);
   });
 
   it("keeps final-package readiness parity", () => {
@@ -59,7 +70,7 @@ describe("requirement-coverage safe response boundary", () => {
     assert.doesNotMatch(source, /\.(?:create|createMany|update|updateMany|delete|deleteMany|upsert)\(/);
   });
 
-  it("keeps Vercel Git deployment enabled (repo policy)", () => {
-    assert.equal(vercel.git?.deploymentEnabled?.["main"], true);
+  it("keeps Vercel Git deployment enabled by repository policy", () => {
+    assert.equal(vercel.git?.deploymentEnabled?.main, true);
   });
 });

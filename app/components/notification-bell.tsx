@@ -1,8 +1,12 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import {
+  SearchIcon, DocumentIcon, ClockIcon, BrainIcon, TrophyIcon, WarningIcon,
+  InfoIcon, BellIcon, CrossIcon,
+} from "../../components/icons";
 
 type Notification = {
   id: string;
@@ -69,14 +73,14 @@ function isSafeInternalLink(link: string): boolean {
   }
 }
 
-const TYPE_ICON: Record<string, string> = {
-  TENDER_ANALYZED: "🔎",
-  TENDER_GENERATED: "📄",
-  TENDER_DEADLINE_SOON: "⏰",
-  KNOWLEDGE_IMPORTED: "🧠",
-  BID_OUTCOME_RECORDED: "🏆",
-  COMPLIANCE_GAP_FOUND: "⚠️",
-  SYSTEM: "ℹ️",
+const TYPE_ICON: Record<string, ReactNode> = {
+  TENDER_ANALYZED: <SearchIcon />,
+  TENDER_GENERATED: <DocumentIcon />,
+  TENDER_DEADLINE_SOON: <ClockIcon />,
+  KNOWLEDGE_IMPORTED: <BrainIcon />,
+  BID_OUTCOME_RECORDED: <TrophyIcon />,
+  COMPLIANCE_GAP_FOUND: <WarningIcon />,
+  SYSTEM: <InfoIcon />,
 };
 
 export function NotificationBell({ initialUnread }: { initialUnread: number }) {
@@ -191,7 +195,7 @@ export function NotificationBell({ initialUnread }: { initialUnread: number }) {
     <div ref={ref} className="relative">
       <button
         onClick={handleOpen}
-        className="relative flex min-h-11 min-w-11 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900 transition-colors"
+        className="relative flex min-h-11 min-w-11 items-center justify-center rounded-lg text-slate-700 hover:bg-slate-100 hover:text-slate-900 transition-colors"
         aria-label={unread > 0 ? `Notifications (${unread} unread)` : "Notifications"}
         aria-expanded={open}
         aria-controls="notification-popup"
@@ -231,9 +235,9 @@ export function NotificationBell({ initialUnread }: { initialUnread: number }) {
           )}
 
           <div className="max-h-96 overflow-y-auto">
-            {loading && <p className="px-4 py-6 text-center text-sm text-slate-400">Loading…</p>}
+            {loading && <p className="px-4 py-6 text-center text-sm text-slate-600">Loading…</p>}
             {!loading && notifications.length === 0 && (
-              <p className="px-4 py-8 text-center text-sm text-slate-400">No notifications yet.</p>
+              <p className="px-4 py-8 text-center text-sm text-slate-600">No notifications yet.</p>
             )}
             {!loading && notifications.map((n) => {
               const isLinkSafe = n.link && isSafeInternalLink(n.link);
@@ -242,7 +246,7 @@ export function NotificationBell({ initialUnread }: { initialUnread: number }) {
                   key={n.id}
                   className={`flex gap-3 border-b px-4 py-3 last:border-b-0 ${n.readAt ? "bg-white" : "bg-blue-50"}`}
                 >
-                  <span className="mt-0.5 text-base shrink-0">{TYPE_ICON[n.type] ?? "🔔"}</span>
+                  <span className="mt-0.5 text-base shrink-0">{TYPE_ICON[n.type] ?? <BellIcon />}</span>
                   <div className="flex-1 min-w-0">
                     {n.link && isLinkSafe ? (
                       <Link
@@ -273,17 +277,17 @@ export function NotificationBell({ initialUnread }: { initialUnread: number }) {
                     ) : (
                       <p className="text-sm font-medium text-slate-900 truncate">{n.title}</p>
                     )}
-                    {n.body && <p className="mt-0.5 text-xs text-slate-500 line-clamp-2">{n.body}</p>}
-                    <p className="mt-1 text-[10px] text-slate-400">{timeAgo(n.createdAt)}</p>
+                    {n.body && <p className="mt-0.5 text-xs text-slate-700 line-clamp-2">{n.body}</p>}
+                    <p className="mt-1 text-[10px] text-slate-600">{timeAgo(n.createdAt)}</p>
                   </div>
                   {!n.readAt && (
                     <button
                       onClick={() => void markRead(n.id)}
                       disabled={markingAllRead || markingReadIds[n.id]}
-                      className="mt-0.5 shrink-0 text-xs text-slate-400 hover:text-slate-600 disabled:opacity-50"
+                      className="mt-0.5 shrink-0 text-xs text-slate-600 hover:text-slate-600 disabled:opacity-50"
                       aria-label={`Mark "${n.title}" as read`}
                     >
-                      ✕
+                      <CrossIcon />
                     </button>
                   )}
                 </div>

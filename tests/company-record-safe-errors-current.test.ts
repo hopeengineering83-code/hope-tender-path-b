@@ -33,12 +33,20 @@ describe("Company Vault record route error boundaries", () => {
     }
   });
 
-  it("preserves REVIEWER read access and restricted mutation access", () => {
-    for (const source of Object.values(sources)) {
+  it("preserves REVIEWER read access (except stricter financial reads) and restricted mutation access", () => {
+    // Donor #1196's own privacy contract (company-documents-privacy-dto.test.ts,
+    // "restricts financial record list DTOs to company knowledge managers")
+    // requires financial-records reads to EXCLUDE REVIEWER — financial data is
+    // deliberately stricter than legal/compliance. This test's original
+    // uniform loop contradicted that; assert the split policy instead.
+    for (const source of [sources.legal, sources.compliance]) {
       assert.match(source, /requireRole\("ADMIN", "PROPOSAL_MANAGER", "REVIEWER"\)/);
       const mutationRoles = source.match(/requireRole\("ADMIN", "PROPOSAL_MANAGER"\)/g) ?? [];
       assert.equal(mutationRoles.length, 2);
     }
+    assert.doesNotMatch(sources.financial, /requireRole\("ADMIN", "PROPOSAL_MANAGER", "REVIEWER"\)/);
+    const financialManagerOnly = sources.financial.match(/requireRole\("ADMIN", "PROPOSAL_MANAGER"\)/g) ?? [];
+    assert.equal(financialManagerOnly.length, 3);
   });
 
   it("returns stable not-found and validation codes", () => {

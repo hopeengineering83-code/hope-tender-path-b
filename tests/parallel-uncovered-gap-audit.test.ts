@@ -36,10 +36,28 @@ describe("P1-2 — observability normalizes Error objects for JSON.stringify", (
 // ─── P1-7: liveness returns 200 for degraded (not 503) ─────────────────────
 
 describe("P1-7 — liveness returns HTTP 200 for degraded status", () => {
-  it("uses allCriticalTablesExist (not ok) for the HTTP status", () => {
+  it("decides the HTTP status from database usability, never from ok", () => {
     const src = read("lib/liveness.ts");
-    assert.match(src, /const httpStatus = allCriticalTablesExist \? 200 : 503/);
-    // The old code used `ok ? 200 : 503` which returned 503 for degraded.
+    // The invariant, not one spelling of it. The old code used `ok ? 200 : 503`
+    // and so returned 503 whenever an OPTIONAL subsystem (an AI provider, file
+    // storage) was unconfigured, even though pages served fine. What decides
+    // the status must be database facts only.
+    //
+    // "Database usable" later grew a second term — whether the deployed Prisma
+    // client can actually query the database, not merely whether its tables
+    // exist — after a live deployment answered 200/"healthy" on a database
+    // that rejected every sign-in. That term belongs here; AI and storage
+    // still do not.
+    const httpStatusExpr = /const httpStatus = ([^;]+);/.exec(src)?.[1] ?? "";
+    assert.ok(httpStatusExpr.length > 0, "httpStatus must be computed in one place");
+    assert.doesNotMatch(httpStatusExpr, /\bok\b/, "degraded must still return 200");
+    for (const optional of ["aiHealth", "storageHealth"]) {
+      assert.ok(
+        !httpStatusExpr.includes(optional),
+        `${optional} is an optional subsystem and must not decide the HTTP status (got: ${httpStatusExpr})`,
+      );
+    }
+    assert.match(httpStatusExpr, /allCriticalTablesExist|databaseUsable/);
     assert.doesNotMatch(src, /status: ok \? 200 : 503/);
   });
 });
@@ -97,21 +115,25 @@ describe("P1-6 — contentChangedHardBlock is no longer always false", () => {
   });
 });
 
-// ─── P0-1: tender-operation-lock idempotencyKey is deterministic ───────────
+// ─── P0-1: the workflow idempotencyKey is deterministic ────────────────────
+//
+// Retargeted from lib/engine/tender-operation-lock.ts, which was deleted: it
+// had no production importer, so a deterministic key in it protected nothing.
+// The live key is derived in lib/engine/tender-workflow-runner.ts.
 
-describe("P0-1 — tender-operation-lock idempotencyKey is deterministic", () => {
-  it("does NOT include Date.now() in the idempotencyKey", () => {
-    const src = read("lib/engine/tender-operation-lock.ts");
-    // Strip comments so the check only applies to real code.
-    const codeOnly = src.replace(/\/\/[^\n]*/g, "");
-    // The old code had: `${operation}-${Date.now()}`
-    // The new code has: `${operation}`
-    assert.doesNotMatch(codeOnly, /idempotencyKey\s*=\s*`\$\{operation\}-\$\{Date\.now\(\)\}`/);
+describe("P0-1 — workflow idempotencyKey is deterministic", () => {
+  const src = read("lib/engine/tender-workflow-runner.ts");
+  // Strip comments so the check only applies to real code.
+  const codeOnly = src.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+
+  it("does NOT derive the idempotencyKey from wall-clock time", () => {
+    assert.doesNotMatch(codeOnly, /idempotencyKey[^\n]*Date\.now\(\)/);
+    assert.doesNotMatch(codeOnly, /idempotencyKey[^\n]*randomUUID/);
   });
 
-  it("uses a deterministic key derived from operation only", () => {
-    const src = read("lib/engine/tender-operation-lock.ts");
-    assert.match(src, /idempotencyKey\s*=\s*`\$\{operation\}`/);
+  it("derives it by stable hash of tenant, tender, operation and request", () => {
+    assert.match(src, /export function deriveIdempotencyKey/);
+    assert.match(src, /computeStableHash\(\{[\s\S]*?tenantId[\s\S]*?tenderId[\s\S]*?operation/);
   });
 });
 
@@ -135,7 +157,7 @@ describe("P1-8 — check-critical-schema includes critical tables", () => {
 
   for (const table of requiredNewTables) {
     it(`REQUIRED_TABLES includes ${table}`, () => {
-      const src = read("scripts/check-critical-schema.mjs");
+      const src = read("scripts/critical-schema-contract.mjs");
       assert.match(src, new RegExp(`"${table}"`), `REQUIRED_TABLES must include ${table}`);
     });
   }

@@ -117,10 +117,12 @@ describe("Final Package Manifest — isExportReady", () => {
     assert.equal(isExportReady({ ...READY_DOC, fileContent: null, storagePath: null }), false);
   });
 
-  it("validated but not review-approved doc is not export ready", () => {
+  it("validated doc is export ready even without human review approval (Gap C: VALIDATED is sufficient)", () => {
+    // Gap C: per Gap 5, VALIDATED is sufficient for the automatic path.
+    // The canonical Document Validator is the machine-safe authority.
     assert.equal(
       isExportReady({ ...READY_DOC, reviewStatus: "PENDING_REVIEW" }),
-      false,
+      true,
     );
   });
 });

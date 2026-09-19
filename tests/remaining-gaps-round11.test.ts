@@ -4,27 +4,39 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 const read = (p: string) => readFileSync(p, "utf8");
 
-describe("round 11 — T1: worker.ts atomic job claiming", () => {
-  const src = read("lib/ai-jobs/worker.ts");
+// Retargeted from lib/ai-jobs/worker.ts, which was deleted. That module was a
+// second job-worker implementation with no production importer: the live drain
+// path is app/api/ai-jobs/run-next/route.ts -> lib/job-claim-policy.ts, and
+// the claim itself is lib/ai-jobs.ts claimNextJob(). Asserting SKIP LOCKED in
+// the dead module proved nothing about how jobs are actually claimed.
+//
+// claimNextJob uses a different but equally race-safe technique: a
+// compare-and-swap. Two workers may both read the same QUEUED row, but the
+// conditional updateMany only matches while status is still QUEUED, so exactly
+// one sees count > 0 and the loser returns null instead of double-running it.
+describe("round 11 — T1: the live job claim is race-safe", () => {
+  const src = read("lib/ai-jobs.ts");
 
-  it("uses UPDATE...FOR UPDATE SKIP LOCKED for atomic job claiming", () => {
-    assert.ok(src.includes("FOR UPDATE SKIP LOCKED"), "must use FOR UPDATE SKIP LOCKED (was non-atomic findMany+update)");
-    assert.ok(src.includes("RETURNING id"), "must RETURNING the claimed jobs (atomic claim)");
+  it("claims with a conditional update guarded on the still-QUEUED status", () => {
+    assert.ok(src.includes("export async function claimNextJob"), "claimNextJob is the live claim");
+    assert.match(
+      src,
+      /updateMany\(\{\s*where:\s*\{\s*id:\s*candidate\.id,\s*status:\s*"QUEUED"\s*\}/,
+      "the update must be conditional on the row still being QUEUED",
+    );
   });
 
-  it("removes the old non-atomic findMany + separate update", () => {
-    assert.ok(
-      !src.includes('prisma.aiJob.findMany({\n    where: {\n      jobType: "AI_ANALYZE"'),
-      "old non-atomic findMany must be removed",
-    );
-    assert.ok(
-      !src.includes("// Mark job as RUNNING\n      await prisma.aiJob.update"),
-      "old separate RUNNING update must be removed (atomic claim does it)",
-    );
+  it("treats a lost race as 'not claimed' rather than running the job twice", () => {
+    assert.match(src, /if \(updated\.count === 0\) return null;/);
+  });
+
+  it("has no second, competing worker implementation", () => {
+    assert.equal(existsSync("lib/ai-jobs/worker.ts"), false, "a duplicate job worker must not exist");
+    assert.match(read("app/api/ai-jobs/run-next/route.ts"), /claimJobForCaller/);
   });
 });
 
@@ -54,43 +66,51 @@ describe("round 11 — T2: tender delete durable storage cleanup", () => {
 describe("round 11 — T5: auto-finalize transaction", () => {
   const src = read("app/api/tenders/[id]/auto-finalize/route.ts");
 
-  it("wraps update + DocumentReview create in a transaction", () => {
-    assert.ok(src.includes("prisma.$transaction(async (tx)"), "must use $transaction for update + audit");
+  // This used to require `tx.documentReview.create` inside the transaction.
+  // A DocumentReview row is a record that a HUMAN reviewed the document, and
+  // the same write set marked the row READY_FOR_EXPORT with reviewedBy and
+  // reviewedAt. Automation writing that is fabricated human state, so it was
+  // removed — the assertion, not the route, was wrong. Requiring the write
+  // back would re-introduce exactly the fabrication the app forbids.
+  //
+  // The atomicity guarantee the test was really protecting still holds and is
+  // still asserted; the no-fabrication guarantee is now pinned beside it so
+  // neither can regress into the other.
+  it("keeps the byte/status update atomic", () => {
+    assert.ok(src.includes("prisma.$transaction(async (tx)"), "must use $transaction for the update");
     assert.ok(src.includes("tx.generatedDocument.update"), "must use tx for the update");
-    assert.ok(src.includes("tx.documentReview.create"), "must use tx for the audit create");
+  });
+
+  it("never fabricates human review state while finalizing", () => {
+    assert.ok(!src.includes("tx.documentReview.create"),
+      "a DocumentReview row asserts a human reviewed this document; automation must not create one");
+    assert.ok(!/reviewedBy:\s*actor\.id/.test(src), "automation must not write reviewedBy");
+    assert.ok(!/reviewedAt:\s*new Date\(\)/.test(src), "automation must not write reviewedAt");
+    // Machine-safe fields only: the Document Validator owns VALIDATED, and the
+    // human reviewStatus is left for a human.
+    assert.ok(/validationStatus:\s*"PENDING"/.test(src), "automation leaves validation to the canonical validator");
   });
 });
 
-describe("round 11 — T4: attach-original old blob cleanup", () => {
-  const src = read("app/api/tenders/[id]/documents/[docId]/attach-original/route.ts");
 
-  it("captures priorStoragePath before the update", () => {
-    assert.ok(src.includes("priorStoragePath"), "must capture priorStoragePath");
-    assert.ok(src.includes("priorFileContent"), "must capture priorFileContent");
+// Retargeted from the deleted lib/ai-jobs/worker.ts to the live classifier in
+// lib/ai.ts. The property that matters is unchanged: an error the classifier
+// does not recognise must NOT be treated as retryable, or an unknown permanent
+// failure becomes a retry storm.
+describe("round 11 — F1: unknown errors are not retried", () => {
+  it("isTransientChunkError falls through to false for unrecognised errors", async () => {
+    const { isTransientChunkError } = await import("../lib/ai");
+    assert.equal(isTransientChunkError(new Error("totally unrecognised failure")), false);
+    assert.equal(isTransientChunkError(null), false);
+    assert.equal(isTransientChunkError({}), false);
   });
 
-  it("cleans up the old blob after the transaction", () => {
-    assert.ok(src.includes("Best-effort cleanup of the OLD blob"), "must clean up old blob");
-    assert.ok(src.includes("priorStoragePath || priorFileContent"), "must guard on prior blob existing");
-  });
-
-  it("includes storagePath + fileContent in the doc select", () => {
-    assert.ok(src.includes("storagePath: true"), "must select storagePath");
-    assert.ok(src.includes("fileContent: true"), "must select fileContent");
-  });
-});
-
-describe("round 11 — F1: worker.ts retry storm fix", () => {
-  const src = read("lib/ai-jobs/worker.ts");
-
-  it("defaults unknown errors to NON-transient (no retry)", () => {
+  it("still recognises genuinely transient conditions as retryable", async () => {
+    const { isTransientChunkError } = await import("../lib/ai");
+    const transient = [new Error("429 Too Many Requests"), new Error("ETIMEDOUT"), new Error("503 Service Unavailable")];
     assert.ok(
-      src.includes("Default: NON-transient"),
-      "must default to non-transient (was true → retry storm on unknown errors)",
-    );
-    assert.ok(
-      src.includes("return false;"),
-      "must return false for unknown errors (was return true)",
+      transient.some((err) => isTransientChunkError(err)),
+      "the classifier must still retry real transient failures",
     );
   });
 });
@@ -144,5 +164,31 @@ describe("round 11 — workflow-center N+1 batch fix", () => {
   it("uses a Set for O(1) override lookup", () => {
     assert.ok(src.includes("overrideFileIds"), "must build an overrideFileIds Set");
     assert.ok(src.includes("overrideFileIds.has"), "must use .has() for O(1) lookup");
+  });
+
+  // Regression: the batch query filtered on `status: "ACTIVE"`, a column
+  // ExtractionQualityOverride has never had (confirmed against its migration,
+  // prisma/migrations/20260622193000_add_readiness_durable_records/migration.sql
+  // -- one row per (tenderId, tenderFileId) IS the active override; there is
+  // no status lifecycle). Every real Prisma call hit this and threw
+  // PrismaClientValidationError, so hasOverride was always silently wrong
+  // (Playwright's WebServer logs surfaced this live on a running server).
+  it("does not filter on a nonexistent `status` column", () => {
+    assert.ok(
+      !src.includes('status: "ACTIVE"'),
+      "ExtractionQualityOverride has no status column -- this always threw PrismaClientValidationError at runtime",
+    );
+  });
+
+  it("filters the batch lookup by the same staleness window as the canonical single-file check", () => {
+    assert.ok(
+      src.includes("import { EXTRACTION_OVERRIDE_MAX_AGE_MS } from \"./readiness-overrides\""),
+      "must import the canonical staleness window from readiness-overrides.ts",
+    );
+    assert.match(
+      src,
+      /overriddenAt:\s*\{\s*gte:\s*new Date\(Date\.now\(\)\s*-\s*EXTRACTION_OVERRIDE_MAX_AGE_MS\)\s*\}/,
+      "must exclude overrides older than EXTRACTION_OVERRIDE_MAX_AGE_MS, matching hasActiveExtractionOverride()",
+    );
   });
 });

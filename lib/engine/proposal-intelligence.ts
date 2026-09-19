@@ -1,10 +1,13 @@
 import { logger } from "../observability";
+import { extractProjectFacts, extractProjectAmounts, extractServicesProvided } from "./project-fact-extractor";
+import { tidyTruncation, factualCardOrEmpty } from "./vault-prose";
 import { detectFinancialProposalRequiredFromText, buildTenderDocumentTypeAdvisory, type TenderDocumentTypeAdvisory } from "../document-generation/generation-integration";
+import { resolveJurisdictionTokens } from "./jurisdiction-instruments";
 export type TenderRequirementLite = { title: string; description: string; priority: string; requirementType: string };
 export type TenderLite = { title: string; reference?: string | null; clientName?: string | null; procuringEntityName?: string | null; country?: string | null; description?: string | null; intakeSummary?: string | null; analysisSummary?: string | null; evaluationMethodology?: string | null; deadline?: Date | string | null; submissionMethod?: string | null; submissionAddress?: string | null; clientContactName?: string | null };
 export type CompanyLite = { name: string; legalName?: string | null; description?: string | null; profileSummary?: string | null; serviceLines: string; sectors: string; email?: string | null; phone?: string | null; website?: string | null; address?: string | null };
 export type ExpertLite = { fullName: string; title?: string | null; yearsExperience?: number | null; disciplines: string; sectors: string; certifications: string; profile?: string | null };
-export type ProjectLite = { name: string; clientName?: string | null; country?: string | null; sector?: string | null; serviceAreas: string; contractValue?: number | null; currency?: string | null; summary?: string | null };
+export type ProjectLite = { name: string; clientName?: string | null; country?: string | null; sector?: string | null; serviceAreas: string; contractValue?: number | null; currency?: string | null; summary?: string | null; startDate?: Date | string | null; endDate?: Date | string | null };
 export type ProposalTheme = { code: string; label: string; triggers: RegExp[]; proofTerms: RegExp[]; methodologyBullets: string[] };
 export type EvaluationWeight = { criterion: string; weight: string; rawMatch: string };
 export type CommercialTerms = {
@@ -24,7 +27,18 @@ export type ProposalIntelligence = {
   assignmentName: string;
   primarySector: string;
   requiredSections: string[];
+  /**
+   * Evaluator-facing criterion labels ONLY. These are rendered as client-visible
+   * headings and table rows (Section C dynamic sub-sections, Section F mirror,
+   * Section H self-score), so they must never carry writer instructions.
+   */
   evaluationCriteria: string[];
+  /**
+   * The same criteria with their in-house writing guidance attached
+   * ("<label> — lead with named hospitals, values, and client references").
+   * For AI/writer context only — never render this in a document.
+   */
+  evaluationCriteriaWriterNotes: string[];
   evaluationWeights: EvaluationWeight[];
   commercialTerms: CommercialTerms;
   submissionRules: string[];
@@ -81,10 +95,14 @@ function textOf(...values: Array<string | null | undefined>): string {
 
 function money(value?: number | null, currency?: string | null): string | null {
   if (!value) return null;
-  const label = currency || "ETB";
-  if (value >= 1_000_000_000) return `${label} ${(value / 1_000_000_000).toFixed(1)}B`;
-  if (value >= 1_000_000) return `${label} ${(value / 1_000_000).toFixed(1)}M`;
-  return `${label} ${value.toLocaleString()}`;
+  // Defaulted to "ETB" on a nullable column — see the note on fmtMoney in
+  // benchmark-tables.ts. A value whose denomination was never recorded is
+  // printed as a magnitude, not re-denominated into someone's currency.
+  const label = (currency ?? "").trim();
+  const withLabel = (amount: string) => (label ? `${label} ${amount}` : amount);
+  if (value >= 1_000_000_000) return withLabel(`${(value / 1_000_000_000).toFixed(1)}B`);
+  if (value >= 1_000_000) return withLabel(`${(value / 1_000_000).toFixed(1)}M`);
+  return withLabel(value.toLocaleString());
 }
 
 // ─── Proposal themes ──────────────────────────────────────────────────────────
@@ -102,7 +120,7 @@ export const PROPOSAL_THEMES: ProposalTheme[] = [
       "radiation shielding design for imaging rooms: shielding calculations, material specification, and regulatory sign-off documentation",
       "medical gas system coordination: oxygen, medical air, vacuum, nitrous oxide, and AGSS layout integrated with MEP from schematic stage",
       "medical-grade electrical design: UPS/generator for life-critical loads, isolated power systems for theatres/ICU, nurse call, BMS, and fire alarm",
-      "Ethiopian Health Authority licensing documentation: design drawings, specifications, and compliance evidence package",
+      "{{JURISDICTION:HEALTH_FACILITY_REGULATOR}} licensing documentation: design drawings, specifications, and compliance evidence package",
     ],
   },
   {
@@ -157,8 +175,8 @@ export const PROPOSAL_THEMES: ProposalTheme[] = [
     triggers: [/structural/i, /foundation/i, /geotechnical/i, /soil.*investigation/i, /borehole.*investigation/i, /seismic/i, /EBCS/i],
     proofTerms: [/structural/i, /foundation/i, /geotechnical/i, /soil/i, /ETABS/i, /SAP2000/i, /seismic/i, /EBCS/i],
     methodologyBullets: [
-      "geotechnical investigation: borehole drilling, soil sampling, laboratory testing (EBCS/ASTM compliant), and bearing capacity recommendation",
-      "structural analysis using ETABS/SAP2000/SAFE: seismic detailing to EBCS-8, foundation engineering for site-specific soil conditions",
+      "geotechnical investigation: borehole drilling, soil sampling, laboratory testing ({{JURISDICTION:MATERIALS_TESTING_STANDARD}} compliant), and bearing capacity recommendation",
+      "structural analysis using ETABS/SAP2000/SAFE: seismic detailing to {{JURISDICTION:SEISMIC_DESIGN_CODE}}, foundation engineering for site-specific soil conditions",
       "staged design review from schematic to working-drawing level with independent peer check before construction-document issue",
     ],
   },
@@ -192,7 +210,7 @@ export const PROPOSAL_THEMES: ProposalTheme[] = [
     proofTerms: [/road/i, /bridge/i, /pavement/i, /highway/i, /culvert/i, /drainage/i, /transport/i, /ERA/i, /AASHTO/i],
     methodologyBullets: [
       "route survey and alignment design: topographic survey, geotechnical investigation (CBR, proctor, borehole/test pit), traffic count and ESAL design traffic calculation",
-      "pavement design per ERA/AASHTO standard: layer thicknesses, surfacing specification, drainage design (culverts, side drains), bridge/structure design and safety audit",
+      "pavement design per {{JURISDICTION:ROAD_DESIGN_STANDARD}} standard: layer thicknesses, surfacing specification, drainage design (culverts, side drains), bridge/structure design and safety audit",
       "construction supervision: materials testing programme (CBR, compaction, aggregate quality), progress reporting, variation control, payment certification, as-built documentation",
     ],
   },
@@ -387,7 +405,7 @@ export const PROPOSAL_THEMES: ProposalTheme[] = [
     methodologyBullets: [
       "Process brief and production-flow analysis (value-stream mapping) before layout design — lean principles embedded in material-flow corridors",
       "Integrated design package: industrial structural design, HVAC/exhaust ventilation, industrial flooring, fire suppression, effluent treatment",
-      "Regulatory and environmental approvals: EIA/ESIA, effluent treatment design to Ethiopian EPA/WHO standards, occupational safety assessment",
+      "Regulatory and environmental approvals: EIA/ESIA, effluent treatment design to {{JURISDICTION:EFFLUENT_STANDARD}}, occupational safety assessment",
       "Factory acceptance test (FAT) protocol for all production equipment; commissioning sequencing plan; operator training programme",
       "Digital 3D plant model for clash detection and installation sequencing; as-built drawings for O&M manual",
     ],
@@ -398,9 +416,9 @@ export const PROPOSAL_THEMES: ProposalTheme[] = [
     triggers: [/high.rise/i, /high_rise/i, /multi.stor/i, /tower.*building/i, /mixed.use.*tower/i, /G\+\d{2,}/i, /basement.*podium/i, /tall building/i],
     proofTerms: [/ETABS/i, /SAP2000/i, /shear wall/i, /seismic/i, /curtain wall/i, /post.tension/i, /BIM/i, /LOD 300/i, /pile foundation/i, /mat foundation/i],
     methodologyBullets: [
-      "Structural system selection (shear wall / core-frame / hybrid) with ETABS/SAP2000 analysis incorporating Ethiopian seismic zone and wind loads per EBCS/ES EN 1998",
+      "Structural system selection (shear wall / core-frame / hybrid) with ETABS/SAP2000 analysis incorporating {{JURISDICTION:SEISMIC_ZONE}} and wind loads per {{JURISDICTION:SEISMIC_CODE_FAMILY}}",
       "BIM-coordinated design at LOD 300+: architecture, structure, and MEP clash detection eliminates field RFIs for riser routing and structural penetrations",
-      "Independent structural peer review before construction documents; structural calculation package formatted to AA City Authority checklist",
+      "Independent structural peer review before construction documents; structural calculation package formatted to the {{JURISDICTION:STRUCTURAL_APPROVAL_AUTHORITY}} checklist",
       "Specialist systems integration: aluminium curtain wall specification, lift/car-lift design, BMS, fire alarm and suppression, generator/UPS sizing",
       "Construction supervision with hold-point inspections at foundation, shear walls, and curtain wall installation; concrete cube tests and rebar pull-out at every pour",
     ],
@@ -529,92 +547,135 @@ function detectRequiredSections(tenderText: string): string[] {
   return detected.length >= 2 ? detected : ["Cover Letter", "Executive Summary", "Company Profile", "Relevant Experience", "Technical Approach", "Compliance and Declaration"];
 }
 
+// The evaluation-criteria window is one long line: textOf/clean() collapse
+// every newline in the tender before this runs. An unanchored `X.*experience`
+// pattern therefore matches across completely unrelated sentences. Measured on
+// a real hospital tender, `/compliance.*experience/i` matched the span
+// "Compliance with submission requirements ... focus on healthcare project
+// experience" and put a Financial Services / Basel-IFRS criterion into a
+// hospital proposal; `/GIS/` matched the "gis" inside "registration" and added
+// an urban master-planning criterion beside it.
+//
+// Splitting the window back into phrases and requiring each pattern to match
+// inside ONE phrase restores the sentence boundary the collapse removed. It
+// fixes every pattern in this catalogue at once, rather than rewriting forty
+// literals and leaving the next one to be added with the same defect.
+function evaluationPhrases(evalSection: string): string[] {
+  return evalSection
+    .split(/[.;:|\u2022\n]+|\s[-\u2013\u2014]\s/g)
+    .map((phrase) => phrase.trim())
+    .filter((phrase) => phrase.length > 0);
+}
+
+/**
+ * Split a catalogue entry into the evaluator-facing label and the in-house
+ * writing guidance that follows it.
+ *
+ * Entries in this catalogue are authored as "<criterion> — <how to answer it>".
+ * The guidance half is writing direction for the proposal author; a real
+ * hospital proposal shipped with the heading "C.7 Financial services /
+ * regulatory compliance experience — lead with named institutions, regulatory
+ * standard met (Basel/IFRS), and go-live outcomes" and repeated that sentence
+ * as its own body text, because the whole string was used as a heading. Keep
+ * the two halves apart at the source so no consumer has to know the convention.
+ */
+export function splitEvaluationCriterion(entry: string): { label: string; guidance: string | null } {
+  const separator = entry.indexOf(" \u2014 ");
+  if (separator < 0) return { label: entry.trim(), guidance: null };
+  return {
+    label: entry.slice(0, separator).trim(),
+    guidance: entry.slice(separator + 3).trim() || null,
+  };
+}
+
 function detectEvaluationCriteria(tenderText: string): string[] {
   const criteria: string[] = [];
   const evalSection = tenderText.match(/evaluation criteria[\s\S]{0,2000}/i)?.[0] ?? tenderText;
+  const phrases = evaluationPhrases(evalSection);
+  const mentions = (pattern: RegExp): boolean => phrases.some((phrase) => pattern.test(phrase));
 
   // Healthcare
-  if (/healthcare.*experience|similar.*hospital|medical.*facility.*experience/i.test(evalSection)) criteria.push("Relevant healthcare / similar medical facility project experience — lead with named hospitals, values, and client references");
-  if (/technical understanding|facility design|clinical|healthcare.*design/i.test(evalSection)) criteria.push("Technical understanding of healthcare facility design — demonstrate clinical workflow, IPC, MEP integration knowledge");
+  if (mentions(/healthcare.*experience|similar.*hospital|medical.*facility.*experience/i)) criteria.push("Relevant healthcare / similar medical facility project experience — lead with named hospitals, values, and client references");
+  if (mentions(/technical understanding|facility design|clinical|healthcare.*design/i)) criteria.push("Technical understanding of healthcare facility design — demonstrate clinical workflow, IPC, MEP integration knowledge");
 
   // Water/Infrastructure
-  if (/water.*experience|water.*project|hydraulic|\bWASH\b|sanitation.*experience/i.test(evalSection)) criteria.push("Relevant water supply / sanitation / hydraulic engineering project experience — lead with named schemes, capacities, and client references");
-  if (/borehole|groundwater|hydrogeol/i.test(evalSection)) criteria.push("Hydrogeological and borehole investigation expertise — show yield, depth, and field supervision evidence");
+  if (mentions(/water.*experience|water.*project|hydraulic|\bWASH\b|sanitation.*experience/i)) criteria.push("Relevant water supply / sanitation / hydraulic engineering project experience — lead with named schemes, capacities, and client references");
+  if (mentions(/borehole|groundwater|hydrogeol/i)) criteria.push("Hydrogeological and borehole investigation expertise — show yield, depth, and field supervision evidence");
 
   // Road/Bridge
-  if (/road.*experience|bridge.*experience|transport.*experience|pavement.*design/i.test(evalSection)) criteria.push("Relevant road / bridge / transport infrastructure experience — lead with route length, contract value, and supervision outcomes");
-  if (/traffic.*study|pavement.*design|highway.*design/i.test(evalSection)) criteria.push("Technical depth in road design — demonstrate pavement design, drainage, and safety audit capability");
+  if (mentions(/road.*experience|bridge.*experience|transport.*experience|pavement.*design/i)) criteria.push("Relevant road / bridge / transport infrastructure experience — lead with route length, contract value, and supervision outcomes");
+  if (mentions(/traffic.*study|pavement.*design|highway.*design/i)) criteria.push("Technical depth in road design — demonstrate pavement design, drainage, and safety audit capability");
 
   // Environmental/Social
-  if (/ESIA|environmental.*experience|social.*assessment|safeguard.*experience/i.test(evalSection)) criteria.push("ESIA/ESMP experience — show accepted reports, donor compliance, and stakeholder engagement track record");
-  if (/World Bank|UNDP|donor.*standard|safeguard.*framework/i.test(evalSection)) criteria.push("Donor compliance track record (World Bank ESF, IFC PS, or equivalent) — position as risk reduction advantage");
+  if (mentions(/ESIA|environmental.*experience|social.*assessment|safeguard.*experience/i)) criteria.push("ESIA/ESMP experience — show accepted reports, donor compliance, and stakeholder engagement track record");
+  if (mentions(/World Bank|UNDP|donor.*standard|safeguard.*framework/i)) criteria.push("Donor compliance track record (World Bank ESF, IFC PS, or equivalent) — position as risk reduction advantage");
 
   // ICT
-  if (/\bICT\b.*experience|system.*develop|software.*experience|\bMIS\b|\bERP\b/i.test(evalSection)) criteria.push("Relevant ICT / system development experience — show deployed systems, user counts, and client references");
-  if (/data.*security|cyber|network.*design/i.test(evalSection)) criteria.push("Technical depth in data security, network architecture, and system resilience");
+  if (mentions(/\bICT\b.*experience|system.*develop|software.*experience|\bMIS\b|\bERP\b/i)) criteria.push("Relevant ICT / system development experience — show deployed systems, user counts, and client references");
+  if (mentions(/data.*security|cyber|network.*design/i)) criteria.push("Technical depth in data security, network architecture, and system resilience");
 
   // Urban Planning
-  if (/urban.*experience|master.*plan.*experience|planning.*experience|GIS/i.test(evalSection)) criteria.push("Urban / master planning experience — show plans delivered, scale, and regulatory alignment outcomes");
+  if (mentions(/urban.*experience|master.*plan.*experience|planning.*experience|\bGIS\b/i)) criteria.push("Urban / master planning experience — show plans delivered, scale, and regulatory alignment outcomes");
 
   // Education
-  if (/school.*design|university.*design|education.*facility.*experience/i.test(evalSection)) criteria.push("Education facility design experience — show comparable school/campus projects with functional approval outcomes");
+  if (mentions(/school.*design|university.*design|education.*facility.*experience/i)) criteria.push("Education facility design experience — show comparable school/campus projects with functional approval outcomes");
 
   // Energy / Power
-  if (/energy.*experience|power.*experience|renewable.*experience|solar.*experience|grid.*experience|electrification.*experience/i.test(evalSection)) criteria.push("Relevant energy / power infrastructure experience — lead with named schemes, installed capacity (MW), and grid-code compliance outcomes");
-  if (/load.*forecast|generation.*design|protection.*relay|SCADA|grid.*integration/i.test(evalSection)) criteria.push("Technical depth in power systems design — demonstrate load-flow analysis, protection coordination, and SCADA integration capability");
+  if (mentions(/energy.*experience|power.*experience|renewable.*experience|solar.*experience|grid.*experience|electrification.*experience/i)) criteria.push("Relevant energy / power infrastructure experience — lead with named schemes, installed capacity (MW), and grid-code compliance outcomes");
+  if (mentions(/load.*forecast|generation.*design|protection.*relay|SCADA|grid.*integration/i)) criteria.push("Technical depth in power systems design — demonstrate load-flow analysis, protection coordination, and SCADA integration capability");
 
   // Agriculture / Irrigation
-  if (/irrigation.*experience|agri.*experience|rural.*develop.*experience|WUA.*experience/i.test(evalSection)) criteria.push("Irrigation / agricultural development experience — lead with named schemes, command area (ha), and WUA establishment outcomes");
-  if (/crop.*water|agronomy|hydrological.*analysis|Penman/i.test(evalSection)) criteria.push("Technical depth in irrigation design — demonstrate FAO Penman-Monteith crop water calculations and hydraulic network design capability");
+  if (mentions(/irrigation.*experience|agri.*experience|rural.*develop.*experience|WUA.*experience/i)) criteria.push("Irrigation / agricultural development experience — lead with named schemes, command area (ha), and WUA establishment outcomes");
+  if (mentions(/crop.*water|agronomy|hydrological.*analysis|Penman/i)) criteria.push("Technical depth in irrigation design — demonstrate FAO Penman-Monteith crop water calculations and hydraulic network design capability");
 
   // Mining / Extractive
-  if (/mining.*experience|mineral.*experience|JORC.*experience|resource.*assess.*experience/i.test(evalSection)) criteria.push("Mining / mineral resource assessment experience — lead with JORC-compliant reports delivered and competent-person credentials");
-  if (/slope.*stability|tailings|mine.*plan|geotechnical.*mining/i.test(evalSection)) criteria.push("Technical depth in mine geotechnics and TSF design — demonstrate slope-stability analyses and MAC/ANCOLD-compliant designs");
+  if (mentions(/mining.*experience|mineral.*experience|JORC.*experience|resource.*assess.*experience/i)) criteria.push("Mining / mineral resource assessment experience — lead with JORC-compliant reports delivered and competent-person credentials");
+  if (mentions(/slope.*stability|tailings|mine.*plan|geotechnical.*mining/i)) criteria.push("Technical depth in mine geotechnics and TSF design — demonstrate slope-stability analyses and MAC/ANCOLD-compliant designs");
 
   // Port / Maritime
-  if (/port.*experience|maritime.*experience|harbour.*experience|berth.*design.*experience/i.test(evalSection)) criteria.push("Port / maritime infrastructure experience — lead with named terminals, berth length, and ISPS certification outcomes");
-  if (/dredging|nautical.*simulation|met.?ocean|bathymetric/i.test(evalSection)) criteria.push("Technical depth in port engineering — demonstrate met-ocean analysis, fast-time simulation, and dredge design capability");
+  if (mentions(/port.*experience|maritime.*experience|harbour.*experience|berth.*design.*experience/i)) criteria.push("Port / maritime infrastructure experience — lead with named terminals, berth length, and ISPS certification outcomes");
+  if (mentions(/dredging|nautical.*simulation|met.?ocean|bathymetric/i)) criteria.push("Technical depth in port engineering — demonstrate met-ocean analysis, fast-time simulation, and dredge design capability");
 
   // Oil & Gas
-  if (/oil.*gas.*experience|pipeline.*experience|HAZOP.*experience|process.*safety.*experience/i.test(evalSection)) criteria.push("Oil & gas / pipeline engineering experience — lead with named projects, pipeline diameter/length, and HAZOP study completions");
-  if (/P&ID|LOPA|cathodic.*protection|pipeline.*integrity|commissioning.*procedure/i.test(evalSection)) criteria.push("Technical depth in process safety and pipeline design — demonstrate HAZOP facilitation, P&ID development, and integrity management capability");
+  if (mentions(/oil.*gas.*experience|pipeline.*experience|HAZOP.*experience|process.*safety.*experience/i)) criteria.push("Oil & gas / pipeline engineering experience — lead with named projects, pipeline diameter/length, and HAZOP study completions");
+  if (mentions(/P&ID|LOPA|cathodic.*protection|pipeline.*integrity|commissioning.*procedure/i)) criteria.push("Technical depth in process safety and pipeline design — demonstrate HAZOP facilitation, P&ID development, and integrity management capability");
 
   // Financial Services
-  if (/financial.*experience|banking.*experience|compliance.*experience|regulatory.*experience/i.test(evalSection)) criteria.push("Financial services / regulatory compliance experience — lead with named institutions, regulatory standard met (Basel/IFRS), and go-live outcomes");
-  if (/KYC|AML|core.*banking|IFRS|Basel.*compliance|prudential/i.test(evalSection)) criteria.push("Technical depth in banking regulation — demonstrate KYC/AML programme design, IFRS implementation, and prudential regulatory advisory");
+  if (mentions(/financial.*experience|banking.*experience|compliance.*experience|regulatory.*experience/i)) criteria.push("Financial services / regulatory compliance experience — lead with named institutions, regulatory standard met (Basel/IFRS), and go-live outcomes");
+  if (mentions(/KYC|AML|core.*banking|IFRS|Basel.*compliance|prudential/i)) criteria.push("Technical depth in banking regulation — demonstrate KYC/AML programme design, IFRS implementation, and prudential regulatory advisory");
 
   // Telecoms / Broadband
-  if (/telecom.*experience|broadband.*experience|spectrum.*experience|network.*rollout.*experience/i.test(evalSection)) criteria.push("Telecoms / broadband network experience — lead with named projects, network reach (km), and spectrum licensing outcomes");
-  if (/LTE|5G|base.*station.*design|backhaul.*design|broadband.*rollout/i.test(evalSection)) criteria.push("Technical depth in mobile and broadband network design — demonstrate RF planning, backhaul design, and commissioning protocol capability");
+  if (mentions(/telecom.*experience|broadband.*experience|spectrum.*experience|network.*rollout.*experience/i)) criteria.push("Telecoms / broadband network experience — lead with named projects, network reach (km), and spectrum licensing outcomes");
+  if (mentions(/\bLTE\b|\b5G\b|base.*station.*design|backhaul.*design|broadband.*rollout/i)) criteria.push("Technical depth in mobile and broadband network design — demonstrate RF planning, backhaul design, and commissioning protocol capability");
 
   // Interior Design / Fit-Out / Construction Supervision / Contract Administration
-  if (/interior.*experience|fit[- ]?out.*experience|space.*planning.*experience/i.test(evalSection)) criteria.push("Interior design / fit-out experience — lead with named projects, area (m²), and client references");
-  if (/supervision.*experience|resident engineer.*experience|site.*management.*experience/i.test(evalSection)) criteria.push("Construction supervision experience — show named contracts supervised, contract value, and IPC/hold-point outcomes");
-  if (/contract.*admin.*experience|FIDIC.*experience|claims.*experience|quantity.*survey.*experience/i.test(evalSection)) criteria.push("Contract administration / FIDIC experience — show named contracts, final account settlements, and EOT determinations");
+  if (mentions(/interior.*experience|fit[- ]?out.*experience|space.*planning.*experience/i)) criteria.push("Interior design / fit-out experience — lead with named projects, area (m²), and client references");
+  if (mentions(/supervision.*experience|resident engineer.*experience|site.*management.*experience/i)) criteria.push("Construction supervision experience — show named contracts supervised, contract value, and IPC/hold-point outcomes");
+  if (mentions(/contract.*admin.*experience|FIDIC.*experience|claims.*experience|quantity.*survey.*experience/i)) criteria.push("Contract administration / FIDIC experience — show named contracts, final account settlements, and EOT determinations");
 
   // Heritage Conservation
-  if (/heritage.*experience|conservation.*experience|historic.*building.*experience|restoration.*experience/i.test(evalSection)) criteria.push("Heritage conservation / restoration experience — lead with named historic buildings conserved, heritage authority approvals obtained, and conservation methods applied");
-  if (/ICOMOS|lime mortar|conservation.*plan|significance.*assessment|reversib/i.test(evalSection)) criteria.push("Technical depth in heritage conservation — demonstrate ICOMOS-aligned methodology, material-compatibility testing, and conservation plan preparation");
+  if (mentions(/heritage.*experience|conservation.*experience|historic.*building.*experience|restoration.*experience/i)) criteria.push("Heritage conservation / restoration experience — lead with named historic buildings conserved, heritage authority approvals obtained, and conservation methods applied");
+  if (mentions(/ICOMOS|lime mortar|conservation.*plan|significance.*assessment|reversib/i)) criteria.push("Technical depth in heritage conservation — demonstrate ICOMOS-aligned methodology, material-compatibility testing, and conservation plan preparation");
 
   // Industrial & Manufacturing
-  if (/industrial.*experience|manufactur.*experience|factory.*experience|abattoir.*experience|processing.*plant.*experience/i.test(evalSection)) criteria.push("Industrial / manufacturing facility experience — lead with named facilities delivered, production capacity, and commissioning outcomes");
-  if (/process.*flow|effluent.*treatment|EHS|FAT|cleaner.*production|lean.*design/i.test(evalSection)) criteria.push("Technical depth in industrial design — demonstrate process-flow analysis, effluent treatment design, and FAT commissioning protocol capability");
+  if (mentions(/industrial.*experience|manufactur.*experience|factory.*experience|abattoir.*experience|processing.*plant.*experience/i)) criteria.push("Industrial / manufacturing facility experience — lead with named facilities delivered, production capacity, and commissioning outcomes");
+  if (mentions(/process.*flow|effluent.*treatment|\bEHS\b|\bFAT\b|cleaner.*production|lean.*design/i)) criteria.push("Technical depth in industrial design — demonstrate process-flow analysis, effluent treatment design, and FAT commissioning protocol capability");
 
   // High-Rise Buildings
-  if (/high.rise.*experience|multi.stor.*experience|tower.*building.*experience|tall.*building.*experience/i.test(evalSection)) criteria.push("High-rise / multi-storey building experience — lead with named towers designed, height/storeys, structural system, and authority approval outcomes");
-  if (/ETABS|SAP2000|shear.*wall|seismic.*design|curtain.*wall|post.tension/i.test(evalSection)) criteria.push("Technical depth in high-rise structural design — demonstrate ETABS/SAP2000 analysis, seismic compliance, and independent peer review protocol");
+  if (mentions(/high.rise.*experience|multi.stor.*experience|tower.*building.*experience|tall.*building.*experience/i)) criteria.push("High-rise / multi-storey building experience — lead with named towers designed, height/storeys, structural system, and authority approval outcomes");
+  if (mentions(/ETABS|SAP2000|shear.*wall|seismic.*design|curtain.*wall|post.tension/i)) criteria.push("Technical depth in high-rise structural design — demonstrate ETABS/SAP2000 analysis, seismic compliance, and independent peer review protocol");
 
   // Hospitality & Tourism
-  if (/hotel.*experience|hospitality.*experience|resort.*experience|lodge.*experience/i.test(evalSection)) criteria.push("Hospitality / hotel design experience — lead with named hotels or resorts designed, star rating, room count, and brand operator sign-off outcomes");
-  if (/FF&E|brand.*standard|RevPAR|guestroom.*HVAC|mock.*room|pre.opening/i.test(evalSection)) criteria.push("Technical depth in hospitality design — demonstrate brand-standard compliance methodology, FF&E procurement schedule, and pre-opening punch list capability");
+  if (mentions(/hotel.*experience|hospitality.*experience|resort.*experience|lodge.*experience/i)) criteria.push("Hospitality / hotel design experience — lead with named hotels or resorts designed, star rating, room count, and brand operator sign-off outcomes");
+  if (mentions(/FF&E|brand.*standard|RevPAR|guestroom.*HVAC|mock.*room|pre.opening/i)) criteria.push("Technical depth in hospitality design — demonstrate brand-standard compliance methodology, FF&E procurement schedule, and pre-opening punch list capability");
 
   // Universal criteria
-  if (/portfolio|quality.*portfolio|relevance.*portfolio/i.test(evalSection)) criteria.push("Quality and relevance of project portfolio — include photos, drawings, and project outcome evidence");
-  if (/professional team|multidisciplinary|strength.*team|key.*personnel|team.*composition/i.test(evalSection)) criteria.push("Strength of professional team — show each expert's role on a comparable previous project");
-  if (/company.*profile|firm.*profile|organisational.*capacity/i.test(evalSection)) criteria.push("Company profile and organisational capacity — licence grade, staff count, registrations, certifications");
-  if (/submission.*requirement|compliance.*submission|format.*requirement/i.test(evalSection)) criteria.push("Compliance with all submission requirements — section structure, file format, subject line, deadline");
-  if (/value.*added|additional.*service|added.*value/i.test(evalSection)) criteria.push("Value-added services and in-house capabilities beyond minimum scope");
-  if (/methodology|technical.*approach|work.*plan/i.test(evalSection)) criteria.push("Quality of technical methodology — demonstrate structured, deliverable-linked work plan with QA gates");
+  if (mentions(/portfolio|quality.*portfolio|relevance.*portfolio/i)) criteria.push("Quality and relevance of project portfolio — include photos, drawings, and project outcome evidence");
+  if (mentions(/professional team|multidisciplinary|strength.*team|key.*personnel|team.*composition/i)) criteria.push("Strength of professional team — show each expert's role on a comparable previous project");
+  if (mentions(/company.*profile|firm.*profile|organisational.*capacity/i)) criteria.push("Company profile and organisational capacity — licence grade, staff count, registrations, certifications");
+  if (mentions(/submission.*requirement|compliance.*submission|format.*requirement/i)) criteria.push("Compliance with all submission requirements — section structure, file format, subject line, deadline");
+  if (mentions(/value.*added|additional.*service|added.*value/i)) criteria.push("Value-added services and in-house capabilities beyond minimum scope");
+  if (mentions(/methodology|technical.*approach|work.*plan/i)) criteria.push("Quality of technical methodology — demonstrate structured, deliverable-linked work plan with QA gates");
 
   return criteria.length > 0 ? criteria : [
     "Relevant project experience — lead with highest-value comparable projects by sector",
@@ -647,7 +708,13 @@ function detectSubmissionRules(tender: TenderLite, tenderText: string): string[]
   if (subjectMatch?.[1]) rules.push(`Exact subject line (verbatim): "${subjectMatch[1].trim()}".`);
 
   // Deadline
-  if (tender.deadline) {
+  const groundedDeadline = tenderText.match(/Submission\s+Deadline\s*:\s*([^\n]{5,100})/i)?.[1]?.trim();
+  if (groundedDeadline) {
+    const boundedDeadline = groundedDeadline
+      .split(/\s+(?=(?:Submission\s+Email|Submission\s+Method|Email\s*\(|Subject|Submission\s+Address|Portal)\b)/i)[0]
+      .trim();
+    rules.push(`Submission deadline: ${boundedDeadline.replace(/\.$/, "")}.`);
+  } else if (tender.deadline) {
     rules.push(`Submission deadline: ${new Date(tender.deadline).toLocaleString("en-US", { year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" })}.`);
   } else {
     const deadlineMatch = tenderText.match(/[Dd]eadline\s*[:\-]\s*([^\n]{5,60})/);
@@ -656,7 +723,7 @@ function detectSubmissionRules(tender: TenderLite, tenderText: string): string[]
 
   // Submission method/address
   if (tender.submissionMethod) rules.push(`Submission method: ${tender.submissionMethod}.`);
-  if (tender.submissionAddress) rules.push(`Submission portal / address: ${tender.submissionAddress}.`);
+  if (tender.submissionAddress && !/email/i.test(tender.submissionMethod ?? "")) rules.push(`Submission portal / address: ${tender.submissionAddress}.`);
 
   // File format
   if (/PDF only|submit.*PDF|electronic.*PDF/i.test(tenderText)) rules.push("File format: PDF (electronic submission only).");
@@ -667,14 +734,28 @@ function detectSubmissionRules(tender: TenderLite, tenderText: string): string[]
   return Array.from(new Set(rules));
 }
 
-function detectThemes(tenderText: string): ProposalTheme[] {
+/**
+ * Exported so the jurisdiction rule can be tested at its own boundary: this is
+ * the only place a theme is selected, and the only place its bullets resolve.
+ */
+export function detectThemes(tenderText: string): ProposalTheme[] {
   const scored = PROPOSAL_THEMES.map((t) => ({ theme: t, score: t.triggers.filter((p) => p.test(tenderText)).length }))
     .filter((s) => s.score > 0)
     .sort((a, b) => b.score - a.score);
   // Return only matched themes. An empty array is correct when no themes
   // trigger — forcing donor-compliance on an unrelated tender (e.g. road
   // design) injects irrelevant methodology bullets and hurts quality.
-  return scored.map((s) => s.theme);
+  //
+  // A theme's bullets are written once, for every jurisdiction, and carry
+  // {{JURISDICTION:...}} tokens where a named regulator, code or standard would
+  // otherwise be asserted. This is the only place a theme is selected, and it
+  // is the first place the tender's own text is available, so it is where the
+  // tokens resolve: a source that names EBCS gets EBCS, and a source that does
+  // not gets the instrument described by its function instead.
+  return scored.map((s) => ({
+    ...s.theme,
+    methodologyBullets: s.theme.methodologyBullets.map((b) => resolveJurisdictionTokens(b, tenderText)),
+  }));
 }
 
 export function inferSector(tenderText: string): string {
@@ -767,12 +848,30 @@ function detectExactSubjectLine(tenderText: string): string | null {
 
 // ─── Differentiators ──────────────────────────────────────────────────────────
 
+/**
+ * Differentiators are derived from SOURCE-DERIVED THEMES and the company's own
+ * evidence — never from the identity of the client.
+ *
+ * This function used to take the raw tender text, and used it for exactly one
+ * thing: `if (/pharo/i.test(tenderText))`, which pushed a claim about "private
+ * -sector investor expectations" into the proposal whenever a particular
+ * client's name appeared anywhere in the document. That is unfounded (a client
+ * name implies nothing about their expectations), unearned (no evidence backs
+ * the claim), and structurally wrong (every neighbouring branch keys on a
+ * theme code, not a customer). It also could not generalise: no other client
+ * could ever receive the behaviour, and any unrelated tender containing that
+ * token received a differentiator it had not earned.
+ *
+ * The parameter is removed along with the branch, deliberately. Dropping only
+ * the regex would leave the capability in place for the next such shortcut;
+ * without the raw text this function cannot key on a client identity at all.
+ * A claim of this kind must come from a theme code derived from the source.
+ */
 function makeDifferentiators(
   company: CompanyLite,
   projects: ProjectLite[],
   experts: ExpertLite[],
   themes: ProposalTheme[],
-  tenderText: string,
 ): string[] {
   const allProjectText = projects.map((p) => textOf(p.name, p.summary, p.sector, p.clientName, ...safeParseArr(p.serviceAreas))).join("\n");
   const allExpertText = experts.map((e) => textOf(e.fullName, e.title, e.profile, ...safeParseArr(e.disciplines), ...safeParseArr(e.certifications))).join("\n");
@@ -790,10 +889,10 @@ function makeDifferentiators(
   // Healthcare positioning — claim, not instruction.
   if (themes.some((t) => t.code === "HEALTHCARE")) {
     if (/hospital|health.*facilit|medical.*cent/i.test(allProjectText)) {
-      items.push("Direct healthcare facility delivery experience: prior hospital and medical-centre projects in the firm's reviewed portfolio give this engagement a same-team continuity advantage.");
+      items.push("Reviewed hospital and medical-centre records inform the healthcare-specific delivery approach described in this proposal.");
     }
-    items.push("Healthcare-specific design depth: IPC compliance, clinical zone segregation, radiation shielding for imaging, medical gas coordination, and Health Authority licensing are core deliverables, not afterthoughts.");
-    items.push("Each proposed lead has performed a comparable role on a previous reviewed project — credentials matched to actual delivery, not just discipline.");
+    items.push("Healthcare-specific methodology addresses IPC, clinical zone segregation and medical-gas coordination; radiation shielding and licensing activities are included only where the confirmed equipment brief and applicable authority require them.");
+    items.push("The proposed disciplines are mapped to the tender's healthcare scope; individual experience claims remain limited to each reviewed specialist record.");
   }
 
   // Facility assessment — claim, not instruction.
@@ -803,7 +902,7 @@ function makeDifferentiators(
 
   // Donor compliance — claim, not instruction.
   if (/World Bank|ESF|UNDP|British Council/i.test(companyText + allProjectText)) {
-    items.push("Donor-grade documentation track record (World Bank ESF, British Council, equivalent): documentation discipline exceeds typical regulatory requirements, reducing approval risk.");
+    items.push("Reviewed World Bank ESF and British Council records inform the proposal's documentation and review controls; each applicable standard remains subject to the tender and authority requirements.");
   }
 
   // In-house geotechnical — claim.
@@ -826,7 +925,8 @@ function makeDifferentiators(
 
   // PhD / senior credentials — claim.
   if (/PhD|doctorate|Eindhoven|Oxford|imperial/i.test(allExpertText)) {
-    items.push("Team includes PhD-qualified specialists — deep technical capability supported by international academic credentials.");
+    // Individual source-backed qualifications belong in the relevant CV entry;
+    // do not turn them into a proposal-wide specialist capability claim.
   }
 
   // Energy / Power
@@ -883,11 +983,6 @@ function makeDifferentiators(
       items.push("Broadband and mobile network delivery track record: prior LTE/5G base-station or fibre-backhaul projects provide RF-planning and commissioning-protocol continuity.");
     }
     items.push("End-to-end network design capability: coverage simulation, backhaul design, base-station siting, and site-acceptance test (SAT) protocol managed under one technical team.");
-  }
-
-  // Pharo-specific — claim, not instruction.
-  if (/pharo/i.test(tenderText)) {
-    items.push("Engagement model tuned to private-sector investor expectations: schedule certainty, audit-ready documentation, and institutional delivery discipline alongside technical depth.");
   }
 
   return Array.from(new Set(items)).slice(0, 8);
@@ -1302,6 +1397,8 @@ export function buildProposalIntelligence(params: {
     description: tender.description,
   });
 
+  const detectedCriteria = detectEvaluationCriteria(tenderText);
+
   return {
     tenderText,
     clientName: finalClientName,
@@ -1309,11 +1406,12 @@ export function buildProposalIntelligence(params: {
     assignmentName: finalAssignmentName,
     primarySector: inferSector(tenderText),
     requiredSections: detectRequiredSections(tenderText),
-    evaluationCriteria: detectEvaluationCriteria(tenderText),
+    evaluationCriteria: detectedCriteria.map((entry) => splitEvaluationCriterion(entry).label),
+    evaluationCriteriaWriterNotes: detectedCriteria,
     evaluationWeights: detectEvaluationWeights(tenderText),
     commercialTerms: detectCommercialTerms(tenderText),
     submissionRules: detectSubmissionRules(tender, tenderText),
-    differentiators: makeDifferentiators(company, topProjects, topExperts, themes, tenderText),
+    differentiators: makeDifferentiators(company, topProjects, topExperts, themes),
     themes,
     topProjects,
     topExperts,
@@ -1326,18 +1424,286 @@ export function buildProposalIntelligence(params: {
   };
 }
 
+/**
+ * What the writer is told about a project.
+ *
+ * This line IS the writer's knowledge of the record: the Section B card the
+ * model produces asks for "Location & Scale", "Duration" and "Services
+ * Provided", and it can only fill those slots from here. On the owner's vault
+ * every structured column this used to read — country, sector, contractValue —
+ * is null on all 114 records, so the model received a name, a client and a wall
+ * of raw text, and the delivered card read:
+ *
+ *   Location & Scale   Ethiopia — —
+ *   Services Provided  —
+ *
+ * The facts are in the record's own source text, and the same extractor the
+ * deterministic card uses finds them: location on 114 of 114 records, dates on
+ * 91, services on 114. Naming them explicitly here is not new information — it
+ * is the record's own words, stated in a form the writer can use rather than
+ * left for it to find in six hundred characters of prose.
+ *
+ * The consultancy fee and the construction cost are passed under separate
+ * labels for the reason set out in project-fact-extractor.ts: one record states
+ * a construction cost of 550,074,678.02 ETB and a design fee of 1,100,000 ETB,
+ * and a writer given a single unlabelled number would put the larger one in a
+ * "Contract Value" row.
+ */
 export function projectProofLine(project: ProjectLite): string {
-  const value = money(project.contractValue, project.currency);
-  const parts = [project.clientName, project.country, project.sector, value].filter(Boolean);
-  const summary = clean(project.summary).slice(0, 600);
+  const derived = extractProjectFacts(project.summary ?? "", project.name);
+  const amounts = extractProjectAmounts(project.summary ?? "");
+  const fee = amounts.find((a) => a.role === "CONSULTANCY_FEE" && !a.perMonth);
+  const works = amounts.find((a) => a.role === "CONSTRUCTION" && !a.perMonth);
+  const services = safeParseArr(project.serviceAreas as unknown as string)
+    .filter((entry) => entry.trim().length > 0);
+  const derivedServices = services.length > 0 ? services : extractServicesProvided(project.summary ?? "");
+
+  const storedValue = money(project.contractValue, project.currency);
+  const parts = [
+    project.clientName,
+    project.country || derived.country || derived.location,
+    project.sector || derived.sector,
+    storedValue || (fee ? `Consultancy fee ${money(fee.value, fee.currency ?? project.currency)}` : ""),
+    works ? `Construction value of works ${money(works.value, works.currency ?? project.currency)}` : "",
+    derivedDurationLabel(project, derived),
+    derivedServices.length > 0 ? `Services: ${derivedServices.join(", ")}` : "",
+  ].filter(Boolean);
+
+  const summary = truncateAtWordBoundary(clean(project.summary), 600);
   return `${project.name}${parts.length ? ` — ${parts.join(" | ")}` : ""}${summary ? `. ${summary}` : ""}`;
+}
+
+/**
+ * "2015-2018" from the record's own dates — the STORED ones first.
+ *
+ * THE DEFECT THIS FIXES
+ * ---------------------
+ * `ProjectLite` carried no date columns, so this function could only re-derive
+ * a duration by regex from `summary`. Every caller passes a full Project row,
+ * and `Project.startDate` / `Project.endDate` are populated and durably
+ * verified for the overwhelming majority of the portfolio -- so a verified
+ * structured field was invisible to the writer, and a project whose summary
+ * prose happened not to restate its years reached the proposal with no
+ * duration at all. The same record's `contractValue` was already read straight
+ * from the column two lines above, which is the authority class these dates
+ * belong to as well.
+ *
+ * CONFLICT IS NOT RESOLVED BY PREFERENCE
+ * --------------------------------------
+ * When the stored years and the years derived from the record's own prose
+ * disagree, nothing is emitted. One of the two is wrong and this function
+ * cannot tell which; a duration printed in a client proposal is acted on, and
+ * the enrichment census is explicit that verified facts are not to be
+ * adjusted to make matching tidier. Silence is recoverable, a wrong delivery
+ * window is not.
+ */
+function derivedDurationLabel(
+  project: ProjectLite,
+  derived: ReturnType<typeof extractProjectFacts>,
+): string {
+  const y = (d: Date | string | null | undefined): string => {
+    if (!d) return "";
+    const parsed = d instanceof Date ? d : new Date(d);
+    return Number.isNaN(parsed.getTime()) ? "" : String(parsed.getUTCFullYear());
+  };
+  const label = (a: string, b: string): string => (a && b && a !== b ? `${a}-${b}` : a || b || "");
+
+  const stored = label(y(project.startDate), y(project.endDate));
+  const fromText = label(y(derived.startDate as Date | null), y(derived.endDate as Date | null));
+
+  if (stored && fromText && stored !== fromText) return "";
+  return stored || fromText;
+}
+
+/**
+ * A stored field, made fit to sit inside a sentence.
+ *
+ * Evidence values are interpolated straight into prose — "delivered X (client)"
+ * and "X for client." — so whatever punctuation the field ends with collides
+ * with the sentence's own. A real Company Vault project carries the client
+ * "Gimba City, South Wollo Zone, Amhara Region," — a location string that ends
+ * in a comma — and the client-facing Technical Proposal therefore read:
+ *
+ *   … G+6 General Hospital – Dr Abdul Seid (Gimba City, South Wollo Zone,
+ *   Amhara Region,) and Moyale Abattoir Rehabilitation …
+ *   … G+6 General Hospital – Dr Abdul Seid for Gimba City, South Wollo
+ *   Zone, Amhara Region,. The same team is proposed …
+ *
+ * ",)" and ",." three times over in the document an evaluator reads.
+ *
+ * The data is not edited to fix this: the vault keeps exactly what its source
+ * says, and only the rendering trims the separator that the sentence is about
+ * to supply itself.
+ */
+export function inlineEvidenceValue(value: string | null | undefined): string {
+  return (value ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^[\s,;:.\u2013\u2014-]+/, "")
+    .replace(/[\s,;:\u2013\u2014-]+$/, "")
+    .trim();
+}
+
+/**
+ * The CV form fields a proposal may quote, and the ones it may not.
+ *
+ * An expert's stored `profile` is the text extracted from their CV, and the
+ * standard consultancy CV opens with a personnel form whose labels and values
+ * run together with no punctuation:
+ *
+ *   1. PERSONNEL INFORMATION Proposed Position Architect Name of Firm Hope
+ *   Urban Planning … Name of Expert Habib Ahmed Date of Birth 1997 G.C.
+ *   (Approx) Nationality Ethiopian Education B.Sc. in Architecture
+ *
+ * expertProofLine hands that text to the writer, and the writer copied it into
+ * the team table of a real client-facing Technical Proposal — so the submitted
+ * document stated an employee's date of birth and nationality. Neither is
+ * evidence of capability, and neither belongs in a document that leaves the
+ * company.
+ *
+ * This is a privacy classifier, not a contaminant list: the categories are
+ * enumerated because personal data IS enumerated (birth, origin, civil status,
+ * identity numbers, personal contact details). The professional fields beside
+ * them — position, firm, education, registration — are exactly what an
+ * evaluator is meant to read and are kept.
+ *
+ * Removal is by FORM FIELD, not by blind deletion: a personal label consumes
+ * text only up to the next known label, so the professional field that follows
+ * it survives intact.
+ */
+const CV_FORM_LABELS = [
+  "Proposed Position", "Name of Firm", "Name of Expert", "Name of Staff",
+  "Date of Birth", "Place of Birth", "Nationality", "Citizenship",
+  "Marital Status", "Gender", "Sex", "Religion",
+  "Passport Number", "Passport No", "National ID", "ID Number", "ID No",
+  "Telephone", "Mobile", "Phone", "Email", "Address",
+  "Education", "Languages", "Membership in Professional Associations",
+  "Membership", "Years with Firm", "Key Qualifications", "Employment Record",
+] as const;
+
+const PERSONAL_CV_LABELS = new Set<string>([
+  "Date of Birth", "Place of Birth", "Nationality", "Citizenship",
+  "Marital Status", "Gender", "Sex", "Religion",
+  "Passport Number", "Passport No", "National ID", "ID Number", "ID No",
+  "Telephone", "Mobile", "Phone", "Email", "Address",
+]);
+
+export function withoutPersonalCvFields(profile: string): string {
+  if (!profile) return profile;
+  // Longest label first so "Passport Number" is not matched as "Passport No".
+  const labels = [...CV_FORM_LABELS].sort((a, b) => b.length - a.length);
+  const labelPattern = labels.map((label) => label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+  const boundary = new RegExp(`\\b(${labelPattern})\\b`, "g");
+
+  const segments: Array<{ label: string | null; text: string }> = [];
+  let lastIndex = 0;
+  let lastLabel: string | null = null;
+  let match: RegExpExecArray | null;
+  while ((match = boundary.exec(profile)) !== null) {
+    segments.push({ label: lastLabel, text: profile.slice(lastIndex, match.index) });
+    lastLabel = match[1];
+    lastIndex = match.index + match[0].length;
+  }
+  segments.push({ label: lastLabel, text: profile.slice(lastIndex) });
+
+  return segments
+    .filter((segment) => !(segment.label && PERSONAL_CV_LABELS.has(segment.label)))
+    .map((segment) => (segment.label ? `${segment.label}${segment.text}` : segment.text))
+    .join(" ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+/**
+ * Strip the furniture of a CV *document* from a stored expert profile.
+ *
+ * `withoutPersonalCvFields` removes the personal data. What it leaves is still
+ * the raw text of a file, and the Principal Qualifications bios print it to the
+ * client verbatim. A real submitted proposal therefore read:
+ *
+ *   Profile. HOPE URBAN PLANNING ARCHITECTURAL AND ENGINEERING CONSULTANCY PLC
+ *   CURRICULUM VITAE ENG. AHMED KEBEDE TEKAW General Manager & Practicing
+ *   Professional Engineer … 1. PERSONNEL INFORMATION Proposed Position General
+ *   Manager … Name of Firm Hope Urban Planning Architectural and Engineering
+ *   Consultan
+ *
+ * An evaluator reads that as the bidder having pasted a file into the proposal.
+ * Three families of furniture are removed: the shouty letterhead banner a CV
+ * opens with, the document titles ("CURRICULUM VITAE", "PROFESSIONAL PROFILE"),
+ * and the numbered form-section headings with their bare labels. The narrative
+ * itself is untouched — this only removes text that describes the document
+ * rather than the person.
+ */
+const CV_DOCUMENT_FURNITURE: RegExp[] = [
+  /\b\d+\s*\.\s*PERSONNEL\s+INFORMATION\b/gi,
+  /\bCURRICULUM\s+VITAE\b/gi,
+  /\bPROFESSIONAL\s+PROFILE\b/gi,
+  /\bPERSONNEL\s+INFORMATION\b/gi,
+  /\b(?:Proposed Position|Current Position|Name of Firm|Name of Expert|Name of Staff|Full Name|Employer)\s*[:\-]?\s*/gi,
+];
+
+export function withoutCvDocumentFurniture(profile: string): string {
+  if (!profile) return profile;
+  let text = profile.replace(/\s+/g, " ").trim();
+  // A CV usually opens with the firm's name in capitals, sometimes twice, then
+  // the holder's name in capitals. Drop a leading run of shouty words before
+  // any ordinary prose starts; stop at the first token that is not upper-case
+  // furniture so a real sentence is never eaten.
+  text = text.replace(/^(?:(?:[A-Z][A-Z&.()À-ɏ]{1,}|\d+\.)\s+){4,}/, "");
+  for (const pattern of CV_DOCUMENT_FURNITURE) text = text.replace(pattern, " ");
+  return text.replace(/\s{2,}/g, " ").replace(/^[\s,;:.\-–—]+/, "").trim();
+}
+
+/**
+ * Cut long evidence text at a WORD boundary, not mid-word.
+ *
+ * These proof lines are writer context, and the writer copies them into the
+ * team and experience tables. A raw `.slice(0, 600)` therefore shipped, in a
+ * real client-facing Technical Proposal:
+ *
+ *   … SELAMAWIT MESFIN ARCHITECT HOPE URBAN PLANNING ARCHI
+ *   … Name of Firm Hope Urban Planning Architectural and Engineering Consultan
+ *
+ * A proposal that stops mid-word reads as broken to an evaluator, and it is the
+ * kind of defect no amount of prompt quality can fix because the damage is done
+ * before the writer sees the text.
+ *
+ * The budget is unchanged — the same amount of evidence reaches the writer —
+ * only the cut moves back to the last space, and the ellipsis marks it as
+ * shortened. A single token longer than the whole budget still gets a hard cut,
+ * because there is no word boundary to find.
+ */
+export function truncateAtWordBoundary(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const window = text.slice(0, max);
+  const lastSpace = window.lastIndexOf(" ");
+  const cut = lastSpace > Math.floor(max * 0.5) ? window.slice(0, lastSpace) : window;
+  // Cutting on a word boundary is not enough on its own. A delivered proposal
+  // ended cells at "(Building Officer, Gimba…", "2. EDUCATION, TRAINING &…" and
+  // "Sectors: …" — each cut is between words, and each still reads as a broken
+  // document rather than a shortened one.
+  return tidyTruncation(cut.replace(/[\s,;:—–-]+$/, ""));
 }
 
 export function expertProofLine(expert: ExpertLite): string {
   const disciplines = safeParseArr(expert.disciplines).slice(0, 6).join(", ");
   const certs = safeParseArr(expert.certifications).slice(0, 6).join(", ");
   const sectors = safeParseArr(expert.sectors).slice(0, 4).join(", ");
-  const profile = clean(expert.profile).slice(0, 600);
+  // Also strip the CV document's own furniture. This line reaches the client
+  // through "Proposed Team and Expert Contributions", where it was printing
+  // "… CURRICULUM VITAE ENG. AHMED KEBEDE TEKAW … 1. PERSONNEL INFORMATION
+  // Proposed Position … Name of Firm …" verbatim from the source file.
+  // Stripping the CV's named fields and headings was not enough: run
+  // 34038487418 still printed the letterhead card — "HOPE URBAN PLANNING
+  // ARCHITECTURAL AND ENGINEERING CONSULTANCY PLC ENG. AHMED KEBEDE TEKAW …
+  // Major Projects | 5 International | 11+ Years Experience … Languages Amharic
+  // (Excellent), English…" — into the client-facing team table. A stored value
+  // that is the source document's furniture rather than a profile is dropped;
+  // the structured fields on either side of it carry the same facts.
+  const profile = truncateAtWordBoundary(
+    factualCardOrEmpty(withoutCvDocumentFurniture(withoutPersonalCvFields(clean(expert.profile)))),
+    600,
+  );
   return [
     `${expert.fullName}${expert.title ? ` — ${expert.title}` : ""}`,
     expert.yearsExperience ? `${expert.yearsExperience}+ years experience` : null,

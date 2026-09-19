@@ -5,6 +5,22 @@ import { requireRole, forbiddenResponse, unauthorizedResponse, getSession } from
 import { logAction } from "../../../../lib/audit";
 import { MUTATION_RATE_LIMIT, rateLimit } from "../../../../lib/rate-limit";
 import { ensureCompanyForUser } from "../../../../lib/company-workspace";
+import { resolveProjectCountry } from "../../../../lib/engine/country-reference";
+import { extractProjectFacts, mergeProjectFacts } from "../../../../lib/engine/project-fact-extractor";
+import {
+  buildReviewProvenance,
+  buildPartialSourceVerificationProvenance,
+  projectReviewFields,
+} from "../../../../lib/vault-review-provenance";
+const DEFAULT_PAGE_SIZE = 50;
+const MAX_PAGE_SIZE = 100;
+
+function parseBoundedLimit(value: string | null): number {
+  const parsed = Number.parseInt(value ?? "", 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_PAGE_SIZE;
+  return Math.min(parsed, MAX_PAGE_SIZE);
+}
+
 
 function toJsonArray(value: unknown): string {
   if (Array.isArray(value)) return JSON.stringify(value.filter(Boolean));
@@ -27,7 +43,7 @@ export async function GET(req: Request) {
   await prismaReady;
 
   const { searchParams } = new URL(req.url);
-  const limit = Math.min(Number(searchParams.get("limit") ?? "100"), 200);
+  const limit = parseBoundedLimit(searchParams.get("limit"));
   const cursor = searchParams.get("cursor") ?? undefined;
   const trustLevel = searchParams.get("trustLevel") ?? undefined;
   const q = searchParams.get("q") ?? "";
@@ -41,9 +57,9 @@ export async function GET(req: Request) {
       ...(trustLevel ? { trustLevel } : {}),
       ...(q ? { OR: [{ name: { contains: q } }, { clientName: { contains: q } }, { sector: { contains: q } }] } : {}),
     },
-    orderBy: [{ trustLevel: "asc" }, { createdAt: "desc" }],
+    orderBy: [{ trustLevel: "asc" }, { createdAt: "desc" }, { id: "desc" }],
     take: limit + 1,
-    select: { id: true, name: true, clientName: true, country: true, sector: true, serviceAreas: true, contractValue: true, currency: true, trustLevel: true, createdAt: true },
+    select: { id: true, name: true, clientName: true, country: true, sector: true, serviceAreas: true, trustLevel: true, createdAt: true },
     ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
   });
 
@@ -94,44 +110,134 @@ export async function POST(req: Request) {
       }
       sourceDocumentId = doc.id;
     }
+    // Same rule as the expert create path and PATCH
+    // /api/company/projects/{id}: a review state is earned from a verified
+    // source document, never asserted at creation. Writing REVIEWED with a
+    // free-text note produced records the authority model rejects forever, so
+    // generation reported "No verified, source-backed projects are available"
+    // for projects the vault listed as reviewed.
+    const projectReviewedAt = new Date();
+    const projectSourceDocument = sourceDocumentId
+      ? await prisma.companyDocument.findFirst({
+          where: { id: sourceDocumentId, companyId: company.id },
+          select: {
+            id: true,
+            companyId: true,
+            extractedText: true,
+            contentSha256: true,
+            contentByteLength: true,
+            integrityStatus: true,
+            metadata: true,
+          },
+        })
+      : null;
+
+    // DERIVED FACTS ARE PART OF THE RECORD BEING VERIFIED.
+    //
+    // These used to be extracted after the row was created and written in a
+    // second update, which quietly un-verified the record it was enriching.
+    // Durable source verification is a claim about a SET of fields, and
+    // provenanceMatchesCurrentRecord refuses a record that has GROWN since —
+    // and normalizedEvidenceFields drops empty values, so a project created
+    // with contractValue, currency or country blank was verified without them
+    // and then failed verification the moment the extractor filled them in.
+    // Observed on the live vault through the bulk path, which had the same
+    // shape. Deriving first means what gets written is what gets proved.
+    const derivedCandidateFacts = (() => {
+      const summary = typeof body.summary === "string" ? body.summary : "";
+      if (summary.trim().length <= 50) return {} as Record<string, unknown>;
+      try {
+        return mergeProjectFacts(
+          {
+            clientName: body.clientName || null,
+            country: body.country || null,
+            sector: body.sector || null,
+            contractValue,
+            currency: body.currency || null,
+          },
+          extractProjectFacts(summary, String(body.name).trim()),
+        ) as Record<string, unknown>;
+      } catch (extractErr) {
+        logger.warn("[project-fact-extractor] pre-create extraction failed:", {
+          detail: extractErr instanceof Error ? extractErr.message : extractErr,
+        });
+        return {} as Record<string, unknown>;
+      }
+    })();
+
+    const candidateCountry = (() => {
+      const stored = (derivedCandidateFacts.country as string | undefined) ?? body.country ?? null;
+      const resolution = resolveProjectCountry({
+        storedCountry: stored,
+        sourceText: typeof body.summary === "string" ? body.summary : null,
+      });
+      return resolution.shouldWrite ? resolution.country : stored || null;
+    })();
+
+    const projectCandidateFields = {
+      name: String(body.name).trim(),
+      clientName: (derivedCandidateFacts.clientName as string | undefined) ?? body.clientName ?? null,
+      country: candidateCountry,
+      sector: (derivedCandidateFacts.sector as string | undefined) ?? body.sector ?? null,
+      serviceAreas: toJsonArray(body.serviceAreas),
+      contractValue: (derivedCandidateFacts.contractValue as number | undefined) ?? contractValue,
+      currency: (derivedCandidateFacts.currency as string | undefined) ?? body.currency ?? null,
+    };
+
+    const projectDurable = projectSourceDocument
+      ? buildReviewProvenance({
+          recordType: "PROJECT",
+          sourceDocument: projectSourceDocument,
+          fields: projectReviewFields(projectCandidateFields),
+          reviewerId: actor.id,
+          reviewedAt: projectReviewedAt,
+        })
+      : null;
+
+    const projectPartial = !projectDurable?.ok && projectSourceDocument
+      ? buildPartialSourceVerificationProvenance({
+          recordType: "PROJECT",
+          sourceDocument: projectSourceDocument,
+          fields: projectReviewFields(projectCandidateFields),
+          verificationMethod: "HYBRID",
+          verifiedAt: projectReviewedAt,
+        })
+      : null;
+
+    const projectReviewState = projectDurable?.ok
+      ? { trustLevel: "REVIEWED", reviewedBy: actor.id, reviewedAt: projectReviewedAt, reviewNotes: projectDurable.serialized }
+      : projectPartial?.ok
+        ? { trustLevel: "SOURCE_VERIFIED", reviewedBy: null, reviewedAt: null, reviewNotes: projectPartial.serialized }
+        : {
+            trustLevel: "MANUAL_DRAFT",
+            reviewedBy: null,
+            reviewedAt: null,
+            reviewNotes: "Manual project record awaiting automatic source verification. Uploaded Company Vault documents are the official source of truth.",
+          };
+
     const project = await prisma.project.create({
       data: {
         companyId: company.id,
-        name: String(body.name).trim(),
-        clientName: body.clientName || null,
-        country: body.country || null,
-        sector: body.sector || null,
-        serviceAreas: toJsonArray(body.serviceAreas),
+        // The verified field set, written verbatim. A second, different set of
+        // values here is how the provenance and the row drift apart.
+        name: projectCandidateFields.name,
+        clientName: projectCandidateFields.clientName,
+        country: projectCandidateFields.country,
+        sector: projectCandidateFields.sector,
+        serviceAreas: projectCandidateFields.serviceAreas,
         summary: body.summary || null,
-        contractValue,
-        currency: body.currency || null,
-        trustLevel: "REVIEWED",
-        reviewedBy: actor.id,
-        reviewedAt: new Date(),
-        reviewNotes: "Manual project record created by authenticated user.",
+        contractValue: projectCandidateFields.contractValue,
+        currency: projectCandidateFields.currency,
+        ...(derivedCandidateFacts.startDate ? { startDate: derivedCandidateFacts.startDate as Date } : {}),
+        ...(derivedCandidateFacts.endDate ? { endDate: derivedCandidateFacts.endDate as Date } : {}),
+        ...projectReviewState,
         sourceDocumentId,
       },
     });
 
-    // ─── Auto-extract project facts (May-7 gap fix) ───────────────────────
-    // Section B project cards used to render "Scale on file" / "Dates on
-    // file" / "Value detail in Appendix B" because contractValue, currency,
-    // country, startDate, endDate, sector were never populated. We now
-    // run the regex extractor over the just-created project's summary
-    // and fill ONLY the empty columns. Idempotent and never overwrites
-    // user-entered values.
-    if (project.summary && project.summary.trim().length > 50) {
-      try {
-        const { extractProjectFacts, mergeProjectFacts } = await import("../../../../lib/engine/project-fact-extractor");
-        const extracted = extractProjectFacts(project.summary, project.name);
-        const update = mergeProjectFacts(project, extracted);
-        if (Object.keys(update).length > 0) {
-          await prisma.project.update({ where: { id: project.id }, data: update });
-        }
-      } catch (eErr) {
-        logger.warn("[project-fact-extractor] auto-extraction failed:", { detail: eErr instanceof Error ? eErr.message : eErr });
-      }
-    }
+    // No second write here on purpose. Deriving the facts after creation and
+    // patching them in is what made the record grow past its own provenance;
+    // the derivation now happens above, inside the field set that gets verified.
 
     const refreshed = await prisma.project.findUnique({ where: { id: project.id } });
 

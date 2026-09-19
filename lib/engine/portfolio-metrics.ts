@@ -95,16 +95,40 @@ export function buildPortfolioMetricsBlock(metrics: PortfolioMetrics, companyNam
   }
 
   const tiles: string[] = [];
-  if (metrics.reviewedProjectCount > 0) {
-    tiles.push(`| **${metrics.reviewedProjectCount}** Reviewed Project Reference${metrics.reviewedProjectCount === 1 ? "" : "s"} |`);
+  // "Reviewed" is this application's internal trust state, not a fact about the
+  // firm. It meant nothing to the evaluator and, worse, a headline block that
+  // opened "1 Reviewed Project Reference" announced thin evidence in the first
+  // line an evaluator reads — while the reference itself is set out in full in
+  // Section B, where it does the firm some good.
+  //
+  // A count of one is not a portfolio statistic; it is the reference. Count
+  // tiles therefore appear only at two or more, and the substantive tiles
+  // below — disciplines, sectors, geography, certifications — carry the block
+  // when the counts are small. Nothing is hidden: every record still appears in
+  // Section A.5 and Section B in full.
+  if (metrics.reviewedProjectCount >= 2) {
+    tiles.push(`| **${metrics.reviewedProjectCount}** Project References |`);
   }
   if (metrics.totalContractValue > 0) {
-    tiles.push(`| **${summariseValue(metrics.totalContractValue, metrics.currency)}** Aggregate Portfolio Value |`);
+    // "Aggregate Portfolio Value" overstates what this number is.
+    //
+    // Project.contractValue is extracted from the project reference text, and
+    // on a real consultancy portfolio it is overwhelmingly the CONSTRUCTION
+    // cost of the works the firm designed or supervised — 95 of 112 on the
+    // portfolio this was measured against — not the firm's own fee, which is
+    // a separate and far smaller figure in the same reference ("Construction
+    // Cost: 550,074,678.02 ETB" alongside "Design Cost: 1,100,000 ETB").
+    //
+    // Until this tile rendered, the distinction cost nothing: every value was
+    // null and the tile never appeared. Now that the import derives the
+    // column, an unqualified "Portfolio Value" in the first block an
+    // evaluator reads would imply firm-scale turnover. Say what it is.
+    tiles.push(`| **${summariseValue(metrics.totalContractValue, metrics.currency)}** Aggregate Value of Projects Delivered |`);
   }
-  if (metrics.reviewedExpertCount > 0) {
-    tiles.push(`| **${metrics.reviewedExpertCount}** Reviewed Specialist${metrics.reviewedExpertCount === 1 ? "" : "s"} on the Proposed Team |`);
+  if (metrics.reviewedExpertCount >= 2) {
+    tiles.push(`| **${metrics.reviewedExpertCount}** Specialists on the Proposed Team |`);
   }
-  if (metrics.certificationsCount > 0) {
+  if (metrics.certificationsCount >= 2) {
     tiles.push(`| **${metrics.certificationsCount}** Documented Professional Certifications & Licences |`);
   }
   if (metrics.countriesCovered.length > 0) {
@@ -117,12 +141,29 @@ export function buildPortfolioMetricsBlock(metrics: PortfolioMetrics, companyNam
     tiles.push(`| Disciplines on the team: ${metrics.uniqueDisciplines.join(" / ")} |`);
   }
   if (metrics.hasDonorEvidence) {
-    tiles.push(`| ✓ Donor / international institution delivery track record on file |`);
+    // No dingbat. U+2713 CHECK MARK is outside WinAnsi, so the PDF renderer
+    // switches to an embedded Unicode face for the whole document - and the
+    // face it picks has no glyph for it, which draws .notdef. On the
+    // delivered 35-page PDF (run 34698133772) the client's first capability
+    // block carried a NUL where the tick should be:
+    //
+    //   <U+0000> Donor / international institution delivery track record...
+    //
+    // Nothing was logged. A missing glyph is silent, unlike an UNENCODABLE
+    // character, which throws and is therefore caught in development. Every
+    // sibling tile in this block is plain text; this one now matches.
+    tiles.push(`| Donor / international institution delivery track record on file |`);
+  }
+
+  if (tiles.length === 0) {
+    // Every tile was suppressed. An empty table is worse than no block: the
+    // capability detail lives in Section A and the references in Section B.
+    return "";
   }
 
   return [
     "## A.0 Portfolio at a Glance",
-    `Headline metrics for ${companyName}, computed from reviewed project and expert records:`,
+    `Headline capability profile for ${companyName}:`,
     "",
     "| Headline Metric |",
     "|---|",

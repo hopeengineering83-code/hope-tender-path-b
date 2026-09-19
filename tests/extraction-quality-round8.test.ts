@@ -163,31 +163,23 @@ describe("extraction quality — corruption detector threshold (round 8)", () =>
   });
 });
 
-describe("extraction quality — upload-first deadline + ocrPageMarkers (round 8)", () => {
-  const src = read("lib/tender-upload-first.ts");
+describe("extraction quality — request/worker ownership + OCR markers (round 8)", () => {
+  const upload = read("lib/tender-upload-first.ts");
+  const worker = read("lib/ai-jobs/tender-extraction-service.ts");
 
-  it("adds a per-upload deadline (45s budget)", () => {
-    assert.ok(
-      src.includes("uploadDeadline") && src.includes("45_000"),
-      "must have a 45s upload deadline",
-    );
-    assert.ok(
-      src.includes("Date.now() > uploadDeadline"),
-      "must check the deadline before each file",
-    );
-    assert.ok(
-      src.includes("Time budget exceeded"),
-      "must push a warning when deadline is exceeded",
-    );
+  it("removes request-time extraction deadlines by moving extraction to a durable job", () => {
+    assert.doesNotMatch(upload, /extractTextFromBuffer|uploadDeadline|45_000/);
+    assert.match(upload, /enqueueTenderFileExtractionJob/);
+    assert.match(worker, /runTenderFileExtractionJob/);
   });
 
   it("fixes ocrPageMarkers regex to match the actual OCR marker", () => {
     assert.ok(
-      src.includes("\\[PDF text extracted via Claude vision OCR"),
-      "ocrPageMarkers regex must match '[PDF text extracted via Claude vision OCR...]'",
+      worker.includes("[PDF text extracted via Claude vision OCR"),
+      "worker must match '[PDF text extracted via Claude vision OCR...]'",
     );
     assert.ok(
-      !src.includes("\\[OCR text"),
+      !worker.includes("\\[OCR text"),
       "old '[OCR text...]' regex must be removed",
     );
   });

@@ -94,11 +94,13 @@ async function loadCompany(userId: string) {
   // Read requests must not delete Expert or Project records. Destructive
   // support-import cleanup is available only through its explicit role-gated
   // mutation endpoint.
+  // Filter deletedAt: null so soft-deleted records don't appear in the UI
+  // (the single/bulk delete handlers set deletedAt — the read must respect it).
   return prisma.company.findUnique({
     where: { userId },
     include: {
-      experts: { orderBy: { createdAt: "desc" } },
-      projects: { orderBy: { createdAt: "desc" } },
+      experts: { where: { deletedAt: null }, orderBy: { createdAt: "desc" } },
+      projects: { where: { deletedAt: null }, orderBy: { createdAt: "desc" } },
     },
   });
 }
@@ -241,8 +243,8 @@ export async function PUT(req: Request) {
         updatedAt: new Date(),
       },
       include: {
-        experts: { orderBy: { createdAt: "desc" } },
-        projects: { orderBy: { createdAt: "desc" } },
+        experts: { where: { deletedAt: null }, orderBy: { createdAt: "desc" } },
+        projects: { where: { deletedAt: null }, orderBy: { createdAt: "desc" } },
       },
     });
 
@@ -268,7 +270,10 @@ export async function PUT(req: Request) {
 
     const refreshed = await prisma.company.findUnique({
       where: { userId: actor.id },
-      include: { experts: { orderBy: { createdAt: "desc" } }, projects: { orderBy: { createdAt: "desc" } } },
+      include: {
+        experts: { where: { deletedAt: null }, orderBy: { createdAt: "desc" } },
+        projects: { where: { deletedAt: null }, orderBy: { createdAt: "desc" } },
+      },
     });
 
     if (!refreshed) return NextResponse.json({});

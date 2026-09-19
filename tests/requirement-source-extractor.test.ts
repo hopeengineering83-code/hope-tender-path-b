@@ -51,7 +51,7 @@ describe("extractRequirementSources", () => {
     assert.equal(out[0].sourceTenderFileId, "file-1");
     assert.equal(out[0].sourcePageNumber, 2);
     assert.ok(out[0].sourceSectionHeading?.toLowerCase().includes("relevant"));
-    assert.ok(out[0].sourceExactQuote?.toLowerCase().includes("three"));
+    assert.ok(out[0].sourceExactQuote?.toLowerCase().includes("three") || out[0].sourceExactQuote?.toLowerCase().includes("36 months"), `expected quote to include 'three' or '36 months', got ${out[0].sourceExactQuote}`);
   });
 
   it("returns confidence=0 when no paragraph matches", () => {

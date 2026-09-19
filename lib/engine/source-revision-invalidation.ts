@@ -6,7 +6,8 @@ export type SourceRevisionReason =
   | "SOURCE_FILE_REPLACED"
   | "SOURCE_FILE_REEXTRACTED"
   | "SOURCE_FILE_DELETED"
-  | "SOURCE_BYTES_CHANGED";
+  | "SOURCE_BYTES_CHANGED"
+  | "TENDER_METADATA_CORRECTED";
 
 export type SourceRevisionInvalidationResult = {
   requirements: number;
