@@ -83,6 +83,7 @@ import { reorderSectionsAndRebuildToc } from "./section-orderer-and-toc";
 import { normalizeSectionC } from "./section-c-authority";
 import { sealDocumentStructure, sectionCHeadingsOf } from "./document-structure-seal";
 import { enforceClientName } from "./client-name-enforcer";
+import { applyConfirmedFactsToWriterTender, confirmedFactFields } from "./writer-tender-facts";
 import { suppressDuplicateSectionHeadings } from "./duplicate-section-suppressor";
 import { injectPersonnelDeep } from "./personnel-deep";
 import { injectTenderClosers } from "./tender-closers";
@@ -1235,6 +1236,11 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       projectMatches: { where: { isSelected: true }, include: { project: { include: { sourceDocument: true, evidences: { orderBy: { createdAt: "desc" }, take: 5 } } } }, orderBy: { score: "desc" } },
       complianceGaps: { where: { isResolved: false }, orderBy: { severity: "asc" } },
       complianceMatrix: { include: { requirement: { select: { title: true, description: true } } } },
+      // The owner's corrections to extracted metadata. The readiness and
+      // export gates have always resolved through these; the writer did not,
+      // so a corrected client name passed the gate while the delivered
+      // document still carried the uncorrected one. See ./writer-tender-facts.
+      metadataOverrides: true,
     },
   });
   if (!tender) throw new Error("Tender not found");
@@ -1416,14 +1422,28 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // expertRequired and projectRequired are computed above (line 1039-1040)
   // as part of the zero-evidence hard-block guard. Reusing them here.
 
-  const intelligence = buildProposalIntelligence({ tender, company, requirements: tender.requirements, experts, projects });
+  // Overlay the facts the owner has confirmed or corrected. Only
+  // HUMAN_CONFIRMED_OPERATIONAL values displace an extracted one; a rejected
+  // candidate is never adopted and a not-applicable marking never blanks a
+  // field. `tender` itself is untouched, so provenance reporting below still
+  // reads what the source actually said.
+  const writerTender = applyConfirmedFactsToWriterTender(tender, tender.metadataOverrides ?? []);
+  const ownerConfirmedFields = confirmedFactFields(tender, tender.metadataOverrides ?? []);
+  // A stored source quote documents the value the source stated. Where the
+  // owner has since corrected that value, the quote must not be handed to
+  // formatters that PREFER a date parsed out of it — doing so reinstates the
+  // misread the correction removed. Null here means "print the confirmed
+  // value", not "we have no provenance": the raw quote stays on `tender` for
+  // the provenance surfaces that report what the source said.
+  const deadlineQuoteForDisplay = ownerConfirmedFields.has("deadline") ? null : tender.deadlineSourceQuote;
+  const intelligence = buildProposalIntelligence({ tender: writerTender, company, requirements: tender.requirements, experts, projects });
   // Cleaned tender title (sanitized via cleanTenderTitle inside
   // buildProposalIntelligence). Used everywhere a user-facing label is
   // needed; the raw tender.title is intentionally kept out of generated
   // content because intake-stage extraction can produce multi-line garbage
   // that propagates to every section if used directly.
   let cleanedTenderTitle = intelligence.assignmentName;
-  const tenderText = [cleanedTenderTitle, tender.reference, intelligence.clientName, tender.description, tender.intakeSummary, tender.analysisSummary, tender.evaluationMethodology, ...tender.files.map((f) => `${f.originalFileName}\n${f.extractedText ?? ""}`)].filter(Boolean).join("\n\n");
+  const tenderText = [cleanedTenderTitle, writerTender.reference, intelligence.clientName, tender.description, tender.intakeSummary, tender.analysisSummary, tender.evaluationMethodology, ...tender.files.map((f) => `${f.originalFileName}\n${f.extractedText ?? ""}`)].filter(Boolean).join("\n\n");
 
   // ─── Service-stream classification (for HAEC methodology injection) ────────
   // Classify the tender to detect service streams (architecture / supervision
@@ -1723,10 +1743,10 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // real run that made this necessary (0 deadlines extracted for a tender
   // whose deadline was known).
   const tenderFacts = extractTenderFacts(intelligence.tenderText, {
-    deadlineDisplay: tender.deadline
-      ? new Date(tender.deadline).toISOString().slice(0, 10)
+    deadlineDisplay: writerTender.deadline
+      ? new Date(writerTender.deadline).toISOString().slice(0, 10)
       : null,
-    referenceNumber: tender.reference ?? null,
+    referenceNumber: writerTender.reference ?? null,
   });
   const tenderFactsPromptBlock = formatFactsForPrompt(tenderFacts);
   const tenderSpecificsTable = buildTenderSpecificsBlock(tenderFacts);
@@ -1735,8 +1755,8 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   }
 
   const submissionNotes = [
-    tender.submissionMethod,
-    tender.submissionAddress,
+    writerTender.submissionMethod,
+    writerTender.submissionAddress,
     ...intelligence.submissionRules,
     ...(commercialTermLines.length > 0 ? ["", "Commercial terms detected in tender — confirm compliance in Cover Letter and Compliance Matrix:", ...commercialTermLines] : []),
   ].filter(Boolean).join("\n");
@@ -1754,7 +1774,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           expertMatches: tender.expertMatches as Parameters<typeof computeBidStrategy>[0]["tender"]["expertMatches"],
           projectMatches: tender.projectMatches as Parameters<typeof computeBidStrategy>[0]["tender"]["projectMatches"],
           evaluationMethodology: tender.evaluationMethodology,
-          submissionMethod: tender.submissionMethod,
+          submissionMethod: writerTender.submissionMethod,
           // Derive analysis source from tender.notes (FM-008): the Tender model
           // has no `analysisSource` column, so leaving it unset made the
           // regex-fallback win-probability penalty never fire.
@@ -2277,11 +2297,11 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       mode = `${provider === "claude" ? "Claude" : provider === "gemini" ? "Gemini" : provider === "openai" ? "GPT-4o" : "AI"} ${pathLabel} bid-writer + evaluator response matrix + full evidence library + client-ready benchmark finalizer + professional DOCX polish`;
     } catch (error) {
       aiError = error instanceof Error ? error.message : String(error);
-      sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, clientContactName: tender.clientContactName, companyName: company.name, companyLegalName: company.legalName, companyAddress: company.address, companyTIN: company.tin, companyVAT: company.vat, companyGM: company.gmName, companyGMLicense: company.gmLicense, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, experts: experts as ExpertRecord[], projects: projects as ProjectRecord[], reviewedExpertCount: experts.length, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired, themes: intelligence.themes, evaluationCriteria: intelligence.evaluationCriteria, appendixList: intelligence.appendixList, noFinancialProposal: intelligence.noFinancialProposal, exactEmails: intelligence.exactEmails, exactSubjectLine: intelligence.exactSubjectLine, gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative, requiredSections: intelligence.requiredSections, tenderDeadline: tender.deadline, tenderDeadlineSourceQuote: tender.deadlineSourceQuote, companyLicenseGrade: company.licenseGrade, companyHeadcount: company.headcount, companyServiceLines: safeParseArr(company.serviceLines), companySectors: safeParseArr(company.sectors), companyProfileSummary: company.profileSummary ?? company.description, companyLegalRecords: company.legalRecords ?? [], companyComplianceRecords: company.complianceRecords ?? [], serviceStreams: detectedServiceStreams });
+      sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, clientContactName: writerTender.clientContactName, companyName: company.name, companyLegalName: company.legalName, companyAddress: company.address, companyTIN: company.tin, companyVAT: company.vat, companyGM: company.gmName, companyGMLicense: company.gmLicense, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, experts: experts as ExpertRecord[], projects: projects as ProjectRecord[], reviewedExpertCount: experts.length, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired, themes: intelligence.themes, evaluationCriteria: intelligence.evaluationCriteria, appendixList: intelligence.appendixList, noFinancialProposal: intelligence.noFinancialProposal, exactEmails: intelligence.exactEmails, exactSubjectLine: intelligence.exactSubjectLine, gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative, requiredSections: intelligence.requiredSections, tenderDeadline: writerTender.deadline, tenderDeadlineSourceQuote: deadlineQuoteForDisplay, companyLicenseGrade: company.licenseGrade, companyHeadcount: company.headcount, companyServiceLines: safeParseArr(company.serviceLines), companySectors: safeParseArr(company.sectors), companyProfileSummary: company.profileSummary ?? company.description, companyLegalRecords: company.legalRecords ?? [], companyComplianceRecords: company.complianceRecords ?? [], serviceStreams: detectedServiceStreams });
       mode = "deterministic benchmark fallback + evaluator response matrix + client-ready benchmark finalizer + professional DOCX polish";
     }
   } else {
-    sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, clientContactName: tender.clientContactName, companyName: company.name, companyLegalName: company.legalName, companyAddress: company.address, companyTIN: company.tin, companyVAT: company.vat, companyGM: company.gmName, companyGMLicense: company.gmLicense, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, experts: experts as ExpertRecord[], projects: projects as ProjectRecord[], reviewedExpertCount: experts.length, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired, themes: intelligence.themes, evaluationCriteria: intelligence.evaluationCriteria, appendixList: intelligence.appendixList, noFinancialProposal: intelligence.noFinancialProposal, exactEmails: intelligence.exactEmails, exactSubjectLine: intelligence.exactSubjectLine, gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative, requiredSections: intelligence.requiredSections, tenderDeadline: tender.deadline, tenderDeadlineSourceQuote: tender.deadlineSourceQuote, companyLicenseGrade: company.licenseGrade, companyHeadcount: company.headcount, companyServiceLines: safeParseArr(company.serviceLines), companySectors: safeParseArr(company.sectors), companyProfileSummary: company.profileSummary ?? company.description, companyLegalRecords: company.legalRecords ?? [], companyComplianceRecords: company.complianceRecords ?? [], serviceStreams: detectedServiceStreams });
+    sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, clientContactName: writerTender.clientContactName, companyName: company.name, companyLegalName: company.legalName, companyAddress: company.address, companyTIN: company.tin, companyVAT: company.vat, companyGM: company.gmName, companyGMLicense: company.gmLicense, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, experts: experts as ExpertRecord[], projects: projects as ProjectRecord[], reviewedExpertCount: experts.length, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired, themes: intelligence.themes, evaluationCriteria: intelligence.evaluationCriteria, appendixList: intelligence.appendixList, noFinancialProposal: intelligence.noFinancialProposal, exactEmails: intelligence.exactEmails, exactSubjectLine: intelligence.exactSubjectLine, gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative, requiredSections: intelligence.requiredSections, tenderDeadline: writerTender.deadline, tenderDeadlineSourceQuote: deadlineQuoteForDisplay, companyLicenseGrade: company.licenseGrade, companyHeadcount: company.headcount, companyServiceLines: safeParseArr(company.serviceLines), companySectors: safeParseArr(company.sectors), companyProfileSummary: company.profileSummary ?? company.description, companyLegalRecords: company.legalRecords ?? [], companyComplianceRecords: company.complianceRecords ?? [], serviceStreams: detectedServiceStreams });
   }
 
   // PR NN: Strip any AI-produced Section H (Proposal Self-Score) from the raw AI
@@ -3118,8 +3138,8 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     companyLegalName: company.legalName,
     tenderTitle: cleanedTenderTitle,
     clientName: intelligence.clientName,
-    reference: tender.reference,
-    exactSubjectLine: tender.submissionEmailSubject ?? intelligence.exactSubjectLine,
+    reference: writerTender.reference,
+    exactSubjectLine: writerTender.submissionEmailSubject ?? intelligence.exactSubjectLine,
     submissionDate: null,
     proposalValidityDays: intelligence.commercialTerms?.bidValidityDays
       ? Number(String(intelligence.commercialTerms.bidValidityDays).match(/\d+/)?.[0] ?? "") || null
@@ -3237,8 +3257,8 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     .replace(/\[\s*\]/g, "—")
     .replace(/\n{3,}/g, "\n\n");
   humanizedMarkdown = stripPlaceholders(humanizedMarkdown).markdown;
-  if (tender.deadline) {
-    const groundedDeadline = formatSubmissionDeadline(tender.deadline, tender.deadlineSourceQuote);
+  if (writerTender.deadline) {
+    const groundedDeadline = formatSubmissionDeadline(writerTender.deadline, deadlineQuoteForDisplay);
     humanizedMarkdown = humanizedMarkdown.replace(/^Submission deadline:.*$/gim, `Submission deadline: ${groundedDeadline}.`);
   }
   humanizedMarkdown = disambiguateRepeatedHeadings(humanizedMarkdown);
@@ -3303,14 +3323,14 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     proposalValidityDays: intelligence.commercialTerms?.bidValidityDays
       ? Number(String(intelligence.commercialTerms.bidValidityDays).match(/\d+/)?.[0] ?? "")
       : null,
-    exactSubjectLine: tender.submissionEmailSubject ?? intelligence.exactSubjectLine,
+    exactSubjectLine: writerTender.submissionEmailSubject ?? intelligence.exactSubjectLine,
   };
 
   const doc = buildProfessionalDocument({
     tenderTitle: cleanedTenderTitle,
     clientName: intelligence.clientName,
     companyName: company.name,
-    reference: tender.reference,
+    reference: writerTender.reference,
     contactFooter,
     children,
     suppressCoverBlock: tenderForbidsCoverPage,
@@ -3794,7 +3814,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         tenderTitle: cleanedTenderTitle,
         clientName: intelligence.clientName,
         companyName: company.name,
-        reference: tender.reference,
+        reference: writerTender.reference,
         contactFooter,
         children: finalChildren,
         suppressCoverBlock: tenderForbidsCoverPage,
