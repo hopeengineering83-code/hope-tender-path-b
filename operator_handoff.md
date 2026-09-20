@@ -203,6 +203,85 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-20 UTC (latest) — WHY the writer times out: a 60s-route budget applied inside a 300s worker
+
+Follow-on from the authorship verdict in the entry below. That entry established
+the writer falls back because it "timed out after 45 seconds". This one
+establishes why 45 is the wrong number here.
+
+**The timeout is tier-gated** (`lib/timeout-config.ts:36-41`):
+
+```ts
+export const PROPOSAL_AI_TIMEOUT_MS = (() => {
+  const raw = Number(process.env.AI_PROPOSAL_TIMEOUT_MS);
+  if (Number.isFinite(raw) && raw >= 5_000 && raw <= 600_000) return raw;
+  const tier = (process.env.ANTHROPIC_TIER || "").trim();
+  return tier === "1" ? 45_000 : 220_000;
+})();
+```
+
+45_000 is reachable only via `ANTHROPIC_TIER=1` or an explicit
+`AI_PROPOSAL_TIMEOUT_MS=45000`, so the Preview **is** running the Tier-1
+profile. I could not confirm which of the two from the Vercel env listing —
+that API response came back truncated (72 keys and a literal `...[truncated]`
+entry, missing even `ANTHROPIC_API_KEY`), so treat any claim that a given
+variable is "not set" from that listing as unfounded. The runtime message is
+the authority.
+
+`generate-elite.ts:170-176` states the intent:
+
+```
+//   Tier 1  (Vercel Hobby  60s):  45s — 15s buffer for enrichers + DOCX
+//   Tier 2+ (Vercel Pro  300s): 220s — 80s buffer; accommodates 16K output
+```
+
+**The premise is wrong for this code path.** Proposal generation does not run
+in a 60-second request route. It runs as a durable `PROPOSAL_GENERATION` AiJob
+executed by the worker:
+
+```
+app/api/tenders/[id]/generate/route.ts   maxDuration = 60
+app/api/tenders/[id]/engine/route.ts     maxDuration = 60
+app/api/ai-jobs/run-next/route.ts        maxDuration = 300   <-- the worker
+app/api/ai-jobs/dispatch/route.ts        maxDuration = 300
+```
+
+**And the runtime proves the worker really gets more than 60s.** From
+acceptance run 35532253174:
+
+```
+ENGINE_RUN            19:27:36 -> 19:29:15   =  99 seconds
+PROPOSAL_GENERATION   19:29:16 -> 19:30:25   =  69 seconds
+```
+
+Both exceed 60s comfortably. So the writer is being cut off at 45 seconds
+inside a worker that demonstrably runs for at least 99. The 45s guard is
+calibrated to a synchronous route's limit that this path does not use, and
+`PROPOSAL_AI_TIMEOUT_MS` is a module-level constant, so it cannot tell the two
+contexts apart.
+
+**Two candidate remedies, neither applied here.**
+
+1. *Environment only, no code change.* Set `AI_PROPOSAL_TIMEOUT_MS` (accepted
+   range 5,000–600,000) or `ANTHROPIC_TIER` on the Preview so the writer gets
+   the 220s the worker can afford. This is an owner action — changing Vercel
+   environment variables is not something to do unilaterally — and it is
+   reversible.
+2. *Code, and more correct long-term.* Make the budget context-aware: the
+   worker path should use the worker's 300s ceiling, the synchronous route
+   should keep 45s. A single module-level constant serving both is the actual
+   defect.
+
+**Do not simply raise the constant** without deciding which of these you want.
+Raising it globally would also lengthen the synchronous `generate` route, whose
+60s `maxDuration` really would 504.
+
+**What this unblocks.** #51 (17-dimension benchmark) has been blocked for weeks
+on "no model-backed proposal exists", and successive sessions attributed that
+to provider credit. Three providers (gemini, groq, zai) were GENERATION_VERIFIED
+and eligible during the failing run. The cause is this timeout. Fix it and the
+benchmark becomes runnable.
+
 ### 2026-09-20 UTC (latest) — ANSWERED: the writer is not model-backed because it times out at 45s, not because providers are unavailable
 
 - **Tool / branch / PR:** Claude Code · `release/consolidated-recovery-20260717` · PR #1175. Head `6b7812c2`.
