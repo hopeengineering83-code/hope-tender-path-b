@@ -298,6 +298,33 @@ at AUTO_FINALIZE time.** AUTO_FINALIZE ran 19:30:25→19:30:37 and the document'
 `export-gap-repair.ts` and `reconcile-generated-docs.ts` are the other
 candidates. Do not re-fix the generator — it is correct.
 
+**ROOT CAUSE — CONFIRMED, replacing the "some other code path" wording above.**
+`generateMissingPlanFiles` skips any document that already exists and is not
+PLANNED. `missing-plan-file-generation.ts:886-887`, verbatim:
+
+```ts
+const existing = await lockedTx.generatedDocument.findFirst({ … });
+if (existing && existing.generationStatus !== "PLANNED") {
+  skipped.push(document.fileName);
+```
+
+The methodology document was created in run 1 (14:06:15) by the OLD stub
+generator and stored with `generationStatus: GENERATED`. In run 2 it therefore
+matched that branch and was skipped by name, so PR #1306's improved generator
+never ran for it. What changed its bytes was `export-gap-repair`, which
+rewrites `fileContent` (`export-gap-repair.ts:537` and `:556`) as part of DOCX
+hygiene — re-packing the file changes `contentSha256` while leaving the prose,
+and therefore the 367-word count, untouched. That is why the document looked
+regenerated and measured identical.
+
+**So the generic defect is this: a content-quality fix to a generator cannot
+heal a document that already exists.** Nothing in the pipeline re-runs
+generation for a GENERATED document that fails the quality gate, so a package
+produced once by faulty code stays faulty forever, and the gate blocks the ZIP
+permanently. Any fix must let a QUALITY_FAILED document be regenerated rather
+than only skipped — and it must stay a fix to the general rule, not a
+special case for this filename.
+
 **A prior question this also answers.** "Technical Approach and Methodology" is
 defined as a *section* of the technical proposal
 (`tender-section-planner.ts:46`, `id: "technical-approach"`, `required: true`,
