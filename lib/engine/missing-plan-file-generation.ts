@@ -1097,10 +1097,11 @@ export async function generateMissingPlanFiles(args: {
   };
 }
 
-export const __testing__ = { documentTypeFor, needsOriginalReplacement, isNarrativeDraft, narrativeDraftContent };
-
-
 export const __testing__ = {
+  documentTypeFor,
+  needsOriginalReplacement,
+  isNarrativeDraft,
+  narrativeDraftContent,
   isMethodologyNarrative,
   methodologyNarrativeContent,
 };
