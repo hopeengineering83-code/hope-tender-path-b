@@ -203,6 +203,96 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-20 UTC (latest) — ANSWERED: the writer is not model-backed because it times out at 45s, not because providers are unavailable
+
+- **Tool / branch / PR:** Claude Code · `release/consolidated-recovery-20260717` · PR #1175. Head `6b7812c2`.
+- **Source:** `confirm=inspect` run 35532974557, job 106136825998. READ-ONLY — no generation, no writes, no provider quota spent on real work (diagnostics run inside `runAsDiagnostic()`).
+
+**Three acceptance runs could not answer this because the authorship printer is
+not in the acceptance job at all.** It lives in `temporary-preview-vault-inspection`
+(workflow line 936), which only runs on `confirm=inspect`. Earlier sessions —
+including this one — ran `accept` and `export` and concluded the printer was
+being skipped by an aborting readiness assertion. That was wrong. Run
+`confirm=inspect` to get authorship and the named quality rules.
+
+**THE VERDICT, verbatim:**
+
+```
+ANALYSIS AUTHORSHIP: analysisSource={'label': 'AI', 'risk': 'LOW',
+                     'detail': 'AI (current AI Analyze output).'}
+DOCUMENT AUTHORSHIP: 2 document(s)
+  - 'Technical Proposal.pdf'
+      reviewStatus='PENDING' mode='deterministic benchmark fallback + evaluator
+      response matrix + client-ready benchmark finalizer + professional DOCX polish'
+      FELL BACK BECAUSE: AI proposal timed out after 45 seconds
+                         (in-pipeline guard before Vercel function timeout)
+  - 'Technical Approach and Methodology'
+      reviewStatus='NEEDS_REVIEW' mode='Generated narrative draft for
+      tender-required file Technical Approach and Methodology'
+```
+
+AI Analyze **is** model-backed. The **proposal is not**, and the reason is a
+45-second in-pipeline guard, not provider availability.
+
+**The provider chain was healthy for generation at the time.** Live sweep,
+both capabilities, minutes after the run:
+
+```
+PROVIDER CHAIN: 6/20 verified, 3 passed the analysis PROBE, 3 ELIGIBLE FOR REAL WORK NOW
+  PROBE PASSED: ['gemini', 'groq', 'zai']
+  ELIGIBLE NOW: ['gemini', 'groq', 'zai']   <-- AI Analyze can run
+
+  gemini    GENERATION_VERIFIED   eligible=True  model=gemini-3.5-flash
+  groq      GENERATION_VERIFIED   eligible=True  model=openai/gpt-oss-120b
+  zai       GENERATION_VERIFIED   eligible=True  model=glm-4.7-flash
+  mistral   AUTH    403 "This model is not available in your subscription tier"
+  cerebras  BILLING 402 "Payment required to access this resource"
+  openrouter BILLING 402 "requested up to 16000 tokens, but can only afford 892"
+  openai    BILLING 429 "You have no credits remaining"
+  together  AUTH    401 "Invalid API key provided"
+  deepseek  BILLING 402 "Insufficient Balance"
+  anthropic BILLING 400 "Your credit balance is too low"
+```
+
+Three providers were verified for GENERATION specifically — not merely
+analysis — and all three were eligible to route. So the deterministic fallback
+is **code-controlled**: the writer had working providers and ran out of wall
+clock. Do not record this as a provider/credit condition; seven providers ARE
+out of credit or misconfigured, and that is a separate owner/account matter
+that did not cause this fallback.
+
+**What to investigate next, and what not to assume.** 45 seconds is an
+in-pipeline guard chosen to stay under the Vercel function timeout, so raising
+it is not obviously safe — the platform limit is the real ceiling. The question
+is whether a full multi-section proposal can be written inside one serverless
+invocation at all, or whether generation must be split across invocations the
+way analysis already chunks. Settle that before changing the number.
+
+**The methodology document is a SECTION being validated as a DOCUMENT —
+now evidenced, no longer a hypothesis.** `/api/tenders/{id}/validate` returned
+422 with:
+
+```
+DOCUMENT QUALITY: 2 document(s), 1 failing
+  validate says: Validation is blocked by 2 canonical or document issue(s).
+  Technical Approach and Methodology  id=e2d1bcf8-a9bf-4226-8055-a16986eef7a9
+      [QUALITY GATE score=28]
+      Missing required sections: Cover Letter, Understanding of the Assignment,
+      Work Plan, Team Composition, Compliance Matrix, Submission Checklist
+  requiredDocumentsTotal=1   exportReadyDocumentsTotal=1   generatedDocumentsTotal=2
+```
+
+That missing-sections list is exactly `export-readiness.ts:1229`'s section list
+for `TECHNICAL_PROPOSAL` — and "Technical Approach and Methodology" is itself
+one of the seven. The document is being required to contain its own siblings.
+Note also that validate scores it **28** while the audit surface scores it
+**50**: two scorers, two numbers, same document. That is consistent with the
+three-quality-authorities design but worth knowing before quoting a score.
+
+`requiredDocumentsTotal=1` — the package requires exactly one document, and
+that one (`Technical Proposal.pdf`) passes at quality 100. Everything blocking
+the ZIP traces to a file that is not required at all.
+
 ### 2026-09-20 UTC (latest) — The owner's upload ran end to end; one document blocks the ZIP, and PR #1306's methodology fix does not reach it
 
 - **Tool / branch / PR:** Claude Code · `release/consolidated-recovery-20260717` · PR #1175. Head `d6b5d818` (PR #1306 merged in by another agent).
