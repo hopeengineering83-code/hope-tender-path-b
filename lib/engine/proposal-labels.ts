@@ -33,6 +33,16 @@ function normalizeLabel(value?: string | null): string {
     .replace(/\bto\s+be\s+confirmed\b/gi, " ")
     .replace(/\bplaceholder\b/gi, " ")
     .replace(/\s+/g, " ")
+    // Leading list and table-cell delimiters. A .docx whose title or
+    // procuring entity sits in a table cell extracts as "| Architectural
+    // Consultancy Services ...", and a bulleted or dashed list extracts as
+    // "- ..." or "\u2022 ...". The punctuation strip in cleanTenderTitle is
+    // anchored to the END of the string, so a leading marker survived into
+    // cleanedTenderTitle -- the client-facing title on every cover page,
+    // document header and cover-letter subject -- and into the "To:" line.
+    // Only markers are stripped: a title may legitimately begin with a digit,
+    // a parenthesis or a quote, and a dash INSIDE a name is not a marker.
+    .replace(/^[|\u2022\u00b7\u25aa\u25e6\u2023*\-\u2013\u2014\s]+/, "")
     .trim();
 }
 
