@@ -22,6 +22,7 @@ import {
   isValidReferenceNumber,
   isGenericFieldLabel,
   isAmbiguousDateString,
+  containsMetadataScaffolding,
 } from "./metadata-validators";
 import { isPhysicalSubmissionMethod, isEmailSubmissionMethod, isPortalSubmissionMethod } from "./submission-method-policy";
 import { isGroundedEvidence as isGroundedSourceEvidence, isGroundedEvidenceWithFileCheck, isGroundedEvidenceInActiveFiles, type GroundingActiveFile } from "./evidence-grounding";
@@ -305,6 +306,9 @@ function validateFieldFormat(fieldKey: string, value: string | null): { valid: b
 
   if (containsMetadataPlaceholder(trimmed) || looksLikeMetadataPlaceholder(trimmed)) {
     return { valid: false, reason: "Value is a placeholder (e.g. TBD, Bid-Team to confirm) and must be replaced." };
+  }
+  if (containsMetadataScaffolding(trimmed)) {
+    return { valid: false, reason: "Value contains extractor field-label scaffolding or internal extraction instructions and must be re-extracted as a single field value." };
   }
   if (isGenericFieldLabel(trimmed)) {
     return { valid: false, reason: "Value is a generic field label (e.g. 'Reference Number') and not the actual data." };
