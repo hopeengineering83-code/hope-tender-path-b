@@ -203,6 +203,130 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-20 UTC (latest) — The owner's upload ran end to end; one document blocks the ZIP, and PR #1306's methodology fix does not reach it
+
+- **Tool / branch / PR:** Claude Code · `release/consolidated-recovery-20260717` · PR #1175. Head `d6b5d818` (PR #1306 merged in by another agent).
+- **Tender:** `d2b85e2a-257d-4457-a12b-58e082155bcf`. The previous tender `22b5e12e-…` is gone with the fifth database swap.
+
+**The pipeline now runs the whole way.** Two acceptance runs, both with every job
+before AUTO_FINALIZE succeeding:
+
+```
+run 35515123454 (head 106c0b68, 14:00-14:06)
+  AI_ANALYZE 2m07  ENGINE_RUN 2m58  PROPOSAL_GENERATION 14s  AUTO_FINALIZE FAILED
+  1 blocker: GENERATED_DOCUMENT_QUALITY_FAILED (ref 90c42a48)
+
+run 35532253174 (head d6b5d818, 19:26-19:30)
+  AI_ANALYZE 41s   ENGINE_RUN 1m39  PROPOSAL_GENERATION 1m09  AUTO_FINALIZE FAILED
+  3 blockers: EXTRA_FILES, GENERATED_DOCUMENT_QUALITY_FAILED, OUTSIDE_PLAN_DOCUMENTS (ref d29705c4)
+```
+
+**`Technical Proposal.pdf` is good and was genuinely regenerated.** Run 1
+sha `8c86afe74369dea6`, run 2 sha `3f0cd584c23a1e3c` — different bytes, so the
+run did real work rather than re-reporting an old artifact. 11,872 words, 10
+sections, `requirementCoverageRatio: 1`, no missing sections, **quality
+100/PASSED**, zero placeholder / pricing-leakage / AI-trace / unsupported-claim /
+generic-content issues, `byteSignatureOk: true`.
+
+**All four blockers name one document.** Verbatim:
+
+```
+[EXTRA_FILES]            Generated package contains non-required file(s):
+                         Technical Approach and Methodology.docx
+[OUTSIDE_PLAN_DOCUMENTS] 1 generated document(s) are outside the confirmed
+                         submission plan: Technical Approach and Methodology.docx.
+[GENERATED_DOCUMENT_QUALITY_FAILED]  1 generated document(s) failed (quality 50)
+[AUTHORITY_OR_QUALITY_BLOCKERS]      Authority review or document quality blockers remain.
+```
+
+**Three of PR #1306's fixes are verified working, one is not.**
+
+Working, measured on run 2's audit payload:
+
+| Fix | Before | After |
+|---|---|---|
+| `9a8dd0c3` align audit export flags | `readyForExport: true`, `zipEligible: true` on a QUALITY_FAILED doc | both `false` |
+| (same) `blockedDocuments` | `0` while a document was blocked | `1` |
+| `c7ace6d1` coverage vs required sections | `requirementCoverageRatio: 1` with 6 sections missing | `0` |
+
+Also verified offline: `containsMetadataScaffolding()` classifies all eleven
+real values from the run correctly — the four contaminated ones caught
+(`clientName` carrying three embedded field labels, `submissionAddress`
+carrying "Do not generate a financial proposal", `preBidMeetingLocation`
+carrying "Mark as not applicable", `clientAddress` = "Addis Ababa Tender
+Status") and the seven legitimate ones untouched, including `Addis Ababa`
+surviving while `Addis Ababa Tender Status` is rejected.
+
+NOT working: **`35fa79ba fix: generate complete methodology planned documents`
+does not reach the document it was written for.** After the fix the document is
+byte-different (`596642228cdb0c87` → `141363e875d1f732`, updatedAt
+2026-09-20T19:30:27.676Z) but **identical in every quality measure**:
+
+```
+wordCount 367 (threshold 800)   sectionCount 1   requirementCoverageRatio 0
+missingRequiredSections ["phases","tasks","deliverables","schedule","qa","risk"]
+qualityScore 50 / QUALITY_FAILED
+```
+
+**Why it does not reach it — the part worth keeping.** The new generator is
+wired correctly and IS reachable for this document. Both dispatch predicates
+were run against the exact filename and document type from the database:
+
+```
+file="Technical Approach and Methodology.docx" type=TECHNICAL_PROPOSAL
+   isNarrativeDraft       = true
+   isMethodologyNarrative = true
+   => reaches new methodology generator: true
+```
+
+and the chain `buildPlannedRowContent` (line 596) → `narrativeDraftContent`
+(598) → `isMethodologyNarrative` (516) → `methodologyNarrativeContent` (517) is
+intact. `methodologyNarrativeContent` emits five named execution phases and is
+far longer than 800 words.
+
+So the generator is not broken. **The document is written by some other code
+path**, and `generateMissingPlanFiles` — which only fills files that are
+*missing* from the plan — never rewrites it, because it already exists. That is
+consistent with `OUTSIDE_PLAN_DOCUMENTS`: a file outside the confirmed plan is
+not a missing plan file, so the module responsible for producing good
+methodology content is never asked to produce this one.
+
+**Next session: find what writes `Technical Approach and Methodology.docx`
+at AUTO_FINALIZE time.** AUTO_FINALIZE ran 19:30:25→19:30:37 and the document's
+`updatedAt` is 19:30:27, so the writer is inside that window.
+`auto-finalize-continuation-service.ts:312` imports `generateMissingPlanFiles`;
+`export-gap-repair.ts` and `reconcile-generated-docs.ts` are the other
+candidates. Do not re-fix the generator — it is correct.
+
+**A prior question this also answers.** "Technical Approach and Methodology" is
+defined as a *section* of the technical proposal
+(`tender-section-planner.ts:46`, `id: "technical-approach"`, `required: true`,
+envelope TECHNICAL) and is listed among the expected *sections* of
+`TECHNICAL_PROPOSAL` in `export-readiness.ts:1229`. A section-sized body (367
+words, one section) being measured against whole-document thresholds is the
+shape you would expect if a required section were being materialised as a
+standalone deliverable. That is a hypothesis consistent with all the evidence,
+not a confirmed code path — confirm it before acting on it.
+
+**Two open items that are not code defects.**
+
+1. `DEADLINE_PASSED`: "Submission deadline passed 27 days ago (2026-08-25)."
+   HIGH severity, but a *warning*, not one of the blockers. Owner decision
+   whether this tender is a live bid or purely a benchmark fixture.
+2. Run Engine reported `vaultVerification: COMPLETED` with
+   `vaultVerifiedExperts: 0` and `vaultVerifiedProjects: 0`, against a vault
+   holding 28 experts and 100 projects (`evidenceRecords: 163`). Verification
+   completes rather than errors, so this may be naming rather than a defect —
+   but a proposal built from zero verified expert and project evidence deserves
+   its own investigation.
+
+**Still unmeasured after three runs: authorship.** The readiness assertion
+aborts the acceptance job before the authorship printer runs, so whether the
+proposal is MODEL_BACKED or the deterministic draft remains unknown. The
+69-second generation in run 2 is suggestive and is not evidence. Getting this
+answered needs either the package to pass readiness, or the authorship print
+moved ahead of the readiness assertion.
+
 ### 2026-09-19 UTC (latest) — Fifth Preview database swap: provisioned and verified healthy; vault is empty
 
 - **Tool / branch / PR:** Claude Code · `release/consolidated-recovery-20260717` · PR #1175 (open, draft, unmerged). Head `86679600`.
