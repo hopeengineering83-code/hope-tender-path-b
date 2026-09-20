@@ -75,6 +75,38 @@ export function containsMetadataPlaceholder(value: string | null | undefined): b
   return false;
 }
 
+/**
+ * Detect extractor scaffolding accidentally stored as a field value.
+ *
+ * A source quote may genuinely contain labels such as "Client Name:", but the
+ * scalar value itself must not be an entire multi-field extraction worksheet or
+ * an instruction to the extractor. These strings can be perfectly source-
+ * grounded while still being invalid values, so grounding alone must never
+ * promote them to EXTRACTED_AND_GROUNDED.
+ */
+export function containsMetadataScaffolding(value: string | null | undefined): boolean {
+  if (!value || typeof value !== "string") return false;
+  const text = value.replace(/[\u00A0\u200B\u200C\u200D\uFEFF]/g, " ").replace(/\s+/g, " ").trim();
+  if (!text) return false;
+
+  // Explicit extractor/self-instruction prose is never a field value.
+  if (/\b(?:mark\s+as\s+(?:not\s+applicable|not\s+found|not\s+stated)|do\s+not\s+generate\s+(?:a\s+)?financial\s+proposal|use\s+email\s+submission\s+only)\b/i.test(text)) {
+    return true;
+  }
+
+  // Two or more embedded field labels mean a multi-field worksheet was stored
+  // in one scalar. One label alone is tolerated because a legitimate endpoint
+  // can sometimes be presented as "Portal: https://..." in source text.
+  const labelPattern = /\b(?:procuring\s+entity\s*\/\s*client\s+name|legal\s+client\s+name|project\s+name|page\s+limit|financial\s+proposal|bid\s+bond(?:\s*\/\s*bid\s+security)?|submission\s+(?:address|method|email)|client\s+(?:address|contact|website)|pre[-\s]?bid\s+(?:meeting|location)|tender\s+status|portal)\s*:/gi;
+  const labels = text.match(labelPattern) ?? [];
+  if (labels.length >= 2) return true;
+
+  // Observed portal residue appended to an otherwise plausible city/address.
+  if (/\b(?:tender\s+status)\s*$/i.test(text) && text.split(/\s+/).length > 2) return true;
+
+  return false;
+}
+
 // ─── Generic field-label / heading detection ─────────────────────────────────
 
 /**
