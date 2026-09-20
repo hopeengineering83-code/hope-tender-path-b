@@ -397,7 +397,13 @@ export async function GET(req: Request) {
       // content, byte-signature and original-form conjuncts below. `validated`
       // is retained as an explicit local assertion of the same fact the resolver
       // already enforces, so a future change to either one is visible here.
-      const readyForExport = candidate && generated && validated && state === "READY_FOR_EXPORT";
+      // The audit must never advertise a document as export-ready when its own
+      // quality assessment says QUALITY_FAILED. The canonical final gate already
+      // blocks this case; mirroring that hard verdict here prevents the audit
+      // surface from reporting readyForExport/zipEligible=true for the exact
+      // document that stops the package.
+      const hardQualityFailure = qualityRecommendedStatus === "QUALITY_FAILED";
+      const readyForExport = candidate && generated && validated && state === "READY_FOR_EXPORT" && !hardQualityFailure;
       const zipEligible = readyForExport
         && !missingContentIssue
         && byteSignatureOk !== false
