@@ -379,9 +379,6 @@ async function methodologyNarrativeContent(
 ) {
   const related = matchingRequirements(fileName, requirements);
   const sourceRequirements = (related.length > 0 ? related : requirements).slice(0, 12);
-  const requirementSummary = sourceRequirements
-    .map((requirement) => clean(requirement.title))
-    .filter(Boolean);
 
   const children: Paragraph[] = [
     para("Technical Approach and Methodology", true),
