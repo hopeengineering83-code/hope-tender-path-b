@@ -661,6 +661,16 @@ export function assessGeneratedDocumentQuality(input: DocumentQualityInput): Doc
 
   // ── Requirement coverage. ───────────────────────────────────────────────
   const reqCov = findRequirementCoverage(text, input.requirements);
+  // The public coverage value must not claim 100% when the same quality report
+  // says the document is structurally incomplete. For document kinds with a
+  // required-section rubric, effective coverage is capped by section coverage.
+  // Tender-requirement matching remains separately available through the issue
+  // text below, so we do not lose the distinction between content coverage and
+  // structural completeness.
+  const structuralCoverageRatio = sectionRule && sectionRule.sections.length > 0
+    ? requiredSectionsPresent.length / sectionRule.sections.length
+    : 1;
+  const effectiveCoverageRatio = Math.min(reqCov.ratio, structuralCoverageRatio);
   if (reqCov.total > 0 && reqCov.ratio < 0.3) {
     issues.push({
       code: "MISSING_REQUIREMENT_COVERAGE",
@@ -752,7 +762,7 @@ export function assessGeneratedDocumentQuality(input: DocumentQualityInput): Doc
     sectionCount,
     requiredSectionsPresent,
     missingRequiredSections,
-    requirementCoverageRatio: reqCov.ratio,
+    requirementCoverageRatio: effectiveCoverageRatio,
     evidenceReferenceCount: evidenceRefs,
     issues,
     notes,

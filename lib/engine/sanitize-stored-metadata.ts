@@ -46,6 +46,7 @@ import {
   isValidCountry,
   isValidClientContact,
   containsMetadataPlaceholder,
+  containsMetadataScaffolding,
 } from "./metadata-validators";
 
 /**
@@ -58,7 +59,7 @@ import {
  */
 function withPlaceholderRejection(validator: (v: string | null | undefined) => boolean): (v: string | null | undefined) => boolean {
   return (value) => {
-    if (containsMetadataPlaceholder(value)) return false;
+    if (containsMetadataPlaceholder(value) || containsMetadataScaffolding(value)) return false;
     return validator(value);
   };
 }

@@ -349,6 +349,155 @@ function coverLetterContent(opts: {
   ];
 }
 
+
+function isMethodologyNarrative(fileName: string, documentType: string): boolean {
+  const label = `${fileName} ${documentType}`.toLowerCase();
+  if (/financial[\s._-]+proposal|commercial[\s._-]+proposal|price[\s._-]+schedule|rate[\s._-]+card|\bboq\b/.test(label)) {
+    return false;
+  }
+  return /methodology|technical[\s._-]+approach|work[\s._-]*plan/.test(label)
+    || documentType.toUpperCase() === "METHODOLOGY";
+}
+
+/**
+ * Build a complete standalone methodology/work-plan document for a confirmed
+ * Build Plan item. This is deliberately deterministic and source-bounded: it
+ * may organize the tender's extracted requirements and the firm's selected,
+ * reviewed evidence, but it does not invent durations, certifications,
+ * personnel, project experience, or client facts.
+ *
+ * The previous fallback used the generic narrative stub for methodology files.
+ * That produced only a requirement list plus optional evidence (367 words in a
+ * real acceptance run), while the quality gate correctly requires phases,
+ * tasks, deliverables, schedule, QA and risk and at least 800 words.
+ */
+async function methodologyNarrativeContent(
+  tenderTitle: string,
+  fileName: string,
+  requirements: RequirementLike[],
+  evidence: { experts: string[]; projects: string[] } = { experts: [], projects: [] },
+) {
+  const related = matchingRequirements(fileName, requirements);
+  const sourceRequirements = (related.length > 0 ? related : requirements).slice(0, 12);
+
+  const children: Paragraph[] = [
+    para("Technical Approach and Methodology", true),
+    para(`Tender: ${clean(tenderTitle)}`),
+    para(`Subject: Technical Approach and Methodology for ${clean(tenderTitle)}`, true),
+    para(
+      "This methodology translates the tender requirements into a controlled execution process from inception through final handover. The sequence is designed to keep scope, technical decisions, deliverables, schedule, quality assurance, and risk controls connected throughout delivery. Activities are advanced only after the information required for the next stage has been reviewed, and each deliverable is checked against the applicable tender requirement before issue. Where the tender does not prescribe a duration, quantity, format, or acceptance period, this methodology does not invent one; those details remain governed by the tender, the agreed inception programme, and subsequent client instructions."
+    ),
+    heading("Execution Phases"),
+    subheading("Phase 1 — Inception, Mobilization and Requirement Confirmation"),
+    para(
+      "The assignment begins with a structured inception stage. The team reviews the tender scope, extracted requirements, required outputs, submission conditions, available background information, interfaces, and known constraints. The purpose is to establish one controlled interpretation of the assignment before technical production starts. The team confirms responsibilities, information needs, decision points, document-control rules, review routes, and the sequence in which technical inputs must be developed. Any ambiguity found in the tender is recorded for clarification rather than silently converted into an assumption."
+    ),
+    para(
+      "The inception output is the working basis for delivery: a requirement register, responsibility allocation, information-request list, deliverable register, initial schedule logic, quality checkpoints, and risk register. These controls are maintained during the assignment so that later design or advisory work can be traced back to the requirement that triggered it."
+    ),
+    subheading("Phase 2 — Data Review, Investigation and Technical Baseline"),
+    para(
+      "The second phase establishes the technical baseline needed for the assignment. Existing documents and client-supplied information are reviewed for completeness, consistency, relevance, and currency. Where the scope requires field verification, surveys, consultations, investigations, measurements, or discipline inputs, those activities are planned around the tender requirements and coordinated so that one discipline does not proceed on information another discipline has not yet confirmed."
+    ),
+    para(
+      "Findings are recorded in a controlled manner, including source, date, responsible reviewer, implication, and required action. Conflicts between source documents are elevated for resolution. The team separates verified facts from assumptions and avoids treating unconfirmed information as an approved design basis. This phase closes when sufficient information exists to begin the principal technical tasks without creating avoidable rework."
+    ),
+    subheading("Phase 3 — Technical Development and Coordination"),
+    para(
+      "Technical development proceeds through coordinated task packages rather than isolated discipline outputs. Each package identifies the requirement being addressed, the input information used, the responsible technical role, interfaces with other tasks, the expected output, and the review required before release. Alternatives are evaluated where the assignment requires options or professional judgement, with the preferred solution supported by the applicable technical criteria and the available project evidence."
+    ),
+    para(
+      "Coordination reviews are used to identify clashes, omissions, duplicated scope, inconsistent assumptions, and downstream impacts before they become final deliverable defects. Comments are logged, assigned, resolved, and closed. A revised output is not treated as final merely because it has been edited; it must pass the defined quality review and remain consistent with the current requirement register."
+    ),
+    subheading("Phase 4 — Review, Consolidation and Client Interface"),
+    para(
+      "Draft outputs are consolidated into the format required by the tender and checked as one package. The review confirms that technical content, schedules, calculations or narratives, drawings or schedules where applicable, and supporting evidence tell the same story and do not contradict one another. Client comments and formal review comments are entered into a response register so that every material comment has an owner, action, disposition, and closure record."
+    ),
+    para(
+      "Changes that affect another discipline, deliverable, milestone, or stated requirement are propagated through the package rather than corrected locally. This prevents a late change in one document from leaving stale information elsewhere in the submission or assignment outputs."
+    ),
+    subheading("Phase 5 — Finalization, Submission and Handover"),
+    para(
+      "Before final issue, the team performs a completion review against the deliverable register and the tender requirements. File names, formats, required signatures or approvals, cross-references, revision identifiers, and package completeness are checked together with technical content. Only the current approved revision is released. Handover includes the final deliverables required by the tender and the records needed to explain outstanding actions, if any, without presenting internal drafting notes as client-facing content."
+    ),
+    heading("Tasks and Execution Sequence"),
+    para(
+      "Tasks are sequenced by dependency. Requirement confirmation and baseline verification precede detailed technical development; discipline outputs that depend on common data use the same controlled baseline; coordination occurs before finalization; and final packaging occurs only after quality comments are closed. This dependency-based sequence is used even when activities overlap, so parallel working does not become uncontrolled working."
+    ),
+  ];
+
+  if (sourceRequirements.length > 0) {
+    children.push(subheading("Tender Requirements Addressed by the Tasks"));
+    for (const requirement of sourceRequirements) {
+      const description = requirement.description ? ` — ${clean(requirement.description).slice(0, 500)}` : "";
+      children.push(bullet(`${clean(requirement.title)}${description}`));
+    }
+  } else {
+    children.push(para(
+      "No separate requirement rows are available in the current tender record. The task sequence therefore remains bounded by the confirmed Build Plan and the tender source; no additional scope is asserted in this document."
+    ));
+  }
+
+  children.push(
+    heading("Deliverables and Acceptance"),
+    para(
+      "Deliverables are controlled through a deliverable register that records the required output, source requirement, responsible preparer, reviewer, planned issue point, current revision, and acceptance status. A deliverable is considered complete only when its required content is present, its internal review is closed, its interfaces are coordinated, and its format is consistent with the tender instruction. Draft, review, and final states are kept distinct so that an intermediate document cannot be mistaken for an approved submission."
+    ),
+    para(
+      "Where several outputs form one package, package-level consistency is checked in addition to document-level quality. Titles, terminology, project identifiers, client identifiers, dates, quantities, and references are reconciled across the package. If the tender calls for a prescribed original or form, the prescribed original remains authoritative and is not replaced by a generated approximation."
+    ),
+    heading("Schedule and Milestones"),
+    para(
+      "The schedule is developed from the dependency logic of the phases and from any dates or durations explicitly stated in the tender. Milestones are tied to measurable outputs: inception completion, baseline confirmation, technical review points, coordinated draft issue, comment closure, final quality review, and final submission or handover. Where the tender does not state a duration, this document does not fabricate calendar dates; the detailed programme is established at inception using the contractual time available and the confirmed information-release dates."
+    ),
+    para(
+      "Progress control compares actual completion against the current approved programme, focusing on activities that govern downstream work. A delay is assessed by its effect on dependent tasks and deliverables, not only by percentage complete. Recovery actions may include resequencing independent work, resolving information constraints earlier, increasing review concurrency where technically safe, or escalating decisions that are holding the critical sequence. Any recovery measure remains subject to the same quality and coordination controls."
+    ),
+    heading("Quality Assurance (QA) and Quality Control"),
+    para(
+      "Quality assurance is embedded in the workflow rather than added at the end. Each technical output has a preparer and an independent reviewer appropriate to the task. Review checks address requirement compliance, technical correctness, completeness, internal consistency, interfaces, source traceability, calculations or assumptions where applicable, and presentation. Review comments are recorded and closed before an output advances to final status."
+    ),
+    para(
+      "Quality control also applies to document production. The current revision is identified, obsolete working copies are prevented from entering the final package, and client-facing documents are checked for placeholders, drafting instructions, unsupported claims, inconsistent metadata, and accidental financial content in a technical envelope. Where evidence is cited, only selected source-verified company evidence is used. The final review is therefore both technical and submission-focused."
+    ),
+    heading("Risk Management"),
+    para(
+      "Risks are identified from the tender requirements, information dependencies, technical interfaces, approvals, site or stakeholder constraints where applicable, and delivery sequence. Each material risk is recorded with cause, potential effect, owner, mitigation action, trigger for escalation, and status. The register is reviewed at the main phase transitions and whenever a new issue could affect scope, quality, schedule, or deliverable acceptance."
+    ),
+    para(
+      "Typical controls include early clarification of ambiguous requirements, validation of critical source information before dependent work proceeds, interface reviews between disciplines, protected review time before issue, controlled change management, and early escalation of decisions that affect multiple outputs. Risk treatment does not rely on optimistic assumptions: an uncertainty remains visible until evidence or an authorized decision closes it."
+    ),
+    heading("Team, Evidence and Responsibility"),
+    para(
+      "Responsibility follows the approved task allocation: the person preparing an output remains accountable for its technical completeness, while the designated reviewer is accountable for an independent check before release. Coordination responsibilities are explicit for tasks that cross disciplines or deliverables. This prevents gaps created by assuming that another team member has checked an interface."
+    ),
+  );
+
+  if (evidence.experts.length > 0) {
+    children.push(subheading("Selected Personnel Evidence"));
+    for (const expert of evidence.experts.slice(0, 12)) children.push(bullet(expert));
+  }
+  if (evidence.projects.length > 0) {
+    children.push(subheading("Selected Project Evidence"));
+    for (const project of evidence.projects.slice(0, 12)) children.push(bullet(project));
+  }
+  if (evidence.experts.length === 0 && evidence.projects.length === 0) {
+    children.push(para(
+      "No source-verified personnel or project records are linked to this standalone methodology file at generation time. This methodology therefore makes no named personnel or past-project claims beyond the tender-controlled execution process described above."
+    ));
+  }
+
+  children.push(
+    heading("Methodology Control Summary"),
+    para(
+      `The methodology for ${clean(tenderTitle)} is therefore controlled through six connected elements: execution phases, dependency-based tasks, a deliverable and acceptance register, a milestone schedule, formal QA/QC, and an active risk register. These controls are maintained together so that progress cannot be reported as complete while required outputs, quality reviews, or unresolved risks remain open.`
+    ),
+  );
+
+  const buffer = await Packer.toBuffer(new Document({ sections: [{ properties: {}, children }] }));
+  return buffer.toString("base64");
+}
+
 async function narrativeDraftContent(
   tenderTitle: string,
   fileName: string,
@@ -362,6 +511,10 @@ async function narrativeDraftContent(
       sections: [{ properties: {}, children: coverLetterContent({ tenderTitle, requirements, evidence, ...letterContext }) }],
     }));
     return buffer.toString("base64");
+  }
+
+  if (isMethodologyNarrative(fileName, documentType)) {
+    return methodologyNarrativeContent(tenderTitle, fileName, requirements, evidence);
   }
 
   // A financial/commercial proposal must not carry "methodology"/"work plan"/
@@ -944,4 +1097,11 @@ export async function generateMissingPlanFiles(args: {
   };
 }
 
-export const __testing__ = { documentTypeFor, needsOriginalReplacement, isNarrativeDraft, narrativeDraftContent };
+export const __testing__ = {
+  documentTypeFor,
+  needsOriginalReplacement,
+  isNarrativeDraft,
+  narrativeDraftContent,
+  isMethodologyNarrative,
+  methodologyNarrativeContent,
+};
