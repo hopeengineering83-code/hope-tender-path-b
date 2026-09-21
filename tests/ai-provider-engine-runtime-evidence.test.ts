@@ -230,16 +230,37 @@ describe("Fix 8 — Later capable providers are attempted", () => {
 
   it("the attempt budget guards only apply to eligible providers", () => {
     const src = read("lib/ai.ts");
-    // The budget guard (actualAttempts >= MAX_PROVIDER_ATTEMPTS_PER_REQUEST)
-    // must appear AFTER the unconfigured/cooldown/preflight skips.
+    // The budget guard must appear AFTER the unconfigured/cooldown/preflight
+    // skips, so a skipped provider never consumes budget.
+    //
+    // This used to pin the literal
+    // "if (actualAttempts >= MAX_PROVIDER_ATTEMPTS_PER_REQUEST)". The
+    // comparison now reads `attemptBudget`, because advisory work gets a
+    // smaller fan-out than mandatory work — the ORDERING invariant this test
+    // exists for is unchanged, but the spelling it happened to match is not.
+    // Matching the guard by its shape keeps the invariant pinned without
+    // freezing which constant feeds it.
     const preflightCheck = src.indexOf("preflightProvider(provider,");
-    const budgetGuard = src.indexOf("if (actualAttempts >= MAX_PROVIDER_ATTEMPTS_PER_REQUEST)");
+    const budgetGuard = src.search(/if \(actualAttempts >= \w+\) \{/);
     assert.ok(preflightCheck > -1);
-    assert.ok(budgetGuard > -1);
+    assert.ok(budgetGuard > -1, "the attempt budget guard is gone entirely");
     assert.ok(
       budgetGuard > preflightCheck,
       "budget guard must come AFTER preflight (so skipped providers don't consume budget)",
     );
+  });
+
+  it("optional advisory work may not spend the whole chain", () => {
+    const src = read("lib/ai.ts");
+    // Measured on run 35610060081: the optional multi-perspective matcher
+    // "Contacted 10 of 10 configured provider(s)", tipped groq past its
+    // 8000 TPM limit, and the mandatory section writer found every provider
+    // cooling down 48 seconds later. Advisory work is bounded to a genuine
+    // first chance; mandatory work keeps the chain.
+    assert.match(src, /export const ADVISORY_MAX_PROVIDER_ATTEMPTS = 1;/);
+    assert.match(src, /isAdvisoryContext\(\)\s*\?\s*ADVISORY_MAX_PROVIDER_ATTEMPTS/);
+    // And the mandatory budget is untouched.
+    assert.match(src, /:\s*MAX_PROVIDER_ATTEMPTS_PER_REQUEST;/);
   });
 });
 
