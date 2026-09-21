@@ -31,11 +31,34 @@ const src = readFileSync(path.join(process.cwd(), "lib/ai.ts"), "utf8");
 function sliceFunction(name: string): string {
   const start = src.indexOf(`function ${name}`);
   assert.ok(start >= 0, `${name} must exist in lib/ai.ts`);
-  // Slice to the next top-level "async function " or "export " after this
-  // point as a cheap function-body boundary — good enough for order checks.
-  const next = src.indexOf("\nasync function ", start + 20);
-  const end = next > start ? next : start + 10000;
-  return src.slice(start, end);
+  // End at the function's own closing brace — the first `}` in column 0 after
+  // it starts, which is how every top-level declaration in this file closes.
+  //
+  // This used to look for the next top-level "async function " and fall back
+  // to a flat 10,000 characters when there wasn't one. generateOneSection is
+  // the LAST async function in lib/ai.ts, so the fallback was always what ran,
+  // and the window silently cut the function off partway through. Adding ~25
+  // lines of comment near the top pushed the provider loop past the 10,000th
+  // character, and three assertions began failing against code that had not
+  // changed — reporting a defect in the function when the defect was in this
+  // helper. A boundary that depends on how much prose precedes the code it
+  // measures cannot guard that code.
+  const close = src.indexOf("\n}\n", start);
+  assert.ok(close > start, `${name} must have a top-level closing brace`);
+  const body = src.slice(start, close);
+  // Guard the guard. The slice runs from the declaration to (not including)
+  // the function's own closing brace, so every brace it opens must be closed
+  // inside it exactly once over. If that does not hold, the boundary landed
+  // somewhere arbitrary and the assertions below would be measuring a
+  // fragment — a failure of this helper, not of the function it describes.
+  const opens = (body.match(/\{/g) ?? []).length;
+  const closes = (body.match(/\}/g) ?? []).length;
+  assert.equal(
+    opens - closes,
+    1,
+    `${name} slice is not a whole function body (${body.length} chars, ${opens} { vs ${closes} }) — the boundary heuristic is wrong, not the function`,
+  );
+  return body;
 }
 
 describe("every proposal path derives its provider order from one place", () => {
