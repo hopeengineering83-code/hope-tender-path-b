@@ -2,13 +2,13 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { logger } from "./observability";
 import { isAIConfigured } from "./env-check";
 const { GoogleGenerativeAI } = require("@google/generative-ai") as typeof import("@google/generative-ai");
-import { recordProviderSuccess as recordProviderSuccessRaw, recordProviderFailure as recordProviderFailureRaw, recordProviderAnalysisSuccess as recordProviderAnalysisSuccessRaw, recordProviderCapabilityResult, classifyAiError, isProviderCooledDown, isBillingLockedOut, getProviderRuntimeSnapshot, getProviderStateSnapshot, getDeepSeekApiKey, isDeepSeekConfigured, getDeepSeekModel, getMistralApiKey, isMistralConfigured, getMistralProposalModel, getMistralAnalysisModel, getMistralFastModel, getMistralBaseUrl, getGroqApiKey, isGroqConfigured, getGroqBaseUrl, getTogetherApiKey, isTogetherConfigured, getTogetherProposalModel, getTogetherAnalysisModel, getTogetherFastModel, getTogetherBaseUrl, getOpenRouterApiKey, isOpenRouterConfigured, getOpenRouterModel, getOpenRouterBaseUrl, getOpenRouterSiteUrl, getOpenRouterAppName, getZaiApiKey, getZaiBaseUrl, getCerebrasApiKey, getCerebrasBaseUrl, getAnthropicApiKey, type AiProviderName } from "./ai-provider-health";
+import { getMinCooldownExpiryMs, recordProviderSuccess as recordProviderSuccessRaw, recordProviderFailure as recordProviderFailureRaw, recordProviderAnalysisSuccess as recordProviderAnalysisSuccessRaw, recordProviderCapabilityResult, classifyAiError, isProviderCooledDown, isBillingLockedOut, getProviderRuntimeSnapshot, getProviderStateSnapshot, getDeepSeekApiKey, isDeepSeekConfigured, getDeepSeekModel, getMistralApiKey, isMistralConfigured, getMistralProposalModel, getMistralAnalysisModel, getMistralFastModel, getMistralBaseUrl, getGroqApiKey, isGroqConfigured, getGroqBaseUrl, getTogetherApiKey, isTogetherConfigured, getTogetherProposalModel, getTogetherAnalysisModel, getTogetherFastModel, getTogetherBaseUrl, getOpenRouterApiKey, isOpenRouterConfigured, getOpenRouterModel, getOpenRouterBaseUrl, getOpenRouterSiteUrl, getOpenRouterAppName, getZaiApiKey, getZaiBaseUrl, getCerebrasApiKey, getCerebrasBaseUrl, getAnthropicApiKey, type AiProviderName } from "./ai-provider-health";
 import { CANONICAL_AI_PROVIDER_ORDER, getAutomaticProviderOrder, automaticallyEligibleProviders, readProviderKey, getProviderModel, getProviderOutputCap, getProviderTimeoutMs, isProviderConfigured as registryIsProviderConfigured, providerAutomaticEligibility, automaticChainDisplay, type AiUseCase } from "./ai-provider-registry";
 import { preflightProvider } from "./ai-preflight";
 import { resolveCurrencyToken } from "./engine/currency-reference";
 import { protectPrompt, protectPromptWithBoundary } from "./ai-trust-boundary";
 import { redactSecrets } from "./sanitize-error";
-import { GEMINI_TIMEOUT_MS, DEEPSEEK_DEFAULT_TIMEOUT_MS, MISTRAL_EXTRACTION_TIMEOUT_MS, OPENAI_COMPAT_DEFAULT_TIMEOUT_MS, O1_O3_TIMEOUT_MS, PROPOSAL_SECTION_TIMEOUT_MS, PROPOSAL_SECTION_TIMEOUT_CEILING_MS, PROPOSAL_SECTION_MS_PER_OUTPUT_TOKEN, PROPOSAL_SECTION_BASE_OVERHEAD_MS, PROPOSAL_SECTION_STITCH_RESERVE_MS, PROPOSAL_AI_TIMEOUT_MS, REFINEMENT_CALL_TIMEOUT_MS } from "./timeout-config";
+import { GEMINI_TIMEOUT_MS, DEEPSEEK_DEFAULT_TIMEOUT_MS, MISTRAL_EXTRACTION_TIMEOUT_MS, OPENAI_COMPAT_DEFAULT_TIMEOUT_MS, O1_O3_TIMEOUT_MS, PROPOSAL_SECTION_TIMEOUT_MS, PROPOSAL_SECTION_TIMEOUT_CEILING_MS, PROPOSAL_SECTION_MS_PER_OUTPUT_TOKEN, PROPOSAL_SECTION_BASE_OVERHEAD_MS, PROPOSAL_SECTION_STITCH_RESERVE_MS, PROPOSAL_SECTION_MIN_WRITE_MS, COOLDOWN_WAIT_SETTLE_MS, PROPOSAL_AI_TIMEOUT_MS, REFINEMENT_CALL_TIMEOUT_MS } from "./timeout-config";
 
 const apiKey = process.env.GEMINI_API_KEY;
 // Anthropic key is read at request time via getAnthropicApiKey() — never cached
@@ -4915,7 +4915,16 @@ interface SectionAuthorship {
   /** Classified category of the last failure, when the section fell back. */
   failureCategory?: string;
   /** Providers walked and refused before the section resolved, in order. */
-  attempts?: Array<{ provider: string; outcome: "SKIPPED_NO_CAPACITY" | "FAILED"; reason: string }>;
+  attempts?: Array<{
+    provider: string;
+    outcome:
+      | "SKIPPED_NO_CAPACITY"
+      | "SKIPPED_INELIGIBLE"
+      | "SKIPPED_COOLING_DOWN"
+      | "WAITED_FOR_COOLDOWN"
+      | "FAILED";
+    reason: string;
+  }>;
 }
 
 interface SectionResult extends SectionAuthorship {
@@ -5040,10 +5049,61 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
   //
   // Canonical order is walked identically in both passes; nothing is
   // reordered, and no provider is excluded from the chain.
+  // ONE ROUND MAY WAIT OUT A COOLDOWN IT CAN AFFORD.
+  //
+  // A cooldown is not a verdict, it is "try again in N seconds": RATE_LIMIT
+  // sets 60s and PROVIDER_OVERLOAD 15s (lib/ai-provider-health.ts). AI Analyze
+  // already treats it that way -- on fallback it reports
+  // getMinCooldownExpiryMs() as providerRetryAfterMs so the work can be
+  // retried. The per-section writer did not: it walked a chain in which every
+  // live provider was cooling down, dispatched nothing, and committed the
+  // whole proposal to the deterministic draft in milliseconds.
+  //
+  // That asymmetry is why no proposal has been model-backed. The two manual
+  // gates run back to back: AI Analyze consumes the same small set of live
+  // providers and leaves them cooling, and generation starts seconds later,
+  // inside those cooldowns. The providers the chain needs are not broken --
+  // they are busy, for a period this runtime can now afford to sit out. The
+  // durable worker has a 220s budget (see resolveProposalExecutionBudget);
+  // before that existed the whole route had 45s and waiting was impossible,
+  // which is why this could not have been fixed at this layer first.
+  //
+  // Bounded on purpose: at most ONE wait, only when nothing was dispatched,
+  // only when the wait plus a usable writing window fits the section budget
+  // that resolveEffectiveTimeoutMs has already clamped to any armed worker
+  // deadline. It can therefore never push a section past the platform ceiling,
+  // and a chain that is genuinely exhausted still falls back immediately.
+  for (let round = 0; round < 2; round += 1) {
   for (const pass of ["capacity-checked", "last-resort"] as const) {
   for (const provider of getAutomaticProviderOrder()) {
-    if (!providerAutomaticEligibility(provider).eligible) continue;
-    if (isProviderCooledDown(provider)) continue;
+    // A SKIP IS NOT A FAILURE, AND THE TWO MUST NOT READ ALIKE.
+    //
+    // These two guards used to be bare `continue`s. They record nothing, so a
+    // section on which every provider was skipped produced an EMPTY attempts
+    // list and then reported, verbatim, "all AI providers failed or
+    // unavailable for this section" -- the same sentence it prints when every
+    // provider was genuinely dispatched and refused. Those are opposite
+    // situations with opposite remedies, and the provenance could not tell
+    // them apart. Observed 2026-09-21 on the acceptance run: 4 of 4 sections
+    // "failed" with no failureCategory, no model, no token counts and no
+    // attempts -- because nothing had been tried at all.
+    //
+    // This function's own header already promises the chain is "recorded as
+    // it is walked so a fallback can say which providers were tried and why
+    // each declined". These two lines were the reason it could not.
+    const eligibility = providerAutomaticEligibility(provider);
+    if (!eligibility.eligible) {
+      if (pass === "last-resort") {
+        attempts.push({ provider, outcome: "SKIPPED_INELIGIBLE", reason: eligibility.reason ?? "not eligible for automatic use" });
+      }
+      continue;
+    }
+    if (isProviderCooledDown(provider)) {
+      if (pass === "last-resort") {
+        attempts.push({ provider, outcome: "SKIPPED_COOLING_DOWN", reason: "cooling down from an earlier failure" });
+      }
+      continue;
+    }
 
     // Provider capability preflight — the same gate callAiWithFallback applies
     // before every attempt, which this path did not run at all.
@@ -5158,7 +5218,41 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
   }
   }
 
-  // All providers failed (or unavailable). Use the deterministic per-section fallback.
+  if (round === 0) {
+    // Only a chain where NOTHING was dispatched can be waiting on a cooldown.
+    // If any provider was actually called and refused, waiting is not the
+    // remedy and the fallback is correct.
+    const dispatched = attempts.some((attempt) => attempt.outcome === "FAILED");
+    const retryAfterMs = dispatched ? null : getMinCooldownExpiryMs();
+    if (retryAfterMs !== null && retryAfterMs > 0) {
+      const sectionBudgetMs = resolveEffectiveTimeoutMs(sectionTimeoutMs);
+      const affordableMs = sectionBudgetMs - (Date.now() - t0) - PROPOSAL_SECTION_MIN_WRITE_MS;
+      if (retryAfterMs <= affordableMs) {
+        attempts.push({
+          provider: "(chain)",
+          outcome: "WAITED_FOR_COOLDOWN",
+          reason: `no provider dispatched; waited ${Math.round(retryAfterMs / 1000)}s for the earliest cooldown to expire`,
+        });
+        logger.warn(
+          `[ai] section "${spec.id}" dispatched no provider — every eligible provider was cooling down. `
+          + `Waiting ${Math.round(retryAfterMs / 1000)}s for the earliest expiry and re-walking the chain `
+          + `(section budget ${Math.round(sectionBudgetMs / 1000)}s, ${Math.round(affordableMs / 1000)}s affordable).`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, retryAfterMs + COOLDOWN_WAIT_SETTLE_MS));
+        continue;
+      }
+      logger.warn(
+        `[ai] section "${spec.id}" dispatched no provider and the earliest cooldown expires in `
+        + `${Math.round(retryAfterMs / 1000)}s, which does not fit the remaining section budget — falling back.`,
+      );
+    }
+  }
+  break;
+  }
+
+  // All providers failed, were skipped, or were still cooling down. Use the
+  // deterministic per-section fallback. `attempts` now says which of those it
+  // was, per provider.
   return {
     id: spec.id,
     title: spec.title,

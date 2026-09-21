@@ -119,3 +119,24 @@ export const PROPOSAL_SECTION_BASE_OVERHEAD_MS = 8_000;
 // reorder, and the DOCX build. Without it the largest section could run right
 // up to the guard and abort the entire proposal instead of one section.
 export const PROPOSAL_SECTION_STITCH_RESERVE_MS = 5_000;
+
+/**
+ * The writing window a section must still have AFTER waiting out a provider
+ * cooldown for that wait to be worth taking.
+ *
+ * A wait is only useful if what follows it can actually produce the section.
+ * Waiting 60s inside a budget with 10s left would spend the section's entire
+ * remaining time to arrive at the same deterministic fallback, one round
+ * later and with the evidence trail muddied. The section writer therefore
+ * waits only when `wait + this` fits the budget that resolveEffectiveTimeoutMs
+ * has already clamped to any armed worker deadline.
+ */
+export const PROPOSAL_SECTION_MIN_WRITE_MS = 20_000;
+
+/**
+ * Slack added to a cooldown wait so the retry lands just AFTER the expiry.
+ * `isProviderCooledDown` compares against `Date.now()`, so waking at exactly
+ * the expiry can still observe the provider as cooling down and waste the
+ * round on the same empty walk.
+ */
+export const COOLDOWN_WAIT_SETTLE_MS = 500;

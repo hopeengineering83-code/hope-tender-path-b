@@ -2260,7 +2260,15 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
                 parts.push(`in=${section.estimatedInputTokens}/${section.contextLimit}`);
               }
               if (section.maxOutputTokens !== undefined) parts.push(`out<=${section.maxOutputTokens}`);
-              if (section.attempts) parts.push(`attempts=${section.attempts}`);
+              // Render the walk, do not stringify the array. `${array}` on an
+              // array of objects yields "[object Object],[object Object]",
+              // which is how the one field that says WHICH providers were
+              // tried and why each declined reached the operator as noise.
+              if (section.attempts?.length) {
+                parts.push(
+                  `attempts=[${section.attempts.map((a) => `${a.provider}:${a.outcome}(${a.reason})`).join("; ")}]`,
+                );
+              }
               if (section.error) parts.push(`"${String(section.error).slice(0, 160)}"`);
               return parts.join(" ");
             })
