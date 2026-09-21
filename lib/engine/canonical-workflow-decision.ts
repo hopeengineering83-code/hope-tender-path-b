@@ -176,6 +176,15 @@ export function buildCanonicalWorkflowDecision(input: {
   // Export
   finalExportAllowed: boolean;
   authorityOrQualityBlockers: boolean;
+  /**
+   * The export blockers that are NOT generation blockers — i.e. exactly the
+   * authority/quality items standing between this package and its ZIP.
+   *
+   * Optional so existing callers keep working, but when supplied the decision
+   * names them instead of restating its own category. See the note at the
+   * AUTHORITY_OR_QUALITY_BLOCKERS branch.
+   */
+  authorityOrQualityBlockerNames?: string[];
 }): CanonicalWorkflowDecision {
   const blockerCodes: string[] = [];
   const blockerDetails: string[] = [];
@@ -311,7 +320,29 @@ export function buildCanonicalWorkflowDecision(input: {
   const docsApproved = docsValidated;
   if (docsApproved && input.authorityOrQualityBlockers) {
     blockerCodes.push("AUTHORITY_OR_QUALITY_BLOCKERS");
-    blockerDetails.push("Authority review or document quality blockers remain.");
+    // NAME WHAT IS BLOCKING, DO NOT RESTATE THE CATEGORY.
+    //
+    // This pushed "Authority review or document quality blockers remain." --
+    // a paraphrase of the code above it. On the Preview at commit 804a0598 the
+    // owner saw a locked ZIP, "Next action: Fix authority/quality blockers",
+    // and a submission checklist in which EVERY itemised line was green:
+    // documents validated, 0 critical compliance gaps, 0 warning gaps, 2
+    // mandatory requirements covered, Technical Proposal.pdf passing. The only
+    // red line was "Canonical readiness: 1 blocker(s)" -- the same fact,
+    // counted. Nothing on screen said which blocker, so nothing on screen
+    // could be acted on.
+    //
+    // The names were never missing. They are in snapshot.exportBlockers, and
+    // the caller reduced them to a boolean by comparing list LENGTHS before
+    // this function ever saw them.
+    const named = (input.authorityOrQualityBlockerNames ?? []).filter((name) => name.trim().length > 0);
+    blockerDetails.push(
+      named.length > 0
+        ? `Authority or document quality blockers remain: ${named.join("; ")}.`
+        // Still fail closed when the caller supplies no names, but say that
+        // the reason is missing rather than implying none exists.
+        : "Authority review or document quality blockers remain (no blocker detail was supplied by the readiness snapshot).",
+    );
   }
 
   // ── Priority 16: Export ZIP ready ────────────────────────────────────
@@ -769,10 +800,22 @@ export async function getCanonicalTenderWorkflowDecision(
   // ─── Authority / quality blockers ───────────────────────────────────────
   // Any unresolved CRITICAL compliance gap, or any export blocker that isn't
   // a generation/plan/extraction blocker (i.e. quality/authority blockers).
-  const authorityOrQualityBlockers =
+  // Identify them, do not count them.
+  //
+  // This was `exportBlockers.length > generationBlockers.length`. Two problems.
+  // It assumes the generation blockers are a subset of the export ones, so the
+  // arithmetic silently gives the wrong answer the moment they diverge. And it
+  // throws away the blocker names on the way to a boolean, which is why the
+  // Export Hub could only offer the owner a category to fix.
+  //
+  // The set difference answers both: its emptiness is the boolean, and its
+  // members are exactly what to show.
+  const generationBlockerSet = new Set(snapshot.generationBlockers);
+  const authorityOrQualityBlockerNames =
     snapshot.exportBlockers.length > 0 && !snapshot.generationEligible
-      ? false // generation blockers exist — authority/quality not yet relevant
-      : snapshot.exportBlockers.length > snapshot.generationBlockers.length;
+      ? [] // generation blockers exist — authority/quality not yet relevant
+      : snapshot.exportBlockers.filter((blocker) => !generationBlockerSet.has(blocker));
+  const authorityOrQualityBlockers = authorityOrQualityBlockerNames.length > 0;
 
   // ─── Final export allowed ───────────────────────────────────────────────
   // The snapshot's finalZipEligible is the gate-aligned, fail-closed flag.
@@ -811,6 +854,7 @@ export async function getCanonicalTenderWorkflowDecision(
     pdfRequiredButUnavailable,
     finalExportAllowed,
     authorityOrQualityBlockers,
+    authorityOrQualityBlockerNames,
   });
 
   // A terminal failure from the latest Engine attempt for these exact inputs
