@@ -208,8 +208,17 @@ describe("12. provider attempt budget", () => {
   });
   it("generateWithFallback enforces the budget + shared deadline in source", () => {
     const src = readFileSync("lib/ai.ts", "utf8");
-    assert.ok(src.includes("actualAttempts >= MAX_PROVIDER_ATTEMPTS_PER_REQUEST"));
+    // Matched by SHAPE, not spelling. The guard used to read
+    // "actualAttempts >= MAX_PROVIDER_ATTEMPTS_PER_REQUEST" literally; it now
+    // compares against `attemptBudget`, because optional advisory work gets a
+    // smaller provider fan-out than mandatory work. What this test exists to
+    // guarantee — that a budget guard and a shared-deadline guard are both
+    // present — is unchanged, so it is asserted directly instead of through
+    // one particular identifier.
+    assert.match(src, /actualAttempts >= \w+/);
     assert.ok(src.includes("ERROR_HANDLING_RESERVE_MS >= opts.deadlineAt"));
+    // Mandatory work must still be the one that gets the full chain.
+    assert.match(src, /:\s*MAX_PROVIDER_ATTEMPTS_PER_REQUEST;/);
   });
 });
 
