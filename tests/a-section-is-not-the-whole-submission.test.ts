@@ -29,9 +29,9 @@ import { resolveArtifactQualitySchema } from "../lib/engine/artifact-quality-sch
  * section list is not its schema. The rule reads the existing section table,
  * so it carries no tender, sector or filename knowledge.
  *
- * Fixtures below are deliberately cross-sector — water, roads, geotechnical,
- * supervision, EOI — because the Pharo benchmark must not be what makes this
- * work.
+ * Fixtures below are deliberately cross-sector — architecture/building design,
+ * water, roads, geotechnical, supervision, EOI — because the Pharo benchmark
+ * must not be what makes this work.
  */
 
 const SECTIONS_BY_TYPE: Record<string, string[]> = {
@@ -118,6 +118,39 @@ describe("a section is not the whole submission", () => {
     for (const [name, type] of [["Technical Approach and Methodology", "TECHNICAL_PROPOSAL"], ["Technical Proposal", "TECHNICAL_PROPOSAL"]] as const) {
       const schema = resolve(name, type);
       assert.ok(schema.rationale.length > 40, `${name}: rationale too thin to act on`);
+    }
+  });
+
+  // Architecture / building-design consultancy is the first sector on the
+  // owner's generalization list, and it is the one most likely to be confused
+  // with the benchmark, so it is pinned explicitly here rather than left to be
+  // inferred from the water and roads fixtures above.
+  it("classifies an architectural building-design submission by the same rule", () => {
+    // A single design-methodology narrative inside a building-design bid.
+    const component = resolve("Technical Approach and Methodology", "TECHNICAL_PROPOSAL", "Architectural Design Services — Technical Approach and Methodology.docx");
+    assert.equal(component.role, "COMPONENT");
+    assert.deepEqual([...component.requiredSections], []);
+
+    // The complete submission for the same bid still answers to the full list.
+    const whole = resolve("Technical Proposal", "TECHNICAL_PROPOSAL", "Technical Proposal.pdf");
+    assert.equal(whole.role, "COMPLETE_DOCUMENT");
+    assert.ok(whole.requiredSections.includes("Team Composition"));
+
+    // And the transmittal letter of a building-design bid is a letter, not a
+    // proposal — under the name a design practice actually uses for it.
+    const letter = resolve("Letter of Transmittal", "TECHNICAL_PROPOSAL", "Letter of Transmittal.docx");
+    assert.equal(letter.role, "COMPONENT");
+    assert.equal(letter.schemaKey, "COVER_LETTER");
+  });
+
+  it("carries no sector, client or benchmark vocabulary in the authority itself", () => {
+    const src = readFileSync("lib/engine/artifact-quality-schema.ts", "utf8");
+    const code = src
+      .split("\n")
+      .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+      .join("\n");
+    for (const forbidden of [/\bPharo\b/i, /\bhospital/i, /\bhealthcare/i, /\bmedical\b/i, /\bEthiopia/i]) {
+      assert.equal(forbidden.test(code), false, `executable code mentions ${forbidden}`);
     }
   });
 

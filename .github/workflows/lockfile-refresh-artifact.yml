@@ -188,8 +188,7 @@ jobs:
             exit 1
           fi
           if [ -z "$TENDER_ID" ]; then
-            echo "::error::tender_id input is required."
-            exit 1
+            echo "tender_id not supplied -- it will be discovered from /api/tenders after sign-in."
           fi
 
       - name: Sign in through the real /api/auth/login endpoint
@@ -234,6 +233,46 @@ jobs:
           echo "::add-mask::$cookie"
           echo "SESSION_COOKIE=$cookie" >> "$GITHUB_ENV"
           echo "Signed in; session captured and masked."
+
+      - name: Resolve the tender under test
+        run: |
+          # The acceptance job used to REQUIRE a tender_id input. Nobody can
+          # know that value: tender ids are database rows, and this Preview's
+          # database has been re-provisioned several times, so every swap
+          # invalidates whatever id was last written down. The only way to
+          # learn the current id was to run the inspection job and read its
+          # log -- which meant a routine acceptance run failed before it
+          # reached the app, on an input the owner had no way to supply.
+          #
+          # The inspection job already discovers the tender from /api/tenders.
+          # This does the same, so an explicit tender_id becomes an override
+          # for "run against THAT tender" rather than a precondition.
+          if [ -n "$TENDER_ID" ]; then
+            echo "tender supplied by input: $TENDER_ID"
+          else
+            curl -sS --connect-timeout 15 --max-time 45 \
+              -H "Cookie: hope_session=$SESSION_COOKIE" \
+              "$BASE_URL/api/tenders" > /tmp/tenders-discover.json || true
+            tid=$(python3 - <<'PYEOF'
+          import json, sys
+          try:
+              d = json.load(open('/tmp/tenders-discover.json', encoding='utf-8'))
+          except Exception as exc:
+              print("", end=""); print(f"discovery: unreadable response ({exc})", file=sys.stderr); raise SystemExit(0)
+          rows = d if isinstance(d, list) else (d.get('items') or d.get('tenders') or [])
+          if not rows:
+              print(f"discovery: no rows; top-level keys = {sorted(d) if isinstance(d, dict) else type(d).__name__}", file=sys.stderr)
+              print("", end=""); raise SystemExit(0)
+          print((rows[0] or {}).get('id', ''), end="")
+          PYEOF
+          )
+            if [ -z "$tid" ]; then
+              echo "::error::No tender_id was supplied and none could be discovered from /api/tenders. Upload a tender, or pass tender_id explicitly."
+              exit 1
+            fi
+            echo "tender discovered: $tid"
+            echo "TENDER_ID=$tid" >> "$GITHUB_ENV"
+          fi
 
       - name: Verify the session authenticates against the target tender
         run: |
