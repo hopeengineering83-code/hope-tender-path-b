@@ -4781,20 +4781,107 @@ Now write the complete technical proposal. Start with the Cover Letter. The eval
   }
   const fencedProposalPrompt = proposalTrustBoundary.protectedPrompt;
 
+  // THE WALK RECORDS WHAT IT DID TO EVERY PROVIDER.
+  //
+  // THE DEFECT THIS REPLACES. Two bare `continue`s stood here:
+  //
+  //   if (!providerAutomaticEligibility(provider).eligible) continue;
+  //   if (isProviderCooledDown(provider)) continue;
+  //
+  // and the throw at the end of this function passed `providerAttempts: []`
+  // with a hand-written message reading "All configured AI providers
+  // exhausted for proposal generation". That sentence was emitted whether ten
+  // providers were contacted and refused, or none was contacted at all --
+  // opposite situations with opposite remedies. It is the same defect already
+  // fixed for the per-section writer (generateOneSection) and, before that,
+  // for the extraction chain, whose note above describeUncontactedProviders
+  // records the identical lesson read off the owner's AiJob 5c44d156.
+  //
+  // Nothing new is invented here. AiProviderAttempt already carries
+  // configured/tried/skipReason, NoAiProviderReadyError already renders
+  // "tried: none -- all skipped" and appends describeUncontactedProviders(),
+  // and ALL_PROVIDERS_COOLING already exists as a distinct kind. This walk was
+  // the one remaining caller that bypassed all of it.
+  //
+  // Canonical order, real cooldown behaviour and the fallback itself are
+  // unchanged: this only observes what the walk was already doing.
+  const providerAttempts: AiProviderAttempt[] = [];
+  const failureDetails: string[] = [];
+
   for (const provider of getAutomaticProviderOrder()) {
-    if (provider === "anthropic") continue; // handled below, with tool-use
-    if (!providerAutomaticEligibility(provider).eligible) continue;
-    if (isProviderCooledDown(provider)) continue;
+    if (provider === "anthropic") continue; // handled below, and recorded there
+
+    const pre = getProviderRuntimeSnapshot(provider);
+    const configured = isProviderEnabled(provider);
+    const eligibility = providerAutomaticEligibility(provider);
+    if (!eligibility.eligible) {
+      providerAttempts.push({
+        provider, configured, tried: false,
+        model: getProviderModel(provider, "proposal"),
+        preflightEligible: null, preflightReason: null,
+        skipReason: configured ? "AUTOMATICALLY_INELIGIBLE" : "NOT_CONFIGURED",
+        attemptBudgetConsumed: false,
+        lastErrorCategory: pre.lastErrorCategory, coolingDown: pre.coolingDown, cooldownUntil: pre.cooldownUntil,
+      });
+      failureDetails.push(`${provider}: ${eligibility.safeMessage}`);
+      continue;
+    }
+    if (isProviderCooledDown(provider)) {
+      providerAttempts.push({
+        provider, configured: true, tried: false,
+        model: getProviderModel(provider, "proposal"),
+        preflightEligible: null, preflightReason: null,
+        skipReason: "COOLDOWN",
+        attemptBudgetConsumed: false,
+        lastErrorCategory: pre.lastErrorCategory, coolingDown: true, cooldownUntil: pre.cooldownUntil,
+      });
+      failureDetails.push(`${provider}: in cooldown`);
+      continue;
+    }
 
     const result = await callProvider(provider, fencedProposalPrompt, { useCase: "proposal" });
     if (result && result.trim().length > 0) {
       lastProposalProvider = provider;
       return result;
     }
+    // Contacted and did not produce usable text. callProvider has already
+    // classified and recorded the failure, so the post-attempt snapshot is the
+    // one that names it.
+    const post = getProviderRuntimeSnapshot(provider);
+    providerAttempts.push({
+      provider, configured: true, tried: true,
+      model: getProviderModel(provider, "proposal"),
+      preflightEligible: null, preflightReason: null,
+      skipReason: null,
+      attemptBudgetConsumed: true,
+      lastErrorCategory: post.lastErrorCategory, coolingDown: post.coolingDown, cooldownUntil: post.cooldownUntil,
+    });
+    failureDetails.push(`${provider}: ${post.lastErrorCategory ?? "returned no usable text"}`);
   }
 
   // Claude (Anthropic) — last AI provider, and the only one with a tool-use path.
-  if (providerAutomaticEligibility("anthropic").eligible && !isProviderCooledDown("anthropic")) {
+  // Recorded on the same terms as the rest of the chain: it is the tenth
+  // provider, not an exception to the accounting.
+  const anthropicEligibility = providerAutomaticEligibility("anthropic");
+  const anthropicCooling = isProviderCooledDown("anthropic");
+  const anthropicPre = getProviderRuntimeSnapshot("anthropic");
+  if (!anthropicEligibility.eligible || anthropicCooling) {
+    const anthropicConfigured = isProviderEnabled("anthropic");
+    providerAttempts.push({
+      provider: "anthropic", configured: anthropicConfigured, tried: false,
+      model: getProviderModel("anthropic", "proposal"),
+      preflightEligible: null, preflightReason: null,
+      skipReason: anthropicCooling
+        ? "COOLDOWN"
+        : anthropicConfigured ? "AUTOMATICALLY_INELIGIBLE" : "NOT_CONFIGURED",
+      attemptBudgetConsumed: false,
+      lastErrorCategory: anthropicPre.lastErrorCategory,
+      coolingDown: anthropicPre.coolingDown,
+      cooldownUntil: anthropicPre.cooldownUntil,
+    });
+    failureDetails.push(`anthropic: ${anthropicCooling ? "in cooldown" : anthropicEligibility.safeMessage}`);
+  }
+  if (anthropicEligibility.eligible && !anthropicCooling) {
     try {
       // TENDER_TOOL_USE_GENERATION: when params.toolUse is set, route through
       // the multi-turn loop so Claude can call search_company_knowledge /
@@ -4828,6 +4915,18 @@ Now write the complete technical proposal. Start with the Cover Letter. The eval
       recordProviderFailure("anthropic", err);
       logger.warn(`[ai] Claude failed for proposal: ${err instanceof Error ? err.message : String(err)}`);
     }
+    const anthropicPost = getProviderRuntimeSnapshot("anthropic");
+    providerAttempts.push({
+      provider: "anthropic", configured: true, tried: true,
+      model: getProviderModel("anthropic", "proposal"),
+      preflightEligible: null, preflightReason: null,
+      skipReason: null,
+      attemptBudgetConsumed: true,
+      lastErrorCategory: anthropicPost.lastErrorCategory,
+      coolingDown: anthropicPost.coolingDown,
+      cooldownUntil: anthropicPost.cooldownUntil,
+    });
+    failureDetails.push(`anthropic: ${anthropicPost.lastErrorCategory ?? "returned no usable text"}`);
   }
 
   lastProposalProvider = null;
@@ -4844,13 +4943,27 @@ Now write the complete technical proposal. Start with the Cover Letter. The eval
       message: "No AI provider configured — set any of: ZAI_API_KEY, CEREBRAS_API_KEY, MISTRAL_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, TOGETHER_API_KEY, DEEPSEEK_API_KEY, or ANTHROPIC_API_KEY in environment variables. All 10 providers are automatic.",
     });
   }
+  // "Exhausted" and "never contacted" are different failures with different
+  // remedies, and only the walk knows which one happened. A chain where every
+  // provider was skipped for a cooldown is ALL_PROVIDERS_COOLING and clears
+  // itself with time; a chain that contacted providers and was refused needs
+  // keys, credit or quota looked at.
+  //
+  // No hand-written message here. The constructor renders one from the
+  // attempts -- including "tried: none — all skipped" and the per-provider
+  // "Not contacted: ..." tail -- and a literal string cannot stay true to a
+  // walk it does not read.
+  const contactedCount = providerAttempts.filter((attempt) => attempt.tried).length;
+  const cooldownSkips = providerAttempts.filter(
+    (attempt) => !attempt.tried && attempt.skipReason === "COOLDOWN",
+  ).length;
+  const nothingContactedAndSomethingCooling = contactedCount === 0 && cooldownSkips > 0;
   throw new NoAiProviderReadyError({
     useCase: "proposal",
-    providerAttempts: [],
-    failureDetails: [],
-    errorKind: "ALL_PROVIDERS_EXHAUSTED",
-    nextAction: "RETRY_AFTER_PROVIDER_FIX",
-    message: "All configured AI providers exhausted for proposal generation. Check provider API keys and rate limits, or wait for cooldown periods to expire.",
+    providerAttempts,
+    failureDetails,
+    errorKind: nothingContactedAndSomethingCooling ? "ALL_PROVIDERS_COOLING" : "ALL_PROVIDERS_EXHAUSTED",
+    nextAction: nothingContactedAndSomethingCooling ? "ALL_PROVIDERS_COOLING" : "RETRY_AFTER_PROVIDER_FIX",
   });
 }
 
