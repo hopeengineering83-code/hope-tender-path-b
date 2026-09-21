@@ -87,6 +87,27 @@ describe("an internal component is not a client-package blocker", () => {
     assert.match(finalReadiness, /INTERNAL_COMPONENT/);
   });
 
+  it("derives the answer per tender across every sector HAEC bids in", () => {
+    // Architecture/building consultancy, roads, water, geotechnical,
+    // supervision and an EOI. The classification must come from each tender's
+    // own plan and section table, never from a remembered benchmark shape.
+    const cases: Array<{ sector: string; planned: string[]; artifact: string; expected: string }> = [
+      { sector: "architecture / building consultancy", planned: ["Technical Proposal.pdf"], artifact: "Technical Approach and Methodology.docx", expected: "INTERNAL_COMPONENT" },
+      { sector: "architecture / building consultancy", planned: ["Technical Proposal.pdf"], artifact: "Technical Proposal.pdf", expected: "PLANNED_DELIVERABLE" },
+      { sector: "road rehabilitation", planned: ["Technical Proposal.pdf", "Work Plan.docx"], artifact: "Work Plan.docx", expected: "PLANNED_DELIVERABLE" },
+      { sector: "rural water supply", planned: ["Technical Proposal.pdf"], artifact: "Team Composition.docx", expected: "INTERNAL_COMPONENT" },
+      { sector: "geotechnical investigation", planned: ["Technical Proposal.pdf"], artifact: "Borehole Logs.pdf", expected: "UNPLANNED_CLIENT_FILE" },
+      { sector: "construction supervision", planned: ["Technical Proposal.pdf"], artifact: "Compliance Matrix.docx", expected: "INTERNAL_COMPONENT" },
+    ];
+    for (const c of cases) {
+      const resolved = role(c.artifact, "TECHNICAL_PROPOSAL", c.planned);
+      assert.equal(resolved.role, c.expected, `${c.sector}: ${c.artifact} -> ${resolved.role}, expected ${c.expected}`);
+    }
+    // Same artifact name, different plan: the plan decides, not the name.
+    assert.equal(role("Work Plan.docx", "TECHNICAL_PROPOSAL", ["Technical Proposal.pdf"]).role, "INTERNAL_COMPONENT");
+    assert.equal(role("Work Plan.docx", "TECHNICAL_PROPOSAL", ["Technical Proposal.pdf", "Work Plan.docx"]).role, "PLANNED_DELIVERABLE");
+  });
+
   it("always says why, for a block as much as for an exclusion", () => {
     for (const [file, planned] of [["Bill of Quantities.docx", []], ["Technical Approach and Methodology.docx", []], ["Technical Proposal.pdf", ["Technical Proposal.pdf"]]] as const) {
       const resolved = role(file, "TECHNICAL_PROPOSAL", [...planned]);
