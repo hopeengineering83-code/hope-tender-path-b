@@ -1,3 +1,4 @@
+import { resolveArtifactQualitySchema, resolvePackageRole } from "./artifact-quality-schema";
 import { looksLikeEncodedBytes } from "./encoded-content";
 import { findRenderedArtifactHygieneFailures } from "./client-text-hygiene";
 import { prisma, prismaReady } from "../prisma";
@@ -554,10 +555,29 @@ export function filePlanBlockersFromLists(
 
   const missingNames = requiredNames.filter((name) => !actualNameSet.has(normalizeFileName(name)));
   if (missingNames.length > 0) blockers.push({ category: "FILE_NAMING", severity: "HIGH", title: `Missing required generated file name(s): ${missingNames.slice(0, 5).join(", ")}${missingNames.length > 5 ? ` and ${missingNames.length - 5} more` : ""}`, recommendedAction: "Generate or rename documents to match the tender's exact required file names before final export." });
+  // An artifact the app materialized for its own assembly is not a stray
+  // client file. A section draft named after one of its submission's own
+  // sections is internal: it must be kept OUT of the package, not turned into
+  // a blocker against a package whose one required file already passed. An
+  // unplanned artifact that is NOT a recognizable component still blocks —
+  // hiding a genuinely unauthorized client-facing file would be worse than
+  // the contradiction this fixes.
+  const internalComponentNames = new Set(
+    deliveryDocs
+      .filter((doc) => resolvePackageRole({
+        documentName: doc.name,
+        fileName: documentFileName(doc),
+        documentType: doc.documentType,
+        requiredSectionsByType: DEFAULT_REQUIRED_SECTIONS_BY_TYPE,
+        plannedDeliveryNames: requiredDeliveryNames,
+      }).role === "INTERNAL_COMPONENT")
+      .map((doc) => normalizeFileName(documentFileName(doc))),
+  );
   const extraFiles = actualNames.filter((name) =>
     requiredNames.length > 0
     && !requiredNames.some((required) => normalizeFileName(required) === normalizeFileName(name))
-    && !allowedExtraNameSet.has(normalizeFileName(name)));
+    && !allowedExtraNameSet.has(normalizeFileName(name))
+    && !internalComponentNames.has(normalizeFileName(name)));
   if (extraFiles.length > 0) blockers.push({ category: "EXTRA_FILES", severity: "HIGH", title: `Generated package contains non-required file(s): ${extraFiles.slice(0, 5).join(", ")}${extraFiles.length > 5 ? ` and ${extraFiles.length - 5} more` : ""}`, recommendedAction: "Remove extra generated files not listed in the tender's exact file naming instructions before final export." });
 
   if (requiredOrder.length > 0) {
@@ -1161,11 +1181,25 @@ export async function checkDocumentQualityGate(
     // ever satisfy. Recognizing it by name first — the same signal
     // lib/engine/document-quality-gate.ts already uses for this exact
     // document kind — routes it to its own, letter-appropriate check instead.
-    const isCoverLetterDoc = /cover\s*[-_]?\s*letter|transmittal\s*letter|letter\s+of\s+transmittal/i.test(`${doc.name ?? ""} ${fileName}`);
-    const documentType = isCoverLetterDoc ? "COVER_LETTER" : (doc.documentType ?? "");
-    const requiredSections = isCoverLetterDoc
-      ? ["Dear", "Subject", "Sincerely"]
-      : requiredSectionsByType[documentType] ?? [];
+    // WHICH SCHEMA DOES THIS ARTIFACT ANSWER TO?
+    //
+    // Looking the section list up by documentType alone asked a single
+    // methodology narrative to contain a Cover Letter, a Work Plan, a Team
+    // Composition and a Compliance Matrix, because the complete proposal and
+    // its own sections are all persisted as TECHNICAL_PROPOSAL. The
+    // cover-letter re-route that used to live here was the same bug fixed for
+    // one document kind; resolveArtifactQualitySchema generalizes it from the
+    // section table itself, so no filename or sector is hard-coded.
+    const schema = resolveArtifactQualitySchema({
+      documentName: doc.name,
+      fileName,
+      documentType: doc.documentType,
+      requiredSectionsByType,
+    });
+    const documentType = schema.role === "COMPONENT" && schema.matchedSectionTitle === "Cover Letter"
+      ? "COVER_LETTER"
+      : (doc.documentType ?? "");
+    const requiredSections = schema.requiredSections;
     const result = validateGeneratedDocumentQuality(
       text,
       documentType,
@@ -1225,7 +1259,7 @@ export async function checkFullExportReadinessWithQualityGate(opts: {
   };
 }
 
-const DEFAULT_REQUIRED_SECTIONS_BY_TYPE: Record<string, string[]> = {
+export const DEFAULT_REQUIRED_SECTIONS_BY_TYPE: Record<string, string[]> = {
   TECHNICAL_PROPOSAL: ["Cover Letter", "Understanding of the Assignment", "Technical Approach and Methodology", "Work Plan", "Team Composition", "Compliance Matrix", "Submission Checklist"],
   EXPRESSION_OF_INTEREST: ["Cover Letter", "Expression of Interest", "Company Profile", "Understanding of the Assignment", "Submission Checklist"],
   QUOTATION: ["Quotation Cover Letter", "Price Schedule", "Submission Checklist"],

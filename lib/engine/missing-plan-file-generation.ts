@@ -27,6 +27,7 @@
 // submission RULE rather than a deliverable is not in the confirmed plan at all
 // (see lib/engine/financial-separation-rule.ts).
 
+import { decideExistingArtifactRegeneration, withContractMarker } from "./generated-artifact-staleness";
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
 import type { PrismaClient } from "@prisma/client";
 import { logAction } from "../audit";
@@ -881,11 +882,30 @@ export async function generateMissingPlanFiles(args: {
                 generationStatus: { not: "SUPERSEDED" },
               },
               orderBy: { updatedAt: "desc" },
-              select: { id: true, generationStatus: true },
+              select: { id: true, generationStatus: true, reviewStatus: true, contentSummary: true },
             });
+            // SELF-HEALING, NOT BLIND SKIPPING.
+            //
+            // Skipping every existing non-PLANNED row meant an artifact written
+            // by an early generator stayed exactly as written, for ever. A
+            // 367-word methodology stub kept failing the quality gate and kept
+            // blocking the ZIP through the very run that shipped the repaired
+            // generator. See ./generated-artifact-staleness for the contract.
+            let regenerateExisting = false;
             if (existing && existing.generationStatus !== "PLANNED") {
-              skipped.push(document.fileName);
-              continue;
+              const decision = decideExistingArtifactRegeneration({
+                generationStatus: existing.generationStatus,
+                reviewStatus: existing.reviewStatus,
+                contentSummary: existing.contentSummary,
+              });
+              if (!decision.regenerate) {
+                skipped.push(`${document.fileName} (${decision.reason})`);
+                continue;
+              }
+              regenerateExisting = true;
+              logger.info(
+                `[missing-plan-file-generation] regenerating ${document.fileName}: ${decision.reason}`,
+              );
             }
 
             // Mirrors the already-PLANNED branch below: no bytes, integrity
@@ -911,7 +931,14 @@ export async function generateMissingPlanFiles(args: {
                 reviewStatus: document.reviewStatus,
                 reviewedBy: null,
                 reviewedAt: null,
-                contentSummary: document.contentSummary,
+                // Record the generator contract this artifact was written to, so a
+                // later run can tell a current artifact from one written to a
+                // superseded contract -- and so THIS artifact is skipped next time.
+                contentSummary: withContractMarker(
+                  regenerateExisting
+                    ? `${document.contentSummary} Regenerated in place: the stored artifact was written to a superseded generator contract.`
+                    : document.contentSummary,
+                ),
                 integrityStatus: "UNKNOWN",
                 integrityVerifiedAt: null,
                 integrityFailureCode: "REQUIRES_ORIGINAL_OR_FORMAT_FINALIZATION",
@@ -934,7 +961,14 @@ export async function generateMissingPlanFiles(args: {
                 reviewStatus: document.reviewStatus,
                 reviewedBy: null,
                 reviewedAt: null,
-                contentSummary: document.contentSummary,
+                // Record the generator contract this artifact was written to, so a
+                // later run can tell a current artifact from one written to a
+                // superseded contract -- and so THIS artifact is skipped next time.
+                contentSummary: withContractMarker(
+                  regenerateExisting
+                    ? `${document.contentSummary} Regenerated in place: the stored artifact was written to a superseded generator contract.`
+                    : document.contentSummary,
+                ),
                 updatedAt: new Date(),
               };
             if (existing) {

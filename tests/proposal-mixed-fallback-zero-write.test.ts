@@ -51,10 +51,17 @@ describe("proposal generation — single canonical authority (no competing fallb
   });
 
   it("the background handler delegates to the same generateTenderDocuments pipeline as the interactive route", () => {
+    // The invariant is ONE pipeline for both entry points, not one argument
+    // list. Each call now also declares the execution context it runs in, so
+    // the durable worker is not given a budget calibrated for the 60s
+    // synchronous route — see tests/a-generation-budget-belongs-to-its-
+    // execution-context.test.ts. The delegation itself is unchanged.
     const region = proposalRegion();
-    assert.match(region, /generateTenderDocuments\(ctx\.tenderId, ctx\.userId\)/);
+    assert.match(region, /generateTenderDocuments\(ctx\.tenderId, ctx\.userId[,)]/);
+    assert.match(region, /generateTenderDocuments\([^)]*execution:\s*"durable-worker"/s);
     const generateRoute = readFileSync("app/api/tenders/[id]/generate/route.ts", "utf8");
-    assert.match(generateRoute, /generateTenderDocuments\(id, userId\)/);
+    assert.match(generateRoute, /generateTenderDocuments\(id, userId[,)]/);
+    assert.match(generateRoute, /generateTenderDocuments\([^)]*execution:\s*"sync-route"/s);
   });
 
   it("GeneratedDocument.reviewStatus defaults to PENDING regardless of AI vs deterministic-fallback content", () => {

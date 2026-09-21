@@ -431,7 +431,11 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
       void recordStep(ctx.jobId, { stepName: "proposal.heartbeat", message: "Generation running — waiting for AI section responses", status: "RUNNING" }).catch(() => {});
     }, 10_000);
     try {
-      await generateTenderDocuments(ctx.tenderId, ctx.userId);
+      // DURABLE WORKER CONTEXT. This handler runs inside
+      // app/api/ai-jobs/run-next (maxDuration 300), not the 60s synchronous
+      // generate route, so the writer gets the worker's budget. Declaring it
+      // here is what stops a 60s-route figure starving a 300s worker.
+      await generateTenderDocuments(ctx.tenderId, ctx.userId, { execution: "durable-worker" });
     } finally {
       clearInterval(heartbeat);
     }

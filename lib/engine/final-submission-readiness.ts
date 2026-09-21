@@ -27,6 +27,8 @@
 // Acceptance: any change to readiness logic must go through this helper.
 // Consumers must NEVER inline blockers/advisory checks that conflict.
 
+import { resolvePackageRole } from "./artifact-quality-schema";
+import { DEFAULT_REQUIRED_SECTIONS_BY_TYPE as PACKAGE_SECTION_TABLE } from "./export-readiness";
 import type { PrismaClient } from "@prisma/client";
 import {
   checkFullExportReadiness,
@@ -703,7 +705,21 @@ export async function getFinalSubmissionReadiness(
   // is no trusted scope at all, so the no-plan blockers below fire.
   const hasExplicitPlanScope = confirmedPlan.ok;
   const missingPlan = findMissingGeneratedDocuments(plan, finalCandidates);
-  const extraPlan = findExtraGeneratedDocuments(plan, finalCandidates);
+  // Internal section drafts are not outside-plan client documents. See
+  // lib/engine/artifact-quality-schema.ts: an artifact named after one of its
+  // own submission's sections is assembly material the app produced, so it is
+  // excluded from the package rather than blocking it. Anything unplanned that
+  // is NOT a recognizable component still blocks.
+  const extraPlan = findExtraGeneratedDocuments(plan, finalCandidates).filter((doc) => {
+    const role = resolvePackageRole({
+      documentName: (doc as { name?: string | null }).name ?? null,
+      fileName: (doc as { exactFileName?: string | null }).exactFileName ?? null,
+      documentType: (doc as { documentType?: string | null }).documentType ?? null,
+      requiredSectionsByType: PACKAGE_SECTION_TABLE,
+      plannedDeliveryNames: planItems.map((f) => f.exactFileName),
+    }).role;
+    return role !== "INTERNAL_COMPONENT";
+  });
   const planNames = new Set(planItems.map((f) => f.exactFileName.toLowerCase().trim()));
   const actualNames = finalCandidates.map((d) => (d.exactFileName ?? d.name ?? "").toLowerCase().trim()).filter(Boolean);
   const nameMismatch = requiredPlanCount > 0 && actualNames.some((n) => !planNames.has(n));

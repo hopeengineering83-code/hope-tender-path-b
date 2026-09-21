@@ -1226,7 +1226,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       if (plannedRecordCount > 0) warnings.push(`${plannedRecordCount} confirmed plan file(s) had no document record and were created for generation.`);
     }
     advanceJob(job.id, "AI_GENERATE");
-    await time("generate.tender_documents", () => generateTenderDocuments(id, userId), { tenderId: id });
+    await time("generate.tender_documents", () => generateTenderDocuments(id, userId, { execution: "sync-route" }), { tenderId: id });
     advanceJob(job.id, "SAVE");
     const supportDocumentCount = await time("generate.fill_support_docs", () => fillPlannedSupportDocuments(id, userId, plannedFileKeys), { tenderId: id });
     if (supportDocumentCount > 0) warnings.push(explicitSubmissionScope ? `${supportDocumentCount} planned package document(s) were generated or marked for original replacement.` : `${supportDocumentCount} remaining package document(s) were generated or marked for original replacement.`);

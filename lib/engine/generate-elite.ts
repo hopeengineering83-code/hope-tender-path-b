@@ -5,8 +5,8 @@ import { withTransactionalGenerationGate } from "./transactional-generation-gate
 import { AlignmentType, BorderStyle, Document, Footer, Header, HeadingLevel, ImageRun, Packer, PageNumber, Paragraph, Table, TableBorders, TableCell, TableOfContents, TableRow, TextRun, WidthType } from "docx";
 import { prisma } from "../prisma";
 import { getStorageAdapter } from "../storage";
-import { generateBenchmarkProposalWithAI, generateProposalSectionsParallel, getLastProposalProvider, isAIEnabled, refineProposalWithAI } from "../ai";
-import { PROPOSAL_AI_TIMEOUT_MS } from "../timeout-config";
+import { generateBenchmarkProposalWithAI, generateProposalSectionsParallel, getLastProposalProvider, isAIEnabled, refineProposalWithAI, withProposalWrapperBudget } from "../ai";
+import { resolveProposalExecutionBudget, type ProposalExecutionContext, type ProposalExecutionBudget } from "../ai-runtime-capability";
 import { detectAnalysisSource } from "./analysis-source";
 import { isDeepReasoningEnabled, isToolUseGenerationEnabled, shouldUseDeepReasoning } from "./feature-flags";
 import { extractDeepTenderComprehension, formatComprehensionForPrompt, type DeepTenderComprehension } from "./evaluation-criteria-extractor";
@@ -174,13 +174,32 @@ function brandImageTransformation(data: Buffer, type: "png" | "jpg"): {
 //   Tier 1  (Vercel Hobby  60s):  45s — 15s buffer for enrichers + DOCX
 //   Tier 2+ (Vercel Pro  300s): 220s — 80s buffer; accommodates 16K output
 
-async function withProposalAiTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+async function withProposalAiTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  budget?: ProposalExecutionBudget,
+): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  const startedAt = Date.now();
   try {
     return await Promise.race([
       promise,
       new Promise<T>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`AI proposal timed out after ${Math.round(ms / 1000)} seconds (in-pipeline guard before Vercel function timeout)`)), ms);
+        timer = setTimeout(() => {
+          // NAME THE BUDGET AND THE CONTEXT. "timed out after 45 seconds" sent
+          // three sessions looking at provider credit, because it did not say
+          // that 45s was a 60s-route figure being applied inside a 300s worker.
+          // Whoever reads this next should be able to tell a genuine model
+          // failure from a miscalibrated budget without reading the source.
+          const where = budget
+            ? ` context=${budget.context} ceiling=${budget.ceilingSeconds}s reserve=${budget.reserveSeconds}s budget=${Math.round(budget.budgetMs / 1000)}s requested=${Math.round(budget.requestedMs / 1000)}s`
+            : "";
+          reject(new Error(
+            `AI proposal timed out after ${Math.round(ms / 1000)} seconds`
+            + ` (elapsed=${Math.round((Date.now() - startedAt) / 1000)}s;`
+            + ` in-pipeline guard before the platform function timeout)${where}`,
+          ));
+        }, ms);
       }),
     ]);
   } finally {
@@ -1226,7 +1245,7 @@ export function buildProfessionalDocument(params: {
   });
 }
 
-export async function generateTenderDocuments(tenderId: string, userId: string): Promise<void> {
+export async function generateTenderDocuments(tenderId: string, userId: string, options?: { execution?: ProposalExecutionContext }): Promise<void> {
   const tender = await prisma.tender.findFirst({
     where: { id: tenderId, userId },
     include: {
@@ -1427,6 +1446,19 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // candidate is never adopted and a not-applicable marking never blanks a
   // field. `tender` itself is untouched, so provenance reporting below still
   // reads what the source actually said.
+  // The wall-clock the model is allowed, resolved from the execution context
+  // this call is actually running in rather than from a shared constant. A
+  // caller that does not declare its context gets the conservative
+  // synchronous-route budget, because overrunning a 60s function is a hard
+  // platform kill while under-using a 300s worker is merely a weaker document.
+  const proposalBudget = resolveProposalExecutionBudget(options?.execution ?? "sync-route");
+  logger.info(
+    `[generate-elite] proposal execution budget: context=${proposalBudget.context}`
+    + ` ceiling=${proposalBudget.ceilingSeconds}s reserve=${proposalBudget.reserveSeconds}s`
+    + ` budget=${Math.round(proposalBudget.budgetMs / 1000)}s`
+    + ` requested=${Math.round(proposalBudget.requestedMs / 1000)}s`,
+  );
+
   const writerTender = applyConfirmedFactsToWriterTender(tender, tender.metadataOverrides ?? []);
   const ownerConfirmedFields = confirmedFactFields(tender, tender.metadataOverrides ?? []);
   // A stored source quote documents the value the source stated. Where the
@@ -2195,8 +2227,9 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       // used deterministic fallback.
       if (useParallel) {
         const sectionResult = await withProposalAiTimeout(
-          generateProposalSectionsParallel(aiInput),
-          PROPOSAL_AI_TIMEOUT_MS,
+          withProposalWrapperBudget(proposalBudget.budgetMs, () => generateProposalSectionsParallel(aiInput)),
+          proposalBudget.budgetMs,
+          proposalBudget,
         );
         if (sectionResult.anyFallback) {
           // NAME THE SECTIONS. The guard is unchanged -- it still refuses a
@@ -2239,8 +2272,9 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         sourceMarkdown = sectionResult.markdown;
       } else {
         sourceMarkdown = await withProposalAiTimeout(
-          generateBenchmarkProposalWithAI(aiInput),
-          PROPOSAL_AI_TIMEOUT_MS,
+          withProposalWrapperBudget(proposalBudget.budgetMs, () => generateBenchmarkProposalWithAI(aiInput)),
+          proposalBudget.budgetMs,
+          proposalBudget,
         );
       }
       // Retry once when the AI returns a near-empty response (< 500 chars) — the first
@@ -2251,8 +2285,12 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       // risk hitting the Vercel timeout wall.
       if (!useParallel && (!sourceMarkdown || sourceMarkdown.trim().length < 500)) {
         logger.warn(`[generate-elite] AI returned near-empty output (${sourceMarkdown?.trim().length ?? 0} chars) — retrying once.`);
-        const retryTimeout = Math.min(PROPOSAL_AI_TIMEOUT_MS, 40_000);
-        sourceMarkdown = await withProposalAiTimeout(generateBenchmarkProposalWithAI(aiInput), retryTimeout);
+        const retryTimeout = Math.min(proposalBudget.budgetMs, 40_000);
+        sourceMarkdown = await withProposalAiTimeout(
+          withProposalWrapperBudget(retryTimeout, () => generateBenchmarkProposalWithAI(aiInput)),
+          retryTimeout,
+          proposalBudget,
+        );
       }
       // Canonical name normalization — fast post-assembly pass that replaces
       // minor expert-name variations (Dr. X vs X, different middle initials)

@@ -684,6 +684,32 @@ export function runAsAdvisory<T>(fn: () => Promise<T>): Promise<T> {
 
 const providerDeadlineStore = new AsyncLocalStorage<number>();
 
+// The whole-generation guard currently in force, in ms.
+//
+// Per-section budgets are bounded so a section cannot outlive the wrapper that
+// contains it. That bound used to read the module-level PROPOSAL_AI_TIMEOUT_MS,
+// which meant the sections were sized for a 60s request route even when
+// generation was running in the 300s durable worker: the largest section
+// sized to ~41.6s against a 45s guard, and anything slower aborted the whole
+// proposal. The wrapper's real budget now comes from the caller's execution
+// context, so the section bound has to follow it or the longer budget buys
+// nothing.
+//
+// AsyncLocalStorage, like the deadline store above, so concurrent generations
+// in one process cannot clamp one another.
+const proposalWrapperBudgetStore = new AsyncLocalStorage<number>();
+
+/** Run `fn` with the whole-generation guard's budget bound to async context. */
+export function withProposalWrapperBudget<T>(budgetMs: number | undefined, fn: () => T): T {
+  if (typeof budgetMs !== "number" || !Number.isFinite(budgetMs) || budgetMs <= 0) return fn();
+  return proposalWrapperBudgetStore.run(budgetMs, fn);
+}
+
+/** The wrapper budget in force, falling back to the static constant. */
+function currentProposalWrapperBudgetMs(): number {
+  return proposalWrapperBudgetStore.getStore() ?? PROPOSAL_AI_TIMEOUT_MS;
+}
+
 /** Smallest budget worth starting a provider request with. */
 export const MIN_PROVIDER_TIMEOUT_MS = 1_000;
 
@@ -4930,7 +4956,7 @@ export function sectionTimeoutMsFor(spec: { maxOutputTokens?: number }): number 
   // deadline on top of this; this bound applies even when none is armed.
   const wrapperBound = Math.max(
     PROPOSAL_SECTION_TIMEOUT_MS,
-    PROPOSAL_AI_TIMEOUT_MS - PROPOSAL_SECTION_STITCH_RESERVE_MS,
+    currentProposalWrapperBudgetMs() - PROPOSAL_SECTION_STITCH_RESERVE_MS,
   );
   return Math.min(
     PROPOSAL_SECTION_TIMEOUT_CEILING_MS,
