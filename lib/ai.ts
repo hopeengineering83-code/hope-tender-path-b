@@ -544,6 +544,40 @@ export type NoAiProviderReadyErrorKind =
 // fires only when the shared deadline hits mid-chain — the workflow
 // falls back to deterministic mode (regex analysis, lexical matcher)
 // rather than blocking.
+// ADVISORY WORK GETS ONE PROVIDER, NOT THE WHOLE CHAIN.
+//
+// runAsAdvisory already narrows the retry budget, and its note says advisory
+// work "must not outbid mandatory work for a scarce shared budget". Narrowing
+// retries does not achieve that, because advisory work still WALKS ALL TEN
+// PROVIDERS, and every provider it touches it can tip into cooldown.
+//
+// Measured, run 35610060081 (Vercel runtime logs):
+//
+//   14:09:05  ENGINE_RUN  [ai-multi-perspective-matcher] EXPERT batch failed:
+//                         "Contacted 10 of 10 configured provider(s)"
+//                         groq: TPM Limit 8000, Used 4929  -> 429 -> cooldown
+//   14:09:47  PROPOSAL_GENERATION starts
+//   14:09:58  [ai] section "..." dispatched no provider — every eligible
+//                  provider was cooling down
+//
+// The matcher is optional: the engine logs "optional AI reranking failed or
+// was skipped; authoritative deterministic selection remains valid" and uses
+// the deterministic result. So work whose answer was discarded consumed the
+// throughput of all ten providers and left the MANDATORY section writer, 48
+// seconds later, with nothing to dispatch to.
+//
+// groq was already at 4929/8000 tokens-per-minute from AI Analyze. Advisory
+// traffic is what tipped it over. Had advisory stopped after its first
+// provider, groq and Z.ai would never have been contacted, and their windows
+// would have reset well before the writer ran.
+//
+// One attempt is a genuine chance at the head of the canonical chain. Failing
+// that, every advisory caller already returns null and degrades to a
+// deterministic path it documents as a normal result. Canonical order,
+// cooldown semantics and health truth are unchanged: advisory work still
+// records what it actually observed about the one provider it contacted.
+export const ADVISORY_MAX_PROVIDER_ATTEMPTS = 1;
+
 export const MAX_PROVIDER_ATTEMPTS_PER_REQUEST = (() => {
   const raw = Number(process.env.AI_MAX_PROVIDER_ATTEMPTS);
   if (Number.isFinite(raw) && raw >= 1 && raw <= 10) return 10;
@@ -1242,8 +1276,13 @@ export async function generateWithFallback(
       continue;
     }
     // Attempt budget guard — this provider is eligible (configured + not
-    // cooling + preflight OK) but we have already used our actual-attempt budget.
-    if (actualAttempts >= MAX_PROVIDER_ATTEMPTS_PER_REQUEST) {
+    // cooling + preflight OK) but we have already used our actual-attempt
+    // budget. Advisory work has a far smaller one: see
+    // ADVISORY_MAX_PROVIDER_ATTEMPTS.
+    const attemptBudget = isAdvisoryContext()
+      ? ADVISORY_MAX_PROVIDER_ATTEMPTS
+      : MAX_PROVIDER_ATTEMPTS_PER_REQUEST;
+    if (actualAttempts >= attemptBudget) {
       budgetExhausted = true;
       providerAttempts.push({
         provider, configured: true, tried: false,
