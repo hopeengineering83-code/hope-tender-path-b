@@ -1747,6 +1747,52 @@ function fallbackTemperature(): number {
   const raw = Number(process.env.AI_FALLBACK_TEMPERATURE);
   return Number.isFinite(raw) && raw >= 0 && raw <= 2 ? raw : 0.4;
 }
+/**
+ * Smallest output budget worth re-asking a provider for.
+ *
+ * Below this a completion cannot carry a usable answer, so retrying inside the
+ * provider's stated affordance would spend an attempt to receive a truncated
+ * fragment.
+ */
+export const MIN_AFFORDABLE_OUTPUT_TOKENS = 256;
+
+/**
+ * A provider that refuses for CREDIT and states what it CAN afford is not
+ * refusing the request — it is refusing its SIZE.
+ *
+ * Observed verbatim, run 35643865544:
+ *
+ *   OpenRouter error 402 on google/gemini-2.5-pro: "This request requires more
+ *   credits, or fewer max_tokens. You requested up to 4000 tokens, but can
+ *   only afford 892."
+ *
+ * The account has credit. The adapter asked for 4000 output tokens, was told
+ * the affordable ceiling is 892, discarded that number and skipped the
+ * provider — on every run, for months. Preflight cannot prevent this: it sizes
+ * requests from static per-model profiles and has no way to know a live credit
+ * balance. The only authority on that balance is the provider's own refusal.
+ *
+ * This reads the ceiling out of the refusal so the chain can re-ask within it.
+ * It is deliberately shape-based rather than provider-specific: any
+ * OpenAI-compatible endpoint that answers in these terms gets the same
+ * treatment, and a refusal that names no ceiling is unchanged.
+ */
+export function parseAffordableOutputTokens(body: string): number | null {
+  // "can only afford 892", "can only afford 892 tokens"
+  const afford = /can only afford\s+([0-9]{1,7})/i.exec(body);
+  if (afford) {
+    const value = Number(afford[1]);
+    if (Number.isFinite(value) && value > 0) return Math.floor(value);
+  }
+  // "maximum context length ... requested N tokens ... reduce to M"
+  const reduce = /reduce (?:the |your )?max_tokens to\s+([0-9]{1,7})/i.exec(body);
+  if (reduce) {
+    const value = Number(reduce[1]);
+    if (Number.isFinite(value) && value > 0) return Math.floor(value);
+  }
+  return null;
+}
+
 async function generateOpenAICompatible(params: {
   providerLabel: string;
   providerName?: AiProviderName;
@@ -1763,8 +1809,13 @@ async function generateOpenAICompatible(params: {
   // Request guaranteed structured JSON output (response_format json_object).
   responseFormatJson?: boolean;
   timeoutMs?: number;
+  /**
+   * Set when this call is already the one retry permitted by a provider's
+   * stated affordable ceiling. Bounds the recursion at exactly one.
+   */
+  withinStatedAffordance?: boolean;
 }): Promise<string | null> {
-  const { providerLabel, providerName, endpoint, apiKey: key, model, prompt, systemPrompt, maxTokens, extraHeaders, maxTokensParam = "max_tokens", responseFormatJson, timeoutMs } = params;
+  const { providerLabel, providerName, endpoint, apiKey: key, model, prompt, systemPrompt, maxTokens, extraHeaders, maxTokensParam = "max_tokens", responseFormatJson, timeoutMs, withinStatedAffordance } = params;
   // Surface the real failure reason. Previously every HTTP-error / empty-content
   // branch only logged to console.warn and returned null, so the actual cause
   // (e.g. "HTTP 400: max_tokens too large", "HTTP 429: rate limit") was lost and
@@ -1812,6 +1863,24 @@ async function generateOpenAICompatible(params: {
         logger.warn(`[ai] ${providerLabel} rate limit (429) on ${model} — skipping to next provider.`);
         note(`rate limit HTTP 429 on ${model}: ${sanitized}`);
         return null;
+      }
+      // Refused for SIZE, and the provider said what it can carry. Re-ask once
+      // inside that ceiling before giving the provider up. Deliberately does
+      // NOT record a failure first: cooling a provider that is about to answer
+      // would make its own remedy unreachable for the next ten minutes.
+      const affordable = withinStatedAffordance ? null : parseAffordableOutputTokens(body);
+      if (affordable !== null && affordable < maxTokens && affordable >= MIN_AFFORDABLE_OUTPUT_TOKENS) {
+        logger.warn(
+          `[ai] ${providerLabel} refused ${maxTokens} output tokens on ${model} (HTTP ${res.status}) and stated it can afford `
+          + `${affordable}; re-asking once within that ceiling.`,
+        );
+        return generateOpenAICompatible({ ...params, maxTokens: affordable, withinStatedAffordance: true });
+      }
+      if (affordable !== null && affordable < MIN_AFFORDABLE_OUTPUT_TOKENS) {
+        logger.warn(
+          `[ai] ${providerLabel} can afford only ${affordable} output tokens on ${model}, below the `
+          + `${MIN_AFFORDABLE_OUTPUT_TOKENS}-token floor for a usable answer — skipping.`,
+        );
       }
       logger.warn(`[ai] ${providerLabel} error ${res.status} on ${model}: ${sanitized} — skipping.`);
       note(`HTTP ${res.status} on ${model}: ${sanitized}`);
