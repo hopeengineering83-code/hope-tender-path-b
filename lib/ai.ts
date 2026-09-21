@@ -5225,9 +5225,38 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
     const dispatched = attempts.some((attempt) => attempt.outcome === "FAILED");
     const retryAfterMs = dispatched ? null : getMinCooldownExpiryMs();
     if (retryAfterMs !== null && retryAfterMs > 0) {
-      const sectionBudgetMs = resolveEffectiveTimeoutMs(sectionTimeoutMs);
-      const affordableMs = sectionBudgetMs - (Date.now() - t0) - PROPOSAL_SECTION_MIN_WRITE_MS;
-      if (retryAfterMs <= affordableMs) {
+      // WEIGH THE WAIT AGAINST THE WORKER DEADLINE, NOT THE SECTION'S OWN
+      // WRITING BUDGET.
+      //
+      // The first version of this check measured a cooldown wait against
+      // sectionTimeoutMs, and on the 2026-09-21 run that refused three of the
+      // four sections:
+      //
+      //   technical-approach         Waiting 16s (section budget 42s, 22s affordable)
+      //   cover-and-summary          cooldown expires in 16s, does not fit -- falling back
+      //   company-and-experience     ... falling back
+      //   additional-and-declaration ... falling back
+      //
+      // while the same invocation logged "budget=220s" and the whole parallel
+      // generation finished in 17.1s. Roughly 200s of worker budget went
+      // unused because each section judged a 16s wait against its own ~42s
+      // allowance, sized from its output tokens.
+      //
+      // That denominator is wrong twice over. A section's budget is how long
+      // it may spend WRITING; a cooldown wait is idle time, and idle time is
+      // bounded by the invocation, not by the section. And makeSectionTimeout
+      // builds a FRESH timeout for every attempt -- deliberately, see its
+      // note -- so time spent waiting does not consume the writing window at
+      // all. Subtracting the wait from the section budget charged the section
+      // for time it would never spend.
+      //
+      // resolveEffectiveTimeoutMs already clamps any request to the armed
+      // worker deadline, so asking it for "the wait plus a usable writing
+      // window" and checking it comes back unclamped IS the affordability
+      // question, asked of the authority that owns the answer.
+      const needMs = retryAfterMs + PROPOSAL_SECTION_MIN_WRITE_MS;
+      const grantedMs = resolveEffectiveTimeoutMs(needMs);
+      if (grantedMs >= needMs) {
         attempts.push({
           provider: "(chain)",
           outcome: "WAITED_FOR_COOLDOWN",
@@ -5236,14 +5265,15 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
         logger.warn(
           `[ai] section "${spec.id}" dispatched no provider — every eligible provider was cooling down. `
           + `Waiting ${Math.round(retryAfterMs / 1000)}s for the earliest expiry and re-walking the chain `
-          + `(section budget ${Math.round(sectionBudgetMs / 1000)}s, ${Math.round(affordableMs / 1000)}s affordable).`,
+          + `(needed ${Math.round(needMs / 1000)}s of worker deadline, granted ${Math.round(grantedMs / 1000)}s).`,
         );
         await new Promise((resolve) => setTimeout(resolve, retryAfterMs + COOLDOWN_WAIT_SETTLE_MS));
         continue;
       }
       logger.warn(
         `[ai] section "${spec.id}" dispatched no provider and the earliest cooldown expires in `
-        + `${Math.round(retryAfterMs / 1000)}s, which does not fit the remaining section budget — falling back.`,
+        + `${Math.round(retryAfterMs / 1000)}s; the worker deadline grants only ${Math.round(grantedMs / 1000)}s `
+        + `of the ${Math.round(needMs / 1000)}s that wait plus a usable writing window needs — falling back.`,
       );
     }
   }

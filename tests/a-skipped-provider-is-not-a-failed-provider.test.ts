@@ -122,10 +122,34 @@ describe("a cooldown is a wait, not a verdict", () => {
 
   it("only waits when the wait AND a usable writing window fit the budget", () => {
     assert.match(SECTION_WRITER, /PROPOSAL_SECTION_MIN_WRITE_MS/);
-    assert.match(SECTION_WRITER, /retryAfterMs <= affordableMs/);
+    assert.match(SECTION_WRITER, /const needMs = retryAfterMs \+ PROPOSAL_SECTION_MIN_WRITE_MS;/);
+    assert.match(SECTION_WRITER, /grantedMs >= needMs/);
     // A wait that consumed the whole remaining budget would reach the same
     // fallback one round later, having learned nothing.
     assert.ok(PROPOSAL_SECTION_MIN_WRITE_MS > 0);
+  });
+
+  it("weighs the wait against the worker deadline, not the section's writing budget", () => {
+    // 2026-09-21, run 35607631874. The same invocation logged "budget=220s"
+    // and finished all four sections in 17.1s, yet three of them refused a
+    // 16s wait:
+    //
+    //   technical-approach          Waiting 16s (section budget 42s, 22s affordable)
+    //   cover-and-summary           does not fit the remaining section budget — falling back
+    //
+    // A section's budget is how long it may spend WRITING. A cooldown wait is
+    // idle time, bounded by the invocation, and makeSectionTimeout builds a
+    // fresh timeout per attempt so waiting costs the writing window nothing.
+    // Charging the wait to the section budget left ~200s of worker budget
+    // unspent and sent the proposal to the deterministic draft.
+    assert.equal(
+      /const affordableMs = sectionBudgetMs/.test(SECTION_WRITER),
+      false,
+      "the wait is still charged against the section's own writing budget",
+    );
+    // resolveEffectiveTimeoutMs clamps to the armed worker deadline, so it is
+    // the authority that owns this answer.
+    assert.match(SECTION_WRITER, /const grantedMs = resolveEffectiveTimeoutMs\(needMs\);/);
   });
 
   it("lands after the expiry rather than exactly on it", () => {
@@ -135,10 +159,11 @@ describe("a cooldown is a wait, not a verdict", () => {
     assert.match(SECTION_WRITER, /retryAfterMs \+ COOLDOWN_WAIT_SETTLE_MS/);
   });
 
-  it("is clamped by the section budget the worker deadline already bounds", () => {
-    // The wait must never push a section past the platform ceiling, so it is
-    // measured against resolveEffectiveTimeoutMs, not a raw constant.
-    assert.match(SECTION_WRITER, /const sectionBudgetMs = resolveEffectiveTimeoutMs\(sectionTimeoutMs\);/);
+  it("cannot push a section past the platform ceiling", () => {
+    // The wait is granted by resolveEffectiveTimeoutMs, which clamps to the
+    // armed worker deadline, so it can never exceed what the invocation has
+    // left — and a raw constant is never used in its place.
+    assert.match(SECTION_WRITER, /resolveEffectiveTimeoutMs\(needMs\)/);
   });
 });
 
