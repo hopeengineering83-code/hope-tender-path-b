@@ -1925,6 +1925,28 @@ jobs:
       - name: Provision the owner account
         run: node scripts/tmp-provision-preview-owner.mjs
 
+      # "Every migration applied" and "the schema matches this head" are two
+      # different claims; the first can be true while hand-made objects or a
+      # half-applied history leave drift. Prove the second directly, and fail
+      # the job if it is not zero.
+      - name: Require zero drift between the migrated database and prisma/schema.prisma
+        run: |
+          npx prisma migrate diff \
+            --from-schema-datasource prisma/schema.prisma \
+            --to-schema-datamodel prisma/schema.prisma \
+            --script > /tmp/post-migration-drift.sql
+          drift=$(grep -vE '^\s*(--.*)?$' /tmp/post-migration-drift.sql | wc -l)
+          echo "post-migration drift statements: $drift"
+          if [ "$drift" -ne 0 ]; then
+            cat /tmp/post-migration-drift.sql
+            echo "::error::The migrated database still differs from prisma/schema.prisma."
+            exit 1
+          fi
+          echo "ZERO DRIFT: the database matches prisma/schema.prisma at this head."
+
+      - name: Critical schema contract, with migration-history enforcement
+        run: node scripts/check-critical-schema.mjs
+
   # ---------------------------------------------------------------------------
   # TEMPORARY, owner-authorized: portfolio enrichment against the Preview
   # database.
