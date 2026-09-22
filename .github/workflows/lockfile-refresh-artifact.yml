@@ -1799,6 +1799,48 @@ jobs:
       - name: Report what has been uploaded so far
         run: python3 scripts/tmp-upload-readiness.py
 
+      # Is the EMPTY application usable, before the owner uploads anything?
+      # A new database proves nothing about login, pages, storage or workers
+      # until each is exercised. Every call here is a GET except the logout at
+      # the end, which ends the session the login above created.
+      - name: Prove the empty application is ready for the owner's upload
+        run: |
+          set +e
+          get() { curl -sS -o "$2" -w '%{http_code}' --connect-timeout 15 --max-time 60 \
+                    -H "Cookie: hope_session=$SESSION_COOKIE" "$BASE_URL$1"; }
+          echo "--- session and platform ---"
+          echo "GET /api/health            -> $(curl -sS -o /tmp/h.json -w '%{http_code}' --max-time 60 "$BASE_URL/api/health")"
+          python3 -c "import json;h=json.load(open('/tmp/h.json'));print('   ok=%s status=%s schemaMatchesDeployedCode=%s release=%s fp=%s'%(h.get('ok'),h.get('status'),h.get('schemaMatchesDeployedCode'),h.get('release'),h.get('databaseFingerprint')))" || true
+          echo "GET /api/auth/me           -> $(get /api/auth/me /tmp/me.json)"
+          python3 -c "import json;d=json.load(open('/tmp/me.json'));u=d.get('user') or d;print('   role=%s authenticated=%s'%(u.get('role'),bool(u.get('id') or u.get('email'))))" || true
+          echo "GET /api/system/readiness  -> $(get /api/system/readiness /tmp/sys.json)"
+          python3 - <<'PYEOF'
+          import json
+          try:
+              r = (json.load(open('/tmp/sys.json')) or {}).get('readiness') or {}
+          except Exception as e:
+              raise SystemExit(f"   system readiness unreadable: {e}")
+          print(f"   productionReady={r.get('productionReady')}")
+          for c in r.get('checks') or []:
+              print(f"   [{c.get('severity')}] {c.get('key')}: {str(c.get('detail'))[:160]}")
+          PYEOF
+          echo "--- pages the owner will use (HTTP status, then any error marker) ---"
+          for page in /dashboard /dashboard/company /dashboard/assets /dashboard/documents /dashboard/tenders /dashboard/tenders/new; do
+            code=$(get "$page" /tmp/page.html)
+            marker=$(grep -oiE "Application error|Internal Server Error|P20[0-9]{2}|does not exist in the current database" /tmp/page.html | head -1)
+            echo "  $page -> $code ${marker:+  !! $marker}"
+          done
+          echo "--- upload-path APIs (read-only) ---"
+          for api in /api/company /api/company/documents /api/company/assets /api/company/ingestion-readiness /api/tenders; do
+            echo "  GET $api -> $(get "$api" /tmp/api.json)"
+          done
+          echo "--- logout ends the session ---"
+          lo=$(curl -sS -o /dev/null -w '%{http_code}' -X POST --max-time 30 \
+                 -H "Cookie: hope_session=$SESSION_COOKIE" -H "Origin: $BASE_URL" "$BASE_URL/api/auth/logout")
+          after=$(get /api/auth/me /tmp/me2.json)
+          echo "  POST /api/auth/logout -> $lo ; GET /api/auth/me afterwards -> $after (expect 401)"
+          exit 0
+
   # database swap is done.
   temporary-preview-db-provision:
     if: github.event_name == 'workflow_dispatch' && inputs.confirm == 'provision'
