@@ -16,7 +16,7 @@ import { assessExtractionQuality } from "../extraction-quality";
 import { mapRequirementsToEvidence } from "./final-package-readiness-model";
 import { buildPageLedger, type PageLedger } from "./page-ledger";
 import { classifyTender, type TenderClassification } from "./tender-classification";
-import { buildReleaseSnapshotEligibility } from "./release-snapshot-eligibility";
+import { buildReleaseSnapshotEligibility, describeGateBlockers } from "./release-snapshot-eligibility";
 import { EXTRACTION_OVERRIDE_MAX_AGE_MS } from "./readiness-overrides";
 import { selectCanonicalTenderFiles } from "../tender/canonical-source-files";
 import {
@@ -482,8 +482,10 @@ export async function getTenderReleaseSnapshot(
       );
       if (!validation.ok) {
         metadataGateValid = false;
-        metadataGateBlocker =
-          validation.blockers[0] ?? "Final Tender Facts are not source-grounded or audit-authorized.";
+        metadataGateBlocker = describeGateBlockers(
+          validation.blockers,
+          "Final Tender Facts are not source-grounded or audit-authorized.",
+        );
       }
     } catch {
       metadataGateValid = false;
@@ -607,7 +609,7 @@ export async function getTenderReleaseSnapshot(
             confirmed.items,
           );
           if (!itemValidation.ok) {
-            buildPlanGateBlocker = itemValidation.blockers[0] ?? "Build Plan items are invalid.";
+            buildPlanGateBlocker = describeGateBlockers(itemValidation.blockers, "Build Plan items are invalid.");
           } else {
             buildPlanGateValid = true;
             buildPlanGateBlocker = null;

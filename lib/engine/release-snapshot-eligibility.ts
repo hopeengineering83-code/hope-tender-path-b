@@ -76,3 +76,37 @@ export function buildReleaseSnapshotEligibility(
     finalZipEligible: finalZipBlockers.length === 0,
   };
 }
+
+/**
+ * How many named causes one gate sentence carries before it summarises the
+ * rest. Enough to repair a package in a single pass; bounded so a gate can
+ * never answer with a wall of text.
+ */
+export const MAX_NAMED_GATE_CAUSES = 5;
+
+/**
+ * Render a validator's blocker list as the ONE sentence a gate reports.
+ *
+ * THE DEFECT THIS REPLACES. Two gates took `blockers[0]`:
+ *
+ *   metadataGateBlocker  = validation.blockers[0]     ?? "...";
+ *   buildPlanGateBlocker = itemValidation.blockers[0] ?? "...";
+ *
+ * Both validators produce one named, field-specific sentence PER failing
+ * field ("Critical metadata field Submission Address has no meaningful source
+ * quote."). Reporting the first means an owner with three ungrounded fields
+ * is told about one, repairs it, is told about the next, and repairs that --
+ * learning the size of the problem only by exhausting it. The names existed
+ * at every step; an index threw them away.
+ *
+ * This is the same rule the canonical decision applies one layer up: name
+ * what blocks, do not collapse it. The fallback still applies when a
+ * validator fails without saying why, so a gate can never go quiet.
+ */
+export function describeGateBlockers(blockers: readonly string[] | null | undefined, fallback: string): string {
+  const named = (blockers ?? []).map((blocker) => blocker?.trim() ?? "").filter((blocker) => blocker.length > 0);
+  if (named.length === 0) return fallback;
+  if (named.length <= MAX_NAMED_GATE_CAUSES) return named.join(" ");
+  const shown = named.slice(0, MAX_NAMED_GATE_CAUSES);
+  return `${shown.join(" ")} (and ${named.length - MAX_NAMED_GATE_CAUSES} more)`;
+}
