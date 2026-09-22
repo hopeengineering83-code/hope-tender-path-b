@@ -110,3 +110,44 @@ export function describeGateBlockers(blockers: readonly string[] | null | undefi
   const shown = named.slice(0, MAX_NAMED_GATE_CAUSES);
   return `${shown.join(" ")} (and ${named.length - MAX_NAMED_GATE_CAUSES} more)`;
 }
+
+/** The shape this module needs from a resolved canonical Tender Fact. */
+export type ExportGateFact = {
+  label: string;
+  status: string;
+  exportEligible: boolean;
+  blockerReason: string | null;
+};
+
+/**
+ * Why the final Tender Facts gate is refusing export.
+ *
+ * THE DEFECT THIS REPLACES. The snapshot read one aggregate boolean,
+ * `hasExportBlocker`, and answered with a constant:
+ *
+ *   "One or more final Tender Facts are missing, invalid, or lack sufficient
+ *    audit authority."
+ *
+ * On the exact-head Preview that sentence was the ENTIRE reason the ZIP was
+ * locked, beside 0 document blockers, 0 tender-level blockers, 0 quality
+ * failures, 1/1 generated, 1/1 export-ready, and a validator reporting "All
+ * canonical package and document validation checks passed." It names no field,
+ * gives no count, and cannot be acted on.
+ *
+ * The resolver knew all of it. Every CanonicalFieldState already carries its
+ * `label`, its `exportEligible` verdict and a written `blockerReason` -- e.g.
+ * `Field "Deadline" has a value but is not yet source-grounded (missing page,
+ * quote, or active file). Critical fields remain blocked until
+ * source-grounded.` Those reasons were resolved and thrown away.
+ *
+ * Fields with no written reason are still named, with their status, so a fact
+ * can never block export anonymously.
+ */
+export function describeMetadataExportBlocker(facts: readonly ExportGateFact[], fallback: string): string {
+  return describeGateBlockers(
+    facts
+      .filter((fact) => !fact.exportEligible)
+      .map((fact) => fact.blockerReason ?? `Field "${fact.label}" is not eligible for final export (status ${fact.status}).`),
+    fallback,
+  );
+}

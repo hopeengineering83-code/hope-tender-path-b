@@ -341,8 +341,12 @@ export function buildCanonicalWorkflowDecision(input: {
   const authorityOrQualityBlockerNames = (input.authorityOrQualityBlockerNames ?? [])
     .map((name) => name.trim())
     .filter((name) => name.length > 0);
+  // The snapshot's blocker sentences already end in their own punctuation, so
+  // appending one produced "...audit authority.." on the live Preview. Join
+  // them as written and terminate only when the last one does not.
+  const authorityOrQualityBlockerList = authorityOrQualityBlockerNames.join(" ");
   const authorityOrQualityBlockerReason = authorityOrQualityBlockerNames.length > 0
-    ? `Authority or document quality blockers remain: ${authorityOrQualityBlockerNames.join("; ")}.`
+    ? `Authority or document quality blockers remain: ${authorityOrQualityBlockerList}${/[.!?]$/.test(authorityOrQualityBlockerList) ? "" : "."}`
     // Still fail closed when the caller supplies no names, but say that the
     // reason is missing rather than implying none exists.
     : "Authority review or document quality blockers remain (no blocker detail was supplied by the readiness snapshot).";

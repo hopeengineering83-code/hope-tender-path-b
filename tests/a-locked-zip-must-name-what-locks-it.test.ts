@@ -55,11 +55,15 @@ describe("a locked ZIP must name what locks it", () => {
   });
 
   it("renders the blocker names when the snapshot supplies them", () => {
-    // Matched by SHAPE, not by the local's spelling: the derivation was later
-    // hoisted and renamed so one sentence could feed both the detail row and
-    // the next-action reason, and a literal-name pin would have failed on the
-    // rename while the behaviour it guards was strictly improving.
-    assert.match(SRC, /Authority or document quality blockers remain: \$\{\w+\.join\("; "\)\}/);
+    // This pinned the derivation's SOURCE TEXT -- first by its local's
+    // spelling, then by its join separator. Both broke on changes that
+    // improved the behaviour it was guarding (hoisting the local so two
+    // surfaces could share it; joining with a space because the snapshot's
+    // own sentences already end in punctuation). A source pin cannot tell
+    // those apart from a regression, so this asks the decision instead.
+    // Behavioural coverage lives in "the reason the owner reads names the
+    // blocker" below; this keeps the rule stated where it was first written.
+    assert.match(SRC, /Authority or document quality blockers remain: \$\{/);
   });
 
   it("still fails closed when no names are available, and says so", () => {

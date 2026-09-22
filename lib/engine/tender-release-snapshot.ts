@@ -16,7 +16,7 @@ import { assessExtractionQuality } from "../extraction-quality";
 import { mapRequirementsToEvidence } from "./final-package-readiness-model";
 import { buildPageLedger, type PageLedger } from "./page-ledger";
 import { classifyTender, type TenderClassification } from "./tender-classification";
-import { buildReleaseSnapshotEligibility, describeGateBlockers } from "./release-snapshot-eligibility";
+import { buildReleaseSnapshotEligibility, describeGateBlockers, describeMetadataExportBlocker } from "./release-snapshot-eligibility";
 import { EXTRACTION_OVERRIDE_MAX_AGE_MS } from "./readiness-overrides";
 import { selectCanonicalTenderFiles } from "../tender/canonical-source-files";
 import {
@@ -460,8 +460,31 @@ export async function getTenderReleaseSnapshot(
   });
 
   let metadataGateValid = !metadataResult.hasExportBlocker;
+  // NAME THE FACTS, DO NOT COUNT THEM.
+  //
+  // This said "One or more final Tender Facts are missing, invalid, or lack
+  // sufficient audit authority." -- a sentence that tells the owner a number
+  // it will not give and a field it will not name. Read from the exact-head
+  // Preview (tender d2b85e2a), it was the ENTIRE reason the ZIP was locked:
+  //
+  //   [BLOCKER] AUTHORITY_OR_QUALITY_BLOCKERS: Authority or document quality
+  //     blockers remain: One or more final Tender Facts are missing, invalid,
+  //     or lack sufficient audit authority.
+  //
+  // beside 0 document blockers, 0 tender-level blockers, 0 quality failures,
+  // 1/1 generated, 1/1 export-ready and a validator reporting "All canonical
+  // package and document validation checks passed."
+  //
+  // The resolver already knows exactly which fields and why: every
+  // CanonicalFieldState carries `label`, `exportEligible` and a written
+  // `blockerReason` ("Field \"Deadline\" has a value but is not yet
+  // source-grounded (missing page, quote, or active file)..."). The
+  // aggregate boolean was read and the per-field reasons were discarded.
   let metadataGateBlocker: string | null = metadataResult.hasExportBlocker
-    ? "One or more final Tender Facts are missing, invalid, or lack sufficient audit authority."
+    ? describeMetadataExportBlocker(
+        metadataResult.fields,
+        "One or more final Tender Facts are missing, invalid, or lack sufficient audit authority.",
+      )
     : null;
   if (metadataGateValid) {
     try {

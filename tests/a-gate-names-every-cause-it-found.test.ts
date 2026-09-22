@@ -76,3 +76,81 @@ describe("a gate names every cause it found", () => {
     assert.equal(/pharo|ethiop|addis|healthcare|architect|consultanc/i.test(region), false);
   });
 });
+
+// ─── The final Tender Facts gate names the facts ────────────────────────────
+//
+// Read from the exact-head Preview (tender d2b85e2a) after the canonical
+// decision was taught to pass the snapshot's names through, verbatim:
+//
+//   [BLOCKER] AUTHORITY_OR_QUALITY_BLOCKERS: Authority or document quality
+//     blockers remain: One or more final Tender Facts are missing, invalid,
+//     or lack sufficient audit authority.
+//
+// beside 0 document blockers, 0 tender-level blockers, 0 quality failures,
+// 1/1 generated, 1/1 export-ready, and "All canonical package and document
+// validation checks passed." The names had simply run out one layer lower:
+// the snapshot read the aggregate `hasExportBlocker` boolean and answered
+// with a constant, discarding the per-field reasons the resolver had already
+// written.
+
+import { describeMetadataExportBlocker, type ExportGateFact } from "../lib/engine/release-snapshot-eligibility";
+
+const GENERIC = "One or more final Tender Facts are missing, invalid, or lack sufficient audit authority.";
+
+function fact(over: Partial<ExportGateFact>): ExportGateFact {
+  return { label: "Deadline", status: "GROUNDED", exportEligible: true, blockerReason: null, ...over };
+}
+
+describe("the final Tender Facts gate names the facts", () => {
+  it("reports the resolver's own written reason for each blocking fact", () => {
+    const rendered = describeMetadataExportBlocker([
+      fact({ label: "Title", exportEligible: true }),
+      fact({
+        label: "Deadline",
+        status: "UNGROUNDED",
+        exportEligible: false,
+        blockerReason: 'Field "Deadline" has a value but is not yet source-grounded (missing page, quote, or active file).',
+      }),
+      fact({
+        label: "Submission Method",
+        status: "BLOCKED",
+        exportEligible: false,
+        blockerReason: 'Field "Submission Method" appears contaminated by tender-portal navigation or unrelated-tender text.',
+      }),
+    ], GENERIC);
+    assert.match(rendered, /"Deadline" has a value but is not yet source-grounded/);
+    assert.match(rendered, /"Submission Method" appears contaminated/);
+    assert.notEqual(rendered, GENERIC);
+  });
+
+  it("says nothing about facts that are eligible for export", () => {
+    const rendered = describeMetadataExportBlocker([
+      fact({ label: "Title", exportEligible: true, blockerReason: "should not be shown" }),
+      fact({ label: "Deadline", exportEligible: false, blockerReason: "Deadline is blocked." }),
+    ], GENERIC);
+    assert.equal(rendered.includes("should not be shown"), false);
+    assert.equal(rendered, "Deadline is blocked.");
+  });
+
+  it("never lets a fact block export anonymously", () => {
+    // exportEligible false with no written reason: name it and its status
+    // rather than falling back to the sentence that names nothing.
+    const rendered = describeMetadataExportBlocker([
+      fact({ label: "Client Name", status: "INTERNAL_PLACEHOLDER", exportEligible: false, blockerReason: null }),
+    ], GENERIC);
+    assert.match(rendered, /"Client Name"/);
+    assert.match(rendered, /INTERNAL_PLACEHOLDER/);
+  });
+
+  it("falls back only when no fact is ineligible at all", () => {
+    assert.equal(describeMetadataExportBlocker([fact({})], GENERIC), GENERIC);
+    assert.equal(describeMetadataExportBlocker([], GENERIC), GENERIC);
+  });
+
+  it("carries no tender, sector, client or benchmark knowledge", () => {
+    const rendered = describeMetadataExportBlocker([
+      fact({ label: "Deadline", exportEligible: false, blockerReason: "Deadline is blocked." }),
+    ], GENERIC);
+    assert.equal(/pharo|ethiop|addis|healthcare|architect|consultanc/i.test(rendered), false);
+  });
+});
