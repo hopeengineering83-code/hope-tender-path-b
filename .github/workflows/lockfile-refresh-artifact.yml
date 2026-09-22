@@ -1683,6 +1683,43 @@ jobs:
             console.log("  health one is what made the 2026-09-07 rebuild refuse.");
           '
 
+      # READ-ONLY. What the database behind the migration secret actually holds.
+      #
+      # A database swap has been followed, more than once, by a runtime that
+      # reaches the new database and fails on a late column (P2022). That one
+      # symptom covers two situations with opposite repairs: a database that is
+      # merely BEHIND (ordinary `migrate deploy`) and one that was never
+      # migrated and carries a legacy bootstrap schema (P3005, which needs the
+      # gated rebuild). Deciding between them from the error alone is a guess;
+      # this answers it from the database, before anything is changed.
+      - name: Setup Node for the read-only database inspection
+        if: env.MIGRATION_URL != ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies for the read-only database inspection
+        if: env.MIGRATION_URL != ''
+        run: npm ci --no-audit --no-fund --ignore-scripts && npx prisma generate
+
+      - name: Inspect the database behind the migration secret (read-only)
+        if: env.MIGRATION_URL != ''
+        env:
+          DATABASE_URL: ${{ secrets.PREVIEW_DATABASE_URL_MIGRATION }}
+        run: |
+          node scripts/tmp-inspect-target-database.mjs
+          echo "--- prisma migrate status (read-only) ---"
+          npx prisma migrate status || true
+          echo "--- drift: SQL needed to bring this database up to prisma/schema.prisma (NOT applied) ---"
+          npx prisma migrate diff \
+            --from-schema-datasource prisma/schema.prisma \
+            --to-schema-datamodel prisma/schema.prisma \
+            --script > /tmp/schema-drift.sql 2>&1 || true
+          drift=$(grep -vE '^\s*(--.*)?$' /tmp/schema-drift.sql | wc -l)
+          echo "drift statements: $drift"
+          head -40 /tmp/schema-drift.sql
+
 
   # ───────────────────────────────────────────────────────────────────────────
   # TEMPORARY. Poll this while the owner re-uploads after a database swap.

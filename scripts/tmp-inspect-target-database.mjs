@@ -64,6 +64,47 @@ try {
 
   const hasMigrationHistory = tables.some((t) => t.table_name === "_prisma_migrations");
   console.log(`_prisma_migrations present: ${hasMigrationHistory}`);
+
+  // WHICH migrations, not just whether the table exists. A database that is
+  // "behind" and a database that was never migrated at all look identical at
+  // runtime (both answer P2022 for a late column) but need different repairs:
+  // the first is an ordinary `migrate deploy`, the second is P3005 territory.
+  // Compared against THIS checkout's prisma/migrations, so the answer is about
+  // the exact head being deployed.
+  const { readdirSync, existsSync } = await import("node:fs");
+  const repoMigrations = existsSync("prisma/migrations")
+    ? readdirSync("prisma/migrations", { withFileTypes: true })
+        .filter((d) => d.isDirectory())
+        .map((d) => d.name)
+        .sort()
+    : [];
+  console.log(`REPO MIGRATIONS (this checkout): ${repoMigrations.length}`);
+  if (hasMigrationHistory) {
+    const rows = await prisma.$queryRawUnsafe(
+      `select migration_name, finished_at is not null as finished, rolled_back_at is not null as rolled_back,
+              coalesce(logs, '') <> '' as has_logs
+         from "_prisma_migrations" order by started_at`,
+    );
+    const applied = rows.filter((r) => r.finished && !r.rolled_back).map((r) => r.migration_name);
+    const unfinished = rows.filter((r) => !r.finished && !r.rolled_back).map((r) => r.migration_name);
+    const rolledBack = rows.filter((r) => r.rolled_back).map((r) => r.migration_name);
+    const appliedSet = new Set(applied);
+    const pending = repoMigrations.filter((m) => !appliedSet.has(m));
+    const unknown = applied.filter((m) => !repoMigrations.includes(m));
+    console.log(`MIGRATION HISTORY: ${rows.length} row(s), ${applied.length} applied, ${unfinished.length} unfinished/failed, ${rolledBack.length} rolled back`);
+    console.log(`  latest applied : ${applied[applied.length - 1] ?? "(none)"}`);
+    console.log(`  PENDING vs repo: ${pending.length}`);
+    for (const m of pending) console.log(`    - ${m}`);
+    if (unfinished.length) console.log(`  UNFINISHED/FAILED: ${unfinished.join(", ")}`);
+    if (unknown.length) console.log(`  APPLIED BUT NOT IN THIS REPO: ${unknown.join(", ")}`);
+  }
+
+  // The column the live runtime reported missing, checked directly.
+  const userCols = await prisma.$queryRawUnsafe(
+    "select column_name from information_schema.columns where table_schema = 'public' and table_name = 'User' order by column_name",
+  );
+  const names = userCols.map((c) => c.column_name);
+  console.log(`User columns: ${names.length}  deletedAt=${names.includes("deletedAt")} deletedBy=${names.includes("deletedBy")}`);
 } finally {
   await prisma.$disconnect();
 }
