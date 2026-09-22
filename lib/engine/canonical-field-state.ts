@@ -617,7 +617,28 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
         : validation.reason?.includes("heading") ? "GENERIC_FIELD_LABEL"
         : validation.reason?.includes("ambiguous") ? "AMBIGUOUS_DATE"
         : "INVALID_FORMAT";
-      blockerReason = validation.reason;
+      // NAME THE FIELD. Every sibling branch writes `Field "<label>" ...`;
+      // this one passed the validator's sentence through unchanged, and
+      // validateFieldFormat is deliberately field-agnostic ("Value contains
+      // extractor field-label scaffolding..."). So the one branch that fires
+      // on contaminated extraction was the one branch that did not say which
+      // fact it was talking about.
+      //
+      // Verbatim from the exact-head Preview (tender d2b85e2a), the entire
+      // reason its ZIP is locked:
+      //
+      //   AUTHORITY_OR_QUALITY_BLOCKERS: Authority or document quality
+      //   blockers remain: Value contains extractor field-label scaffolding
+      //   or internal extraction instructions and must be re-extracted as a
+      //   single field value. Value contains extractor field-label
+      //   scaffolding or internal extraction instructions and must be
+      //   re-extracted as a single field value. Value contains extractor
+      //   field-label scaffolding or internal extraction instructions and
+      //   must be re-extracted as a single field value.
+      //
+      // Three blocked facts, three identical anonymous sentences, and no way
+      // to tell which three.
+      blockerReason = `Field "${label}": ${validation.reason}`;
     } else if (override?.fieldState === "USER_CONFIRMED") {
       const normalizedConfirmed = normalizeFieldValue(fieldKey, effectiveStr);
       const normalizedRaw = normalizeFieldValue(fieldKey, rawValue ?? "");
