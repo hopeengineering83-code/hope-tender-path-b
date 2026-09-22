@@ -317,6 +317,36 @@ export function buildCanonicalWorkflowDecision(input: {
   const docsValidated = docsGenerated && input.documentsValidated;
 
   // ── Priority 15: Authority or quality blockers ───────────────────────
+  //
+  // ONE DERIVATION, BOTH SURFACES.
+  //
+  // The names were recovered into `blockerDetails` and the owner still saw the
+  // paraphrase, because the Export Hub does not render `blockerDetails` -- it
+  // renders `nextRequiredActionReason`, which came from the static `actionMap`
+  // below. Verbatim from the exact-head Preview (tender
+  // d2b85e2a, GET /api/tenders/{id}/export-readiness):
+  //
+  //   primaryBlockerReason='Authority review or document quality blockers remain.'
+  //   blockers: 1
+  //     [BLOCKER] AUTHORITY_OR_QUALITY_BLOCKERS: Authority review or document quality blockers remain.
+  //
+  // while every other number in the same response read clean: 0 document
+  // blockers, 0 tender-level blockers, 0 quality-failed documents, 1/1
+  // generated, 1/1 export-ready, zipReady=true.
+  //
+  // A reason the caller can compute is not a constant. Deriving it once here
+  // and using it for BOTH the detail row and the next-action reason is what
+  // makes the two surfaces unable to drift apart again -- a second copy of the
+  // sentence is exactly how the first repair stopped one layer short.
+  const authorityOrQualityBlockerNames = (input.authorityOrQualityBlockerNames ?? [])
+    .map((name) => name.trim())
+    .filter((name) => name.length > 0);
+  const authorityOrQualityBlockerReason = authorityOrQualityBlockerNames.length > 0
+    ? `Authority or document quality blockers remain: ${authorityOrQualityBlockerNames.join("; ")}.`
+    // Still fail closed when the caller supplies no names, but say that the
+    // reason is missing rather than implying none exists.
+    : "Authority review or document quality blockers remain (no blocker detail was supplied by the readiness snapshot).";
+
   const docsApproved = docsValidated;
   if (docsApproved && input.authorityOrQualityBlockers) {
     blockerCodes.push("AUTHORITY_OR_QUALITY_BLOCKERS");
@@ -335,14 +365,7 @@ export function buildCanonicalWorkflowDecision(input: {
     // The names were never missing. They are in snapshot.exportBlockers, and
     // the caller reduced them to a boolean by comparing list LENGTHS before
     // this function ever saw them.
-    const named = (input.authorityOrQualityBlockerNames ?? []).filter((name) => name.trim().length > 0);
-    blockerDetails.push(
-      named.length > 0
-        ? `Authority or document quality blockers remain: ${named.join("; ")}.`
-        // Still fail closed when the caller supplies no names, but say that
-        // the reason is missing rather than implying none exists.
-        : "Authority review or document quality blockers remain (no blocker detail was supplied by the readiness snapshot).",
-    );
+    blockerDetails.push(authorityOrQualityBlockerReason);
   }
 
   // ── Priority 16: Export ZIP ready ────────────────────────────────────
@@ -403,7 +426,7 @@ export function buildCanonicalWorkflowDecision(input: {
     REQUIRED_DOCS_NOT_GENERATED: { action: "GENERATE_DOCUMENTS", label: "Generate proposal documents", reason: `${input.generatedDocumentsTotal}/${input.requiredDocumentsTotal} required documents generated.` },
     DOCS_NOT_VALIDATED: { action: "FIX_EXPORT_BLOCKERS", label: "Validate documents", reason: "Generated documents have not been validated." },
     DOCS_NOT_APPROVED_EXPORT_READY: { action: "AUTOMATIC_PROCESSING", label: "Checking machine export eligibility", reason: "The durable worker verifies document validation, byte integrity, format and package eligibility without impersonating human release authority." },
-    AUTHORITY_OR_QUALITY_BLOCKERS: { action: "FIX_EXPORT_BLOCKERS", label: "Fix authority/quality blockers", reason: "Authority review or document quality blockers remain." },
+    AUTHORITY_OR_QUALITY_BLOCKERS: { action: "FIX_EXPORT_BLOCKERS", label: "Fix authority/quality blockers", reason: authorityOrQualityBlockerReason },
     EXPORT_BLOCKED: { action: "FIX_EXPORT_BLOCKERS", label: "Resolve export blockers", reason: "Export gate is not satisfied. Resolve the remaining export blockers before downloading the final ZIP." },
     EXPORT_ZIP_READY: { action: "EXPORT_READY", label: "Export ready", reason: "All gates pass. Review the final package manifest and export the submission ZIP." },
   };

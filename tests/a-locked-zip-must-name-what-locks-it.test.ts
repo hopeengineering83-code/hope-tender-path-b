@@ -55,7 +55,11 @@ describe("a locked ZIP must name what locks it", () => {
   });
 
   it("renders the blocker names when the snapshot supplies them", () => {
-    assert.match(SRC, /Authority or document quality blockers remain: \$\{named\.join\("; "\)\}/);
+    // Matched by SHAPE, not by the local's spelling: the derivation was later
+    // hoisted and renamed so one sentence could feed both the detail row and
+    // the next-action reason, and a literal-name pin would have failed on the
+    // rename while the behaviour it guards was strictly improving.
+    assert.match(SRC, /Authority or document quality blockers remain: \$\{\w+\.join\("; "\)\}/);
   });
 
   it("still fails closed when no names are available, and says so", () => {
@@ -107,5 +111,114 @@ describe("the change carries no tender-, sector- or benchmark-specific logic", (
     for (const forbidden of [/\bPharo\b/i, /\bhospital/i, /\bhealthcare/i, /\bEthiopia/i, /\bmedical\b/i]) {
       assert.equal(forbidden.test(code), false, `the derivation mentions ${forbidden}`);
     }
+  });
+});
+
+// ─── ONE DERIVATION, BOTH SURFACES ──────────────────────────────────────────
+//
+// The repair above put the names in `blockerDetails` and the owner still saw
+// the paraphrase, because the Export Hub renders `nextRequiredActionReason`,
+// which came from a static table. Verbatim from the exact-head Preview
+// (tender d2b85e2a, GET /api/tenders/{id}/export-readiness):
+//
+//   CANONICAL BLOCKERS: ok=False zipReady=True
+//     primaryBlockerReason='Authority review or document quality blockers remain.'
+//     summary.documentBlockers=0
+//     summary.tenderLevelBlockers=0
+//     summary.qualityFailedDocuments=0
+//     blockers: 1
+//       [BLOCKER] AUTHORITY_OR_QUALITY_BLOCKERS: Authority review or document quality blockers remain.
+//     documents.generated (1): ["Technical Proposal.pdf"]
+//     documents.missingRequired (0): []
+//
+// These tests call the decision rather than reading its source, because the
+// defect was never visible in one string -- it was two copies of a sentence
+// that drifted.
+
+import { buildCanonicalWorkflowDecision } from "../lib/engine/canonical-workflow-decision";
+
+/** The exact-head Preview state: everything green except the authority gate. */
+function lockedByAuthorityOnly(names?: string[]) {
+  return buildCanonicalWorkflowDecision({
+    hasFiles: true,
+    extractionUnsafe: false,
+    extractionCorrupted: false,
+    ocrRequired: false,
+    aiAnalysisExists: true,
+    aiAnalysisTrusted: true,
+    aiAnalysisPartial: false,
+    aiAnalysisStale: false,
+    resumableAnalysisAvailable: false,
+    criticalTenderDetailsValid: true,
+    requirementsExist: true,
+    requirementsTrusted: true,
+    mandatoryRequirementCount: 2,
+    mandatoryTracedCount: 2,
+    mandatoryComplianceRowsCount: 2,
+    mandatoryFullOrSubstantialCoverageCount: 2,
+    confirmedBuildPlanExists: true,
+    requiredDocumentsTotal: 1,
+    generatedDocumentsTotal: 1,
+    exportReadyDocumentsTotal: 1,
+    documentsValidated: true,
+    documentsApproved: true,
+    pdfRequiredButUnavailable: false,
+    finalExportAllowed: false,
+    authorityOrQualityBlockers: true,
+    ...(names === undefined ? {} : { authorityOrQualityBlockerNames: names }),
+  });
+}
+
+describe("the reason the owner reads names the blocker", () => {
+  it("reaches the authority/quality stage from the live Preview state", () => {
+    const decision = lockedByAuthorityOnly(["Final Tender Facts are not ready for export."]);
+    assert.equal(decision.currentBlockingStage, "AUTHORITY_OR_QUALITY_BLOCKERS");
+  });
+
+  it("puts the snapshot's blocker names in nextRequiredActionReason", () => {
+    const decision = lockedByAuthorityOnly([
+      "Final Tender Facts are not ready for export.",
+      "Evidence coverage is 40% (need >= 50% for export).",
+    ]);
+    assert.match(decision.nextRequiredActionReason, /Final Tender Facts are not ready for export\./);
+    assert.match(decision.nextRequiredActionReason, /Evidence coverage is 40%/);
+  });
+
+  it("no longer answers with the paraphrase the owner was given", () => {
+    const decision = lockedByAuthorityOnly(["Final Tender Facts are not ready for export."]);
+    assert.notEqual(
+      decision.nextRequiredActionReason,
+      "Authority review or document quality blockers remain.",
+      "the next-action reason is still restating the blocker's own category",
+    );
+  });
+
+  it("gives the detail row and the next-action reason the SAME sentence", () => {
+    // Two copies of one fact is how the first repair stopped a layer short.
+    const names = ["Final Tender Facts are not ready for export."];
+    const decision = lockedByAuthorityOnly(names);
+    const index = decision.blockerCodes.indexOf("AUTHORITY_OR_QUALITY_BLOCKERS");
+    assert.notEqual(index, -1, "the blocker code was not recorded");
+    assert.equal(decision.blockerDetails[index], decision.nextRequiredActionReason);
+  });
+
+  it("still fails closed, and says the detail is missing, when no names arrive", () => {
+    for (const names of [undefined, [], ["", "   "]]) {
+      const decision = lockedByAuthorityOnly(names);
+      assert.equal(decision.currentBlockingStage, "AUTHORITY_OR_QUALITY_BLOCKERS");
+      assert.match(decision.nextRequiredActionReason, /no blocker detail was supplied/);
+    }
+  });
+
+  it("keeps the action label, which says what to do rather than what is wrong", () => {
+    const decision = lockedByAuthorityOnly(["Final Tender Facts are not ready for export."]);
+    assert.equal(decision.nextRequiredActionLabel, "Fix authority/quality blockers");
+  });
+
+  it("carries no sector, client or benchmark vocabulary of its own", () => {
+    const decision = lockedByAuthorityOnly(["Final Tender Facts are not ready for export."]);
+    const forbidden = /pharo|ethiop|addis|healthcare|architect|consultanc/i;
+    assert.equal(forbidden.test(decision.nextRequiredActionReason), false);
+    assert.equal(forbidden.test(decision.nextRequiredActionLabel), false);
   });
 });
