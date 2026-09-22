@@ -61,3 +61,12 @@ describe("a worker attempt may use its budget but never pass its deadline", () =
     }
   });
 });
+
+describe("Gemini, first in the chain, gets a worker ceiling that leaves the chain room", () => {
+  it("has a worker ceiling above its static timeout and below Z.ai's", () => {
+    const gemini = getProviderWorkerTimeoutMs("gemini");
+    assert.equal(typeof gemini, "number");
+    assert.ok(gemini! > 60_000, "must outlast the 60s static cutoff that aborted a working Gemini on 2026-09-22");
+    assert.ok(gemini! < getProviderWorkerTimeoutMs("zai")!, "a slow Gemini must leave later providers a real attempt");
+  });
+});

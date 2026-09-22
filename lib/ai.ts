@@ -419,7 +419,11 @@ async function generate(prompt: string, modelName = defaultGeminiModel(), maxTok
         // per fallback model, overrunning the parent's remaining budget several
         // times over. resolveEffectiveTimeoutMs returns the static value
         // unchanged when no deadline is armed, so standalone calls are unaffected.
-        const config = { timeout: resolveEffectiveTimeoutMs(GEMINI_TIMEOUT_MS) } as Record<string, unknown>;
+        // Inside a durable worker the attempt may run to Gemini's worker ceiling,
+        // never past the worker's deadline (resolveProviderAttemptTimeoutMs).
+        const config = {
+          timeout: resolveProviderAttemptTimeoutMs(GEMINI_TIMEOUT_MS, getProviderWorkerTimeoutMs("gemini")),
+        } as Record<string, unknown>;
         if (maxTokens !== undefined) config.maxOutputTokens = maxTokens;
         const result = await model.generateContent(prompt, config);
         const t = result.response.text();
@@ -1768,6 +1772,40 @@ export function describeEmptyCompletion(choice: OpenAiCompatibleChoice | undefin
   return finish ? `returned empty content (finish_reason=${finish})` : "returned empty content and no finish_reason";
 }
 
+/**
+ * A structured (JSON-mode) answer whose finish_reason is "length" stopped at
+ * the output budget: it is a fragment of an object, not malformed output.
+ * Returns the reason to report, or null when the answer is complete or the
+ * request was not structured.
+ */
+export function describeTruncatedStructuredAnswer(
+  choice: OpenAiCompatibleChoice | undefined,
+  text: string,
+  maxTokens: number,
+  structured: boolean | undefined,
+): string | null {
+  if (!structured || choice?.finish_reason !== "length") return null;
+  const reasoningChars = (choice.message?.reasoning_content ?? "").trim().length;
+  return `stopped at the output budget (max_tokens=${maxTokens}, finish_reason=length) after ${text.length} characters of JSON`
+    + (reasoningChars > 0 ? ` and ${reasoningChars} characters of reasoning` : "")
+    + " — the structured answer is truncated";
+}
+
+/**
+ * Request fields that make Z.ai spend its whole output budget on the answer.
+ *
+ * glm-4.7-flash thinks before it answers, and the thinking is billed against
+ * the same max_tokens as the answer. On 2026-09-22 an AI Analyze run spent
+ * ~65s on Z.ai and its reply was rejected as "malformed JSON or empty
+ * structured response": thinking plus the long extraction schema overran the
+ * 8,000-token budget. A structured extraction asks the model to transcribe
+ * what the source says, so thinking is disabled for JSON requests only; prose
+ * (proposal) calls keep the model's default.
+ */
+export function zaiRequestExtras(wantJson: boolean): Record<string, unknown> | undefined {
+  return wantJson ? { thinking: { type: "disabled" } } : undefined;
+}
+
 function fallbackTemperature(): number {
   const raw = Number(process.env.AI_FALLBACK_TEMPERATURE);
   return Number.isFinite(raw) && raw >= 0 && raw <= 2 ? raw : 0.4;
@@ -1836,13 +1874,15 @@ async function generateOpenAICompatible(params: {
   timeoutMs?: number;
   /** Longer ceiling usable only under an armed worker deadline (see resolveProviderAttemptTimeoutMs). */
   workerTimeoutMs?: number;
+  /** Provider-specific request fields merged into the body (e.g. Z.ai `thinking`). */
+  extraBody?: Record<string, unknown>;
   /**
    * Set when this call is already the one retry permitted by a provider's
    * stated affordable ceiling. Bounds the recursion at exactly one.
    */
   withinStatedAffordance?: boolean;
 }): Promise<string | null> {
-  const { providerLabel, providerName, endpoint, apiKey: key, model, prompt, systemPrompt, maxTokens, extraHeaders, maxTokensParam = "max_tokens", responseFormatJson, timeoutMs, workerTimeoutMs, withinStatedAffordance } = params;
+  const { providerLabel, providerName, endpoint, apiKey: key, model, prompt, systemPrompt, maxTokens, extraHeaders, maxTokensParam = "max_tokens", responseFormatJson, timeoutMs, workerTimeoutMs, extraBody, withinStatedAffordance } = params;
   // Surface the real failure reason. Previously every HTTP-error / empty-content
   // branch only logged to console.warn and returned null, so the actual cause
   // (e.g. "HTTP 400: max_tokens too large", "HTTP 429: rate limit") was lost and
@@ -1868,6 +1908,7 @@ async function generateOpenAICompatible(params: {
         [maxTokensParam]: maxTokens,
         temperature: fallbackTemperature(),
         ...(responseFormatJson ? { response_format: { type: "json_object" } } : {}),
+        ...(extraBody ?? {}),
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: prompt },
@@ -1928,6 +1969,15 @@ async function generateOpenAICompatible(params: {
       const why = describeEmptyCompletion(data.choices?.[0], maxTokens);
       logger.warn(`[ai] ${providerLabel} ${model} ${why}.`);
       note(`${model} ${why}`);
+      return null;
+    }
+    // A structured answer that stopped at the output budget is a fragment, not
+    // malformed output. Say so here: downstream it could only be reported as
+    // "malformed JSON", which points at the prompt instead of the budget.
+    const truncation = describeTruncatedStructuredAnswer(data.choices?.[0], text, maxTokens, responseFormatJson);
+    if (truncation) {
+      logger.warn(`[ai] ${providerLabel} ${model} ${truncation}.`);
+      note(`${model} ${truncation}`);
       return null;
     }
     return text;
@@ -2069,6 +2119,7 @@ async function generateWithZai(
     systemPrompt,
     maxTokens,
     responseFormatJson: wantJson,
+    extraBody: zaiRequestExtras(wantJson),
     // FIX: Use registry timeout (45s) instead of the 20s default.
     // The AI Analyze prompt is very large and glm-4.7-flash needs more time.
     timeoutMs: getProviderTimeoutMs("zai"),

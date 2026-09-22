@@ -42,7 +42,7 @@ describe("every provider adapter clamps to the parent deadline", () => {
       for (const line of source.match(re) ?? []) {
         const trimmed = line.trim();
         if (trimmed.startsWith("//") || trimmed.startsWith("*")) continue;
-        if (trimmed.includes("resolveEffectiveTimeoutMs")) continue;
+        if (trimmed.includes("resolveEffectiveTimeoutMs") || trimmed.includes("resolveProviderAttemptTimeoutMs")) continue;
         // Diagnostic output interpolates the static constant into human-readable
         // text ("timed out after 60000ms"). That is the value the adapter was
         // configured with, not a timeout being handed to a provider, so it is

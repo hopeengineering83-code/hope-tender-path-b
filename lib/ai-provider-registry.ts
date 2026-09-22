@@ -169,6 +169,13 @@ const ANALYSIS_TIMEOUT_MS = 45_000;
 // provider after Z.ai was billing-locked -- the 45s constant, written for 60s
 // request routes, decided the outcome, not the worker's real budget.
 const ANALYSIS_WORKER_TIMEOUT_MS = 150_000;
+// Gemini is first in the chain, so its worker ceiling is kept below the
+// others': a slow Gemini must still leave the rest of the chain a real attempt
+// inside the same worker budget. Its static 60s (GEMINI_TIMEOUT_MS) is
+// unchanged outside a worker. On 2026-09-22 a Gemini request that was accepted
+// on its third rate-limit retry was aborted at exactly 60s while the worker had
+// ~170s left.
+const GEMINI_WORKER_TIMEOUT_MS = 100_000;
 
 const FALLBACK_RETRY: ProviderRetryPolicy = { maxRetries: 0, retryOnAuth: false, retryOnBilling: false };
 
@@ -368,6 +375,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     },
     outputCaps: STANDARD_CAPS,
     timeoutMs: 28_000,
+    workerTimeoutMs: GEMINI_WORKER_TIMEOUT_MS,
     retry: FALLBACK_RETRY,
     supportsStructuredJson: false,
     emergencyOnly: false,
