@@ -1040,6 +1040,133 @@ jobs:
           echo "SESSION_COOKIE=$cookie" >> "$GITHUB_ENV"
           echo "Signed in; session captured and masked."
 
+      - name: Resolve the tender under test
+        run: |
+          # WHY THIS EXISTS. This job declared TENDER_ID from an optional input
+          # and never resolved it. Its own precondition step prints "the
+          # inspection will discover the tender from /api/tenders" -- but no
+          # step ever did, so every later step that interpolated $TENDER_ID
+          # built a URL with an empty path segment.
+          #
+          # On run 35739427671 that produced, verbatim:
+          #
+          #   validate HTTP 308   (422 = blocked, which is the case we want to read)
+          #   DOCUMENT QUALITY: validate response unreadable: Expecting value: line 1 column 1 (char 0)
+          #
+          # POST /api/tenders//validate is a redirect with an empty body, not a
+          # verdict. The one diagnostic that exists to NAME the quality rule
+          # behind GENERATED_DOCUMENT_QUALITY_FAILED had therefore been silently
+          # dead, and the blocker locking the ZIP could only be read from a
+          # stale AUTO_FINALIZE error message recorded days earlier on older code.
+          #
+          # Resolve it once here, exactly as the acceptance job does, so every
+          # downstream step in this job addresses a real tender.
+          if [ -n "$TENDER_ID" ]; then
+            echo "tender supplied by input: $TENDER_ID"
+          else
+            curl -sS --connect-timeout 15 --max-time 45 \
+              -H "Cookie: hope_session=$SESSION_COOKIE" \
+              "$BASE_URL/api/tenders" > /tmp/tenders-discover.json || true
+            tid=$(python3 - <<'PYEOF'
+          import json, sys
+          try:
+              d = json.load(open('/tmp/tenders-discover.json', encoding='utf-8'))
+          except Exception as exc:
+              print("", end=""); print(f"discovery: unreadable response ({exc})", file=sys.stderr); raise SystemExit(0)
+          rows = d if isinstance(d, list) else (d.get('items') or d.get('tenders') or [])
+          if not rows:
+              print(f"discovery: no rows; top-level keys = {sorted(d) if isinstance(d, dict) else type(d).__name__}", file=sys.stderr)
+              print("", end=""); raise SystemExit(0)
+          print((rows[0] or {}).get('id', ''), end="")
+          PYEOF
+          )
+            if [ -z "$tid" ]; then
+              echo "::error::No tender_id was supplied and none could be discovered from /api/tenders. Upload a tender, or pass tender_id explicitly."
+              exit 1
+            fi
+            echo "tender discovered: $tid"
+            echo "TENDER_ID=$tid" >> "$GITHUB_ENV"
+          fi
+
+      - name: Name the blocker that is currently locking the ZIP
+        run: |
+          # The Export Hub shows a COLLAPSED category ("Canonical readiness: 1
+          # blocker(s)" / AUTHORITY_OR_QUALITY_BLOCKERS). That category is a
+          # bucket, not a cause, so reading it off the page cannot say what to
+          # repair. GET /api/tenders/{id}/export-readiness is the authority the
+          # page itself renders: it returns the canonical decision plus the
+          # expanded blocker rows, each with its own code, message and next
+          # action. No CSRF/Origin concern -- it is a GET.
+          code=$(curl -sS -o /tmp/export-readiness.json -w '%{http_code}' \
+            -H "Cookie: hope_session=$SESSION_COOKIE" \
+            --connect-timeout 15 --max-time 90 \
+            "$BASE_URL/api/tenders/$TENDER_ID/export-readiness" || echo 000)
+          echo "export-readiness HTTP $code  (tender $TENDER_ID)"
+          python3 - <<'PYEOF' | tee /tmp/canonical-blockers.txt
+          import json
+          try:
+              d = json.load(open('/tmp/export-readiness.json', encoding='utf-8'))
+          except Exception as exc:
+              raise SystemExit(f"CANONICAL BLOCKERS: NOT MEASURED (unreadable: {exc})")
+          if d.get('ok') is None and d.get('blockers') is None:
+              raise SystemExit(
+                  "CANONICAL BLOCKERS: NOT MEASURED — export-readiness returned no readiness body "
+                  f"(error={d.get('error') or d.get('message') or d!r})")
+          er = d.get('exportReadiness') or {}
+          summary = er.get('summary') or {}
+          facts = er.get('finalPackageFacts') or {}
+          print(f"CANONICAL BLOCKERS: ok={d.get('ok')!r} zipReady={facts.get('zipReady')!r}")
+          print(f"  primaryBlockerReason={d.get('primaryBlockerReason')!r}")
+          print(f"  primaryFixAction={d.get('primaryFixAction')!r}")
+          for key in ("requiredDocumentsTotal", "generatedDocumentsTotal", "exportReadyDocumentsTotal"):
+              print(f"  {key}={d.get(key)!r}")
+          for key in ("planStatus", "analysisSource", "readinessScore", "documentBlockers",
+                      "tenderLevelBlockers", "totalBlockers", "qualityFailedDocuments",
+                      "missingRequiredDocuments", "excludedInternalDrafts", "finalExportCandidates"):
+              if key in summary:
+                  print(f"  summary.{key}={summary[key]!r}")
+          for key in ("plannedCount", "missingCount", "exportCandidateCount", "supersededCount"):
+              if key in facts:
+                  print(f"  finalPackageFacts.{key}={facts[key]!r}")
+
+          # The envelope's `blockers` is the EXPANDED list the Export Hub
+          # collapses into one category chip. Each row carries its own code,
+          # so this is where "1 blocker / AUTHORITY_OR_QUALITY_BLOCKERS"
+          # becomes a named, repairable cause.
+          rows = d.get('blockers') or []
+          print(f"  blockers: {len(rows)}")
+          for row in rows:
+              if isinstance(row, dict):
+                  print(f"    [{row.get('severity')}] {row.get('code')}: {row.get('message')}")
+                  if row.get('nextAction'):
+                      print(f"        next: {row['nextAction']}")
+              else:
+                  print(f"    {row!r}")
+          for row in (er.get('tenderLevelBlockers') or []):
+              if isinstance(row, dict):
+                  print(f"    TENDER-LEVEL [{row.get('severity')}] {row.get('category')}: {row.get('title')}")
+                  if row.get('recommendedAction'):
+                      print(f"        next: {row['recommendedAction']}")
+          for row in (er.get('documentBlockers') or []):
+              if isinstance(row, dict):
+                  print(f"    DOCUMENT [{row.get('severity')}] {row.get('category')}: {row.get('title')} ({row.get('documentName') or row.get('name')})")
+          fp = er.get('finalPackageReadiness') or {}
+          docs = fp.get('documents') or {}
+          for bucket in ("required", "planned", "generated", "exportReady", "missingRequired",
+                         "extraGeneratedOutsidePlan"):
+              value = docs.get(bucket)
+              if isinstance(value, list):
+                  names = [ (x.get('exactFileName') or x.get('fileName') or x.get('name')) if isinstance(x, dict) else x for x in value ]
+                  print(f"  documents.{bucket} ({len(names)}): {json.dumps(names)[:600]}")
+          for row in ((fp.get('export') or {}).get('blockers') or []):
+              if isinstance(row, dict):
+                  print(f"    EXPORT [{row.get('severity')}] {row.get('code')}: {row.get('message') or row.get('title')}")
+          for row in (d.get('warnings') or []):
+              if isinstance(row, dict):
+                  print(f"    (warning) {row.get('code')}: {row.get('message')}")
+          PYEOF
+        continue-on-error: true
+
       - name: Read the live vault, the selection pipeline and provider state
         run: python3 scripts/tmp-inspect-vault-and-selection.py 2>&1 | tee /tmp/vault-inspection.txt
 
@@ -1225,12 +1352,26 @@ jobs:
           # "None document(s), None failing" -- a diagnostic that silently said
           # nothing was wrong with a package the gate was refusing. Every other
           # POST in this workflow already sends it.
+          # An empty TENDER_ID does not fail here -- it builds
+          # /api/tenders//validate, which answers 308 with an empty body, and
+          # the report below then says "validate response unreadable". That is
+          # how this diagnostic ran dead for several inspections. Refuse to
+          # make the request at all rather than emit a verdict-shaped non-answer.
+          if [ -z "$TENDER_ID" ]; then
+            echo "::error::DOCUMENT QUALITY: NOT MEASURED — no tender id is set in this job, so there is nothing to validate."
+            exit 1
+          fi
           code=$(curl -sS -o /tmp/validate.json -w '%{http_code}' -X POST \
             -H "Cookie: hope_session=$SESSION_COOKIE" -H "Origin: $BASE_URL" \
             -H 'Content-Type: application/json' -d '{}' \
             --connect-timeout 15 --max-time 90 \
             "$BASE_URL/api/tenders/$TENDER_ID/validate" || echo 000)
           echo "validate HTTP $code   (422 = blocked, which is the case we want to read)"
+          case "$code" in
+            3??)
+              echo "::error::validate returned $code (a redirect, not a verdict) for tender '$TENDER_ID'. The URL below did not address a tender: $BASE_URL/api/tenders/$TENDER_ID/validate"
+              ;;
+          esac
           if [ "$code" != "200" ] && [ "$code" != "422" ]; then
             echo "::warning::validate returned $code — the quality report below is NOT a verdict on the package."
           fi
@@ -1393,9 +1534,20 @@ jobs:
       # echoed script alone is ~60 lines. Reading it back cost several large log
       # fetches that each missed it by a few lines. Re-print it last: the most
       # important line in the report should not be the hardest one to find.
-      - name: Repeat the authorship verdict at the end of the log
+      - name: Repeat the verdicts at the end of the log
         if: always()
         run: |
+          # A GitHub Actions job log is only readable from its tail through the
+          # API, and the provider-chain sweep above is long enough to push the
+          # two verdicts that matter out of any reasonable tail. Repeat both
+          # here so "what locks the ZIP" and "who wrote the documents" are
+          # always the last thing in the log.
+          echo "================ CANONICAL BLOCKERS (repeat) ================"
+          cat /tmp/canonical-blockers.txt 2>/dev/null || echo "canonical-blockers.txt was not produced"
+          echo "=============================================================="
+          echo "================ DOCUMENT QUALITY (repeat) =================="
+          cat /tmp/document-quality-blockers.txt 2>/dev/null || echo "document-quality-blockers.txt was not produced"
+          echo "=============================================================="
           echo "================ AUTHORSHIP VERDICT (repeat) ================"
           cat /tmp/authorship.txt 2>/dev/null || echo "authorship.txt was not produced"
           echo "============================================================="
@@ -1410,6 +1562,7 @@ jobs:
             /tmp/authorship.txt
             /tmp/provider-chain.txt
             /tmp/document-quality-blockers.txt
+            /tmp/canonical-blockers.txt
             /tmp/provider-chain.jsonl
             /tmp/preview-health.txt
           if-no-files-found: error
