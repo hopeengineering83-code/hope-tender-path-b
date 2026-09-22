@@ -33,9 +33,35 @@ function envFlag(name: string): boolean {
   return ["1", "true", "yes", "on"].includes(raw.trim().toLowerCase());
 }
 
-function isRuntimeSchemaBootstrapEnabled(): boolean {
-  if (process.env.NODE_ENV !== "production") return true;
-  return envFlag("ENABLE_RUNTIME_SCHEMA_BOOTSTRAP");
+/**
+ * True when the database this process would bootstrap is on this machine.
+ *
+ * WHY THIS EXISTS. "Non-production" used to mean "bootstrap anything". The
+ * legacy bootstrap below is ad-hoc CREATE TABLE IF NOT EXISTS DDL with no
+ * migration history, so a non-production process pointed at a REMOTE, freshly
+ * created database builds a schema that `prisma migrate deploy` then refuses
+ * forever with P3005 ("the database schema is not empty"). That is exactly the
+ * state three successive Preview Neon databases were found in -- 54 tables, no
+ * _prisma_migrations, 4 seeded Role rows, User without deletedAt -- and each
+ * time the runtime answered P2022 on login and the only way back was a gated
+ * DROP SCHEMA. The first-run convenience this path exists for (`npm run dev`
+ * against a local Postgres) is kept; a remote database now needs the explicit
+ * ENABLE_RUNTIME_SCHEMA_BOOTSTRAP opt-in, like production already did.
+ */
+export function isLocalDatabaseUrl(url: string | undefined): boolean {
+  if (!url || !url.trim()) return true; // nothing remote to reach
+  try {
+    const host = new URL(url).hostname.replace(/^\[|\]$/g, "").toLowerCase();
+    return host === "" || host === "localhost" || host === "127.0.0.1" || host === "::1" || host.endsWith(".localhost");
+  } catch {
+    return false; // unparseable: do not guess that it is safe to mutate
+  }
+}
+
+export function isRuntimeSchemaBootstrapEnabled(): boolean {
+  if (envFlag("ENABLE_RUNTIME_SCHEMA_BOOTSTRAP")) return true;
+  if (process.env.NODE_ENV === "production") return false;
+  return isLocalDatabaseUrl(process.env.DATABASE_URL);
 }
 
 // ─── column existence helper (PostgreSQL) ────────────────────────────────────

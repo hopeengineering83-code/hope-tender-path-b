@@ -56,8 +56,23 @@ describe("Gap 6 — lib/prisma.ts runtime schema bootstrap policy", () => {
   it("development still runs the bootstrap (so npm run dev works first-time)", async () => {
     const { readFile } = await import("node:fs/promises");
     const src = await readFile(new URL("../lib/prisma.ts", import.meta.url), "utf8");
-    // The schema-bootstrap flag function returns true in non-production.
-    assert.match(src, /NODE_ENV\s*!==\s*"production".*return true/s);
+    // Asked of the function, not of its source text: the policy was narrowed
+    // so non-production bootstraps only a LOCAL database (see
+    // tests/runtime-bootstrap-never-touches-a-remote-database.test.ts), and a
+    // regex over the old one-liner could not tell that from a regression.
+    const { isRuntimeSchemaBootstrapEnabled } = await import("../lib/prisma");
+    const env = process.env as Record<string, string | undefined>;
+    const snap = { NODE_ENV: env.NODE_ENV, DATABASE_URL: env.DATABASE_URL, FLAG: env.ENABLE_RUNTIME_SCHEMA_BOOTSTRAP };
+    try {
+      env.NODE_ENV = "development";
+      delete env.ENABLE_RUNTIME_SCHEMA_BOOTSTRAP;
+      env.DATABASE_URL = "postgresql://dev:dev@127.0.0.1:5432/dev";
+      assert.equal(isRuntimeSchemaBootstrapEnabled(), true);
+    } finally {
+      for (const [k, v] of [["NODE_ENV", snap.NODE_ENV], ["DATABASE_URL", snap.DATABASE_URL], ["ENABLE_RUNTIME_SCHEMA_BOOTSTRAP", snap.FLAG]] as const) {
+        if (v === undefined) delete env[k]; else env[k] = v;
+      }
+    }
   });
 });
 
