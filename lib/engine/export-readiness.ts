@@ -901,8 +901,24 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
   if (effDeadline) {
     const now = new Date();
     if (effDeadline < now) {
-      const daysAgo = Math.round((now.getTime() - effDeadline.getTime()) / (1000 * 60 * 60 * 24));
-      advisoryWarnings.push({ category: "DEADLINE_PASSED", severity: "HIGH" as const, title: `Submission deadline passed ${daysAgo} day${daysAgo === 1 ? "" : "s"} ago (${effDeadline.toISOString().slice(0, 10)}). Late submissions are typically rejected by evaluators.`, recommendedAction: "Confirm whether a deadline extension was granted. If the tender closed, mark it as lost/withdrawn rather than exporting." });
+      // COUNT CALENDAR DAYS, AGAINST THE DATE THIS SENTENCE PRINTS.
+      //
+      // This was Math.round() over an elapsed duration, which contradicts the
+      // date in its own sentence and can contradict the fact it is reporting:
+      //
+      //   deadline 2026-08-25, read 2026-09-22 14:35Z -> 28.6 days elapsed
+      //   -> "passed 29 days ago (2026-08-25)", which is 28 days on a calendar
+      //
+      //   deadline yesterday 23:00, read today 01:00  -> 0.08 days elapsed
+      //   -> "passed 0 days ago", for a deadline that has passed
+      //
+      // The printed date is the UTC date, so the count is taken between UTC
+      // day boundaries and the two agree by construction. A deadline that
+      // passed earlier the same day is said so rather than counted as zero.
+      // The gate itself is unchanged: still `effDeadline < now`, still a HIGH
+      // advisory, never a hard blocker.
+      const passedWhen = describeDeadlinePassed(effDeadline, now);
+      advisoryWarnings.push({ category: "DEADLINE_PASSED", severity: "HIGH" as const, title: `Submission deadline passed ${passedWhen} (${effDeadline.toISOString().slice(0, 10)}). Late submissions are typically rejected by evaluators.`, recommendedAction: "Confirm whether a deadline extension was granted. If the tender closed, mark it as lost/withdrawn rather than exporting." });
     }
   }
 
@@ -1265,3 +1281,20 @@ export const DEFAULT_REQUIRED_SECTIONS_BY_TYPE: Record<string, string[]> = {
   QUOTATION: ["Quotation Cover Letter", "Price Schedule", "Submission Checklist"],
   FINANCIAL_PROPOSAL: ["Financial Proposal", "Price Schedule"],
 };
+
+/**
+ * How long ago a passed deadline passed, phrased for the owner.
+ *
+ * The caller prints the deadline's UTC date in the same sentence, so the count
+ * is taken between UTC day boundaries and the two agree by construction.
+ * Exported so the arithmetic can be exercised directly: it was previously
+ * inline and unreachable from a test without a database.
+ *
+ * `daysAgo` is retained as the name of the count -- it is what the readiness
+ * gate's own guards look for.
+ */
+export function describeDeadlinePassed(effDeadline: Date, now: Date): string {
+  const startOfUtcDay = (value: Date) => Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate());
+  const daysAgo = Math.round((startOfUtcDay(now) - startOfUtcDay(effDeadline)) / (1000 * 60 * 60 * 24));
+  return daysAgo <= 0 ? "earlier today" : `${daysAgo} day${daysAgo === 1 ? "" : "s"} ago`;
+}
