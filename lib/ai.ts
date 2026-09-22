@@ -6,6 +6,7 @@ import { getMinCooldownExpiryMs, recordProviderSuccess as recordProviderSuccessR
 import { CANONICAL_AI_PROVIDER_ORDER, getAutomaticProviderOrder, automaticallyEligibleProviders, readProviderKey, getProviderModel, getProviderOutputCap, getProviderTimeoutMs, isProviderConfigured as registryIsProviderConfigured, providerAutomaticEligibility, automaticChainDisplay, type AiUseCase } from "./ai-provider-registry";
 import { preflightProvider } from "./ai-preflight";
 import { resolveCurrencyToken } from "./engine/currency-reference";
+import { containsMetadataPlaceholder, containsMetadataScaffolding } from "./engine/metadata-validators";
 import { protectPrompt, protectPromptWithBoundary } from "./ai-trust-boundary";
 import { redactSecrets } from "./sanitize-error";
 import { GEMINI_TIMEOUT_MS, DEEPSEEK_DEFAULT_TIMEOUT_MS, MISTRAL_EXTRACTION_TIMEOUT_MS, OPENAI_COMPAT_DEFAULT_TIMEOUT_MS, O1_O3_TIMEOUT_MS, PROPOSAL_SECTION_TIMEOUT_MS, PROPOSAL_SECTION_TIMEOUT_CEILING_MS, PROPOSAL_SECTION_MS_PER_OUTPUT_TOKEN, PROPOSAL_SECTION_BASE_OVERHEAD_MS, PROPOSAL_SECTION_STITCH_RESERVE_MS, PROPOSAL_SECTION_MIN_WRITE_MS, COOLDOWN_WAIT_SETTLE_MS, PROPOSAL_AI_TIMEOUT_MS, REFINEMENT_CALL_TIMEOUT_MS } from "./timeout-config";
@@ -2428,6 +2429,50 @@ const ANALYSIS_MAX_CHUNKS = 200;
  * therefore the plan — stays deterministic for the same source and configuration.
  * Chunk TEXT is unaffected either way; only the eligibility verdict changes.
  */
+/**
+ * A free-text Tender Fact as it may be STORED.
+ *
+ * THE DEFECT THIS FIXES. Every extended client field was written with nothing
+ * but `trim().slice(...)`:
+ *
+ *   submissionAddress: typeof parsed.submissionAddress === "string"
+ *     ? parsed.submissionAddress.trim().slice(0, 500) || null : null,
+ *
+ * so whatever the extractor produced went into the column verbatim -- including
+ * its own worksheet. `containsMetadataScaffolding` already existed and already
+ * ran, but only at the READ side, inside the canonical field resolver. The
+ * value was therefore stored, then refused, with nothing in between able to
+ * clear it.
+ *
+ * Read from the exact-head Preview (tender d2b85e2a), the entire reason its ZIP
+ * was locked:
+ *
+ *   Field "Submission address":       Value contains extractor field-label
+ *     scaffolding or internal extraction instructions and must be re-extracted
+ *     as a single field value.
+ *   Field "Client address":           (same)
+ *   Field "Pre-bid meeting location": (same)
+ *
+ * Three address/location fields, each holding a multi-field extraction
+ * worksheet rather than one value. `sanitize-stored-metadata.ts` -- the
+ * "nullify anything that fails the canonical validators" layer -- covers eight
+ * NAME-shaped fields and none of these three, so no repair path could clear
+ * them either. Any tender whose extractor does this is permanently
+ * export-blocked, on every sector and every jurisdiction.
+ *
+ * Refusing to store it is what CLAUDE.md already specifies: a field that cannot
+ * be extracted is MISSING_SOURCE requiring manual confirmation, not a
+ * placeholder or a worksheet treated as data. Null is recoverable; contaminated
+ * text is not.
+ */
+export function storedTenderFactOrNull(value: unknown, maxLength: number): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim().slice(0, maxLength);
+  if (!trimmed) return null;
+  if (containsMetadataPlaceholder(trimmed) || containsMetadataScaffolding(trimmed)) return null;
+  return trimmed;
+}
+
 export function buildAnalysisPromptAsSent(content: string, index: number, total: number): string {
   return protectPrompt(buildAnalysisPrompt(content, index, total)).protectedPrompt;
 }
@@ -3059,24 +3104,24 @@ async function analyzeOneChunk(
         clientType: sanitizeClientType(parsed.clientType),
         submissionFormat: sanitizeSubmissionFormat(parsed.submissionFormat),
         // Extended client fields — validated and capped to safe lengths
-        procuringEntityName: typeof parsed.procuringEntityName === "string" ? parsed.procuringEntityName.trim().slice(0, 240) || null : null,
-        legalClientName: typeof parsed.legalClientName === "string" ? parsed.legalClientName.trim().slice(0, 240) || null : null,
-        donorAgency: typeof parsed.donorAgency === "string" ? parsed.donorAgency.trim().slice(0, 240) || null : null,
-        implementingAgency: typeof parsed.implementingAgency === "string" ? parsed.implementingAgency.trim().slice(0, 240) || null : null,
+        procuringEntityName: storedTenderFactOrNull(parsed.procuringEntityName, 240),
+        legalClientName: storedTenderFactOrNull(parsed.legalClientName, 240),
+        donorAgency: storedTenderFactOrNull(parsed.donorAgency, 240),
+        implementingAgency: storedTenderFactOrNull(parsed.implementingAgency, 240),
         country: typeof parsed.country === "string" ? parsed.country.trim().slice(0, 100) || null : null,
-        clientAddress: typeof parsed.clientAddress === "string" ? parsed.clientAddress.trim().slice(0, 500) || null : null,
-        clientContactName: typeof parsed.clientContactName === "string" ? parsed.clientContactName.trim().slice(0, 200) || null : null,
-        clientContactTitle: typeof parsed.clientContactTitle === "string" ? parsed.clientContactTitle.trim().slice(0, 200) || null : null,
+        clientAddress: storedTenderFactOrNull(parsed.clientAddress, 500),
+        clientContactName: storedTenderFactOrNull(parsed.clientContactName, 200),
+        clientContactTitle: storedTenderFactOrNull(parsed.clientContactTitle, 200),
         clientContactEmail: typeof parsed.clientContactEmail === "string" ? parsed.clientContactEmail.trim().slice(0, 300) || null : null,
-        clientContactPhone: typeof parsed.clientContactPhone === "string" ? parsed.clientContactPhone.trim().slice(0, 100) || null : null,
-        submissionAddress: typeof parsed.submissionAddress === "string" ? parsed.submissionAddress.trim().slice(0, 500) || null : null,
-        clientCity: typeof parsed.clientCity === "string" ? parsed.clientCity.trim().slice(0, 200) || null : null,
+        clientContactPhone: storedTenderFactOrNull(parsed.clientContactPhone, 100),
+        submissionAddress: storedTenderFactOrNull(parsed.submissionAddress, 500),
+        clientCity: storedTenderFactOrNull(parsed.clientCity, 200),
         clientWebsite: typeof parsed.clientWebsite === "string" ? parsed.clientWebsite.trim().slice(0, 500) || null : null,
-        submissionEmailSubject: typeof parsed.submissionEmailSubject === "string" ? parsed.submissionEmailSubject.trim().slice(0, 500) || null : null,
-        preBidChannel: typeof parsed.preBidChannel === "string" ? parsed.preBidChannel.trim().slice(0, 500) || null : null,
+        submissionEmailSubject: storedTenderFactOrNull(parsed.submissionEmailSubject, 500),
+        preBidChannel: storedTenderFactOrNull(parsed.preBidChannel, 500),
         preBidMeetingDate: (() => { const raw = parsed.preBidMeetingDate; if (typeof raw !== "string" || !raw.trim()) return null; const d = raw.trim().slice(0, 50); return /^\d{4}-\d{2}-\d{2}/.test(d) ? d : null; })(),
-        preBidMeetingLocation: typeof parsed.preBidMeetingLocation === "string" ? parsed.preBidMeetingLocation.trim().slice(0, 300) || null : null,
-        clientRepresentative: typeof parsed.clientRepresentative === "string" ? parsed.clientRepresentative.trim().slice(0, 300) || null : null,
+        preBidMeetingLocation: storedTenderFactOrNull(parsed.preBidMeetingLocation, 300),
+        clientRepresentative: storedTenderFactOrNull(parsed.clientRepresentative, 300),
         submissionMethod: typeof parsed.submissionMethod === "string" ? parsed.submissionMethod.trim().slice(0, 80) || null : null,
         submissionEmails: typeof parsed.submissionEmails === "string" ? parsed.submissionEmails.trim().slice(0, 500) || null : null,
         procurementReferenceNumber: typeof parsed.procurementReferenceNumber === "string" ? parsed.procurementReferenceNumber.trim().slice(0, 200) || null : null,
