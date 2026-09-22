@@ -3,7 +3,7 @@ import { logger } from "./observability";
 import { isAIConfigured } from "./env-check";
 const { GoogleGenerativeAI } = require("@google/generative-ai") as typeof import("@google/generative-ai");
 import { getMinCooldownExpiryMs, recordProviderSuccess as recordProviderSuccessRaw, recordProviderFailure as recordProviderFailureRaw, recordProviderAnalysisSuccess as recordProviderAnalysisSuccessRaw, recordProviderCapabilityResult, classifyAiError, isProviderCooledDown, isBillingLockedOut, getProviderRuntimeSnapshot, getProviderStateSnapshot, getDeepSeekApiKey, isDeepSeekConfigured, getDeepSeekModel, getMistralApiKey, isMistralConfigured, getMistralProposalModel, getMistralAnalysisModel, getMistralFastModel, getMistralBaseUrl, getGroqApiKey, isGroqConfigured, getGroqBaseUrl, getTogetherApiKey, isTogetherConfigured, getTogetherProposalModel, getTogetherAnalysisModel, getTogetherFastModel, getTogetherBaseUrl, getOpenRouterApiKey, isOpenRouterConfigured, getOpenRouterModel, getOpenRouterBaseUrl, getOpenRouterSiteUrl, getOpenRouterAppName, getZaiApiKey, getZaiBaseUrl, getCerebrasApiKey, getCerebrasBaseUrl, getAnthropicApiKey, type AiProviderName } from "./ai-provider-health";
-import { CANONICAL_AI_PROVIDER_ORDER, getAutomaticProviderOrder, automaticallyEligibleProviders, readProviderKey, getProviderModel, getProviderOutputCap, getProviderTimeoutMs, isProviderConfigured as registryIsProviderConfigured, providerAutomaticEligibility, automaticChainDisplay, type AiUseCase } from "./ai-provider-registry";
+import { CANONICAL_AI_PROVIDER_ORDER, getAutomaticProviderOrder, automaticallyEligibleProviders, readProviderKey, getProviderModel, getProviderOutputCap, getProviderTimeoutMs, getProviderWorkerTimeoutMs, isProviderConfigured as registryIsProviderConfigured, providerAutomaticEligibility, automaticChainDisplay, type AiUseCase } from "./ai-provider-registry";
 import { preflightProvider } from "./ai-preflight";
 import { resolveCurrencyToken } from "./engine/currency-reference";
 import { containsMetadataPlaceholder, containsMetadataScaffolding } from "./engine/metadata-validators";
@@ -767,6 +767,30 @@ export function resolveEffectiveTimeoutMs(staticTimeoutMs: number, now: number =
   if (typeof deadlineAt !== "number") return staticTimeoutMs;
   const remaining = deadlineAt - now;
   return Math.max(MIN_PROVIDER_TIMEOUT_MS, Math.min(staticTimeoutMs, remaining));
+}
+
+/**
+ * One provider attempt's timeout when the provider has a longer worker ceiling.
+ *
+ * resolveEffectiveTimeoutMs can only SHORTEN a static timeout to fit an armed
+ * deadline; it can never let an attempt use time the caller actually has. So a
+ * durable worker with minutes remaining still cut a slow-but-working provider
+ * off at the constant written for 60s request routes. With a deadline armed and
+ * a `workerTimeoutMs` declared, the attempt may run up to that ceiling, still
+ * clamped to what the deadline leaves. With no deadline armed nothing changes:
+ * the static timeout applies exactly as before, so a sync route can never be
+ * pushed past its own platform limit by this.
+ */
+export function resolveProviderAttemptTimeoutMs(
+  staticTimeoutMs: number,
+  workerTimeoutMs: number | undefined,
+  now: number = Date.now(),
+): number {
+  const deadlineAt = providerDeadlineStore.getStore();
+  if (typeof deadlineAt !== "number" || typeof workerTimeoutMs !== "number" || workerTimeoutMs <= staticTimeoutMs) {
+    return resolveEffectiveTimeoutMs(staticTimeoutMs, now);
+  }
+  return Math.max(MIN_PROVIDER_TIMEOUT_MS, Math.min(workerTimeoutMs, deadlineAt - now));
 }
 
 export class NoAiProviderReadyError extends Error {
@@ -1810,13 +1834,15 @@ async function generateOpenAICompatible(params: {
   // Request guaranteed structured JSON output (response_format json_object).
   responseFormatJson?: boolean;
   timeoutMs?: number;
+  /** Longer ceiling usable only under an armed worker deadline (see resolveProviderAttemptTimeoutMs). */
+  workerTimeoutMs?: number;
   /**
    * Set when this call is already the one retry permitted by a provider's
    * stated affordable ceiling. Bounds the recursion at exactly one.
    */
   withinStatedAffordance?: boolean;
 }): Promise<string | null> {
-  const { providerLabel, providerName, endpoint, apiKey: key, model, prompt, systemPrompt, maxTokens, extraHeaders, maxTokensParam = "max_tokens", responseFormatJson, timeoutMs, withinStatedAffordance } = params;
+  const { providerLabel, providerName, endpoint, apiKey: key, model, prompt, systemPrompt, maxTokens, extraHeaders, maxTokensParam = "max_tokens", responseFormatJson, timeoutMs, workerTimeoutMs, withinStatedAffordance } = params;
   // Surface the real failure reason. Previously every HTTP-error / empty-content
   // branch only logged to console.warn and returned null, so the actual cause
   // (e.g. "HTTP 400: max_tokens too large", "HTTP 429: rate limit") was lost and
@@ -1827,7 +1853,8 @@ async function generateOpenAICompatible(params: {
     if (providerName) recordProviderFailure(providerName, new Error(`${providerLabel} ${reason}`));
   };
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), resolveEffectiveTimeoutMs(timeoutMs ?? OPENAI_COMPAT_DEFAULT_TIMEOUT_MS));
+  const appliedTimeoutMs = resolveProviderAttemptTimeoutMs(timeoutMs ?? OPENAI_COMPAT_DEFAULT_TIMEOUT_MS, workerTimeoutMs);
+  const timeoutId = setTimeout(() => controller.abort(), appliedTimeoutMs);
   try {
     const res = await fetch(endpoint, {
       method: "POST",
@@ -1908,7 +1935,10 @@ async function generateOpenAICompatible(params: {
     clearTimeout(timeoutId);
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes("aborted") || msg.includes("timeout")) {
-      const actualTimeout = timeoutMs ?? OPENAI_COMPAT_DEFAULT_TIMEOUT_MS;
+      // Report the limit that was actually applied, not the static constant:
+      // under a worker deadline they differ, and naming the wrong one sends the
+      // reader after the wrong cause.
+      const actualTimeout = appliedTimeoutMs;
       logger.warn(`[ai] ${providerLabel} fetch timed out after ${actualTimeout}ms — falling through.`);
       note(`timed out after ${actualTimeout}ms`);
       return null;
@@ -2042,6 +2072,7 @@ async function generateWithZai(
     // FIX: Use registry timeout (45s) instead of the 20s default.
     // The AI Analyze prompt is very large and glm-4.7-flash needs more time.
     timeoutMs: getProviderTimeoutMs("zai"),
+    workerTimeoutMs: getProviderWorkerTimeoutMs("zai"),
   });
 }
 
@@ -2072,6 +2103,7 @@ async function generateWithCerebras(
     responseFormatJson: wantJson,
     // FIX: Use registry timeout (45s) — same rationale as Z.ai.
     timeoutMs: getProviderTimeoutMs("cerebras"),
+    workerTimeoutMs: getProviderWorkerTimeoutMs("cerebras"),
   });
 }
 

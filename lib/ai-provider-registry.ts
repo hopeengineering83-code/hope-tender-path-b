@@ -124,6 +124,13 @@ export type ProviderRegistryEntry = {
   };
   outputCaps: ProviderOutputCaps;
   timeoutMs: number;
+  /**
+   * How long one call may run when the caller has declared a real budget (a
+   * durable worker's armed deadline). Absent means `timeoutMs` is also the
+   * ceiling there. Never used without an armed deadline, and always clamped to
+   * the time that deadline leaves -- see resolveProviderAttemptTimeoutMs.
+   */
+  workerTimeoutMs?: number;
   retry: ProviderRetryPolicy;
   // Whether the provider can return guaranteed structured JSON (response_format
   // json_object). When true, structured-extraction calls request JSON mode.
@@ -155,6 +162,13 @@ const DEFAULT_TIMEOUT_MS = 20_000;
 // can take 15-40s to generate a complete JSON response. 20s causes TIMEOUT
 // on the first provider, consuming an attempt budget slot for nothing.
 const ANALYSIS_TIMEOUT_MS = 45_000;
+// Inside a durable worker (300s ceiling, ~220s usable) the same slow providers
+// may take this long for one structured extraction. On 2026-09-22 AI Analyze
+// on a 7,242-input-token request failed with "Z.ai GLM timed out after
+// 45000ms" while the worker still had well over two minutes left and every
+// provider after Z.ai was billing-locked -- the 45s constant, written for 60s
+// request routes, decided the outcome, not the worker's real budget.
+const ANALYSIS_WORKER_TIMEOUT_MS = 150_000;
 
 const FALLBACK_RETRY: ProviderRetryPolicy = { maxRetries: 0, retryOnAuth: false, retryOnBilling: false };
 
@@ -188,6 +202,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     // more than the 20s default. Z.ai glm-4.7-flash can take 15-40s on
     // a full tender analysis JSON response.
     timeoutMs: ANALYSIS_TIMEOUT_MS,
+    workerTimeoutMs: ANALYSIS_WORKER_TIMEOUT_MS,
     retry: FALLBACK_RETRY,
     supportsStructuredJson: true,
     emergencyOnly: false,
@@ -227,6 +242,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     outputCaps: HOBBY_SAFE_CAPS, // 8K proposal tokens — safe for Vercel Hobby 45s
     // FIX: 45s timeout — same rationale as Z.ai.
     timeoutMs: ANALYSIS_TIMEOUT_MS,
+    workerTimeoutMs: ANALYSIS_WORKER_TIMEOUT_MS,
     retry: FALLBACK_RETRY,
     supportsStructuredJson: true,
     emergencyOnly: false,
@@ -744,6 +760,11 @@ export function getProviderOutputCap(
  */
 export function getProviderTimeoutMs(provider: AiProviderName): number {
   return REGISTRY[provider].timeoutMs;
+}
+
+/** The longer per-call ceiling a provider may use under an armed worker deadline, if any. */
+export function getProviderWorkerTimeoutMs(provider: AiProviderName): number | undefined {
+  return REGISTRY[provider].workerTimeoutMs;
 }
 
 // ─── OpenRouter free-model policy ─────────────────────────────────────────────

@@ -85,7 +85,21 @@ describe("every provider adapter clamps to the parent deadline", () => {
     const abortArms = source.match(/setTimeout\(\(\) => controller\.abort\(\),[^)]*\)/g) ?? [];
     assert.ok(abortArms.length >= 3, "expected the fetch-based adapters to arm abort controllers");
     for (const arm of abortArms) {
-      assert.match(arm, /resolveEffectiveTimeoutMs/, `abort site must be clamped: ${arm}`);
+      // resolveProviderAttemptTimeoutMs is the same clamp with a worker ceiling:
+      // it can lengthen a static timeout inside a durable worker but never past
+      // the parent deadline (proved behaviourally in
+      // a-worker-attempt-may-use-its-budget-but-never-pass-its-deadline).
+      // An arm may name the clamped value it computed one line earlier, so the
+      // timeout log can report the limit that was actually applied.
+      if (/controller\.abort\(\), appliedTimeoutMs\)$/.test(arm)) {
+        assert.match(
+          source,
+          /const appliedTimeoutMs = resolve(Effective|ProviderAttempt)TimeoutMs\(/,
+          "appliedTimeoutMs must itself come from the clamp",
+        );
+        continue;
+      }
+      assert.match(arm, /resolve(Effective|ProviderAttempt)TimeoutMs/, `abort site must be clamped: ${arm}`);
     }
   });
 
