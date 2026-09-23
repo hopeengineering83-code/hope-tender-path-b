@@ -28,6 +28,8 @@ import {
   canonicalizeCountry,
   isValidClientContact,
   nonClientEntityLabelPattern,
+  containsMetadataScaffolding,
+  containsMetadataPlaceholder,
 } from "./metadata-validators";
 import { cutAtNextFieldLabel } from "./tender-field-extractors";
 
@@ -554,6 +556,28 @@ function summaryFromText(text: string): string | null {
   return useful || null;
 }
 
+/**
+ * The upload-time extractor must not store what the export gate will refuse.
+ *
+ * On 2026-09-23 this extractor stored, as the Preview tender's submission
+ * address, "/ Portal: No physical address or portal is provided. Use email
+ * submission only. Financial Proposal: Not required at this stage. ..." --
+ * several field labels and an instruction run together. The AI Analyze write
+ * path already refused such values (storedTenderFactOrNull), but this path
+ * did not, and canonical-field-state later refused the same value with
+ * "extractor field-label scaffolding", pausing everything after Run Engine.
+ * One test decides, at both writers: the gate's own containsMetadataScaffolding
+ * and placeholder checks. A refused value is simply not stated; nothing is
+ * invented in its place.
+ */
+function extractedFactOrNull(value: string | null | undefined): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (containsMetadataScaffolding(trimmed) || containsMetadataPlaceholder(trimmed)) return null;
+  return trimmed;
+}
+
 export function inferTenderMetadata(extractedText: string, fallbackFileName: string): TenderMetadataDraft {
   const text = extractedText.slice(0, 250_000);
 
@@ -646,7 +670,7 @@ export function inferTenderMetadata(extractedText: string, fallbackFileName: str
     donorAgency: donorAgencyResult?.value ?? null,
     implementingAgency: implementingAgencyResult?.value ?? null,
     clientWebsite: clientWebsiteResult?.value ?? null,
-    submissionEmailSubject: submissionEmailSubjectResult?.value ?? null,
+    submissionEmailSubject: extractedFactOrNull(submissionEmailSubjectResult?.value ?? null),
     contactDetailsSource: sourceMap([
       ["procuringEntityName", procuringEntity],
       ["donorAgency", donorAgencyResult],
@@ -654,24 +678,24 @@ export function inferTenderMetadata(extractedText: string, fallbackFileName: str
       ["clientWebsite", clientWebsiteResult],
       ["submissionEmailSubject", submissionEmailSubjectResult],
     ]),
-    clientContactName,
-    clientContactTitle,
+    clientContactName: extractedFactOrNull(clientContactName),
+    clientContactTitle: extractedFactOrNull(clientContactTitle),
     clientContactEmail,
     clientContactPhone,
-    clientAddress,
+    clientAddress: extractedFactOrNull(clientAddress),
     country,
     category,
     budget: budget.amount,
     currency: budget.currency,
     deadline,
     submissionMethod,
-    submissionAddress,
+    submissionAddress: extractedFactOrNull(submissionAddress),
     submissionEmails,
     validityDays,
     bidBondAmount: bidBond.amount,
     bidBondCurrency: bidBond.currency,
     preBidMeetingDate: preBid.date,
-    preBidMeetingLocation: preBid.location,
+    preBidMeetingLocation: extractedFactOrNull(preBid.location),
     mandatorySiteVisit,
     numberOfCopiesRequired,
     pageLimit,

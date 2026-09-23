@@ -186,6 +186,16 @@ export function listInvalidStoredFields(tender: StoredMetadataLike): string[] {
   if (hasInvalidValue(tender.legalClientName, withPlaceholderRejection(isValidClientName))) out.push("legalClientName");
   if (hasInvalidValue(tender.donorAgency, withPlaceholderRejection(isValidClientName))) out.push("donorAgency");
   if (hasInvalidValue(tender.implementingAgency, withPlaceholderRejection(isValidClientName))) out.push("implementingAgency");
+  // The address-like fields are cleaned by computeStoredMetadataPatch but were
+  // never LISTED here, and both callers only apply the patch when this list is
+  // non-empty. So a contaminated submission address on an otherwise-valid
+  // tender was never cleaned: on 2026-09-23 Run Engine completed and every
+  // downstream stage paused on "Field \"Submission address\": Value contains
+  // extractor field-label scaffolding" — the very value this module exists to
+  // clear. Listing and patching now name the same fields.
+  for (const field of ADDRESS_LIKE_FIELDS) {
+    if (isContaminatedFreeText(tender[field])) out.push(field);
+  }
   return out;
 }
 

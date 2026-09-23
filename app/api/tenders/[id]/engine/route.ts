@@ -141,6 +141,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         legalClientName: true,
         donorAgency: true,
         implementingAgency: true,
+        // The address-like fields sanitize-stored-metadata cleans. Without
+        // them in the select the cleanup below could never see them.
+        submissionAddress: true,
+        clientAddress: true,
+        clientCity: true,
+        preBidMeetingLocation: true,
+        preBidChannel: true,
+        submissionEmailSubject: true,
+        clientRepresentative: true,
         files: {
           select: {
             id: true,
