@@ -246,6 +246,27 @@ export function MatchingSelectedEvidencePanel({
     return () => window.clearInterval(timer);
   }, [loadReadiness, readiness?.engineRunning]);
 
+  // A failed readiness check must not lock Run Engine for the life of the page.
+  //
+  // The check ran once on mount and again only while an Engine job was in
+  // flight. When that single request failed in transit — the browser's own
+  // "Failed to fetch", while the server logged the same route answering 200 —
+  // readiness stayed null, the button stayed disabled, and nothing ever asked
+  // again. On 2026-09-23 the owner pressed a greyed-out Run Engine under
+  // "Engine readiness could not be verified. Run Engine remains disabled.
+  // Failed to fetch", and no Engine run was ever requested.
+  //
+  // While the last check failed, ask again on the idle cadence. It stays
+  // fail-closed: the button enables only when a check actually succeeds, and a
+  // hidden tab does no work.
+  useEffect(() => {
+    if (!readinessError || deletedRef.current) return;
+    const timer = window.setInterval(() => {
+      if (!document.hidden) void loadReadiness();
+    }, IDLE_POLL_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [loadReadiness, readinessError]);
+
   // `engineComplete` is NOT transient. The route computes it as
   // `latestJob.status === "SUCCEEDED" && !engineRunning`, so once the Engine has
   // succeeded it stays true for the life of the tender. Polling on that condition

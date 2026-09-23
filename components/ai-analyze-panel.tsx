@@ -86,6 +86,8 @@ const DIAGNOSTIC_STATE_LABEL: Record<ProviderDiag["diagnosticState"], string> = 
   CONFIGURED: "contacted, nothing proven",
 };
 
+/** Retry cadence for a readiness check that failed in transit. */
+const READINESS_RETRY_INTERVAL_MS = 8_000;
 const POLL_INTERVAL_MS = 3_000;
 const TERMINAL: JobStatus[] = ["SUCCEEDED", "PARTIAL_SUCCESS", "FAILED", "CANCELED"];
 
@@ -364,6 +366,22 @@ export function AIAnalyzePanel({
     }, POLL_INTERVAL_MS);
     return () => window.clearInterval(timer);
   }, [engineState?.engineRunning, loadEngineState]);
+
+  // A failed readiness check must not lock AI Analyze or the Engine state for
+  // the life of the page. Both were loaded once on mount, so one request lost
+  // in transit ("Failed to fetch") left the action disabled until a manual
+  // reload — the same defect that greyed out Run Engine on 2026-09-23. While a
+  // check is failing, ask again; the action still enables only when a check
+  // actually succeeds, and a hidden tab does no work.
+  useEffect(() => {
+    if ((!readinessError && !engineStateError) || deletedRef.current) return;
+    const timer = window.setInterval(() => {
+      if (document.hidden) return;
+      if (readinessError) void loadReadiness();
+      if (engineStateError) void loadEngineState();
+    }, READINESS_RETRY_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [engineStateError, loadEngineState, loadReadiness, readinessError]);
 
   useEffect(() => {
     if (!jobId) return;
