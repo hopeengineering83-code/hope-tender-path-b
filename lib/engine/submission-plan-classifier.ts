@@ -40,6 +40,19 @@ function isProbablyDeliverable(input: ClassifierInput): boolean {
   return ["FORM", "ANNEX", "SCHEDULE", "DECLARATION"].includes(t);
 }
 
+const DELIVERY_CHANNEL = String.raw`(?:e-?mail(?:ed)?|electronic(?:ally)?|online|web|(?:e-?)?portal|e-?procurement|e-?tender(?:ing)?|hard[\s-]?cop(?:y|ies)|physical|paper|postal|post|courier|hand[\s-]?deliver(?:y|ed)?|in[\s-]person|sealed[\s-]envelope)`;
+const CHANNEL_SUBMISSION = new RegExp(
+  String.raw`\b${DELIVERY_CHANNEL}\s+(?:bid\s+|tender\s+|proposal\s+)?submission\b`
+  + String.raw`|\bsubmission\s+(?:by|via|through|using|in)\s+(?:an?\s+|the\s+)?${DELIVERY_CHANNEL}\b`,
+);
+const DELIVERABLE_NOUN = /\b(?:form|letter|proposal|sheet|schedule|template|annex(?:ure)?|appendix|declaration|certificate|profile|cv|statement|report|plan|matrix|checklist)\b/;
+
+/** True when the row names a submission delivery channel and nothing that is itself a document. */
+export function namesOnlyADeliveryChannel(value: string): boolean {
+  const v = value.toLowerCase();
+  return CHANNEL_SUBMISSION.test(v) && !DELIVERABLE_NOUN.test(v);
+}
+
 export function classifySubmissionPlanItem(input: ClassifierInput): ClassifierResult {
   const value = text(input);
   if (!value.trim()) return result("INTERNAL_COMPLIANCE_CONTROL", "Empty row — not a generated file.");
@@ -101,6 +114,19 @@ export function classifySubmissionPlanItem(input: ClassifierInput): ClassifierRe
     /\bemail\s+subject\b|\bsubject\s+line\b|\bsubject\s+of\s+the\s+e-?mail\b|\bmark\s+the\s+(?:e-?mail|envelope)\b|\bemail\s+body\b|\bcovering\s+e-?mail\b/.test(value)
   ) {
     return result("SUBMISSION_RULE", "Submission process/timing/recipient/subject rule, not a deliverable file.");
+  }
+
+  // A delivery CHANNEL named as if it were a document: "Email Submission",
+  // "Online Portal Submission", "Hard Copy Submission", "Submission via
+  // e-mail". These say HOW the package travels, not WHAT is in it. On
+  // 2026-09-23 the Preview Build Plan carried a required file named
+  // "Email Submission.docx", so AUTO_FINALIZE could never converge
+  // (UNGENERATED_PLANNED_DOCUMENTS / SUBMISSION_PLAN_DOCUMENTS_MISSING) for a
+  // file no bidder could ever produce. A row that also names a deliverable
+  // ("Email Submission Form", "Online Submission Cover Letter") is left to the
+  // deliverable and template branches below.
+  if (namesOnlyADeliveryChannel(value)) {
+    return result("SUBMISSION_RULE", "Submission delivery channel (how the package is sent), not a deliverable file.");
   }
 
   // Formatting rules → INTERNAL_COMPLIANCE_CONTROL (not TECHNICAL_PROPOSAL)

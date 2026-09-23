@@ -1,4 +1,5 @@
 import { classifySubmissionPlanItem } from "./submission-plan-classifier";
+import { statedSingleSubmissionFile } from "./single-submission-file-rule";
 
 export type SubmissionPlanFormat = "DOCX" | "PDF" | "ZIP" | "XLSX" | "OTHER";
 
@@ -293,7 +294,17 @@ function buildFilesFromExactNames(tender: TenderLike, startOrder: number): Submi
   const orderedNames = exactOrder.length > 0 ? exactOrder : exactNames;
   const sourceNames = orderedNames.length > 0 ? orderedNames : exactNames;
 
-  return sourceNames.map((name, index): SubmissionPlanFile => {
+  // A tender-stated name is still subject to the one rule-vs-file authority:
+  // a name that positively reads as a submission rule ("Email Submission")
+  // describes how to send the package and can never be produced, so it must
+  // not become a required file. Only the positive rule categories are dropped —
+  // the classifier's catch-all is not a reason to discard a name the tender gave.
+  const deliverableNames = sourceNames.filter((name) => {
+    const category = classifySubmissionPlanItem({ title: name, exactFileName: name }).category;
+    return category !== "SUBMISSION_RULE" && category !== "COMMERCIAL_SEPARATION_RULE";
+  });
+
+  return deliverableNames.map((name, index): SubmissionPlanFile => {
     const format = inferFormat(name);
     return {
       canonicalId: `exact-${slug(name)}`,
@@ -433,6 +444,57 @@ export function buildSubmissionPlan(tender: TenderLike): SubmissionPlan {
       ? { ...file, sourceRequirementIds: Array.from(new Set([...file.sourceRequirementIds, ...folded])) }
       : file);
   });
+
+  // ── "All documents … as a single PDF file named X" ────────────────────────
+  // See lib/engine/single-submission-file-rule.ts. Bidder-produced files in
+  // the non-financial scope are contents of X, not files beside it.
+  const singleFile = statedSingleSubmissionFile(requirements);
+  if (singleFile) {
+    const targetFormat = inferFormat(singleFile.fileName);
+    const targetKey = fileKey(fileNameWithExtension(singleFile.fileName, targetFormat));
+    const foldedIds: string[] = [...singleFile.requirementIds];
+    for (const [key, file] of Array.from(files.entries())) {
+      if (key === targetKey) continue;
+      // The row that STATES the rule is an instruction about the package, not
+      // a second file ("PDF Submission.pdf" beside the file it names).
+      const onlyStatesTheRule = file.sourceRequirementIds.length > 0
+        && file.sourceRequirementIds.every((id) => singleFile.requirementIds.includes(id));
+      if (onlyStatesTheRule) {
+        files.delete(key);
+        continue;
+      }
+      if (file.envelope === "FINANCIAL") continue;
+      const category = classifySubmissionPlanItem({
+        title: file.exactFileName,
+        requirementType: file.documentType,
+        exactFileName: file.exactFileName,
+      }).category;
+      if (category !== "REQUIRED_OUTPUT_FILE") continue;
+      foldedIds.push(...file.sourceRequirementIds);
+      files.delete(key);
+    }
+    const existing = files.get(targetKey);
+    addFile(files, existing
+      ? { ...existing, sourceRequirementIds: Array.from(new Set([...existing.sourceRequirementIds, ...foldedIds])) }
+      : {
+          canonicalId: `single-${slug(singleFile.fileName)}`,
+          exactFileName: fileNameWithExtension(singleFile.fileName, targetFormat),
+          documentType: "TECHNICAL_PROPOSAL",
+          required: true,
+          exactOrder: 1,
+          format: targetFormat,
+          envelope: "TECHNICAL",
+          sourceRequirementIds: Array.from(new Set(foldedIds)),
+          pageLimit: tender.pageLimit ?? null,
+          templateRequired: false,
+          templateSourceFileId: null,
+          brandingAllowed: restrictionAllows(restrictions, "letterhead"),
+          signatureAllowed: restrictionAllows(restrictions, "signature"),
+          stampAllowed: restrictionAllows(restrictions, "stamp"),
+          grouping: null,
+          notes: "The tender requires the whole submission as this one file; bidder-produced deliverables are its contents.",
+        });
+  }
 
   // ── The tender's stated attachment order is authoritative ────────────────
   //
