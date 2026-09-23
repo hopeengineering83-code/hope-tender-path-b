@@ -4,7 +4,7 @@ import { buildSubmissionPlan, plannedSubmissionTargetFiles, type SubmissionPlanF
 import { isEmailSubmissionMethod, isPhysicalSubmissionMethod, isPortalSubmissionMethod } from "./submission-method-policy";
 import { containsMetadataPlaceholder } from "./metadata-validators";
 import { isValidationPassed } from "./document-output-state";
-import { classifySubmissionPlanItem } from "./submission-plan-classifier";
+import { plannedFileIsARule } from "./submission-plan-classifier";
 
 /**
  * Plan items a CONFIRMED BuildPlan carries that the current classification
@@ -29,27 +29,13 @@ export function findNonDeliverablePlanItems(items: BuildPlanItem[]): Array<{ exa
   for (const item of items) {
     const exactFileName = String(item.exactFileName ?? "").trim();
     if (!exactFileName) continue;
-    const classification = classifySubmissionPlanItem({
-      title: item.exactFileName,
-      description: item.notes ?? null,
-      requirementType: item.documentType ?? null,
-      exactFileName: item.exactFileName,
-    });
-    // ONLY categories that positively mean "this is a rule, not a file".
-    //
-    // shouldBePlannedFile is false for four categories, and two of them are not
-    // phantoms: ORIGINAL_EVIDENCE_ATTACHMENT is a real document that is
-    // attached rather than generated, and INTERNAL_COMPLIANCE_CONTROL is the
-    // classifier's CATCH-ALL for text it does not recognise. Treating the
-    // catch-all as a phantom fail-closed any confirmed plan containing a
-    // tersely-named item — a real regression the metadata-evidence DB proof
-    // caught on a plan item named "1.docx".
-    if (
-      classification.category === "COMMERCIAL_SEPARATION_RULE"
-      || classification.category === "SUBMISSION_RULE"
-    ) {
-      phantom.push({ exactFileName, rationale: classification.rationale });
-    }
+    // ONLY categories that positively mean "this is a rule, not a file" —
+    // see plannedFileIsARule. The classifier's catch-all
+    // (INTERNAL_COMPLIANCE_CONTROL) and attached originals are not phantoms;
+    // treating the catch-all as one fail-closed a confirmed plan containing a
+    // tersely-named item ("1.docx").
+    const verdict = plannedFileIsARule(item);
+    if (verdict.rule) phantom.push({ exactFileName, rationale: verdict.rationale });
   }
   return phantom;
 }

@@ -43,3 +43,31 @@ describe("a delivery channel is not a document", () => {
     assert.deepEqual(phantom.map((p) => p.exactFileName), ["Email Submission.docx"]);
   });
 });
+
+describe("a freshly built plan is never stale by construction", () => {
+  // The live requirement was typed SUBMISSION_RULE and its description mentioned
+  // the proposal, so the builder kept "Email Submission.docx" while the stale-plan
+  // detector rejected it: every Run Engine confirmed a plan the next read called
+  // stale, and generation never started.
+  const req = (id: string, title: string, description: string, requirementType: string) =>
+    ({ id, title, description, requirementType, priority: "MANDATORY" });
+
+  const shapes = [
+    [req("e1", "Email Submission", "Submit the technical proposal via email to procurement@example.org.", "SUBMISSION_RULE")],
+    [req("e2", "Email Submission", "Proposals must be emailed as one PDF attachment.", "SUBMISSION_RULE")],
+    [req("e3", "Online Portal Submission", "Upload the proposal on the e-procurement portal.", "SUBMISSION_RULE")],
+    [req("e4", "Submission Deadline", "Proposals must reach the client before 25 August 2026.", "SUBMISSION_RULE")],
+  ];
+
+  for (const requirements of shapes) {
+    it(`"${requirements[0]!.title}" (${requirements[0]!.description}) is not planned as a file`, () => {
+      const plan = buildSubmissionPlan({
+        id: "t",
+        exactFileNaming: JSON.stringify(["Technical Proposal.pdf"]),
+        requirements: [...requirements, req("c1", "Cover Letter", "Submit a signed cover letter.", "TECHNICAL")],
+      } as any);
+      assert.deepEqual(findNonDeliverablePlanItems(plan.files as any), [], "the builder produced a plan its own detector rejects");
+      assert.ok(!plan.files.some((f) => /submission|deadline/i.test(f.exactFileName)), plan.files.map((f) => f.exactFileName).join(", "));
+    });
+  }
+});

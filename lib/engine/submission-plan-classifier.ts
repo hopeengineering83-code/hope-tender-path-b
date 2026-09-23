@@ -175,3 +175,31 @@ export function classifySubmissionPlanItem(input: ClassifierInput): ClassifierRe
 export function shouldRowBecomePlannedFile(input: ClassifierInput): boolean {
   return classifySubmissionPlanItem(input).shouldBePlannedFile;
 }
+
+/**
+ * The ONE test for "this planned file is really a rule".
+ *
+ * Shared by the plan builder (submission-plan.ts) and the stale-plan detector
+ * (build-plan.ts findNonDeliverablePlanItems). They used to ask the classifier
+ * different questions: the builder passed the requirement's full description,
+ * the detector only the planned file name and its notes. On 2026-09-23 the
+ * requirement "Email Submission" (type SUBMISSION_RULE) had a description that
+ * mentions the proposal, so the builder kept "Email Submission.docx" while the
+ * detector rejected it — every Run Engine confirmed a plan the next read called
+ * stale, and generation never started. Asking the same question of the same
+ * planned-file fields in both places makes a freshly built plan non-stale by
+ * construction.
+ */
+export function plannedFileIsARule(file: { exactFileName?: string | null; notes?: string | null; documentType?: string | null }): { rule: boolean; rationale: string } {
+  const exactFileName = String(file.exactFileName ?? "").trim();
+  if (!exactFileName) return { rule: false, rationale: "" };
+  const classification = classifySubmissionPlanItem({
+    title: exactFileName,
+    description: file.notes ?? null,
+    requirementType: file.documentType ?? null,
+    exactFileName,
+  });
+  const rule = classification.category === "COMMERCIAL_SEPARATION_RULE" || classification.category === "SUBMISSION_RULE";
+  return { rule, rationale: classification.rationale };
+}
+

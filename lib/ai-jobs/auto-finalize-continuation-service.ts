@@ -262,6 +262,56 @@ export async function runAutoFinalizeAfterGeneration(
     warning: null,
   };
 
+  // Step -1: retire documents the confirmed plan no longer names.
+  //
+  // lib/engine/outside-plan-documents.ts says the manual control and "the
+  // automatic stage" share this rule, but only the manual routes called it. So
+  // when a rebuilt plan dropped a file — on 2026-09-23 the plan folded the
+  // Cover Letter and Company Profile into the single "Technical Proposal.pdf"
+  // the tender demands — the earlier "Company Profile.docx" stayed GENERATED,
+  // the export gate reported EXTRA_FILES, and no automatic step could clear it.
+  //
+  // Nothing is deleted: rows are SUPERSEDED with the reason, as the manual
+  // control leaves them. A document whose base name matches a planned file is
+  // never touched — "Technical Proposal.docx" is the source the required
+  // "Technical Proposal.pdf" is rendered from in the PDF stage below.
+  try {
+    const { findOutsidePlanDocumentIds, supersedeOutsidePlanDocuments } = await import("../engine/outside-plan-documents");
+    const outside = await findOutsidePlanDocumentIds(prisma, { tenderId, userId });
+    if (!outside.planEmpty && outside.ids.length > 0) {
+      const { getCurrentConfirmedBuildPlan } = await import("../engine/build-plan");
+      const confirmed = await getCurrentConfirmedBuildPlan(prisma, tenderId, userId);
+      const plannedBases = new Set(
+        (confirmed.ok ? confirmed.items : [])
+          .map((item: { exactFileName?: string | null }) => baseNameOf(item.exactFileName ?? ""))
+          .filter(Boolean),
+      );
+      const candidates = await prisma.generatedDocument.findMany({
+        where: { id: { in: outside.ids }, tenderId },
+        select: { id: true, name: true, exactFileName: true },
+      });
+      const retire = candidates
+        .filter((doc) => !plannedBases.has(baseNameOf(doc.exactFileName ?? doc.name ?? "")))
+        .map((doc) => doc.id);
+      const retired = await supersedeOutsidePlanDocuments(prisma, { tenderId, documentIds: retire });
+      if (retired > 0) {
+        await recordStep(jobId, {
+          stepName: "auto-finalize.outside-plan",
+          message: `Retired ${retired} document(s) the confirmed Build Plan no longer names`,
+          status: "SUCCEEDED",
+        });
+      }
+    }
+  } catch (error) {
+    // Fail closed: leaving an extra document in place is reported by the export
+    // gate, which blocks rather than releases.
+    logger.warn("[auto-finalize] outside-plan reconciliation failed", {
+      tenderId,
+      jobId,
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+    });
+  }
+
   // Step 0: reuse tender-issued forms from the uploaded Tender Intake files.
   //
   // Generation already tries this for every form it plans, but a user who
@@ -1181,3 +1231,9 @@ async function runPdfFinalization(
 
   return { finalized, skipped, failed };
 }
+
+/** "Technical Proposal.docx" and "Technical Proposal.pdf" share a base name. */
+function baseNameOf(fileName: string): string {
+  return fileName.trim().toLowerCase().replace(/\.[a-z0-9]{2,5}$/, "").replace(/\s+/g, " ");
+}
+

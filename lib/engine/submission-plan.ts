@@ -1,4 +1,4 @@
-import { classifySubmissionPlanItem } from "./submission-plan-classifier";
+import { classifySubmissionPlanItem, plannedFileIsARule } from "./submission-plan-classifier";
 import { statedSingleSubmissionFile } from "./single-submission-file-rule";
 
 export type SubmissionPlanFormat = "DOCX" | "PDF" | "ZIP" | "XLSX" | "OTHER";
@@ -525,7 +525,11 @@ export function buildSubmissionPlan(tender: TenderLike): SubmissionPlan {
   const rankOf = (file: SubmissionPlanFile): number =>
     declaredRank.get(normalize(file.exactFileName)) ?? Number.MAX_SAFE_INTEGER;
 
+  // The plan must never contain a file the stale-plan detector would reject,
+  // or every confirmed plan is stale the moment it is read. Same test, same
+  // fields — see plannedFileIsARule.
   const sortedFiles = Array.from(files.values())
+    .filter((file) => !plannedFileIsARule(file).rule)
     .sort((a, b) =>
       rankOf(a) - rankOf(b)
       || a.exactOrder - b.exactOrder
