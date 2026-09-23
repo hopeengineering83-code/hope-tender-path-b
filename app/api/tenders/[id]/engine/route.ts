@@ -189,6 +189,41 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       await prisma.tender.update({ where: { id: tender.id }, data: computeStoredMetadataPatch(tender) });
     }
 
+    // Refill EMPTY fields from the canonical source text with the current
+    // extractor. Auto-fill ran only once, when each file was first extracted,
+    // so a field cleared above as contaminated — or never extracted because an
+    // older extractor ran a value into the next label — stayed empty for the
+    // life of the tender. On 2026-09-23 the client name was cleared that way
+    // and Run Engine then stopped on "Critical tender details field clientName
+    // has no value" although the source states "Procuring Entity / Client
+    // Name: Pharo Ventures". autoFillTenderMetadata fills only empty or
+    // placeholder fields and never overwrites a value; everything it writes is
+    // read from the tender source. Non-fatal: a failure leaves the fields as
+    // they were, and the gates below judge what is stored.
+    try {
+      const current = await prisma.tender.findFirst({ where: { id: tender.id, userId } });
+      if (current) {
+        const { autoFillTenderMetadata } = await import("../../../../../lib/engine/auto-fill-tender-metadata");
+        await autoFillTenderMetadata(
+          {
+            ...(current as any),
+            files: canonicalFiles.map((file) => ({
+              extractedText: file.extractedText,
+              originalFileName: file.originalFileName,
+              fileName: file.originalFileName || file.fileName,
+              totalPages: file.totalPages,
+            })),
+          },
+          prisma,
+          // The analysis-input fields are hashed into the current analysis;
+          // filling one here would mark the owner's AI Analyze stale.
+          { preserveAnalysisInputs: true },
+        );
+      }
+    } catch {
+      // Fail closed: the metadata gates block on anything still missing.
+    }
+
     const effectiveExtractionFiles = canonicalFiles.map((file) => {
       const quality = assessExtractionQuality(file.extractedText, file.originalFileName || file.fileName);
       return {
