@@ -50,6 +50,7 @@ import { canonicalWorkPlan } from "./canonical-work-plan";
 
 import type { ExpertRecord, ProjectRecord } from "./benchmark-tables";
 import { truncateAtWordBoundary } from "./proposal-intelligence";
+import { titleStatesRole } from "./requirement-constraints";
 
 const MARKER_CROSSWALK = "<!-- deliverable:crosswalk -->";
 const MARKER_PHASES = "<!-- methodology:phase-narrative -->";
@@ -176,10 +177,10 @@ export function buildDeliverableCrosswalk(opts: {
 
 function pickName(experts: ExpertRecord[], keywords: string[], used: Set<string>): string {
   for (const k of keywords) {
-    const match = experts.find((e) =>
-      !used.has(e.fullName) &&
-      `${e.title || ""} ${e.disciplines || ""} ${e.profile || ""}`.toLowerCase().includes(k.toLowerCase()),
-    );
+    // The title only. The real record behind the defect below carried the
+    // firm-wide "Architecture" discipline tag, so a discipline match still
+    // named the electrical engineer as the Architect after the fallback went.
+    const match = experts.find((e) => !used.has(e.fullName) && titleStatesRole(e.title, k));
     if (match) {
       used.add(match.fullName);
       return `${match.fullName}${match.title ? ` (${match.title})` : ""}`;

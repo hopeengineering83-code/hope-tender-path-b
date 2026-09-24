@@ -1,6 +1,6 @@
 import type { CompanyKnowledgeSnapshot, MatchingResult, RequirementDraft } from "./types";
 import { exactSelectionLimit } from "./scope-policy";
-import { deriveRequirementConstraintProfile } from "./requirement-constraints";
+import { deriveRequirementConstraintProfile, expertTitleRoles } from "./requirement-constraints";
 import { checkMatchingEligibility } from "./matching-eligibility";
 import { effectiveReviewTrustLevel, type ReviewRecordState } from "../vault-review-provenance";
 import { domainTagMatchScore } from "./domain-signals";
@@ -587,11 +587,16 @@ function selectedLimit(requirements: RequirementDraft[], type: string, available
   const profile = deriveRequirementConstraintProfile(requirements);
   const exact = exactSelectionLimit(requirements, type);
   if (exact > 0) return Math.min(exact, available);
-  if (type === "EXPERT" && profile.expertCount > 0) return Math.min(profile.expertCount, available);
+  if (type === "EXPERT" && profile.explicitExpertCount > 0) return Math.min(profile.explicitExpertCount, available);
   if (type === "PROJECT_EXPERIENCE" && profile.projectCount > 0) return Math.min(profile.projectCount, available);
   const relevant = requirements.filter((r) => r.requirementType === type);
-  if (relevant.length > 0) return Math.min(available, type === "EXPERT" ? 8 : 10);
-  return Math.min(available, type === "EXPERT" ? 6 : 8);
+  const fallback = relevant.length > 0 ? (type === "EXPERT" ? 8 : 10) : (type === "EXPERT" ? 6 : 8);
+  // With no stated head count, the role families the tender names are a floor
+  // under the default team size, never the team size itself. Using them as
+  // the limit turned "architects, engineers, a biomedical engineer, MEP
+  // experts and other relevant specialists" into a three-person team.
+  if (type === "EXPERT") return Math.min(available, Math.max(fallback, profile.expertCount));
+  return Math.min(available, fallback);
 }
 
 // ─── Portfolio optimization (authoritative selection) ──────────────────────────────
@@ -640,12 +645,19 @@ interface PortfolioCandidate<T extends { score: number; isSelected: boolean }> {
   match: T;
   capabilityFamilies: CapabilityFamily[];
   disciplineTags: string[];
+  /** Experts only: the role families the person's own title names (expertTitleRoles). */
+  roles?: string[];
+}
+
+function coversRole<T extends { score: number; isSelected: boolean }>(candidate: PortfolioCandidate<T>, requiredRoles: string[]): boolean {
+  return (candidate.roles ?? []).some((role) => requiredRoles.includes(role));
 }
 
 function setCoverageScore<T extends { score: number; isSelected: boolean }>(
   candidates: PortfolioCandidate<T>[],
   requiredFamilies: CapabilityFamily[],
   requiredDisciplines: Set<string>,
+  requiredRoles: string[] = [],
 ): number {
   if (candidates.length === 0) return 0;
 
@@ -670,7 +682,12 @@ function setCoverageScore<T extends { score: number; isSelected: boolean }>(
 
   // Weighted blend — coverage is more important than raw score because
   // coverage is what the evaluator explicitly scores against.
-  return efficiency * 0.45 + familyCoverage * 0.40 + disciplineCoverage * 0.15;
+  const base = efficiency * 0.45 + familyCoverage * 0.40 + disciplineCoverage * 0.15;
+  if (requiredRoles.length === 0) return base;
+  const setRoles = new Set<string>();
+  for (const c of candidates) for (const r of c.roles ?? []) setRoles.add(r);
+  const roleCoverage = requiredRoles.filter((r) => setRoles.has(r)).length / requiredRoles.length;
+  return base * 0.75 + roleCoverage * 0.25;
 }
 
 function marginalGainScore<T extends { score: number; isSelected: boolean }>(
@@ -678,6 +695,7 @@ function marginalGainScore<T extends { score: number; isSelected: boolean }>(
   currentSet: PortfolioCandidate<T>[],
   requiredFamilies: CapabilityFamily[],
   requiredDisciplines: Set<string>,
+  requiredRoles: string[] = [],
 ): number {
   const currentFamilies = new Set<CapabilityFamily>();
   const currentDisciplines = new Set<string>();
@@ -697,11 +715,24 @@ function marginalGainScore<T extends { score: number; isSelected: boolean }>(
   // lower-scoring in-domain candidate who adds a new required family.
   // Previous split (0.55 / 0.30) allowed a 0.90-scorer with 0 new
   // families to edge out a 0.76-scorer who adds a required family.
-  return (
+  const base = (
     candidate.match.score * 0.40 +
     (newFamilies / requiredFamiliesCount) * 0.45 +
     (newDisciplines / requiredDisciplinesCount) * 0.15
   );
+  if (requiredRoles.length === 0) return base;
+  // Roles the tender names: a person who fills a role nobody selected fills
+  // yet gains most; a person whose title is any named role still outranks one
+  // whose title is none (a second architect before a highway engineer), by
+  // less for each colleague already holding that role, so depth spreads
+  // across the named roles instead of piling onto one.
+  const holders = new Map<string, number>();
+  for (const c of currentSet) for (const r of c.roles ?? []) holders.set(r, (holders.get(r) ?? 0) + 1);
+  const named = (candidate.roles ?? []).filter((r) => requiredRoles.includes(r));
+  const newRoles = named.filter((r) => !holders.has(r)).length;
+  const leastHeld = named.length > 0 ? Math.min(...named.map((r) => holders.get(r) ?? 0)) : -1;
+  const depth = leastHeld >= 0 ? 0.15 / (1 + leastHeld) : 0;
+  return base + (newRoles / requiredRoles.length) * 0.45 + depth;
 }
 
 function optimizePortfolioSelection<T extends { score: number; isSelected: boolean }>(
@@ -710,8 +741,9 @@ function optimizePortfolioSelection<T extends { score: number; isSelected: boole
   limit: number,
   requiredFamilies: CapabilityFamily[],
   requiredDisciplines: Set<string>,
-  options: { completeRequiredCoverage?: boolean } = {},
+  options: { completeRequiredCoverage?: boolean; requiredRoles?: string[] } = {},
 ): T[] {
+  const requiredRoles = options.requiredRoles ?? [];
   if (limit <= 0 || candidates.length === 0) {
     return matches.map((m) => ({ ...m, isSelected: false }));
   }
@@ -780,7 +812,7 @@ function optimizePortfolioSelection<T extends { score: number; isSelected: boole
       let bestNextIdx = 0;
       for (let i = 0; i < remaining.length; i += 1) {
         const candidate = remaining[i];
-        const gain = marginalGainScore(candidate, set, requiredFamilies, requiredDisciplines);
+        const gain = marginalGainScore(candidate, set, requiredFamilies, requiredDisciplines, requiredRoles);
         if (gain > bestNextScore) {
           bestNext = candidate;
           bestNextScore = gain;
@@ -791,7 +823,7 @@ function optimizePortfolioSelection<T extends { score: number; isSelected: boole
       remaining.splice(bestNextIdx, 1);
     }
 
-    const setScore = setCoverageScore(set, requiredFamilies, requiredDisciplines);
+    const setScore = setCoverageScore(set, requiredFamilies, requiredDisciplines, requiredRoles);
     if (setScore > bestScore) {
       bestScore = setScore;
       bestSet = set;
@@ -898,6 +930,45 @@ function optimizePortfolioSelection<T extends { score: number; isSelected: boole
           !bestSet.includes(candidate))
         .sort((a, b) => b.match.score - a.match.score)[0];
       if (addition) bestSet.push(addition);
+    }
+  }
+
+  // Role completion (experts only).
+  //
+  // The passes above reason in capability families, which are read from the
+  // whole CV and therefore from tags the firm copies onto every record; they
+  // cannot tell the architect from the highway engineer. The tender's named
+  // roles are checked against each person's own title. For every named role no
+  // selected title holds, the highest-scoring holder at or above the same 0.55
+  // floor is added (within the limit) or takes the seat of the lowest-scoring
+  // member whose title holds no named role. A role nobody in the vault holds
+  // stays uncovered and is reported downstream; nobody is invented, and a
+  // record without durable provenance scores 0 and is unreachable here.
+  if (requiredRoles.length > 0 && bestSet.length > 0) {
+    const coveredRoles = (): Set<string> => {
+      const covered = new Set<string>();
+      for (const candidate of bestSet) for (const role of candidate.roles ?? []) covered.add(role);
+      return covered;
+    };
+    for (const role of requiredRoles) {
+      if (coveredRoles().has(role)) continue;
+      const holder = candidates
+        .filter((candidate) =>
+          candidate.match.score >= COVERAGE_COMPLETION_FLOOR &&
+          (candidate.roles ?? []).includes(role) &&
+          !bestSet.includes(candidate))
+        .sort((a, b) => b.match.score - a.match.score)[0];
+      if (!holder) continue;
+      if (bestSet.length < limit) {
+        bestSet.push(holder);
+        continue;
+      }
+      const dropIdx = bestSet
+        .map((candidate, idx) => ({ idx, score: candidate.match.score, fills: coversRole(candidate, requiredRoles) }))
+        .filter((item) => !item.fills)
+        .sort((a, b) => a.score - b.score)[0]?.idx;
+      if (dropIdx === undefined) continue;
+      bestSet.splice(dropIdx, 1, holder);
     }
   }
 
@@ -1161,8 +1232,17 @@ export function buildMatches(
       match: m,
       capabilityFamilies: capabilityFamilies(recordText),
       disciplineTags: disciplines,
+      roles: expertTitleRoles(e?.title),
     };
   });
+
+  // The roles the tender names, plus a lead: every proposed team is led by
+  // someone, whether or not the tender spells out "team leader".
+  const hasExpertRequirement = requirements.some((r) => String(r.requirementType ?? "").toUpperCase() === "EXPERT");
+  const requiredRoles = [...new Set([
+    ...constraintProfile.roleSignals,
+    ...(hasExpertRequirement || constraintProfile.roleSignals.length > 0 ? ["team_leader"] : []),
+  ])];
 
   const projectCandidates: PortfolioCandidate<typeof projectMatches[number]>[] = projectMatches.map((m) => {
     const p = knowledge.projects.find((x) => x.id === m.projectId);
@@ -1187,7 +1267,7 @@ export function buildMatches(
       // offered as COMPARABLE EXPERIENCE, where sector fit is the claim itself,
       // so admitting a below-threshold off-sector project would misrepresent
       // the portfolio. That asymmetry is deliberate.
-      { completeRequiredCoverage: true },
+      { completeRequiredCoverage: true, requiredRoles },
     ),
     projectMatches: optimizePortfolioSelection(
       projectMatches,

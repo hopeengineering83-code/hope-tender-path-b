@@ -53,6 +53,7 @@
 import type { ExpertRecord, ProjectRecord } from "./benchmark-tables";
 import { canonicalWorkPlan } from "./canonical-work-plan";
 import { resolveJurisdictionTokens } from "./jurisdiction-instruments";
+import { titleStatesRole } from "./requirement-constraints";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
 
@@ -117,19 +118,21 @@ function toMarker(key: string): string {
   return key;
 }
 
+// A column with nobody in it is headed by the role it stands for. It used to
+// read "Bid-Team Action: confirm Project Principal", an internal instruction
+// printed in the client's RACI matrix.
 function safeName(expert: ExpertRecord | undefined, role: string): string {
   if (expert && expert.fullName) return `${expert.fullName}${expert.title ? ` (${expert.title})` : ""}`;
-  return `Bid-Team Action: confirm ${role}`;
+  return role;
 }
 
-// Pick the most senior expert for a given role. Heuristic: highest
-// yearsExperience whose disciplines contain the role keyword. Falls
-// back to the highest-experience expert overall, then to a placeholder.
+// Pick the most senior expert whose own TITLE states a role keyword, falling
+// back to the most senior expert overall. Discipline and profile text are not
+// read: the firm-wide tags on every CV made "architect" match everybody.
 function pickExpert(experts: ExpertRecord[], roleKeywords: string[]): ExpertRecord | undefined {
   if (experts.length === 0) return undefined;
   const scored = experts.map((e) => {
-    const blob = `${e.disciplines || ""} ${e.title || ""} ${e.profile || ""}`.toLowerCase();
-    const keywordHit = roleKeywords.some((k) => blob.includes(k.toLowerCase())) ? 1 : 0;
+    const keywordHit = roleKeywords.some((k) => titleStatesRole(e.title, k)) ? 1 : 0;
     const years = typeof e.yearsExperience === "number" ? e.yearsExperience : 0;
     return { e, score: keywordHit * 1000 + years };
   });
