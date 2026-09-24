@@ -10,6 +10,7 @@ import { containsMetadataPlaceholder, containsMetadataScaffolding } from "./engi
 import { protectPrompt, protectPromptWithBoundary } from "./ai-trust-boundary";
 import { redactSecrets } from "./sanitize-error";
 import { GEMINI_TIMEOUT_MS, DEEPSEEK_DEFAULT_TIMEOUT_MS, MISTRAL_EXTRACTION_TIMEOUT_MS, OPENAI_COMPAT_DEFAULT_TIMEOUT_MS, O1_O3_TIMEOUT_MS, PROPOSAL_SECTION_TIMEOUT_MS, PROPOSAL_SECTION_TIMEOUT_CEILING_MS, PROPOSAL_SECTION_MS_PER_OUTPUT_TOKEN, PROPOSAL_SECTION_BASE_OVERHEAD_MS, PROPOSAL_SECTION_STITCH_RESERVE_MS, PROPOSAL_SECTION_POOL_RESERVE_MS, PROPOSAL_SECTION_MIN_WRITE_MS, COOLDOWN_WAIT_SETTLE_MS, PROPOSAL_AI_TIMEOUT_MS, REFINEMENT_CALL_TIMEOUT_MS } from "./timeout-config";
+import { AI_TRACE_PATTERNS, countOwnPriceMentions, scrubSourceDocumentMetadata } from "./engine/detection-patterns";
 
 const apiKey = process.env.GEMINI_API_KEY;
 // Anthropic key is read at request time via getAnthropicApiKey() — never cached
@@ -792,6 +793,32 @@ export async function mapInOrderWithConcurrency<T, R>(
   const width = Math.max(1, Math.min(limit, queue.length));
   await Promise.all(Array.from({ length: width }, worker));
   return results;
+}
+
+/**
+ * Most pricing/currency mentions one model-written section may carry. The
+ * final technical-proposal gate blocks the whole document above 3
+ * (countOwnPriceMentions), and the deterministic sections around a kept model
+ * section already spend some of that budget, so a kept model section may add
+ * none.
+ */
+export const MAX_OWN_PRICE_MENTIONS_PER_SECTION = 0;
+
+/**
+ * Would this model-written section pass the final gate's client-safety rules?
+ * Source-document metadata lines are scrubbed first (they are never proposal
+ * content); after that, any AI trace or more than
+ * MAX_OWN_PRICE_MENTIONS_PER_SECTION own-price mentions rejects the section.
+ */
+export function clientSafeModelSection(markdown: string): { ok: boolean; markdown: string; reason?: string } {
+  const cleaned = scrubSourceDocumentMetadata(markdown);
+  const trace = AI_TRACE_PATTERNS.find((re) => re.test(cleaned));
+  if (trace) return { ok: false, markdown: cleaned, reason: `AI trace ${trace.source.slice(0, 60)}` };
+  const prices = countOwnPriceMentions(cleaned);
+  if (prices > MAX_OWN_PRICE_MENTIONS_PER_SECTION) {
+    return { ok: false, markdown: cleaned, reason: `${prices} own-price mentions in a technical section` };
+  }
+  return { ok: true, markdown: cleaned };
 }
 
 /** Smallest budget worth starting a provider request with. */
@@ -5851,7 +5878,23 @@ export async function generateProposalSectionsParallel(input: AIBidWriterInput, 
         markdown: buildSectionFallback(filteredSpecs[i], input),
       };
     }
-    return r;
+    // A model-written section is kept only if it would pass the same
+    // client-safety rules the final quality gate applies. Otherwise that one
+    // section takes its deterministic text instead of failing the whole
+    // proposal at finalization (run 36037462010: a copied vault-document
+    // heading and the firm's own prices sank a partially model-written
+    // proposal, score 68).
+    const safe = clientSafeModelSection(r.markdown);
+    if (!safe.ok) {
+      logger.warn(`[ai] section "${r.id}" model output failed the client-safety check (${safe.reason}) — using its deterministic text.`);
+      return {
+        ...r,
+        source: "fallback" as const,
+        error: `model-written section failed the client-safety check: ${safe.reason}`,
+        markdown: buildSectionFallback(filteredSpecs[i], input),
+      };
+    }
+    return { ...r, markdown: safe.markdown };
   });
 
   // ─── Deep mode: Section C drill-down (chained second call) ───────────────
@@ -5885,11 +5928,11 @@ export async function generateProposalSectionsParallel(input: AIBidWriterInput, 
       if (!drillResult) {
         logger.warn(`[ai] section-C drill-down skipped — too little time left before the proposal guard; keeping first-pass Section C.`);
         drillDownInfo = ` [section-c-drilldown=skipped(no-time)]`;
-      } else if (drillResult.source !== "fallback") {
+      } else if (drillResult.source !== "fallback" && clientSafeModelSection(drillResult.markdown).ok) {
         // Replace the first-pass Section C in the sections array.
         const idx = sections.findIndex((s) => s.id === "technical-approach");
         if (idx >= 0) {
-          sections[idx] = drillResult;
+          sections[idx] = { ...drillResult, markdown: clientSafeModelSection(drillResult.markdown).markdown };
           drillDownInfo = ` [section-c-drilldown=${drillResult.source}(${Math.round(drillResult.durationMs / 100) / 10}s)]`;
         }
       } else {

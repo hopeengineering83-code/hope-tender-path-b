@@ -393,3 +393,59 @@ export const OFFICIAL_ORIGINAL_LABEL_PATTERNS: RegExp[] = [
   /\bbusiness\s+licen/i,
   /\bregistration\s+certificate\b/i,
 ];
+
+/**
+ * Header/metadata lines of the owner's own uploaded source documents, e.g. a
+ * company profile titled "Tender Proposal AI-Ready Summary — Prepared for
+ * AI-assisted tender proposal generation". A model-written section can copy
+ * such a heading verbatim from the vault context it was given; it is never
+ * proposal content and every final gate rejects it as an AI trace.
+ */
+export const SOURCE_DOCUMENT_METADATA_PATTERNS: RegExp[] = [
+  /\bAI[-\s]assisted\s+(?:tender\s+)?proposal\s+generation\b/i,
+  /\b(?:tender\s+)?proposal\s+AI[-\s]ready\s+summary\b/i,
+  /\bprepared\s+for\s+(?:AI|model)[-\s]assisted\b/i,
+];
+
+/** Remove whole lines that carry source-document metadata (see above). */
+export function scrubSourceDocumentMetadata(markdown: string): string {
+  return markdown
+    .split("\n")
+    .filter((line) => !SOURCE_DOCUMENT_METADATA_PATTERNS.some((re) => re.test(line)))
+    .join("\n");
+}
+
+const FINANCIAL_KEYWORD_RE = /\b(?:price|pricing|quotation|ETB|USD|EUR|GBP|fee|rate|lump\s+sum|unit\s+price)\b/gi;
+const REFERENCE_COST_CONTEXT_RE = /\b(?:construction|design|supervision|contract|project|feasibility|geotechnical)\s+cost\b|contract\s+value|cost\s+details|comparable\s+project|project\s+reference/i;
+const NO_OFFER_DISCLAIMER_RE = /no\s+financial\s+offer|no\s+pricing|not\s+include[sd]?\s+(?:any\s+)?(?:financial|price|pricing)|technical\s+proposal\s+only|do\s+not\s+include\s+any\s+financial/i;
+// "at no fee" / "at no additional fee" / "budgeted into fee" state that
+// something is NOT separately charged — a value-add commitment, the opposite
+// of a price disclosure. And "rate" is one of the most overloaded words in
+// engineering/HSE writing: "frequency rate (LTIFR)", "injury rate",
+// "success/completion/defect/response rate" are safety and quality KPIs a
+// methodology or QA/QC section is expected to state, never a price.
+const NO_CHARGE_RE = /\bat\s+no\s+(?:additional\s+)?(?:fee|cost|charge)\b|\bfree\s+of\s+charge\b|\bbudgeted\s+into\b|\bno\s+extra\s+(?:fee|cost|charge)\b/i;
+const NON_FINANCIAL_RATE_RE = /\b(?:frequency|injury|success|completion|defect|rejection|response|conversion|failure|pass|attendance|literacy|vacancy|occupancy|utili[sz]ation|growth|compliance|error|accuracy|retention)\s+rate\b|\brate\s*\([A-Z]+\)/i;
+
+/**
+ * How many pricing/currency mentions in `text` read as the FIRM'S OWN price
+ * for this assignment — i.e. not a reference-project cost, a no-offer
+ * disclaimer, a no-charge commitment or a non-financial "rate". The technical
+ * proposal gate treats more than 3 as financial-envelope contamination.
+ */
+export function countOwnPriceMentions(text: string): number {
+  let count = 0;
+  for (const match of text.matchAll(FINANCIAL_KEYWORD_RE)) {
+    const start = Math.max(0, (match.index ?? 0) - 80);
+    const end = Math.min(text.length, (match.index ?? 0) + match[0].length + 80);
+    const surrounding = text.slice(start, end);
+    if (
+      REFERENCE_COST_CONTEXT_RE.test(surrounding)
+      || NO_OFFER_DISCLAIMER_RE.test(surrounding)
+      || NO_CHARGE_RE.test(surrounding)
+      || NON_FINANCIAL_RATE_RE.test(surrounding)
+    ) continue;
+    count += 1;
+  }
+  return count;
+}
