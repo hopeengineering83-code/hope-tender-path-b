@@ -163,3 +163,12 @@ describe("the deterministic fallback writer", () => {
     assert.doesNotMatch(src, /senior bid-review controls/);
   });
 });
+
+describe("the value framework states method, not promised outcomes", () => {
+  it("promises no revenue result and no approval outcome", async () => {
+    const { buildValueFrameworkTable } = await import("../lib/engine/benchmark-tables");
+    const md = buildValueFrameworkTable({ primarySector: "Healthcare / Medical Facility Design", clientName: "Client", sourceText: SILENT_TENDER });
+    assert.doesNotMatch(md, /maximum revenue|from day one|exceeds .* requirements|shortening approval cycles/i);
+    assert.match(md, /Regulatory Readiness/);
+  });
+});

@@ -203,6 +203,52 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-24 UTC (latest) — Benchmark-quality pass: team breadth, role truth, client-only content, scope-by-scope approach
+
+Claude Code, branch `release/consolidated-recovery-20260717`, PR #1175 (draft,
+unmerged). Production not touched. Benchmark = the owner's signed Pharo Word
+proposal, used as a quality reference only; the tender and the company
+authority JSON are the factual authorities.
+
+**BEFORE (run 36040407147, head `06b0cbc2`, all four sections deterministic
+fallback):** 40 pages, 63-entry contents page, 3 named experts, 3 of 6 scope
+items addressed, electrical engineer printed as "Lead Architect", environmental
+expert as "Senior Healthcare Architect", "Assignee confirmed at inception" rows,
+ESG / H&S / Innovation / Local-content / anti-bribery / no-debarment sections
+the tender never asked for. Scored 68/100 on the 17 dimensions.
+
+**Root causes and fixes (all generic, all tested):**
+
+| Commit | Defect | Root cause | Fix |
+|---|---|---|---|
+| `af925682` | 3 experts from 28 source-verified (18 at 100%), no architect | `deriveRequirementConstraintProfile` counted named role families (architect, biomedical, MEP = 3) and `selectedLimit` used that as the exact team size; selection never read titles | Explicit head count stays exact (`explicitExpertCount`); named roles are a floor under the default; optimizer covers each named role from the person's own title (`expertTitleRoles`); MEP = electrical + mechanical + plumbing. Nobody invented: biomedical stays uncovered |
+| `af925682` | Wrong role labels, placeholder rows | Loading table / organogram / phase leads / RACI matched role words against firm-wide discipline tags ("Architecture" on every CV) | Role claims read the title only (`titleStatesRole`); unheld roles are omitted, not printed as "Assignee confirmed at inception"; profile cards state only CV-grounded facts |
+| `9d61d04f` | 63-entry TOC; unsupported commitments | Supplementary sections injected unconditionally | `tender-asks-for.ts`: ESG, H&S, innovation, local content, anti-bribery and no-conflict/debarment sections only when the tender raises the topic |
+| `9d61d04f` | False claims | "attached as Appendix A/C", "at no additional charge", "permanent staff", invented "10+ years", tender sector attached to a person's years, A.5 mapping every expert to the same hospital as "Senior <title>" | Removed or grounded; A.5 maps a person only to a project their own CV names (`cv-grounding.ts`); the bid desk's submission rules no longer print as a Section A heading |
+| `1bd85c55` | Advisory ATTEMPT_BUDGET_EXHAUSTED message printed the normal budget | Constructor always used `MAX_PROVIDER_ATTEMPTS_PER_REQUEST` | Error carries the effective budget and whether the deadline or the budget stopped the chain |
+| `8e93d955` | Technical approach answered 3 of 6 scope items, named nobody | No scope-item reader | `scope-delivery-plan.ts`: each tender scope item quoted and answered with lead (title-grounded), inputs, deliverables (tender's own words first), QA, approval, key risk |
+
+**Projects: 3 is correct.** The authority holds exactly three healthcare
+projects of 114 (G+6 Dr Abdul Seid, Dessie Specialized, Hospital Project); the
+strict healthcare gate keeps the rest out of "comparable experience".
+
+**Classified, not changed:** `@napi-rs/canvas` warning = cosmetic. It is an
+optional native dependency of pdfjs-dist used only for rendering; the app calls
+only `page.getTextContent` (`lib/extract-text.ts:410`).
+
+**Benchmark factual audit (do not copy these into the app):** deadline "March
+25, 2026" (tender: August 25, 2026, 5:00 PM Addis Ababa); licences "IPSTE/6884"
+and "PPE/6883" (CVs: PSTE/6884, PPECM/6883); Ethiopian Health Authority,
+Radiation Protection Authority, HTM 02-01, "12 licensed PPE/PP professionals",
+Entoto "First Aid / Wellness centres" and a no-debarment declaration have no
+support in the authority; "same team designed both hospitals": only three CVs
+name both, and the benchmark's Lead Architect's CV names neither.
+
+**Tests:** full suite with `RUN_DB_INTEGRATION=true`: `af925682` 12,452 / 12,452 pass;
+`8e93d955` 12,482 / 12,482 pass (0 fail, 0 skipped). `tsc --noEmit` and `next lint` clean.
+
+<!-- AFTER-RESULTS -->
+
 ### 2026-09-20 UTC (latest) — WHY the writer times out: a 60s-route budget applied inside a 300s worker
 
 Follow-on from the authorship verdict in the entry below. That entry established

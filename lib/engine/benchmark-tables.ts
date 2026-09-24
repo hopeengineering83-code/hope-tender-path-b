@@ -789,9 +789,13 @@ function valueFrameworkPillars(primarySector: string, clientName: string, source
   if (isHealthcare) return [
     { pillar: "Facility Intelligence", clientGains: `${clientName} identifies the right premises with confidence. Weighted site assessment scores each shortlisted property against five healthcare-specific criteria. In-house geotechnical capability delivers subsurface findings within days, protecting acquisition timelines.` },
     { pillar: "Workflow Engineering", clientGains: "Patients experience shorter waiting times and staff cover less unnecessary distance. Clinical workflows are designed from the patient perspective — OPD reception positioned for triage visibility, diagnostics close to referral sources, pharmacy at outpatient exit." },
-    { pillar: "Revenue-Based Zoning", clientGains: "The facility generates maximum revenue from day one. High-throughput revenue centres (Radiology, Laboratory, Pharmacy) are positioned and sized for operational efficiency. Patient flow is designed to maximise referrals between departments." },
+    // Outcomes the design can shape, stated as the method. "The facility
+    // generates maximum revenue from day one" and "exceeds Health Authority
+    // requirements, ... shortening approval cycles" were promises about results
+    // no record supports.
+    { pillar: "Throughput-Aware Zoning", clientGains: "High-throughput departments in the brief (for example imaging, laboratory and pharmacy) are positioned and sized for patient flow and operational efficiency, with short routes between the departments that refer to each other." },
     { pillar: "Infrastructure Integration", clientGains: "Renovation completes without costly design changes. All MEP systems, medical gas, radiation shielding, biomedical equipment, and ICT/PACS integration are coordinated from schematic stage — not added retrospectively." },
-    { pillar: "Regulatory Velocity", clientGains: "Health Authority licensing timeline is protected. Documentation prepared to international donor standards (World Bank ESF, equivalent) exceeds Health Authority requirements, reducing rejection risk and shortening approval cycles." },
+    { pillar: "Regulatory Readiness", clientGains: "Each approval package is checked against the applicable standards before submission, and every authority comment is logged and closed, so submissions go in complete." },
     { pillar: "Operational Readiness", clientGains: "Day-one handover includes as-built drawings, O&M manuals, equipment commissioning records, regulatory certificates, and warranty register. The facility opens with documentation that supports operational management from the first patient." },
   ];
   if (isWater) return [
