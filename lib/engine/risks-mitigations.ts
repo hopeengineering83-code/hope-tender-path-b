@@ -200,7 +200,7 @@ function risksForSector(primarySector: string): SectorRisk[] {
   return [
     { risk: "Scope misalignment with client expectations", impact: "High", likelihood: "Medium", mitigation: "Documented scope confirmation at inception; named sign-off authority; change-control protocol agreed at contract signature." },
     { risk: "Resource availability shortfall during peak phases", impact: "High", likelihood: "Medium", mitigation: "Permanent-staff team confirmed in this proposal; backup specialists on standby; phased delivery to balance load." },
-    { risk: "Quality non-conformance at deliverable stage", impact: "High", likelihood: "Low", mitigation: "Three-stage internal review (schematic, developed, pre-issue) with named reviewer sign-off catches issues before issue." },
+    { risk: "Quality non-conformance at deliverable stage", impact: "High", likelihood: "Low", mitigation: "Three-stage design review (schematic, developed, pre-issue) with named reviewer sign-off catches issues before issue." },
     { risk: "Late-stage regulatory or approval blockers", impact: "High", likelihood: "Medium", mitigation: "Regulatory submissions prepared as a core project deliverable, not a separate later activity. Pre-check at Stage 2." },
     { risk: "Stakeholder communication breakdowns", impact: "Medium", likelihood: "Medium", mitigation: "Bi-weekly written progress reports; named single point of contact; documented escalation path." },
   ];

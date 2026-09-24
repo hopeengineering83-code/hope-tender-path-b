@@ -128,7 +128,9 @@ function hasContractValue(value: number | null | undefined): boolean {
 // other prose contexts.
 function fmtProjectInline(project: Pick<ProjectRecord, "name" | "contractValue" | "currency" | "clientName">): string {
   const parts: string[] = [];
-  if (hasContractValue(project.contractValue)) parts.push(fmtMoney(project.contractValue, project.currency));
+  // Labelled: an amount beside a project name with no label reads as this
+  // bid's price to the export gate, and to an evaluator.
+  if (hasContractValue(project.contractValue)) parts.push(`construction value of works ${fmtMoney(project.contractValue, project.currency)}`);
   // Trim the separator the sentence is about to supply. A vault client of
   // "Gimba City, South Wollo Zone, Amhara Region," otherwise renders as
   // "… (Gimba City, South Wollo Zone, Amhara Region,)".
@@ -893,7 +895,7 @@ function valueFrameworkPillars(primarySector: string, clientName: string, source
   return [
     { pillar: "Scope Understanding", clientGains: `${clientName} receives an evidence-led response that maps every tender requirement to a deliverable, responsible expert, and quality gate.` },
     { pillar: "Team Continuity", clientGains: "Same proposed experts have performed the same roles on comparable previous projects — zero learning curve, predictable delivery." },
-    { pillar: "Quality Discipline", clientGains: "Three-stage internal review (schematic, developed, pre-issue) with named reviewer sign-off catches issues before issue." },
+    { pillar: "Quality Discipline", clientGains: "Three-stage design review (schematic, developed, pre-issue) with named reviewer sign-off catches issues before issue." },
     { pillar: "Compliance & Documentation", clientGains: "Submission package follows tender file naming, ordering, and format rules exactly — no mechanical compliance failures." },
     { pillar: "Risk Reduction", clientGains: "Senior bid-review controls, source-evidence verification, and final validation pass reduce delivery risk for the awarding authority." },
   ];

@@ -14,7 +14,7 @@ import { runDeepRefinement } from "./deep-reasoning-refiner";
 import { alignMatchesToEvaluatorCriteria, formatAlignmentForPrompt, type AlignmentCandidate, type AlignmentReport } from "./semantic-match-aligner";
 import { executeProposalTool, PROPOSAL_TOOL_DEFS, type ToolEvidenceInventory } from "./proposal-tools";
 import { DeepReasoningTelemetry } from "./deep-reasoning-telemetry";
-import { BENCHMARK_CONTEXT_LINES, buildCriterionEvidenceMap, buildProposalIntelligence, expertProofLine, inlineEvidenceValue, projectProofLine, safeParseArr, truncateAtWordBoundary } from "./proposal-intelligence";
+import { BENCHMARK_CONTEXT_LINES, buildCriterionEvidenceMap, buildProposalIntelligence, expertProofLine, inlineEvidenceValue, projectProofLine, projectReferenceLine, safeParseArr, truncateAtWordBoundary } from "./proposal-intelligence";
 import { enforceCanonicalNames } from "./entity-name-normalizer";
 import { exactSelectionLimit, forbidsBranding, forbidsCoverPage, requiresSignatureOrStamp } from "./scope-policy";
 import { finalizeClientReadyProposalMarkdown } from "./proposal-benchmark-guard";
@@ -840,7 +840,12 @@ function fallbackProposalMarkdown(params: {
   lines.push(`# ${sectionBLabel}`);
   if (projectSelected > 0) {
     lines.push(`${params.companyName} presents ${projectSelected} reviewed project reference(s) directly relevant to this assignment:`);
-    lines.push(...params.projectLines.map((x) => `- ${x}`));
+    // The reference line, not the writer's proof line: the latter carries the
+    // record's raw summary (see projectReferenceLine).
+    const referenceLines = params.projects && params.projects.length === params.projectLines.length
+      ? params.projects.map((project) => projectReferenceLine(project as never))
+      : params.projectLines;
+    lines.push(...referenceLines.map((x) => `- ${x}`));
     if (params.projectEvidenceLines.length > 0) {
       lines.push("## Project Evidence Attachments");
       lines.push(...params.projectEvidenceLines.slice(0, 25).map((x) => `- ${x}`));

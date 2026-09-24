@@ -60,16 +60,28 @@ export function buildWhyUsSummary(opts: {
     const certs = safeArr(lead.certifications);
     const credentials = certs.length > 0 ? certs[0] : (safeArr(lead.disciplines)[0] || lead.title || "Specialist");
     bullets.push(
-      `**Proven team continuity.** ${lead.fullName} (${lead.title || "Senior Lead"}, ${credentials})${lead.yearsExperience ? ` brings ${lead.yearsExperience} years` : ""} — the same lead who has delivered comparable work and is committed to this engagement.`,
+      `**Named team lead.** ${lead.fullName} (${lead.title || "Senior Lead"}, ${credentials})${lead.yearsExperience ? ` brings ${lead.yearsExperience} years` : ""} and leads the proposed team for this engagement.`,
     );
   }
 
   // 3. Aggregate evidence
-  const totalValue = opts.projects.reduce((sum, p) => sum + (p.contractValue ?? 0), 0);
+  // One total per currency. Run 36071201669 printed "aggregate value ETB
+  // 693,974,678" for ETB 675,074,678 plus USD 18,900,000 — two currencies
+  // summed as if they were one.
+  const totals = new Map<string, number>();
+  for (const p of opts.projects) {
+    if (!p.contractValue || p.contractValue <= 0 || !p.currency) continue;
+    totals.set(p.currency, (totals.get(p.currency) ?? 0) + p.contractValue);
+  }
+  const totalText = [...totals.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([currency, total]) => fmtMoney(total, currency))
+    .filter(Boolean)
+    .join(" and ");
   const projectCount = opts.projects.length;
-  if (projectCount >= 2 && totalValue > 0) {
+  if (projectCount >= 2 && totalText) {
     bullets.push(
-      `**Portfolio depth.** ${projectCount} reviewed reference project${projectCount === 1 ? "" : "s"} on file, aggregate value ${fmtMoney(totalValue, opts.projects[0]?.currency || "ETB")} — an institutional track record that reduces delivery risk for the awarding authority.`,
+      `**Portfolio depth.** ${projectCount} reviewed reference project${projectCount === 1 ? "" : "s"} on file, with an aggregate construction value of works of ${totalText} — an institutional track record that reduces delivery risk for the awarding authority.`,
     );
   } else if (opts.experts.length >= 3) {
     bullets.push(
@@ -85,7 +97,7 @@ export function buildWhyUsSummary(opts: {
 
   // 5. Quality & compliance discipline
   bullets.push(
-    `**Quality discipline.** Three-stage internal review (schematic / developed / pre-issue) with named reviewer sign-off, source-evidence verification on every claim, and a final validation pass before submission — risk reduction the awarding authority can audit.`,
+    `**Quality discipline.** Three-stage design review (schematic / developed / pre-issue) with a named senior reviewer's sign-off, and every stated fact checked against the firm's own records before issue.`,
   );
 
   // Need at least 3 bullets to be meaningful

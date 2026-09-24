@@ -215,7 +215,7 @@ export function buildValueAddedServices(opts: { primarySector: string; companyNa
     `**EMR certificate registry** — all site EMR certificates filed in a structured registry; supports regulator and public-interest queries without re-measurement.`,
   ];
   else bullets = [
-    `**Three-stage internal review** — schematic, developed, pre-issue review by named senior reviewers, beyond the contractual deliverable scope.`,
+    `**Three-stage design review** — schematic, developed and pre-issue review by named senior reviewers.`,
     // Same internal-name leak as mobilization-and-checklist.ts: the control is
     // real and worth stating, but "the firm's vault" is this application's word
     // for its evidence store, not the bidder's word for its records.

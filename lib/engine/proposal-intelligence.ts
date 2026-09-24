@@ -1450,6 +1450,23 @@ export function buildProposalIntelligence(params: {
  * "Contract Value" row.
  */
 export function projectProofLine(project: ProjectLite): string {
+  const reference = projectReferenceLine(project);
+  const summary = truncateAtWordBoundary(clean(project.summary), 600);
+  return `${reference}${summary ? `. ${summary}` : ""}`;
+}
+
+/**
+ * The project as a client reads it: name, client, country, sector, labelled
+ * value, dates and services — without the record's own summary text.
+ *
+ * projectProofLine appends up to 600 characters of that summary, which the
+ * writer needs as context. Printed in the proposal it is a raw record: run
+ * 36071201669 delivered "Ref: …/1591/18 … 2. Feasibility Study, Geotechnical &
+ * New Design Cost: 1,100,000 ETB 3. Contract Administration & Construction
+ * Supervision Cost: 110,000 ETB/month" — the firm's own past fees, in a
+ * technical-only envelope, cut off mid-list.
+ */
+export function projectReferenceLine(project: ProjectLite): string {
   const derived = extractProjectFacts(project.summary ?? "", project.name);
   const amounts = extractProjectAmounts(project.summary ?? "");
   const fee = amounts.find((a) => a.role === "CONSULTANCY_FEE" && !a.perMonth);
@@ -1459,18 +1476,21 @@ export function projectProofLine(project: ProjectLite): string {
   const derivedServices = services.length > 0 ? services : extractServicesProvided(project.summary ?? "");
 
   const storedValue = money(project.contractValue, project.currency);
+  const worksValue = works ? money(works.value, works.currency ?? project.currency) : "";
   const parts = [
     project.clientName,
     project.country || derived.country || derived.location,
     project.sector || derived.sector,
-    storedValue || (fee ? `Consultancy fee ${money(fee.value, fee.currency ?? project.currency)}` : ""),
-    works ? `Construction value of works ${money(works.value, works.currency ?? project.currency)}` : "",
+    // The stored value is printed once, and never bare: "ETB 550.1M |
+    // Construction value of works ETB 550.1M" said it twice, the first time
+    // with nothing to say what it was.
+    storedValue && storedValue !== worksValue ? `Construction value of works ${storedValue}` : (!storedValue && fee ? `Consultancy fee ${money(fee.value, fee.currency ?? project.currency)}` : ""),
+    worksValue ? `Construction value of works ${worksValue}` : "",
     derivedDurationLabel(project, derived),
     derivedServices.length > 0 ? `Services: ${derivedServices.join(", ")}` : "",
   ].filter(Boolean);
 
-  const summary = truncateAtWordBoundary(clean(project.summary), 600);
-  return `${project.name}${parts.length ? ` — ${parts.join(" | ")}` : ""}${summary ? `. ${summary}` : ""}`;
+  return `${project.name}${parts.length ? ` — ${parts.join(" | ")}` : ""}`;
 }
 
 /**

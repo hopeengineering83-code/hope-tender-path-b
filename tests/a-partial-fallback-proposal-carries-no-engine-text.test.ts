@@ -376,3 +376,49 @@ describe("prose that states a project value states what the value is", () => {
     assert.equal(containsPricingLeakage("methodology addresses | Technical approach and | Hospital Project, USD 19M,", pdfDoc), true, "the wrapped fragment the gate refused");
   });
 });
+
+describe("the delivered text reads as the firm's record, not a record dump", () => {
+  // Run 36071201669 passed every gate and delivered: "aggregate value ETB
+  // 693,974,678" (ETB 675,074,678 + USD 18,900,000); the firm's own past fees
+  // from a raw record ("Supervision Cost: 110,000 ETB/month"); a why-us bullet
+  // cut to "Three-stage" because "internal review" is AI-trace vocabulary a
+  // repair pass removes; and a bare amount beside a project name.
+  const projects = [
+    { name: "District Hospital", clientName: "City Health Bureau", country: "Kenya", sector: "Healthcare", contractValue: 550_074_678, currency: "KES",
+      summary: "Ref: 1591/18. 1. Construction Cost: 550,074,678 KES 2. Design Cost: 1,100,000 KES 3. Supervision Cost: 110,000 KES/month", serviceAreas: JSON.stringify(["Architectural design"]) },
+    { name: "Regional Clinic", clientName: "County Office", country: "Uganda", sector: "Healthcare", contractValue: 18_900_000, currency: "USD", summary: "Testimony letter.", serviceAreas: JSON.stringify(["MEP design"]) },
+    { name: "Health Post", clientName: "County Office", country: "Kenya", sector: "Healthcare", contractValue: 125_000_000, currency: "KES", summary: "", serviceAreas: "[]" },
+  ];
+
+  it("sums values per currency and never uses AI-trace vocabulary", async () => {
+    const { buildWhyUsSummary } = await import("../lib/engine/why-us-summary");
+    const { AI_TRACE_PATTERNS } = await import("../lib/engine/detection-patterns");
+    const out = buildWhyUsSummary({ companyName: "Firm", clientName: "Client", experts: [{ fullName: "A. Lead", title: "Team Leader", yearsExperience: 11 }] as never, projects: projects as never, differentiators: [], primarySector: "Healthcare" }) ?? "";
+    assert.match(out, /aggregate construction value of works of KES 675,074,678 and USD 18,900,000/);
+    assert.doesNotMatch(out, /693,974,678/);
+    assert.doesNotMatch(out, /same lead who has delivered/);
+    for (const rx of AI_TRACE_PATTERNS) assert.doesNotMatch(out, rx);
+  });
+
+  it("no deterministic builder writes the phrase a repair pass cuts out", () => {
+    for (const file of ["lib/engine/why-us-summary.ts", "lib/engine/benchmark-tables.ts", "lib/engine/risks-mitigations.ts", "lib/engine/understanding-and-value-added.ts"]) {
+      assert.doesNotMatch(readFileSync(file, "utf8"), /Three-stage internal review/i, file);
+    }
+  });
+
+  it("a project reference carries its labelled value once and none of the raw record", async () => {
+    const { projectReferenceLine, projectProofLine } = await import("../lib/engine/proposal-intelligence");
+    const line = projectReferenceLine(projects[0] as never);
+    assert.match(line, /Construction value of works KES 550,074,678|Construction value of works KES 550\.1M/);
+    assert.doesNotMatch(line, /Supervision Cost|110,000|Ref: 1591/);
+    assert.equal((line.match(/550/g) ?? []).length, 1, line);
+    // The writer's proof line still carries the record for context.
+    assert.match(projectProofLine(projects[0] as never), /Supervision Cost/);
+  });
+
+  it("the cover letter labels the value it names", async () => {
+    const { buildCoverLetterOpener } = await import("../lib/engine/benchmark-tables");
+    const out = buildCoverLetterOpener({ companyName: "Firm", clientName: "Client", tenderTitle: "Clinic Design", projects: projects as never });
+    assert.match(out, /District Hospital \(construction value of works KES 550,074,678/);
+  });
+});
