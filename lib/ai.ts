@@ -749,6 +749,51 @@ function currentProposalWrapperBudgetMs(): number {
   return proposalWrapperBudgetStore.getStore() ?? PROPOSAL_AI_TIMEOUT_MS;
 }
 
+/** The absolute provider deadline armed in this async context, if any. */
+function currentProviderDeadlineAt(): number | undefined {
+  return providerDeadlineStore.getStore();
+}
+
+/**
+ * How many proposal sections may be in flight at once.
+ *
+ * Default 2. The free tiers this chain relies on reject a burst of four
+ * concurrent section requests with 429, and one 429 cools the provider for
+ * every section. PROPOSAL_SECTION_CONCURRENCY (1..8) overrides it for accounts
+ * whose provider tiers can take more.
+ */
+export function resolveProposalSectionConcurrency(raw: string | undefined = process.env.PROPOSAL_SECTION_CONCURRENCY): number {
+  const parsed = Number.parseInt(String(raw ?? "").trim(), 10);
+  if (!Number.isFinite(parsed) || parsed < 1) return 2;
+  return Math.min(8, parsed);
+}
+
+/**
+ * Map `items` through `fn` with at most `limit` calls in flight, returning the
+ * results in the ORIGINAL item order. `startOrder`, when given, decides which
+ * items start first without affecting where their results land.
+ */
+export async function mapInOrderWithConcurrency<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+  startOrder?: (a: T, b: T) => number,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  const queue = items.map((item, index) => ({ item, index }));
+  if (startOrder) queue.sort((a, b) => startOrder(a.item, b.item) || a.index - b.index);
+  let next = 0;
+  const worker = async () => {
+    while (next < queue.length) {
+      const { item, index } = queue[next++];
+      results[index] = await fn(item);
+    }
+  };
+  const width = Math.max(1, Math.min(limit, queue.length));
+  await Promise.all(Array.from({ length: width }, worker));
+  return results;
+}
+
 /** Smallest budget worth starting a provider request with. */
 export const MIN_PROVIDER_TIMEOUT_MS = 1_000;
 
@@ -5746,9 +5791,31 @@ export async function generateProposalSectionsParallel(input: AIBidWriterInput, 
   const filteredSpecs = isChunked ? specs.filter((s) => sectionFilter.includes(s.id)) : specs;
 
   // generateOneSection never rejects — it catches all errors and returns
-  // a "fallback" SectionResult. Promise.all is therefore safe here; the
-  // comment "Promise.allSettled" in earlier drafts was stale.
-  const results = await Promise.all(filteredSpecs.map(generateOneSection));
+  // a "fallback" SectionResult, so the pool below never has to handle a throw.
+  //
+  // PACED, NOT ALL AT ONCE. Firing every section at the same moment made the
+  // free-tier providers the chain actually reaches (Z.ai, Groq) answer 429 to
+  // all of them together: each 429 put the provider into a 60s cooldown, the
+  // other sections found it cooling and skipped it, and every section of the
+  // proposal fell back to the deterministic draft. A bounded pool lets the
+  // same providers write the sections instead of rejecting them.
+  //
+  // Queued sections share ONE deadline, the whole-generation guard minus the
+  // stitch reserve, so a section that starts late is clamped to what is left
+  // instead of running past the guard and aborting the entire proposal.
+  const armedDeadlineAt = currentProviderDeadlineAt();
+  const poolDeadlineAt = Math.min(
+    t0 + currentProposalWrapperBudgetMs() - PROPOSAL_SECTION_STITCH_RESERVE_MS,
+    armedDeadlineAt ?? Number.POSITIVE_INFINITY,
+  );
+  const results = await mapInOrderWithConcurrency(
+    filteredSpecs,
+    resolveProposalSectionConcurrency(),
+    (spec) => withProviderDeadline(poolDeadlineAt, () => generateOneSection(spec)),
+    // Largest section first: the Technical Approach needs the most time, so it
+    // must not be the one left to start after the others have used it up.
+    (a, b) => (b.maxOutputTokens ?? 0) - (a.maxOutputTokens ?? 0),
+  );
 
   // Build per-section markdown, substituting deterministic fallback for
   // any section whose source is "fallback".
