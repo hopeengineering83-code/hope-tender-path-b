@@ -2376,7 +2376,10 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
   // produce Section H, but its version uses rough estimates while the deterministic
   // builder (buildSelfScoreSection) uses the structured evidence we have. Keeping
   // both would give duplicate headings; the deterministic version always wins.
-  const matrixMarkdown = appendEvaluatorResponseMatrix(stripSelfScoreSections(sourceMarkdown), evaluatorMatrixInput);
+  // The writer's working appendix (contract, criterion graph, evidence scores)
+  // is removed here, before any pass renumbers or restyles its headings; only
+  // the client sections the matrix builds (Sections E and F) stay.
+  const matrixMarkdown = stripInternalReviewSections(appendEvaluatorResponseMatrix(stripSelfScoreSections(sourceMarkdown), evaluatorMatrixInput)).markdown;
   const isHealthcare = /health|hospital|medical|clinic|radiology|laboratory|pharmacy|patient|specialty|OPD|in-patient|emergency/i.test(`${intelligence.primarySector}\n${intelligence.tenderText}`);
   const strengtheningMarkdown = buildClientProposalStrengtheningSections({ clientName: intelligence.clientName, tenderTitle: cleanedTenderTitle, companyName: company.name, projectLines, expertLines, companyEvidenceLines, projectEvidenceLines, isHealthcare, existingMarkdown: matrixMarkdown });
 

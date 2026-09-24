@@ -56,6 +56,25 @@ describe("the writer's working appendix never reaches the client", () => {
     assert.match(out, /Section E: Compliance Matrix/, "client sections the matrix builds are kept");
   });
 
+  it("is stripped after a later pass renumbers or restyles its headings", () => {
+    // Run 36055406065: the evidence graph reached the client under a
+    // renumbered heading the "## Name" patterns did not match.
+    const md = [
+      "# Section D: Additional Information",
+      "## D.6 Evidence Graph Selection Model",
+      "| EXPERT-1 | EXPERT | TRANSFERABLE | WEAK_PROOF_SIGNAL |",
+      "### **Tender Form Strategy**",
+      "Primary tender form: TECHNICAL_PROPOSAL.",
+      "## 7. Proposal Intelligence Contract",
+      "Contract: PIC-3.",
+      "## D.7 Value to the Client",
+      "Client text.",
+    ].join("\n");
+    const out = stripInternalReviewSections(md).markdown;
+    assert.doesNotMatch(out, /WEAK_PROOF_SIGNAL|TECHNICAL_PROPOSAL|PIC-3|Evidence Graph|Tender Form Strategy/);
+    assert.match(out, /## D\.7 Value to the Client\nClient text\./);
+  });
+
   it("the final gate refuses engine text wherever it survives", () => {
     const base = "# Technical Proposal\n\nProposal for the district clinic.\n\n".repeat(20);
     for (const leak of ["EXPERT-1 EXPERT TRANSFERABLE 60% WEAKPROOFSIGNAL", "Evidence graph: directProjects=1; transferableProjects=2", "C.3.1 PROPOSAL INTELLIGENCE CONTRACT — obey before drafting:", "Block final export until this mandatory requirement is traced."]) {

@@ -113,8 +113,24 @@ const INTERNAL_REVIEW_HEADINGS: RegExp[] = [
   /^##?\s+Submission\s+Readiness\s+Checklist\b/i,
 ];
 
+// Later passes renumber and restyle headings ("## D.7 Evidence Graph Selection
+// Model", "### **Tender Form Strategy**"), and run 36055406065 delivered the
+// evidence graph under such a heading: the name patterns above, written for
+// "## Name", no longer matched. A heading is compared by its name alone.
+function headingByName(line: string): string | null {
+  const m = line.match(/^(#{1,6})\s+(.*)$/);
+  if (!m) return null;
+  const name = m[2]
+    .replace(/\*\*|__/g, "")
+    .replace(/^(?:(?:SECTION\s+)?[A-Z]?\d+(?:\.\d+)*[a-z]?\.?|[A-Z]\.\d+(?:\.\d+)*[a-z]?|[A-Z]\.)\s+(?:[—–-]\s+)?/i, "")
+    .trim();
+  return `${m[1].length > 2 ? "##" : m[1]} ${name}`;
+}
+
 function isInternalReviewHeading(line: string): boolean {
-  return INTERNAL_REVIEW_HEADINGS.some((p) => p.test(line));
+  if (INTERNAL_REVIEW_HEADINGS.some((p) => p.test(line))) return true;
+  const normalized = headingByName(line);
+  return normalized !== null && normalized !== line && INTERNAL_REVIEW_HEADINGS.some((p) => p.test(normalized));
 }
 
 // Detect the END of an internal-review section. End = next heading at
