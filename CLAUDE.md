@@ -29,6 +29,11 @@ re-run before believing the result.
 
 Open work and cross-agent scope: `operator_handoff.md` Active Workboard.
 
+After the owner swaps the Preview database or redeploys the Preview, follow
+`docs/PREVIEW_RECOVERY_RUNBOOK.md`: it records how the recurring
+schema-bootstrap (P2022 `User.deletedAt`) and AI-provider fallback problems were
+actually solved, step by step.
+
 ## Product goal (canonical — owner-stated, supersedes earlier phrasing)
 
 Read `OWNER_AUTOMATION_CONTRACT.md` first. It is the current workflow authority.
