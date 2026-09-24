@@ -1,4 +1,4 @@
-import { nonClientEntityLabelPattern, canonicalizeCountry, containsMetadataPlaceholder } from "./metadata-validators";
+import { nonClientEntityLabelPattern, canonicalizeCountry, containsMetadataPlaceholder, isValidReferenceNumber } from "./metadata-validators";
 
 // Deterministic, source-grounded extractors for tender-metadata scalar fields.
 export type ExtractedField<T> = {
@@ -129,6 +129,12 @@ export function extractReference(input: ExtractorInput): ExtractedFieldOrMissing
       if (!m) continue;
       const value = m[1].trim();
       if (LABEL_REJECT.test(value)) continue; // reject pure-label captures
+      // "Tender Reference: Not provided" captured "Not"; "RFP Reference: None"
+      // captured "None". The export gate refuses these as placeholders
+      // ("Critical metadata field reference has a placeholder value (\"Not\")"),
+      // so a tender that states it has no reference was left with a stored
+      // reference that blocked the Build Plan. The gate's own validator decides.
+      if (!isValidReferenceNumber(value)) continue;
       cands.push({ found: true, value, sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: p.confidence });
       break;
     }

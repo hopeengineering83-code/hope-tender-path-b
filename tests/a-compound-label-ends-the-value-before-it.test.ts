@@ -70,3 +70,26 @@ describe("the Run Engine refill never touches the analysis input", () => {
     assert.match(route, /preserveAnalysisInputs: true/);
   });
 });
+
+describe("a tender that says it has no reference has no reference", () => {
+  // 2026-09-24, Preview: Run Engine stopped on "Automatic Build Plan
+  // verification blocked (TENDER_FACTS_INVALID): ... Critical metadata field
+  // reference has a placeholder value (\"Not\")" — the second-pass extractor
+  // read "Tender Reference: Not provided" as the reference "Not".
+  it("the second-pass reference extractor refuses negations and placeholders", async () => {
+    const { extractReference } = await import("../lib/engine/tender-field-extractors");
+    const body = " The consultant shall support the client in identifying suitable premises.".repeat(20);
+    for (const line of ["Tender Reference: Not provided.", "Reference Number: Not stated", "RFP Reference: None", "Reference No.: N/A"]) {
+      const r = extractReference({ files: [{ fileName: "t.pdf", extractedText: "Tender Title: X " + line + body, totalPages: 1 }] } as any);
+      assert.equal(r.found ? r.value : null, null, line);
+    }
+    const ok = extractReference({ files: [{ fileName: "t.pdf", extractedText: "Tender Reference: PV-RFP-2026-014" + body, totalPages: 1 }] } as any);
+    assert.equal(ok.found ? ok.value : null, "PV-RFP-2026-014");
+  });
+
+  it("the refill never writes a placeholder string", () => {
+    const source = readFileSync("lib/engine/auto-fill-tender-metadata.ts", "utf8");
+    const fn = source.slice(source.indexOf("function trySecondPassScalar"), source.indexOf("function trySecondPassScalar") + 900);
+    assert.match(fn, /containsMetadataPlaceholder\(extracted\)/);
+  });
+});
