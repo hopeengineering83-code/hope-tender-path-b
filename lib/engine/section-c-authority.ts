@@ -46,6 +46,7 @@ export type SectionCIdentity =
   | "TENDER_SPECIFICS"
   | "UNDERSTANDING"
   | "METHODOLOGY"
+  | "SCOPE_DELIVERY"
   | "WORK_PLAN"
   | "QUALITY_ASSURANCE"
   | "SECTOR_STANDARDS"
@@ -78,6 +79,12 @@ const CANONICAL_SECTION_C: readonly SectionCSpec[] = [
     identity: "METHODOLOGY",
     title: "Technical Methodology",
     match: /technical\s+methodology|^methodology\b|methodology\s+and\s+approach/i,
+  },
+  {
+    // Each tender scope item answered in the tender's order (scope-delivery-plan.ts).
+    identity: "SCOPE_DELIVERY",
+    title: "Scope-by-Scope Delivery Plan",
+    match: /scope[-\s]by[-\s]scope\s+delivery\s+plan|delivery\s+plan\s+by\s+scope\s+item/i,
   },
   {
     identity: "WORK_PLAN",

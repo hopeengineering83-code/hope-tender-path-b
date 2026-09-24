@@ -76,6 +76,7 @@ import { amplifySectionCDepth } from "./section-c-depth-amplifier";
 import { injectMethodologyTables } from "./methodology-tables";
 import { injectBeyondSpecTables } from "./beyond-spec-tables";
 import { tenderAsksFor } from "./tender-asks-for";
+import { buildScopeDeliveryPlan } from "./scope-delivery-plan";
 import { injectWinThemesTable } from "./win-themes-table";
 import { injectMobilizationAndChecklist } from "./mobilization-and-checklist";
 import { stripPlaceholders } from "./placeholder-stripper";
@@ -2477,6 +2478,13 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
   }
   if (!upstreamCheck("C.5 Risk Register and Mitigation Strategy") && !upstreamCheck("Risk Register") && !upstreamCheck("Risks and Mitigations")) {
     round2Sections.push(buildRisksMitigationsTable({ primarySector: intelligence.primarySector, clientName: intelligence.clientName, sourceText: tenderText }));
+  }
+  // Every scope item the tender lists, answered in its order with a lead named
+  // from the proposed team's own titles (scope-delivery-plan.ts). The sector
+  // themes above covered some items and named nobody.
+  if (!upstreamCheck("Scope-by-Scope Delivery Plan")) {
+    const scopePlan = buildScopeDeliveryPlan({ tenderText, experts: experts as ExpertRecord[] });
+    if (scopePlan) round2Sections.push(scopePlan);
   }
   if (!upstreamCheck("C.6 Work Plan and Schedule") && !upstreamCheck("Work Plan") && !upstreamCheck("Schedule")) {
     // Same day count the phasing narrative uses, from the one parser, so the
