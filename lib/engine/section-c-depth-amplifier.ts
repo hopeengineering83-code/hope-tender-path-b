@@ -134,7 +134,7 @@ function joinWithoutEcho(paragraph: string, closing: string): string {
   // Word overlap is too blunt here — two paragraphs about quality assurance
   // share quality words without restating each other. A shared four-word run is
   // the sentence saying the same thing again, which is what the delivered text
-  // did: "Each gate signed off by Project Principal + Technical Director"
+  // did: "Each gate signed off by Project Principal + Senior Reviewer"
   // followed by "Each gate is signed off by Project Principal and Technical
   // Director before client submission".
   return sharesPhrase(paragraph, closing, 4) ? paragraph : `${paragraph} ${closing}`;
@@ -173,7 +173,7 @@ function sectorMethodologyParagraphRaw(sector: string, subSection: string): stri
     if (/understanding|C\.1/i.test(subSection)) return "The clinical brief drives every downstream decision: zone segregation between Emergency, Outpatient, In-patient, Imaging, Pharmacy, and Laboratory; Infection Prevention and Control (IPC) compliant flow patterns; medical-gas distribution coordinated with structural and MEP grids; radiation-shielding loads accounted for at structural sizing.";
     if (/methodology|C\.2/i.test(subSection)) return "Methodology follows the Ministry of Health functional programming framework: clinical-zone capacity sizing, IPC-compliant patient/staff/supply flow, biomedical equipment integration through PACS-ready cabling and lead-shielding for imaging rooms, and HEPA-rated ventilation across critical-care areas.";
     if (/work plan|C\.3/i.test(subSection)) return "Phased deliverables: site assessment with weighted matrix → conceptual design with clinical zoning → detailed design with MEP coordination → working drawings + BOQ → construction supervision with three IPC hold-points → close-out with as-built and {{JURISDICTION:HEALTH_FACILITY_REGULATOR}} licensing pack.";
-    if (/quality|QA|C\.4/i.test(subSection)) return "Quality gates at 30% Schematic, 60% Design Development, and 100% Pre-Issue. Each gate signed off by Project Principal + Technical Director. Independent peer review at 100%.";
+    if (/quality|QA|C\.4/i.test(subSection)) return "Quality gates at 30% Schematic, 60% Design Development, and 100% Pre-Issue. Each gate signed off by Project Principal + Senior Reviewer. Independent peer review at 100%.";
   }
   if (/water|borehole|hydraulic|sanitary/.test(s)) {
     if (/understanding|C\.1/i.test(subSection)) return "Source-to-tap delivery requires verified yield, hydraulic-model-driven network sizing (EPANET / WaterCAD), pump-station design matched to demand projection, storage reservoir sized for daily peaks, and chlorination compliant with {{JURISDICTION:MATERIALS_TESTING_STANDARD}} standards.";
@@ -281,7 +281,7 @@ function sectorMethodologyParagraphRaw(sector: string, subSection: string): stri
   if (/understanding|C\.1/i.test(subSection)) return "The assignment is driven by the client's stated scope, evaluation criteria, and deliverable expectations. Each scope item maps to a specific methodology element, a responsible expert, and a quality-gate sign-off.";
   if (/methodology|C\.2/i.test(subSection)) return "Methodology integrates inception and scope confirmation, stakeholder consultation, baseline data collection, technical analysis, scenario development, detailed design / planning, peer review, and final deliverable issuance.";
   if (/work plan|C\.3/i.test(subSection)) return "Phased deliverables align scope items to deliverables, responsible experts, quality gates, and timelines. Each phase produces a defined deliverable with sign-off before the next phase begins.";
-  if (/quality|QA|C\.4/i.test(subSection)) return "Quality controls at three formal review milestones (30% / 60% / 100%) signed off by Project Principal + Technical Director. Independent peer review at 100% before issuance.";
+  if (/quality|QA|C\.4/i.test(subSection)) return "Quality controls at three formal review milestones (30% / 60% / 100%) signed off by Project Principal + Senior Reviewer. Independent peer review at 100% before issuance.";
   return "";
 }
 
@@ -328,7 +328,7 @@ const CANONICAL_SUB_SECTIONS: SubSectionSpec[] = [
     matchPatterns: [/^##\s+C\.4\b/im, /^##\s+Quality\s+Assurance/im, /^##\s+QA\b/im],
     buildDepth: ({ primarySector, projects, anchored, sourceText }) => {
       const anchor = anchorOnce([projects[3], projects[0]], anchored, "applied on")
-        ?? "The three-gate quality framework (30% / 60% / 100%) is applied on every engagement. Each gate is signed off by Project Principal and Technical Director before client submission; an independent peer reviewer — not a member of the delivery team — validates the 100% deliverable package.";
+        ?? "The three-gate quality framework (30% / 60% / 100%) is applied on every engagement. Each gate is signed off by Project Principal and Senior Reviewer before client submission; an independent peer reviewer — not a member of the delivery team — validates the 100% deliverable package.";
       const para = sectorMethodologyParagraph(primarySector, "C.4", sourceText);
       return joinWithoutEcho(para, anchor);
     },

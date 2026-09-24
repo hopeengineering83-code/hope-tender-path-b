@@ -399,6 +399,23 @@ const INTERNAL_TRACEABILITY_PATTERNS: RegExp[] = [
   /\b(?:internal\s+use(?:\s+only)?|internal\s+notes?|for\s+internal\s+review|internal\s+review\s+only|reviewer\s+notes?)\b/i,
   /\btraceability\s+map\b/i,
   /\baudit\s+metadata\b/i,
+  // The writer's own contract, criterion graph and evidence scores. Run
+  // 36049851073 delivered 22 pages of them and scored 95 here, because none
+  // of the phrases above occurs in them. These are identifiers and field
+  // syntax the engine prints, never words a proposal uses.
+  /\bWEAKPROOFSIGNAL\b/,
+  /\bNEEDS_CONFIRMATION\b/,
+  /\bobey\s+before\s+drafting\b/i,
+  /\bevidence=(?:DIRECT|PARTIAL|NEEDS_CONFIRMATION)\b/,
+  /\b(?:direct|transferable)(?:Projects|Experts)=\d/,
+  /\bunsafeMismatches=\d/,
+  /\bTCG-\d+\b/,
+  /\bSRC-REQ-\d+\b/,
+  /\b(?:EXPERT|PROJECT)-\d+\s+(?:EXPERT|PROJECT)\b/,
+  /\bblock\s+final\s+export\b/i,
+  /\bproposal\s+intelligence\s+contract\b/i,
+  /\banti-hallucination\b/i,
+  /\bNEVER\s+invent\s+facts\b/i,
 ];
 
 const UNSUPPORTED_CLAIM_PATTERNS: RegExp[] = [
@@ -630,8 +647,9 @@ export function assessGeneratedDocumentQuality(input: DocumentQualityInput): Doc
   }
 
   // ── Internal traceability leakage. ───────────────────────────────────────
-  if (text && INTERNAL_TRACEABILITY_PATTERNS.some((rx) => rx.test(text))) {
-    issues.push({ code: "INTERNAL_TRACEABILITY", severity: "HIGH", message: "Document contains internal traceability text (source-id, evidence-id, match-score, win probability). Strip before submission." });
+  const traceability = text ? INTERNAL_TRACEABILITY_PATTERNS.map((rx) => text.match(rx)).find(Boolean) : null;
+  if (traceability) {
+    issues.push({ code: "INTERNAL_TRACEABILITY", severity: "HIGH", message: `Document contains internal traceability or proposal-engine text ("${traceability[0]}"). Strip before submission.` });
   }
 
   // ── Unsupported claims. ─────────────────────────────────────────────────

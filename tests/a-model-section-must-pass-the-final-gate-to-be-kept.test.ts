@@ -75,7 +75,10 @@ describe("one definition of own-price contamination", () => {
     const validator = readFileSync("lib/document-generation/generated-document-quality-validator.ts", "utf8");
     assert.match(validator, /countOwnPriceMentions\(documentText\)/);
     const ai = readFileSync("lib/ai.ts", "utf8");
-    assert.match(ai, /const safe = clientSafeModelSection\(r\.markdown\)/);
+    // The section's unsupported credentials are removed first, then the same
+    // guard decides; the guard is still what keeps or replaces the section.
+    assert.match(ai, /const credentials = scrubUngroundedCompanyCredentials\(r\.markdown, companyGroundingText\(input\)\)/);
+    assert.match(ai, /const safe = clientSafeModelSection\(credentials\.markdown\)/);
   });
 
   it("the final validator still blocks more than 3 own-price mentions", () => {

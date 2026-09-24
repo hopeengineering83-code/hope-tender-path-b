@@ -156,9 +156,11 @@ describe("a bio is composed from the record when the vault has no prose", () => 
     assert.match(section!, /Principal Qualifications/);
     assert.match(section!, /\*\*Profile\.\*\*/);
     assert.match(section!, /Eng\. Kemal Mohammed Zeinu is proposed as Senior Environmental & Electrical Expert/);
-    assert.match(section!, /14 years experience recorded in the reviewed specialist record/);
-    assert.match(section!, /Electrical Engineering, Environmental Engineering and Hydraulic \/ Water Resources/);
-    assert.match(section!, /Healthcare and Infrastructure/);
+    assert.match(section!, /with 14 years of professional practice/);
+    assert.match(section!, /PhD, Huazhong University of Science & Technology/);
+    // The discipline and sector tags are firm-wide on a real vault, so the bio
+    // no longer repeats them as this person's own.
+    assert.doesNotMatch(section!, /Hydraulic \/ Water Resources|Healthcare and Infrastructure/);
   });
 
   it("does not print the letterhead it refused", () => {

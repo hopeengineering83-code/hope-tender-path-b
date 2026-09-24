@@ -126,8 +126,10 @@ function defaultRows(sector: string): ThemeRow[] {
     },
     {
       pain: "Knowledge lost at handover; client returns to designer for clarifications",
-      strength: "Structured lessons-learned memo + post-handover advisory call (60 min) at no fee",
-      discriminator: "Six-month post-handover advisory window protected against scope re-engagement fees",
+      // No "at no fee" / "protected against ... fees": a technical proposal
+      // states no price, and a free service is a price.
+      strength: "Structured handover memo recording design decisions, assumptions and open items",
+      discriminator: "The operator receives the design reasoning in writing, not only the drawings",
       evidenceFallback: "Written commitment in this proposal — Section C (Technical Methodology)",
     },
   ];

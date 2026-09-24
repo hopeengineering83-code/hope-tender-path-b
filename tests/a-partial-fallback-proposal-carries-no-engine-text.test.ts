@@ -1,0 +1,254 @@
+// A proposal whose sections are partly model-written and partly deterministic
+// carries nothing of the engine that wrote it, and states no credential the
+// firm's record does not hold.
+//
+// Preview run 36049851073 (2026-09-24) was the first to keep a model-written
+// section beside deterministic ones: Section A came from a model, the other
+// three from buildSectionFallback. It passed every gate at quality 95 and
+// delivered:
+//   - 22 pages of the writer's own contract, criterion graph and evidence
+//     scores ("EXPERT-1 EXPERT TRANSFERABLE ... WEAKPROOFSIGNAL", "Block final
+//     export until ..."), because the stripper only ever removed them by
+//     accident of which top-level heading they sat under;
+//   - "C.3.1 PROPOSAL INTELLIGENCE CONTRACT — obey before drafting:" as a
+//     methodology heading, because the fallback read the contract block the
+//     model's input carries as tender requirements;
+//   - "Pharo Ventures requires Pharo Ventures", because the client-name
+//     enforcer took the tender title in "Subject: Technical Proposal — <title>"
+//     for a substituted client and replaced it everywhere;
+//   - "founded in 2012", "a Grade A licence" and "ISO 45001 / ISO 14001" from
+//     the model, against a record of 2019, Grade I and no such certificate.
+// The fixtures are generic; nothing here is tied to that tender.
+
+import { describe, it } from "node:test";
+import { strict as assert } from "node:assert";
+import { appendEvaluatorResponseMatrix } from "../lib/engine/proposal-evaluator-matrix";
+import { stripInternalReviewSections } from "../lib/engine/internal-review-stripper";
+import { enforceClientName } from "../lib/engine/client-name-enforcer";
+import { buildSectionFallback, comparableProjectAnchor } from "../lib/engine/proposal-sections";
+import { stripAIWriterContractPromptBlock } from "../lib/engine/ai-writer-contract-prompt";
+import { scrubUngroundedCompanyCredentials, ungroundedCredential } from "../lib/engine/company-credential-grounding";
+import { assessGeneratedDocumentQuality } from "../lib/engine/document-quality-gate";
+import type { AIBidWriterInput } from "../lib/ai";
+import type { ProposalSectionSpec } from "../lib/engine/proposal-sections";
+
+const MATRIX_INPUT = {
+  tenderTitle: "Design of a District Clinic",
+  clientName: "County Health Office",
+  requirements: ["MANDATORY: Valid business licence", "SCORED: Methodology and work plan", "SCORED: Key experts CVs"],
+  expertLines: ["A. Person — Architect | Disciplines: Architecture"],
+  projectLines: ["Clinic A | Kenya | Healthcare | USD 1.2M"],
+  companyEvidenceLines: ["Business licence BL-1"],
+  projectEvidenceLines: [],
+  complianceLines: ["Submit by email"],
+  differentiators: ["In-house laboratory"],
+};
+
+describe("the writer's working appendix never reaches the client", () => {
+  it("is stripped by name even under a client top-level section", () => {
+    const md = appendEvaluatorResponseMatrix("# Declaration\n\nWe declare.", MATRIX_INPUT);
+    const out = stripInternalReviewSections(md).markdown;
+    for (const heading of ["Proposal Intelligence Contract", "Source-Grounded Requirement Map", "Evidence Graph Selection Model", "Contract Export Gates", "Tender Form Strategy", "Tender Criterion Graph", "Tender Response Blueprint", "Tender Criteria Response Matrix", "Multi-Angle Proposal Quality Check", "Evidence Gaps and Anti-Hallucination Controls", "Win Themes and Differentiators"]) {
+      assert.doesNotMatch(out, new RegExp(`^#+\\s+${heading}`, "m"), heading);
+    }
+    assert.doesNotMatch(out, /WEAKPROOFSIGNAL|NEVER invent facts|Block final export/i);
+    assert.match(out, /^# Declaration/m);
+    assert.match(out, /Section E: Compliance Matrix/, "client sections the matrix builds are kept");
+  });
+
+  it("the final gate refuses engine text wherever it survives", () => {
+    const base = "# Technical Proposal\n\nProposal for the district clinic.\n\n".repeat(20);
+    for (const leak of ["EXPERT-1 EXPERT TRANSFERABLE 60% WEAKPROOFSIGNAL", "Evidence graph: directProjects=1; transferableProjects=2", "C.3.1 PROPOSAL INTELLIGENCE CONTRACT — obey before drafting:", "Block final export until this mandatory requirement is traced."]) {
+      const result = assessGeneratedDocumentQuality({
+        doc: { id: "x", name: "Technical Proposal", exactFileName: "Technical Proposal.pdf", documentType: "TECHNICAL_PROPOSAL", format: "PDF" },
+        visibleText: `${base}${leak}\n`,
+      });
+      const issue = result.issues.find((i) => i.code === "INTERNAL_TRACEABILITY");
+      assert.ok(issue, leak);
+      assert.equal(issue.severity, "HIGH");
+    }
+  });
+});
+
+describe("the tender title is not a substituted client", () => {
+  it("survives the enforcer when the subject line names it", () => {
+    const title = "Architectural Design Services for the Riverside Community Health Centre";
+    const md = [
+      "# Cover Letter",
+      `Subject: Technical Proposal — ${title}`,
+      "To: County Health Office",
+      `We submit this proposal for ${title}.`,
+      "# Section C: Technical Approach",
+      `County Health Office has invited proposals for **${title}**.`,
+    ].join("\n");
+    const out = enforceClientName(md, { canonicalClientName: "County Health Office", knownFirmClients: [], protectedNames: [title] });
+    assert.equal(out.substitutionsMade, 0);
+    assert.equal(out.markdown, md);
+  });
+
+  it("still replaces a genuinely substituted client", () => {
+    const md = "# Cover Letter\nSubject: Technical Proposal — Old Client Ltd\nTo: Old Client Ltd";
+    const out = enforceClientName(md, { canonicalClientName: "County Health Office", knownFirmClients: ["Old Client Ltd"], protectedNames: ["Design of a District Clinic"] });
+    assert.doesNotMatch(out.markdown, /Old Client Ltd/);
+  });
+});
+
+const CONTRACT_BLOCK = [
+  "PROPOSAL INTELLIGENCE CONTRACT — obey before drafting:",
+  "Tender form: PREQUALIFICATION.",
+  "Criterion graph: 10 criteria; 0 critical; 0 high-risk; 0 missing evidence.",
+  "Evidence graph: directProjects=1; transferableProjects=2; directExperts=0; transferableExperts=8; unsafeMismatches=0.",
+  "Section writing plan:",
+  "- Technical Proposal Response: TCG-2, TCG-6 | evidence=DIRECT | risk=LOW | Write directly",
+  "Hard writing rules:",
+  "- NEVER invent facts.",
+].join("\n");
+
+const TENDER = [
+  "[Page 3] SCOPE OF SERVICES",
+  "1. Site Assessment",
+  "The consultant shall assess the candidate sites and prepare an assessment report.",
+  "2. Detailed Design",
+  "The consultant shall prepare detailed design drawings and specifications.",
+  "3. Construction Supervision",
+  "The consultant shall supervise the works for compliance with the approved design.",
+  "[Page 4] EVALUATION CRITERIA",
+].join("\n");
+
+function writerInput(overrides: Partial<AIBidWriterInput> = {}): AIBidWriterInput {
+  return {
+    tenderTitle: "Design of a District Clinic",
+    clientName: "County Health Office",
+    tenderText: TENDER,
+    analysisSummary: "",
+    evaluationMethodology: "",
+    submissionNotes: "",
+    requirements: `${CONTRACT_BLOCK}\n\nMANDATORY: Valid business licence\nSCORED: Methodology and work plan for the clinic`,
+    companyProfile: "",
+    experts: "A. Person — Architect | Disciplines: Architecture\nB. Person — Senior Sanitary Engineer | Disciplines: Sanitary",
+    projects: "Clinic A — County Council | Kenya | Healthcare | USD 1.2M | Construction value of works USD 1.2M | 2019-2021 | Services: Feasibility study, Architectural design, Structural design, MEP design, Construction supervision, Contract administration",
+    compliance: `${CONTRACT_BLOCK}\n\nSubmit by email`,
+    differentiators: "",
+    companyVault: { name: "Firm PLC" },
+    ...overrides,
+  } as AIBidWriterInput;
+}
+
+const spec = (id: string) => ({ id } as unknown as ProposalSectionSpec);
+
+describe("the per-section fallback writes tender content, not its prompt", () => {
+  it("the contract block comes off the fields it was prepended to", () => {
+    assert.equal(stripAIWriterContractPromptBlock(`${CONTRACT_BLOCK}\n\nSCORED: Methodology`), "SCORED: Methodology");
+    assert.equal(stripAIWriterContractPromptBlock("SCORED: Methodology"), "SCORED: Methodology");
+  });
+
+  it("the technical approach names the tender's scope items and none of the contract", () => {
+    const md = buildSectionFallback(spec("technical-approach"), writerInput());
+    assert.doesNotMatch(md, /PROPOSAL INTELLIGENCE|Criterion graph|directProjects|TCG-\d|obey before drafting/);
+    assert.match(md, /3 scope items: Site Assessment; Detailed Design; Construction Supervision/);
+    assert.doesNotMatch(md, /Responsible expert:/, "no name is dealt out round-robin");
+    assert.doesNotMatch(md, /requires \*\*/);
+  });
+
+  it("without listed scope items it falls back to requirement lines, still without the contract", () => {
+    const md = buildSectionFallback(spec("technical-approach"), writerInput({ tenderText: "Design of a clinic." }));
+    assert.doesNotMatch(md, /PROPOSAL INTELLIGENCE|Criterion graph|directProjects|TCG-\d/);
+    assert.match(md, /Methodology and work plan for the clinic/);
+  });
+
+  it("the cover names a project by name, and a construction value under its own label", () => {
+    const md = buildSectionFallback(spec("cover-and-summary"), writerInput());
+    assert.match(md, /comparable experience includes Clinic A — County Council \(Kenya, construction value of works USD 1\.2M\)\./);
+    assert.doesNotMatch(md, / \| /, "no pipe-joined record in prose");
+    assert.doesNotMatch(md, /enclosed appendices|confirms full compliance|team availability|declaration of eligibility/i);
+  });
+
+  it("the anchor never cuts a service mid-word", () => {
+    const anchor = comparableProjectAnchor("Clinic A | Kenya | Healthcare | ETB 5M | Services: Feasibility study, Geotechnical investigation, Archit");
+    assert.ok(anchor);
+    assert.doesNotMatch(anchor.services ?? "", /archit$/);
+  });
+
+  it("section D writes no ESG, safety or innovation pitch the tender did not ask for, and no bracketed signatory", () => {
+    const md = buildSectionFallback(spec("additional-and-declaration"), writerInput());
+    assert.doesNotMatch(md, /Environmental and Social Governance|Health and Safety|Innovation|no additional cost/);
+    assert.doesNotMatch(md, /\[General Manager|YYYY-MM-DD|placeholder|Appendix Register/);
+    assert.match(md, /^# Declaration/m);
+    const asked = buildSectionFallback(spec("additional-and-declaration"), writerInput({ tenderText: `${TENDER}\nThe consultant shall submit a health and safety plan for site works.` }));
+    assert.match(asked, /### Health and Safety/);
+  });
+});
+
+describe("a model-written section states only the credentials the record holds", () => {
+  const record = "Category 1 (Grade I) Ethiopian Construction Authority consultancy. Date of establishment | 05 November 2019 G.C. Training: ISO 9001:2008 Quality Management.";
+
+  it("removes an invented founding year, licence grade and certificate, sentence by sentence", () => {
+    const md = [
+      "## A.1 Company Background",
+      "The firm was founded in 2012 and operates under a Grade A licence. It has delivered 350 projects, worth ETB 694.0M in total.",
+      "Certifications include ISO 9001 (quality), ISO 45001 and ISO 14001.",
+      "| Record | Reference |",
+      "| ISO 14001 certificate | EMS-1 |",
+      "| Business licence | BL-1 |",
+    ].join("\n");
+    const out = scrubUngroundedCompanyCredentials(md, record);
+    assert.doesNotMatch(out.markdown, /2012|Grade A|45001|14001/);
+    assert.match(out.markdown, /It has delivered 350 projects, worth ETB 694\.0M in total\./, "the next sentence, decimals intact");
+    assert.match(out.markdown, /\| Business licence \| BL-1 \|/);
+    assert.equal(out.removed.length, 3);
+  });
+
+  it("keeps a credential the record states", () => {
+    assert.equal(ungroundedCredential("The firm was established in 2019 as a Grade I consultancy.", record), null);
+    assert.equal(ungroundedCredential("Its QMS follows ISO 9001.", record), null);
+    assert.equal(ungroundedCredential("The design follows ISO 21542 for accessibility.", record), "ISO 21542");
+  });
+
+  it("leaves a section with no credential claim byte-for-byte unchanged", () => {
+    const md = "## C.1 Approach\n\n  Indented line.  Two spaces here.\n| a | b |";
+    assert.equal(scrubUngroundedCompanyCredentials(md, record).markdown, md);
+  });
+});
+
+describe("tables state what each person's own record holds", () => {
+  it("reads a professional registration from the CV, and not a reference-letter number", async () => {
+    const { licencesNamedInCv } = await import("../lib/engine/cv-grounding");
+    assert.deepEqual(licencesNamedInCv("Professional Reg. Practicing Professional Architect (PPA/1840) Valid until 2027"), ["Practicing Professional Architect (PPA/1840)"]);
+    assert.deepEqual(licencesNamedInCv("Professional Reg. • Practicing Professional Engineer (PE) in Construction Management • Reg No: PEPCM/5718"), ["Practicing Professional Engineer (PE) in Construction Management (PEPCM/5718)"]);
+    assert.deepEqual(licencesNamedInCv("Supervision: 120K ETB/month Ref No: DRE/021/25, Date: 2025"), []);
+    assert.deepEqual(licencesNamedInCv(""), []);
+  });
+
+  it("the team table shows no firm-wide tags, and each person's scope items", async () => {
+    const { buildProposedTeamTable } = await import("../lib/engine/benchmark-tables");
+    const experts = [
+      { fullName: "E. Volt", title: "Senior Electrical Engineer", disciplines: '["Architecture","Urban Planning","Electrical Engineering"]', sectors: '["Healthcare","Hospitality"]', certifications: '["—"]', yearsExperience: 11, profile: "" },
+      { fullName: "A. Plan", title: "Senior Architect", disciplines: '["Architecture"]', sectors: '["Healthcare"]', certifications: "[]", profile: "Professional Reg. Practicing Professional Architect (PPA/1840)" },
+    ] as never[];
+    const roles = new Map([["A. Plan", { leads: ["Conceptual Design"], supports: ["Renovation Planning"] }]]);
+    const md = buildProposedTeamTable(experts, "hint", roles);
+    assert.doesNotMatch(md, /Urban Planning|Hospitality|\| — \|/);
+    assert.match(md, /Practicing Professional Architect \(PPA\/1840\)/);
+    assert.match(md, /Leads: Conceptual Design\. Supports: Renovation Planning\./);
+    assert.match(md, /E\. Volt — Senior Electrical Engineer \| Not stated in CV \| 11 years \| Senior Electrical Engineer \|/);
+  });
+
+  it("a portfolio card's relevance is built from the record's fields, not its working summary", async () => {
+    const { buildProjectPortfolioCards } = await import("../lib/engine/benchmark-tables");
+    const md = buildProjectPortfolioCards([
+      { name: "Clinic A", sector: "Healthcare", serviceAreas: '["Architectural design","MEP design"]', summary: "9 Clinic A / Council Testimony letter 1. Construction Cost: 18,900,000 USD 2. Design Cost: 945,000 USD" },
+    ] as never, "Design of a District Clinic", "Healthcare / Medical Facility Design");
+    assert.match(md, /Same sector as this assignment \(Healthcare\)\. Services the firm provided: architectural design, MEP design\./);
+    assert.doesNotMatch(md, /Testimony letter|Design Cost: 945,000/);
+  });
+
+  it("project values are added only within one currency", async () => {
+    const { computePortfolioMetrics, buildPortfolioMetricsBlock } = await import("../lib/engine/portfolio-metrics");
+    const block = buildPortfolioMetricsBlock(computePortfolioMetrics({ experts: [] as never, projects: [
+      { contractValue: 550_000_000, currency: "ETB" }, { contractValue: 125_000_000, currency: "ETB" }, { contractValue: 18_900_000, currency: "USD" },
+    ] as never }), "Firm");
+    assert.match(block, /\*\*ETB 675\.0M\*\* Aggregate Value of Projects Delivered \(ETB\)/);
+    assert.match(block, /\*\*USD 18\.9M\*\* Aggregate Value of Projects Delivered \(USD\)/);
+    assert.doesNotMatch(block, /693\.9|694\.0/);
+  });
+});

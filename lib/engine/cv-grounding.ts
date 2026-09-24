@@ -73,3 +73,34 @@ export function softwareNamedInCv(cvText: string | null | undefined): string[] {
     new RegExp(`(^|[^a-z0-9])${tool.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z0-9]|$)`, "i").test(cv),
   );
 }
+
+// A professional registration as CVs print it: "PPA/1840", "PSNE/17891",
+// "PEPCM/5718". A reference letter's number runs on ("DRE/021/25",
+// "EHT/GM/057/2025") and is not one.
+const REGISTRATION = /(?<![A-Za-z/])([A-Z]{2,8})\/(\d{3,6})(?![\/\d])/g;
+const REGISTRATION_CONTEXT = /(?:professional\s+reg|reg(?:istration)?\.?\s*(?:no|number)|licen[cs]|construction\s+(?:works\s+regulatory\s+)?authority|practicing\s+professional|professional\s+(?:engineer|architect))/i;
+const REFERENCE_CONTEXT = /\bref(?:erence)?\.?\s*(?:no\.?)?\s*:?\s*$/i;
+const REGISTERED_TITLE = /((?:Practicing\s+)?(?:Professional|Licensed)\s+(?:[A-Z][a-z]+\s+){0,3}(?:Engineer|Architect|Planner|Surveyor)(?:\s*\([A-Z]{1,5}\))?(?:\s+in\s+[A-Z][a-z]+(?:\s+(?!Reg\b|No\b)[A-Z][a-z]+){0,2})?|(?:[A-Z][a-z]+\s+){1,2}(?:Engineer|Architect))(?:[\s•·:.,()\-]|Reg(?:istration)?\b|No\b|Number\b|\([^)]{0,40}\)|\d{2}\/\d{2}\/\d{4}|G\.C\.)*$/;
+
+/**
+ * The professional registrations this person's own CV states, as
+ * "Practicing Professional Architect (PPA/1840)", or the bare number when the
+ * CV gives no title beside it. Expert records hold a certifications field that
+ * is usually empty, and the proposal printed "—" in the licence column of every
+ * row while the CVs carried the numbers.
+ */
+export function licencesNamedInCv(cvText: string | null | undefined): string[] {
+  const cv = String(cvText ?? "").replace(/\s+/g, " ");
+  const found: string[] = [];
+  const seen = new Set<string>();
+  for (const match of cv.matchAll(REGISTRATION)) {
+    const number = `${match[1]}/${match[2]}`;
+    if (seen.has(number)) continue;
+    const before = cv.slice(Math.max(0, (match.index ?? 0) - 140), match.index ?? 0);
+    if (REFERENCE_CONTEXT.test(before.slice(-20)) || !REGISTRATION_CONTEXT.test(before)) continue;
+    seen.add(number);
+    const title = before.match(REGISTERED_TITLE)?.[1]?.replace(/\s+/g, " ").trim();
+    found.push(title ? `${title} (${number})` : `Reg. No. ${number}`);
+  }
+  return found.slice(0, 3);
+}

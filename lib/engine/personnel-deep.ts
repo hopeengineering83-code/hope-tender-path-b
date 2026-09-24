@@ -41,7 +41,7 @@ import type { ExpertRecord, ProjectRecord } from "./benchmark-tables";
 import { factualCardOrEmpty } from "./vault-prose";
 import { truncateAtWordBoundary } from "./proposal-intelligence";
 import { titleStatesRole } from "./requirement-constraints";
-import { projectsNamedInCv, softwareNamedInCv } from "./cv-grounding";
+import { licencesNamedInCv, projectsNamedInCv, softwareNamedInCv } from "./cv-grounding";
 
 const MARKER_LOADING = "<!-- personnel:per-01-loading -->";
 const MARKER_PROFILES = "<!-- personnel:per-02-profiles -->";
@@ -318,11 +318,16 @@ function pickAndRemove(pool: ExpertRecord[], keywords: string[]): ExpertRecord |
   return picked;
 }
 
+// The licence column states a licence: the stored one, else the registration
+// the person's CV states. It used to repeat the job title from the next column
+// when the stored field was empty, which it usually is.
+function expertLicences(e: ExpertRecord): string[] {
+  const stored = safeArr(e.certifications).map((c) => c.trim()).filter((c) => c.length > 2 && !/^[-—–]+$/.test(c));
+  return stored.length > 0 ? stored : licencesNamedInCv(e.profile);
+}
+
 function expertLicenceLine(e: ExpertRecord): string {
-  const certs = safeArr(e.certifications);
-  if (certs.length > 0) return certs.slice(0, 2).join(" ; ");
-  if (e.title) return e.title;
-  return "Not recorded in the reviewed specialist record";
+  return expertLicences(e).slice(0, 2).join(" ; ") || "Not stated in CV";
 }
 
 export function buildPersonnelLoadingTable(opts: {
@@ -385,11 +390,11 @@ export function buildPersonnelLoadingTable(opts: {
 // Projects and software this person's OWN CV names (cv-grounding.ts). These
 // used to be inferred from firm-wide sector and discipline tags, so every card
 // claimed the same hospitals and the same design software.
+// Names only. A contract value in this cell was blanked by the technical-price
+// separation pass, which printed the row label over an empty cell; the value
+// is stated, under its own label, on the project's portfolio card.
 function expertProjectsLine(e: ExpertRecord, projects: ProjectRecord[]): string {
-  return projectsNamedInCv(e.profile, projects).slice(0, 5).map((p) => {
-    const v = p.contractValue && p.currency?.trim() ? `${p.currency.trim()} ${Math.round(p.contractValue).toLocaleString("en-US")}` : "";
-    return `${p.name}${v ? ` (${v})` : ""}`;
-  }).join(" ; ");
+  return projectsNamedInCv(e.profile, projects).slice(0, 5).map((p) => p.name ?? "").filter(Boolean).join(" ; ");
 }
 
 function expertSoftwareLine(e: ExpertRecord): string {
@@ -410,7 +415,7 @@ function buildOneExpertCard(e: ExpertRecord, idx: number, projects: ProjectRecor
   const rows: { label: string; value: string }[] = [
     { label: "Current Role", value: e.title?.trim() ?? "" },
     { label: "Years of Professional Practice", value: years },
-    { label: "Licence / Certification", value: certs.slice(0, 3).join(" ; ") },
+    { label: "Licence / Certification", value: (certs.length > 0 ? certs : licencesNamedInCv(e.profile)).slice(0, 3).join(" ; ") },
     { label: "Software Named in CV", value: expertSoftwareLine(e) },
     { label: "Projects Named in CV", value: expertProjectsLine(e, projects) },
     // No discipline row: the discipline list is firm-wide boilerplate on every
@@ -554,9 +559,12 @@ export function buildOrganogram(opts: {
   const pool = [...opts.experts];
   // Pick PM first
   const pm = pickAndRemove(pool, ["principal", "director", "manager", "pm"]);
+  // A licence is shown only when there is one: the old fallback printed the
+  // title a second time ("Name, Senior Architect (Senior Architect)").
+  const licenceSuffix = (e: ExpertRecord) => expertLicences(e).slice(0, 1).join("");
   const pmLabel = pm
-    ? `${pm.fullName}${pm.title ? `, ${pm.title}` : ""}${expertLicenceLine(pm) !== "Not recorded in the reviewed specialist record" ? ` (${expertLicenceLine(pm)})` : ""}`
-    : "Project Manager confirmed at inception";
+    ? `${pm.fullName}${pm.title ? `, ${pm.title}` : ""}${licenceSuffix(pm) ? ` (${licenceSuffix(pm)})` : ""}`
+    : "";
 
   const streams = streamsForSector(opts.primarySector);
   const streamRows: string[] = [];
@@ -565,8 +573,8 @@ export function buildOrganogram(opts: {
     for (let i = 0; i < stream.members; i += 1) {
       const ex = pickAndRemove(pool, stream.pickKeywords);
       if (!ex) break;
-      const lic = expertLicenceLine(ex);
-      members.push(`${ex.fullName}${ex.title ? ` (${ex.title})` : ""}${lic !== "Not recorded in the reviewed specialist record" ? ` — ${lic}` : ""}`);
+      const lic = licenceSuffix(ex);
+      members.push(`${ex.fullName}${ex.title ? ` (${ex.title})` : ""}${lic ? ` — ${lic}` : ""}`);
     }
     // A stream nobody on the team holds is left out, not filled with
     // "Assignee confirmed at inception" placeholders.
@@ -582,10 +590,11 @@ export function buildOrganogram(opts: {
     MARKER_ORGANOGRAM,
     "## Project Management Organogram",
     "",
-    "Reporting structure for this engagement. The Project Manager is single-point-of-accountability to the client and reports through the firm's Technical Director for QA escalation. Each stream below is led by a senior with directly comparable experience.",
+    // No "Technical Director" (nobody proposed holds the post) and no "led by a
+    // senior with directly comparable experience" (a claim no record makes).
+    "Reporting structure for this engagement. The Project Manager is the single point of accountability to the client; each stream groups the team members whose own titles hold its disciplines.",
     "",
-    `**Project Manager (single-point-of-accountability)**: ${pmLabel}`,
-    "",
+    ...(pmLabel ? [`**Project Manager (single point of accountability)**: ${pmLabel}`, ""] : []),
     "| Stream | Members |",
     "|--------|---------|",
     ...streamRows,

@@ -22,6 +22,7 @@
  */
 
 import type { ExpertRecord } from "./benchmark-tables";
+import { softwareNamedInCv } from "./cv-grounding";
 
 const MARKER_MOBILIZATION = "<!-- mobilization-plan:table -->";
 const MARKER_CHECKLIST = "<!-- submission-checklist:list -->";
@@ -64,7 +65,15 @@ function mobilizationRows(experts: ExpertRecord[]): MobilizationRow[] {
   // store. It reached a delivered client proposal as "3 reviewed expert(s)
   // from the firm's supervision vault", which tells an evaluator nothing about
   // the team and reveals how the document was assembled.
-  const teamLabel = teamSize > 0 ? `${teamSize} named specialist(s) from the firm's permanent staff` : "Bid-Team Action: confirm team selection before mobilization";
+  // No "from the firm's permanent staff": no record states anybody's terms
+  // of employment. The tools and kit are the ones the team's own CVs name, not
+  // a list written for water and road schemes ("EPANET / WaterCAD", "sand-cone
+  // density", "hydrology kit") that reached a hospital-design proposal.
+  const teamLabel = teamSize > 0 ? `the ${teamSize} named specialist(s) listed in Section A` : "the named specialists listed in Section A";
+  const software = Array.from(new Set(experts.flatMap((e) => softwareNamedInCv(e.profile)))).slice(0, 8);
+  const softwareLine = software.length > 0
+    ? `Design and project software the team's CVs name (${software.join(", ")}) provisioned to the team; shared project workspace set up`
+    : "Design and project-management software provisioned to the team; shared project workspace set up";
 
   return [
     {
@@ -81,25 +90,25 @@ function mobilizationRows(experts: ExpertRecord[]): MobilizationRow[] {
     },
     {
       category: "Software & Digital Tools",
-      week1to2: "Licensed CAD / BIM / GIS / hydraulic / pavement / project-management tools provisioned to team; cloud-storage workspace per engagement",
-      week3to8: "Active design + collaboration; daily backups; version control; coordination tools (BIM 360 / Revit / EPANET / WaterCAD / AutoCAD Civil 3D / ArcGIS as relevant to scope)",
+      week1to2: softwareLine,
+      week3to8: "Active design and coordination in the same tools; daily backups; version control",
       week9plus: "Final-deliverable file format conversion (DWG → DWF, PDF/A); model handover pack",
     },
     {
       category: "Field Equipment",
-      week1to2: "Site-survey kit (total station / GNSS / drone); geotechnical kit (DCP, sand-cone density, sampling tubes); hydrology kit if relevant",
+      week1to2: "Survey and site-inspection equipment mobilised as the scope requires",
       week3to8: "Active deployment as per programme; condition checks weekly",
       week9plus: "Equipment de-mobilization; calibration certificates filed",
     },
     {
       category: "Support Staff",
-      week1to2: "Document controller, GIS analyst, drafting team, admin support active from week 1",
+      week1to2: "Document control, drafting and administrative support active from week 1",
       week3to8: "Continued support with phase-aligned ramp; technical writers engaged for deliverable production",
       week9plus: "Admin + document control active until close-out memo signed",
     },
     {
       category: "Quality Assurance Resourcing",
-      week1to2: "Technical Director nominated as 100% gate reviewer; independent peer reviewer identified",
+      week1to2: "A senior reviewer outside the design team nominated for the 100% gate",
       week3to8: "Active gate reviews at 30% / 60% / 100%; independent peer review at 100%",
       week9plus: "Close-out QA — final-deliverable audit; client-comment resolution log signed off",
     },

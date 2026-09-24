@@ -17,6 +17,7 @@
 import type { ExpertRecord } from "./benchmark-tables";
 import { withoutPersonalCvFields, withoutCvDocumentFurniture, truncateAtWordBoundary } from "./proposal-intelligence";
 import { proseProfileOrEmpty } from "./vault-prose";
+import { licencesNamedInCv, projectsNamedInCv, softwareNamedInCv } from "./cv-grounding";
 
 function safeArr(value: unknown): string[] {
   if (Array.isArray(value)) return value.map(String).filter(Boolean);
@@ -48,50 +49,38 @@ function clean(text: string | null | undefined, max = 320): string {
 export function buildPrincipalQualificationsSection(opts: {
   experts: ExpertRecord[];
   topN?: number;
+  projects?: Array<{ name?: string | null }>;
 }): string | null {
-  const top = opts.experts.slice(0, opts.topN ?? 5);
+  // Every proposed expert, not the first five: the tender scores the whole
+  // team, and three of eight people had no bio at all.
+  const top = opts.experts.slice(0, opts.topN ?? 12);
   if (top.length === 0) return null;
 
   const blocks: string[] = ["## A.4.1 Principal Qualifications — Detailed Bios"];
-  blocks.push("Detailed bios for the lead experts proposed for this assignment. Full curricula vitae, educational certificates, and professional license copies are attached as Appendix C.");
+  // Not "attached as Appendix C": the package carries no CV annex.
+  blocks.push("A short profile of each proposed expert, from their own CV. Full curricula vitae, educational certificates and professional licence copies can be provided on request.");
 
   for (const expert of top) {
     const position = expert.title?.trim() || "Specialist";
-    const disciplines = safeArr(expert.disciplines);
-    const sectors = safeArr(expert.sectors);
-    const certifications = safeArr(expert.certifications);
-    const years = expert.yearsExperience ? `${expert.yearsExperience} years experience` : null;
     // A stored profile that is the CV's letterhead rather than a biography is
     // not printed. A delivered proposal opened this bio with "HOPE URBAN
     // PLANNING ARCHITECTURAL AND ENGINEERING CONSULTANCY PLC ENG. AHMED KEBEDE
     // TEKAW General Manager & Practicing Professional Engineer … Languages
     // Amharic (Excellent), English…" — the firm's name twice, the person's name
-    // twice, and a cut mid-list. The table above already carries the same facts
-    // in a form an evaluator can score.
+    // twice, and a cut mid-list.
     const profile = clean(
       proseProfileOrEmpty(withoutCvDocumentFurniture(withoutPersonalCvFields(expert.profile ?? ""))),
       480,
     );
 
     blocks.push(`### ${expert.fullName} — ${position}`);
-
-    const tableRows: string[] = ["| Field | Detail |", "|---|---|"];
-    tableRows.push(`| Position | ${position} |`);
-    if (years) tableRows.push(`| Experience | ${years} |`);
-    if (disciplines.length > 0) tableRows.push(`| Disciplines | ${disciplines.join(", ")} |`);
-    if (sectors.length > 0) tableRows.push(`| Sector Experience | ${sectors.join(", ")} |`);
-    if (certifications.length > 0) tableRows.push(`| Licenses & Certifications | ${certifications.join("; ")} |`);
-    if (expert.email) tableRows.push(`| Contact | ${expert.email}${expert.phone ? `, ${expert.phone}` : ""} |`);
-    blocks.push(tableRows.join("\n"));
-
-    // When the vault holds no written profile — or holds the CV's letterhead
-    // rather than a biography — the bio is composed from the record's own
-    // structured fields instead. Run 34039741983 refused every stored profile
-    // as furniture, the internal note below it was stripped as internal, and
-    // the whole Detailed Bios sub-section disappeared from the delivered
-    // proposal. An evaluator scoring team depth needs this section, and every
-    // fact in the composed sentence comes from the same reviewed record.
-    blocks.push(`**Profile.** ${profile || composedProfile(expert, position, disciplines, sectors, certifications, years)}`);
+    // One paragraph per person. The facts in table form are the PER 02
+    // profile cards; this section used to repeat them as a second table, plus
+    // "Disciplines" and "Sector Experience" rows filled from firm-wide tags
+    // (every CV of one firm carries "Architecture ... Healthcare, Commercial,
+    // Hospitality"), which told the evaluator an electrical engineer covered
+    // architecture and urban planning.
+    blocks.push(`**Profile.** ${profile || composedProfile(expert, position, opts.projects ?? [])}`);
     blocks.push("");
   }
 
@@ -99,32 +88,23 @@ export function buildPrincipalQualificationsSection(opts: {
 }
 
 /**
- * A factual profile sentence built from the reviewed record's structured
- * fields. It asserts nothing the record does not carry: position, recorded
- * years, disciplines, sectors and licences, in that order, and stops when the
- * record stops.
+ * A factual profile built from what the person's own record states: position,
+ * years, professional registration, and the software and projects their CV
+ * names. It stops when the record stops.
  */
-function composedProfile(
-  expert: ExpertRecord,
-  position: string,
-  disciplines: string[],
-  sectors: string[],
-  certifications: string[],
-  years: string | null,
-): string {
-  const opening = years
-    ? `${expert.fullName} is proposed as ${position} and has ${years} recorded in the reviewed specialist record.`
-    : `${expert.fullName} is proposed as ${position} against the reviewed specialist record.`;
-  const sentences = [opening];
-  if (disciplines.length > 0) {
-    sentences.push(`The record covers ${listPhrase(disciplines)}.`);
-  }
-  if (sectors.length > 0) {
-    sentences.push(`Sector experience is recorded in ${listPhrase(sectors)}.`);
-  }
-  if (certifications.length > 0) {
-    sentences.push(`Licences and certifications on file: ${certifications.join("; ")}.`);
-  }
+function composedProfile(expert: ExpertRecord, position: string, projects: Array<{ name?: string | null }>): string {
+  const stored = safeArr(expert.certifications).filter((c) => c.trim().length > 2 && !/^[-—–]+$/.test(c.trim()));
+  const licences = stored.length > 0 ? stored : licencesNamedInCv(expert.profile);
+  const software = softwareNamedInCv(expert.profile);
+  const named = projectsNamedInCv(expert.profile, projects).map((p) => p.name ?? "").filter(Boolean);
+  const sentences = [
+    expert.yearsExperience
+      ? `${expert.fullName} is proposed as ${position}, with ${expert.yearsExperience} years of professional practice.`
+      : `${expert.fullName} is proposed as ${position}.`,
+  ];
+  if (licences.length > 0) sentences.push(`${stored.length > 0 ? "Qualifications and registration on file" : "Professional registration"}: ${licences.slice(0, 2).join("; ")}.`);
+  if (named.length > 0) sentences.push(`Projects named in the CV include ${listPhrase(named.slice(0, 3))}.`);
+  if (software.length > 0) sentences.push(`Design tools listed in the CV: ${software.slice(0, 6).join(", ")}.`);
   return sentences.join(" ");
 }
 

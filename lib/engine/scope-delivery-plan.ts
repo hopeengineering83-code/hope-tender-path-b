@@ -261,19 +261,54 @@ function cell(text: string): string {
   return text.replace(/\r?\n+/g, " ").replace(/\|/g, "/").trim() || "—";
 }
 
-export function buildScopeDeliveryPlan(opts: { tenderText: string | null | undefined; experts: ExpertRecord[] }): string {
-  const items = extractScopeItems(opts.tenderText);
-  if (items.length === 0) return "";
+interface PlannedScopeItem {
+  item: ScopeItem;
+  traits: ScopeTraits;
+  lead: ExpertRecord | null;
+  support: ExpertRecord[];
+  discipline: string;
+}
+
+// One assignment of people to scope items, shared by the delivery plan and by
+// every table that says what a team member does, so the two cannot disagree.
+function planScopeItems(tenderText: string | null | undefined, experts: ExpertRecord[]): PlannedScopeItem[] {
   const used = new Map<string, number>();
+  return extractScopeItems(tenderText).map((item) => {
+    const traits = traitsOf(item);
+    return { item, traits, ...leadFor(traits.roles, experts, used) };
+  });
+}
+
+/**
+ * The scope items each proposed expert leads and supports, keyed by full name,
+ * in the tender's order. Empty when the tender lists no scope items.
+ */
+export function scopeRolesByExpert(opts: { tenderText: string | null | undefined; experts: ExpertRecord[] }): Map<string, { leads: string[]; supports: string[] }> {
+  const roles = new Map<string, { leads: string[]; supports: string[] }>();
+  const entry = (name: string) => {
+    const existing = roles.get(name);
+    if (existing) return existing;
+    const created = { leads: [] as string[], supports: [] as string[] };
+    roles.set(name, created);
+    return created;
+  };
+  for (const planned of planScopeItems(opts.tenderText, opts.experts)) {
+    if (planned.lead) entry(planned.lead.fullName).leads.push(planned.item.title);
+    for (const member of planned.support) entry(member.fullName).supports.push(planned.item.title);
+  }
+  return roles;
+}
+
+export function buildScopeDeliveryPlan(opts: { tenderText: string | null | undefined; experts: ExpertRecord[] }): string {
+  const planned = planScopeItems(opts.tenderText, opts.experts);
+  if (planned.length === 0) return "";
   const blocks: string[] = [
     "## C.3 Scope-by-Scope Delivery Plan",
     "",
     "Each item of the tender's scope of services is answered below in the tender's own order: who leads it, what it takes in, what it hands over, how it is checked and approved, and the main risk it manages.",
     "",
   ];
-  items.forEach((item, index) => {
-    const traits = traitsOf(item);
-    const { lead, support, discipline } = leadFor(traits.roles, opts.experts, used);
+  planned.forEach(({ item, traits, lead, support, discipline }, index) => {
     const rows: Array<[string, string]> = [
       ["Lead", lead ? person(lead) : `${discipline} (discipline lead)`],
     ];

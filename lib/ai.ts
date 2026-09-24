@@ -11,6 +11,8 @@ import { protectPrompt, protectPromptWithBoundary } from "./ai-trust-boundary";
 import { redactSecrets } from "./sanitize-error";
 import { GEMINI_TIMEOUT_MS, DEEPSEEK_DEFAULT_TIMEOUT_MS, MISTRAL_EXTRACTION_TIMEOUT_MS, OPENAI_COMPAT_DEFAULT_TIMEOUT_MS, O1_O3_TIMEOUT_MS, PROPOSAL_SECTION_TIMEOUT_MS, PROPOSAL_SECTION_TIMEOUT_CEILING_MS, PROPOSAL_SECTION_MS_PER_OUTPUT_TOKEN, PROPOSAL_SECTION_BASE_OVERHEAD_MS, PROPOSAL_SECTION_STITCH_RESERVE_MS, PROPOSAL_SECTION_POOL_RESERVE_MS, PROPOSAL_SECTION_MIN_WRITE_MS, COOLDOWN_WAIT_SETTLE_MS, PROPOSAL_AI_TIMEOUT_MS, REFINEMENT_CALL_TIMEOUT_MS } from "./timeout-config";
 import { AI_TRACE_PATTERNS, countOwnPriceMentions, hasUnprovenClaim, scrubOwnPriceSentences, scrubSourceDocumentMetadata, scrubUnprovenClaimSentences } from "./engine/detection-patterns";
+import { scrubUngroundedCompanyCredentials } from "./engine/company-credential-grounding";
+import { withoutAIWriterContractPrompt } from "./engine/ai-writer-contract-prompt";
 
 const apiKey = process.env.GEMINI_API_KEY;
 // Anthropic key is read at request time via getAnthropicApiKey() — never cached
@@ -828,6 +830,21 @@ export function clientSafeModelSection(markdown: string): { ok: boolean; markdow
     return { ok: false, markdown: cleaned, reason: `${prices} own-price mentions in a technical section` };
   }
   return { ok: true, markdown: cleaned };
+}
+
+/**
+ * Everything the writer was told about the firm: the text a company
+ * credential in a model-written section must be found in.
+ */
+export function companyGroundingText(input: AIBidWriterInput): string {
+  const data = withoutAIWriterContractPrompt(input);
+  return [
+    data.companyProfile,
+    data.compliance,
+    data.experts,
+    data.projects,
+    data.companyVault ? JSON.stringify(data.companyVault) : "",
+  ].filter(Boolean).join("\n");
 }
 
 /** Smallest budget worth starting a provider request with. */
@@ -5911,7 +5928,14 @@ export async function generateProposalSectionsParallel(input: AIBidWriterInput, 
     // proposal at finalization (run 36037462010: a copied vault-document
     // heading and the firm's own prices sank a partially model-written
     // proposal, score 68).
-    const safe = clientSafeModelSection(r.markdown);
+    // A credential the firm's record does not state goes before the safety
+    // check (run 36049851073: "founded in 2012", "Grade A licence", "ISO
+    // 45001 / 14001" against a record of 2019, Grade I and no such certificate).
+    const credentials = scrubUngroundedCompanyCredentials(r.markdown, companyGroundingText(input));
+    if (credentials.removed.length > 0) {
+      logger.warn(`[ai] section "${r.id}": removed ${credentials.removed.length} sentence(s) stating a credential the company record does not hold — ${credentials.removed.join(" | ").slice(0, 300)}`);
+    }
+    const safe = clientSafeModelSection(credentials.markdown);
     if (!safe.ok) {
       logger.warn(`[ai] section "${r.id}" model output failed the client-safety check (${safe.reason}) — using its deterministic text.`);
       return {
@@ -5955,11 +5979,11 @@ export async function generateProposalSectionsParallel(input: AIBidWriterInput, 
       if (!drillResult) {
         logger.warn(`[ai] section-C drill-down skipped — too little time left before the proposal guard; keeping first-pass Section C.`);
         drillDownInfo = ` [section-c-drilldown=skipped(no-time)]`;
-      } else if (drillResult.source !== "fallback" && clientSafeModelSection(drillResult.markdown).ok) {
+      } else if (drillResult.source !== "fallback" && clientSafeModelSection(scrubUngroundedCompanyCredentials(drillResult.markdown, companyGroundingText(input)).markdown).ok) {
         // Replace the first-pass Section C in the sections array.
         const idx = sections.findIndex((s) => s.id === "technical-approach");
         if (idx >= 0) {
-          sections[idx] = { ...drillResult, markdown: clientSafeModelSection(drillResult.markdown).markdown };
+          sections[idx] = { ...drillResult, markdown: clientSafeModelSection(scrubUngroundedCompanyCredentials(drillResult.markdown, companyGroundingText(input)).markdown).markdown };
           drillDownInfo = ` [section-c-drilldown=${drillResult.source}(${Math.round(drillResult.durationMs / 100) / 10}s)]`;
         }
       } else {

@@ -5,7 +5,7 @@ import { withoutSourceProvenance, factualCardOrEmpty } from "./vault-prose";
 import { inlineEvidenceValue } from "./proposal-intelligence";
 import { withoutPersonalCvFields, withoutCvDocumentFurniture, truncateAtWordBoundary } from "./proposal-intelligence";
 import { resolveJurisdictionTokens } from "./jurisdiction-instruments";
-import { projectsNamedInCv } from "./cv-grounding";
+import { projectsNamedInCv, licencesNamedInCv } from "./cv-grounding";
 
 /**
  * Benchmark-quality tabular sections built deterministically from the
@@ -159,42 +159,54 @@ function parseYear(value: Date | string | null | undefined): number | null {
  * A.4 Proposed Project Team — table.
  * Mirrors the benchmark format: # | Expert & Position | Qualifications & Licenses | Sector Experience | Role on This Assignment.
  */
-export function buildProposedTeamTable(experts: ExpertRecord[], assignmentRoleHint: string): string {
+// A stored licence of "—" or "N/A" is an empty field, not a licence. When the
+// record holds none, the registrations the person's own CV states are used.
+function recordedLicences(expert: ExpertRecord): string[] {
+  const stored = safeArr(expert.certifications).map((c) => c.trim()).filter((c) => c.length > 2 && !/^(?:[-—–]+|n\/?a|none|nil|not\s+(?:stated|available|applicable))$/i.test(c));
+  return stored.length > 0 ? stored : licencesNamedInCv(expert.profile);
+}
+
+/**
+ * A.4 Proposed Project Team — one row per person, from their own record.
+ *
+ * The qualifications and sector columns used to print the discipline and
+ * sector tags on the expert record. Those tags are firm-wide ("Architecture,
+ * Urban Planning, Structural Engineering ..." on an electrical engineer's CV,
+ * "Healthcare, Commercial, Hospitality ..." on every CV), so the table told
+ * the evaluator each engineer covered every discipline. It now states only
+ * what the person's record holds — title, licence, years — and, when the
+ * tender lists its scope, which scope items the person leads and supports
+ * (the same assignment the Scope-by-Scope Delivery Plan makes).
+ */
+export function buildProposedTeamTable(
+  experts: ExpertRecord[],
+  assignmentRoleHint: string,
+  scopeRoles?: Map<string, { leads: string[]; supports: string[] }>,
+): string {
   if (experts.length === 0) {
     // An instruction to the bid desk is not a client section; with no
     // reviewed experts the section is simply not written.
     return "";
   }
+  void assignmentRoleHint;
 
-  const header = "| # | Expert & Position | Qualifications & Licenses | Comparable Sector Experience | Role on This Assignment |";
-  const separator = "|---|---|---|---|---|";
+  const showLicence = experts.some((expert) => recordedLicences(expert).length > 0);
+  const showYears = experts.some((expert) => Boolean(expert.yearsExperience));
+  const header = ["#", "Expert & Position", ...(showLicence ? ["Licence / Registration"] : []), ...(showYears ? ["Years of Practice"] : []), "Role on This Assignment"];
   const rows = experts.map((expert, idx) => {
     const position = expert.title?.trim() || "Specialist";
-    const certs = safeArr(expert.certifications).join(", ");
-    const disciplines = safeArr(expert.disciplines).join(", ");
-    const yearsLine = expert.yearsExperience ? `${expert.yearsExperience} yrs experience` : "";
-    const qualParts = [disciplines, certs, yearsLine].filter(Boolean).join(" | ");
-    const sectors = safeArr(expert.sectors).join(", ");
-    // Same defect as the Principal Qualifications bios: the CV file's own
-    // furniture reaching the client, and a hard slice stopping mid-word.
-    // Stripping named CV fields was not enough — run 34039741983 still put
-    // "— DR. ENG. KEMAL MOHAMMED ZEINU Senior Environmental & Electrical Expert
-    // (PhD) HOPE URBAN PLANNING ARCHITECTURAL AND ENGINEERING CONSULTANCY PLC …"
-    // in this table's sector-experience column. A stored value that is the
-    // source document's letterhead is not shown; the sectors beside it say what
-    // this column is for.
-    // This column lists facts rather than reading as a paragraph, so a short
-    // factual card is welcome here — what is not is the CV's letterhead or its
-    // habit of repeating the person's own name and title back at itself.
-    const profile = truncateAtWordBoundary(
-      factualCardOrEmpty(withoutCvDocumentFurniture(withoutPersonalCvFields(expert.profile ?? ""))),
-      280,
-    );
-    const sectorExp = [sectors, profile].filter(Boolean).join(" — ");
-    const role = position.toLowerCase().includes("lead") || position.toLowerCase().includes("principal")
-      ? `${position} on this assignment. ${assignmentRoleHint}`
-      : `${position} on this assignment.`;
-    return `| ${idx + 1} | ${escCell(`${expert.fullName} — ${position}`)} | ${escCell(qualParts || "Qualifications on file")} | ${escCell(sectorExp || "Sector experience on file")} | ${escCell(role)} |`;
+    const roles = scopeRoles?.get(expert.fullName);
+    const role = roles && (roles.leads.length > 0 || roles.supports.length > 0)
+      ? [roles.leads.length > 0 ? `Leads: ${roles.leads.join("; ")}.` : "", roles.supports.length > 0 ? `Supports: ${roles.supports.join("; ")}.` : ""].filter(Boolean).join(" ")
+      : position;
+    const cells = [
+      String(idx + 1),
+      `${expert.fullName} — ${position}`,
+      ...(showLicence ? [recordedLicences(expert).join(", ") || "Not stated in CV"] : []),
+      ...(showYears ? [expert.yearsExperience ? `${expert.yearsExperience} years` : "Not stated in CV"] : []),
+      role,
+    ];
+    return `| ${cells.map(escCell).join(" | ")} |`;
   });
 
   return [
@@ -204,8 +216,8 @@ export function buildProposedTeamTable(experts: ExpertRecord[], assignmentRoleHi
     // CV annex.
     "Each proposed team member is drawn from the firm's own CV records. Full curricula vitae and professional licence copies can be provided on request.",
     "",
-    header,
-    separator,
+    `| ${header.join(" | ")} |`,
+    `|${header.map(() => "---").join("|")}|`,
     ...rows,
   ].join("\n");
 }
@@ -287,7 +299,7 @@ export function buildProjectPortfolioCards(projects: ProjectRecord[], tenderTitl
   cards.push(
     `${projects.length} reviewed project reference(s) directly relevant to ${tenderTitle} are presented below. ` +
     `Each card maps the project's specific transferable technical competencies to a ${primarySector || "tender-specific"} requirement of this assignment. ` +
-    "Original testimony letters, signed contracts, and project completion evidence are attached as Appendix B.",
+    "Original testimony letters, signed contracts and completion evidence can be provided on request.",
   );
 
   for (const project of projects.slice(0, 9)) {
@@ -376,7 +388,7 @@ export function buildProjectPortfolioCards(projects: ProjectRecord[], tenderTitl
     if (hasContractValue(project.contractValue) && !storedIsTheConstructionAmount && !storedIsTheConsultancyFee) {
       rows.push(`| Contract Value | ${escCell(fmtMoney(project.contractValue, project.currency))} |`);
     } else {
-      rows.push(`| Contract Value | ${escCell("Value detail in Appendix B (project reference)")} |`);
+      rows.push(`| Contract Value | ${escCell("Stated in the project reference, available on request")} |`);
     }
     if (constructionValue) {
       rows.push(`| Construction Value of Works | ${escCell(fmtMoney(constructionValue.value, constructionValue.currency ?? project.currency))} |`);
@@ -486,20 +498,20 @@ function extractTestimonyFields(evidences: ProjectEvidenceRecord[]): {
   return { referenceNumber, date, author, contact };
 }
 
+// What the project has in common with this assignment, from its structured
+// fields. The statement used to append the record's free-text summary, which
+// is the vault's working note: "9 Hospital Project / City Administration of
+// Abuja / ... Testimony letter from client 1. Construction Cost: 18,900,000
+// USD 2. Feasibility Study, Geotechnical & New Design Cost: 945,000 USD ..."
+// reached a client card, with the firm's past fees in it.
 function buildRelevanceStatement(project: ProjectRecord, tenderTitle: string, primarySector: string): string {
-  const sectorMatch = (project.sector ?? "").toLowerCase().includes(primarySector.toLowerCase());
-  const summary = (project.summary ?? "").replace(/\s+/g, " ").trim();
-
-  if (summary && sectorMatch) {
-    return `Direct ${primarySector} relevance: ${truncateAtWordBoundary(summary, 280)}`;
-  }
-  if (summary) {
-    return `Demonstrates transferable competency for ${tenderTitle}: ${truncateAtWordBoundary(summary, 280)}`;
-  }
-  if (sectorMatch) {
-    return `Direct ${primarySector} project; its methodology applies to ${tenderTitle}.`;
-  }
-  return `Transferable technical competency: ${safeArr(project.serviceAreas).join(", ") || "scope-relevant scope"} — directly applicable to the methodology required by ${tenderTitle}.`;
+  const sectorMatch = Boolean(project.sector) && (project.sector ?? "").toLowerCase().includes(primarySector.toLowerCase().split(/[\s/]+/)[0] ?? "");
+  const services = safeArr(project.serviceAreas).map((service) => service.trim()).filter(Boolean);
+  const serviceText = services.length > 0 ? services.slice(0, 6).map((service) => (/^[A-Z]{2,}\b/.test(service) ? service : service.charAt(0).toLowerCase() + service.slice(1))).join(", ") : "";
+  void tenderTitle;
+  const sectorLine = sectorMatch ? `Same sector as this assignment (${(project.sector ?? primarySector).trim()}).` : "";
+  const servicesLine = serviceText ? `Services the firm provided: ${serviceText}.` : "";
+  return [sectorLine, servicesLine].filter(Boolean).join(" ") || "Comparable project in the firm's record.";
 }
 
 /**
@@ -619,8 +631,8 @@ export function buildThreeStageReviewTable(companyName: string, primarySector: s
     "",
     "| Stage | Milestone | Review Authority and Required Action |",
     "|---|---|---|",
-    `| Stage 1 | ${stage1Action}: ${stage1Detail} | Senior Engineer and QA Manager. Sector-protocol gate-check. Written sign-off required before proceeding. |`,
-    `| Stage 2 | ${stage2Action}: ${stage2Detail} | Deputy General Manager / Technical Director. Regulatory and compliance pre-check. Written approval required. |`,
+    `| Stage 1 | ${stage1Action}: ${stage1Detail} | Senior discipline lead and a second reviewer. Sector-protocol gate-check. Written sign-off required before proceeding. |`,
+    `| Stage 2 | ${stage2Action}: ${stage2Detail} | Senior reviewer outside the design team. Regulatory and compliance pre-check. Written approval required. |`,
     `| Stage 3 | ${stage3Action}: ${stage3Detail} | General Manager / Principal. Final sign-off before issue. All review comments resolved. |`,
   ].join("\n");
 }
@@ -683,11 +695,12 @@ export function buildBenchmarkTablesBlock(opts: {
   primarySector: string;
   assignmentRoleHint: string;
   alreadyHasHeading: (heading: string) => boolean;
+  scopeRoles?: Map<string, { leads: string[]; supports: string[] }>;
 }): string {
   const blocks: string[] = [];
 
   if (!opts.alreadyHasHeading("A.4 Proposed Project Team") && !opts.alreadyHasHeading("Proposed Project Team")) {
-    blocks.push(buildProposedTeamTable(opts.experts, opts.assignmentRoleHint));
+    blocks.push(buildProposedTeamTable(opts.experts, opts.assignmentRoleHint, opts.scopeRoles));
   }
   if (!opts.alreadyHasHeading("A.5 Team-to-Project Experience Mapping") && !opts.alreadyHasHeading("Team-to-Project Experience Mapping")) {
     blocks.push(buildTeamToProjectMappingTable(opts.experts, opts.projects));
@@ -759,7 +772,7 @@ export function buildClientReferencesTable(projects: ProjectRecord[]): string {
 
   return [
     "## B.1 Client References",
-    `${projects.length === 1 ? "One client reference" : `${Math.min(projects.length, 5)} client references`} provided with named contacts and reference details. Original testimony letters, signed contracts, and project completion evidence are attached as Appendix B.`,
+    `${projects.length === 1 ? "One client reference" : `${Math.min(projects.length, 5)} client references`} provided with named contacts and reference details. Original testimony letters, signed contracts and completion evidence can be provided on request.`,
     "",
     "| Project / Client | Reference Contact & Title | Contact Details & Reference | Contract Value |",
     "|---|---|---|---|",

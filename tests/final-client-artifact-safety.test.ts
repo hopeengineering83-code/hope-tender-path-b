@@ -174,5 +174,7 @@ test('client-facing team summaries remove irrelevant personal CV fields', () => 
   }];
   const output = `${buildProposedTeamTable(experts, 'Lead coordination')}\n${buildPrincipalQualificationsSection({ experts })}`;
   assert.doesNotMatch(output, /Date of Birth|10 January 1983|Nationality Ethiopian/);
-  assert.match(output, /Education MSc Electrical Engineering|Hospital MEP design/);
+  // What the table and bio do state comes from the person's own record.
+  assert.match(output, /Daniel Example — Electrical Engineer/);
+  assert.match(output, /11 years/);
 });

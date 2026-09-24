@@ -19,6 +19,8 @@ export type PortfolioMetrics = {
   reviewedProjectCount: number;
   reviewedExpertCount: number;
   totalContractValue: number;
+  // One total per currency, the dominant one first.
+  valueByCurrency?: Array<{ currency: string; total: number }>;
   currency: string;
   countriesCovered: string[];
   topSectors: string[];
@@ -36,7 +38,19 @@ export function computePortfolioMetrics(opts: {
   const currencies = projects.map((p) => p.currency).filter(Boolean);
   const dominantCurrency = currencies.find((c) => currencies.filter((x) => x === c).length >= currencies.length / 2) || currencies[0] || "ETB";
 
-  const totalContractValue = projects.reduce((sum, p) => sum + (p.contractValue ?? 0), 0);
+  // Values are added only within one currency. The sum used to add every
+  // project's figure whatever its currency, so ETB 550M + ETB 125M + USD 18.9M
+  // was printed as "ETB 694.0M".
+  const valueByCurrency: Array<{ currency: string; total: number }> = [];
+  for (const p of projects) {
+    if (!p.contractValue || p.contractValue <= 0) continue;
+    const currency = (p.currency ?? "").trim() || dominantCurrency;
+    const entry = valueByCurrency.find((v) => v.currency === currency);
+    if (entry) entry.total += p.contractValue;
+    else valueByCurrency.push({ currency, total: p.contractValue });
+  }
+  valueByCurrency.sort((a, b) => (a.currency === dominantCurrency ? -1 : b.currency === dominantCurrency ? 1 : 0));
+  const totalContractValue = valueByCurrency.find((v) => v.currency === dominantCurrency)?.total ?? 0;
   const countriesCovered = Array.from(new Set(projects.map((p) => (p.country ?? "").trim()).filter(Boolean)));
   const sectorCounts = new Map<string, number>();
   for (const p of projects) {
@@ -77,6 +91,7 @@ export function computePortfolioMetrics(opts: {
     reviewedProjectCount: projects.length,
     reviewedExpertCount: experts.length,
     totalContractValue,
+    valueByCurrency,
     currency: dominantCurrency,
     countriesCovered: countriesCovered.slice(0, 5),
     topSectors,
@@ -123,7 +138,14 @@ export function buildPortfolioMetricsBlock(metrics: PortfolioMetrics, companyNam
     // null and the tile never appeared. Now that the import derives the
     // column, an unqualified "Portfolio Value" in the first block an
     // evaluator reads would imply firm-scale turnover. Say what it is.
-    tiles.push(`| **${summariseValue(metrics.totalContractValue, metrics.currency)}** Aggregate Value of Projects Delivered |`);
+    const totals = metrics.valueByCurrency && metrics.valueByCurrency.length > 0
+      ? metrics.valueByCurrency
+      : [{ currency: metrics.currency, total: metrics.totalContractValue }];
+    // One tile per currency: a combined "ETB 675.1M + USD 18.9M" value wraps
+    // in the PDF, and the amount then reads as a bare figure on its own line.
+    for (const v of totals) {
+      tiles.push(`| **${summariseValue(v.total, v.currency)}** Aggregate Value of Projects Delivered${totals.length > 1 ? ` (${v.currency})` : ""} |`);
+    }
   }
   if (metrics.reviewedExpertCount >= 2) {
     tiles.push(`| **${metrics.reviewedExpertCount}** Specialists on the Proposed Team |`);

@@ -157,7 +157,7 @@ function sectorRiskRows(sector: string): RiskRow[] {
     { category: "Schedule", risk: "Late client decision on key approvals delays critical-path activities", likelihood: "Medium", impact: "High", mitigation: "Approval-pack pre-circulation 5 working days ahead; standing weekly client meeting; escalation matrix with 48-hour SLA", owner: "Project Principal" },
     { category: "Scope", risk: "Mid-engagement scope expansion erodes budget and quality", likelihood: "Medium", impact: "Medium", mitigation: "Variation log maintained from week 1; signed change-order required before any work outside ToR; monthly scope-health memo", owner: "Project Principal" },
     { category: "Resource", risk: "Loss of a key expert during the engagement", likelihood: "Low", impact: "High", mitigation: "Named back-up expert per role in this proposal; CV-rotation kept current; 48-hour mobilization commitment", owner: "Lead Specialist" },
-    { category: "Quality", risk: "Deliverable fails internal peer review at 100% gate", likelihood: "Low", impact: "High", mitigation: "30%/60%/100% formal QA gates signed off by Project Principal + Technical Director; independent peer review at 100%", owner: "Technical Director" },
+    { category: "Quality", risk: "Deliverable fails internal peer review at 100% gate", likelihood: "Low", impact: "High", mitigation: "30%/60%/100% formal QA gates signed off by Project Principal + Senior Reviewer; independent peer review at 100%", owner: "Senior Reviewer" },
     { category: "Compliance", risk: "Regulatory or licensing change during engagement", likelihood: "Low", impact: "Medium", mitigation: "Compliance scan at inception and 60% review; named regulatory liaison; designs reference current statutes by clause", owner: "Compliance Lead" },
   ];
 
@@ -316,8 +316,8 @@ function sectorQARows(sector: string): QAItpRow[] {
   const s = sector.toLowerCase();
   const generic: QAItpRow[] = [
     { checkpoint: "30% Schematic Review", criterion: "Scope coverage and zoning rationale match ToR", method: "Internal peer review against ToR-clause checklist", frequency: "Once at 30%", responsible: "Project Principal", type: "Hold" },
-    { checkpoint: "60% Design Development Review", criterion: "Technical design integrity, coordination across disciplines", method: "Multi-discipline coordination review; clash audit", frequency: "Once at 60%", responsible: "Technical Director", type: "Hold" },
-    { checkpoint: "100% Pre-Issue Review", criterion: "Deliverable completeness, regulatory compliance, ToR coverage", method: "Independent peer review by senior expert not on team", frequency: "Once at 100%", responsible: "Technical Director", type: "Hold" },
+    { checkpoint: "60% Design Development Review", criterion: "Technical design integrity, coordination across disciplines", method: "Multi-discipline coordination review; clash audit", frequency: "Once at 60%", responsible: "Senior Reviewer", type: "Hold" },
+    { checkpoint: "100% Pre-Issue Review", criterion: "Deliverable completeness, regulatory compliance, ToR coverage", method: "Independent peer review by senior expert not on team", frequency: "Once at 100%", responsible: "Senior Reviewer", type: "Hold" },
     { checkpoint: "Documentation QA", criterion: "Drawings, specs, BOQ cross-reference correctly; revision control intact", method: "Cross-document audit with revision register", frequency: "Each issuance", responsible: "Document Controller", type: "Review" },
     { checkpoint: "Client Comment Resolution", criterion: "All client comments addressed in writing", method: "Comment-resolution register with response per comment", frequency: "After each review cycle", responsible: "Project Principal", type: "Review" },
   ];
@@ -409,10 +409,10 @@ function commsRows(): CommsRow[] {
   return [
     { item: "Client Coordination Meeting", audience: "Client Project Manager + Project Principal + Lead Specialist", cadence: "Weekly", owner: "Project Principal", format: "Standing agenda, written minutes within 48h, action register" },
     { item: "Monthly Progress Report", audience: "Client Project Manager + Client Director", cadence: "Monthly (5th of each month)", owner: "Project Principal", format: "Written report: progress vs plan, risks, decisions needed, next-period look-ahead" },
-    { item: "Technical Design Workshop", audience: "Multi-discipline team + Client technical reviewers", cadence: "30%, 60%, 100% gates", owner: "Technical Director", format: "Workshop with pre-circulated pack; decisions captured in design log" },
+    { item: "Technical Design Workshop", audience: "Multi-discipline team + Client technical reviewers", cadence: "30%, 60%, 100% gates", owner: "Senior Reviewer", format: "Workshop with pre-circulated pack; decisions captured in design log" },
     { item: "Stakeholder Consultation", audience: "End-users, regulators, community representatives", cadence: "Inception + 60% gate + final", owner: "Project Principal", format: "Structured workshop with attendance register, comments log, response memo" },
     { item: "Risk Register Review", audience: "Internal team + Client PM", cadence: "Monthly", owner: "Project Principal", format: "Updated register circulated 48h ahead; live discussion at coordination meeting" },
-    { item: "Escalation Path", audience: "Client Director / Technical Director", cadence: "On-demand, 48-hour SLA", owner: "Project Principal", format: "Written memo flagging the issue, options, recommendation" },
+    { item: "Escalation Path", audience: "Client Director / Senior Reviewer", cadence: "On-demand, 48-hour SLA", owner: "Project Principal", format: "Written memo flagging the issue, options, recommendation" },
   ];
 }
 

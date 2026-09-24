@@ -66,7 +66,8 @@ test("a phase with no matching expert defers the assignment instead of inventing
     assert.ok(narrative.includes(phase.title), `the plan lost "${phase.title}"`);
   }
   assert.ok(!narrative.includes("**Phase lead:**"), "a lead was named from an empty team");
-  assert.ok(narrative.includes("confirmed at inception"));
+  assert.ok(!narrative.includes("confirmed at inception"), "an unfilled post is not announced to the client");
+  assert.ok(narrative.includes("**Accountable role:**"), "the phase still states who is accountable");
   assert.ok(!narrative.includes("Bid-Team Action"), "internal action language must not reach the client");
 });
 

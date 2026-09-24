@@ -116,7 +116,10 @@ export function buildValueAddedServices(opts: { primarySector: string; companyNa
   if (/health|hospital|medical|clinic/.test(sector)) bullets = [
     `**Clinical workflow audit** — patient, staff, supply, and waste flow mapping with bottleneck analysis. Carried into the facility design as an input.`,
     `**Medical equipment readiness review** — coordination with biomedical specialist on equipment-power, shielding, and gas requirements before procurement decisions are taken, reducing late-stage retrofit costs.`,
-    `**Health Authority licensing pre-check** — pre-submission internal review of design package against current Health Authority licensing checklist, included as a project deliverable.`,
+    // The words "internal review" made a later client-text pass cut this line
+    // to "— pre-submission", and "Health Authority" named a body the tender
+    // may not.
+    `**Licensing pre-check** — the design package is checked against the health-facility licensing checklist before each authority submission.`,
     `**O&M training pack** — facility operator training materials provided at handover, including HVAC operation, medical-gas system operation, and IPC protocol enforcement.`,
     `**Post-occupancy evaluation** — six-month post-occupancy audit (workflow, IPC compliance, HVAC performance) offered as an optional extension for continuous improvement.`,
   ];
@@ -200,7 +203,7 @@ export function buildValueAddedServices(opts: { primarySector: string; companyNa
   else if (/kyc|aml|core.*banking|microfinance|ifrs|basel|prudential|fintech/.test(sector)) bullets = [
     `**Regulatory compliance knowledge base** — searchable wiki of applicable regulations, mapped to system controls, handed over as part of the training package.`,
     `**Automated regulatory reporting templates** — Basel, IFRS, or AML return templates pre-validated against regulator's published format; reduces manual reporting effort.`,
-    `**Source code escrow** — third-party source code escrow available during warranty period; protects client from vendor lock-in at no additional cost.`,
+    `**Source code escrow** — third-party source code escrow available during warranty period; protects the client from vendor lock-in.`,
     `**Penetration test report and remediation evidence** — pre-go-live security review with full remediation evidence; supports regulatory and audit submission.`,
     `**90-day post-go-live hypercare** — named support contact with SLA-defined response times for 90 days after go-live; included in the engagement scope.`,
   ];
@@ -260,7 +263,7 @@ export function buildCertificationsSection(opts: {
   if (sortedCerts.length > 0) {
     return [
       "## D.3 Professional Certifications and Affiliations",
-      `${opts.companyName} maintains documented professional certifications and registrations across the proposed team. Original certificates are attached as Appendix C alongside the curricula vitae.`,
+      `${opts.companyName} maintains documented professional certifications and registrations across the proposed team. Original certificates can be provided on request, with the curricula vitae.`,
       "",
       "| Certification / License / Registration |",
       "|---|",

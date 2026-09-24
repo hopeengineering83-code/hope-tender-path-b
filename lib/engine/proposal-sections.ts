@@ -46,6 +46,9 @@ import {
   TENDER_FOCUS_EVALUATION,
 } from "./tender-context-selection";
 import { resolveJurisdictionTokens } from "./jurisdiction-instruments";
+import { withoutAIWriterContractPrompt } from "./ai-writer-contract-prompt";
+import { extractScopeItems } from "./scope-delivery-plan";
+import { tenderAsksFor } from "./tender-asks-for";
 
 // ─── Section-specific system prompts ─────────────────────────────────────────
 // Each persona is the EXACT senior bid-team specialist who would write
@@ -1076,7 +1079,10 @@ export function extractSectionCFromMarkdown(markdown: string): string | null {
 // self-score-builder, narrative-throughline-enforcer) downstream will
 // fill the section out with structured tables.
 
-export function buildSectionFallback(spec: ProposalSectionSpec, input: AIBidWriterInput): string {
+export function buildSectionFallback(spec: ProposalSectionSpec, writerInput: AIBidWriterInput): string {
+  // The writer's input carries the model's contract block at the head of
+  // three fields; this writer reads those fields as tender data.
+  const input = withoutAIWriterContractPrompt(writerInput);
   switch (spec.id) {
     case "cover-and-summary":
       return buildCoverAndSummaryFallback(input);
@@ -1095,15 +1101,6 @@ export function buildSectionFallback(spec: ProposalSectionSpec, input: AIBidWrit
         // they all start with an ALL-CAPS keyword followed by " RULE:" or " BENCHMARK"
         .filter((l) => l.length > 15 && !/\bBENCHMARK\b|\bRULE:\s/i.test(l.slice(0, 60)))
         .slice(0, 8);
-      // Parse top expert names — expertProofLine format is "Name — Title | ..."
-      // so we match the name at the start, stopping at space-dash or pipe or end.
-      const expertNames = input.experts
-        .split("\n")
-        .map((l) => l.match(/^([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)(?:\s*[—|–\-]|$)/)?.[1]?.trim() ?? "")
-        .filter(Boolean)
-        .slice(0, 4);
-      const leadExpert = expertNames[0] || "the lead expert";
-      const team = expertNames.length > 1 ? expertNames.join(", ") : leadExpert;
       // Sector-specific scope item sets replace the generic fallback when sector detected.
       const SECTOR_SCOPE_ITEMS: Record<string, string[]> = {
         healthcare: ["Clinical Brief Review and Space Programming", "Site Investigation and Clinical Zoning", "Infection Prevention and Control (IPC) Design", "MEP Engineering — Medical Gas, HVAC, Emergency Power", "Structural and Fire Safety Design", "Regulatory Approval and Permit Documentation", "Equipment Planning and Biomedical Coordination", "Tender Documentation and BOQ Preparation", "Construction Supervision and QA", "Commissioning and Handover"],
@@ -1163,33 +1160,45 @@ export function buildSectionFallback(spec: ProposalSectionSpec, input: AIBidWrit
       while (normalizedReqs.length < 6) {
         normalizedReqs.push(EFFECTIVE_SCOPE_ITEMS[normalizedReqs.length]);
       }
+      // No expert is named against an item here. Names used to be dealt out
+      // round-robin, which put a sanitary engineer in charge of "Relevant
+      // Experience" and an electrical engineer on the tender form; a lead is
+      // named only where a title holds the discipline (scope-delivery-plan).
+      const scopeItems = extractScopeItems(input.tenderText ?? "");
       const methodBlocks = normalizedReqs.map((req, i) => {
-        const expert = expertNames[i % Math.max(1, expertNames.length)] || "the assigned expert";
         const isGeneric = i >= reqLines.length;
         const body = isGeneric
-          ? `The ${req.toLowerCase()} phase follows the firm's established staged-delivery methodology. ${expert} will lead this scope item, applying sector-specific technical standards and the firm's quality-gate process. Each stage deliverable is prepared at schematic, detailed, and final levels with internal QA peer review before submission to ${client} for approval.`
-          : `Our approach to this requirement begins with a thorough review of ${client}'s stated scope, constraints, and applicable standards. ${expert} will lead this scope item, applying the firm's proven methodology and drawing on comparable project experience. The deliverable will be prepared at schematic, detailed, and final stages with internal QA review at each gate before submission to ${client} for approval.\n\nResponsible expert: ${expert}. Quality Gate: 30%/60%/100% internal review gates — peer-reviewed at 30%, cross-discipline at 60%, director sign-off at 100%.`;
+          ? `The ${req.toLowerCase()} phase follows the firm's staged-delivery methodology. The discipline lead applies the applicable technical standards and the firm's quality-gate process, and each stage deliverable is prepared at schematic, detailed and final levels with internal peer review before submission to ${client} for approval.`
+          : `Our approach to this requirement begins with a review of ${client}'s stated scope, constraints and applicable standards. The deliverable is prepared at schematic, detailed and final stages with internal review at each gate before submission to ${client} for approval.\n\nQuality gate: internal review at 30%, cross-discipline check at 60% and senior sign-off at 100%.`;
         return `### C.2.${i + 1} ${req.slice(0, 80)}\n\n${body}`;
       });
       // Work-plan rows derived from normalised requirement scope items (scales to 10 items)
       const PHASE_TIMELINES = ["Week 1–2", "Week 2–4", "Week 4–6", "Week 6–8", "Week 8–12", "Week 12–16", "Week 16–18", "Week 18–20", "Week 20–22", "Week 22–24"];
       const PHASE_GATES = ["PM sign-off", "Senior Engineer review", "QA peer review", "Client interim review", "30% client review", "60%/100% gates", "Director sign-off", "Client acceptance", "Final QA review", "PM close-out"];
       const workPlanRows = normalizedReqs.map((req, i) => {
-        const responsible = i % 2 === 0 ? leadExpert : team;
+        const responsible = "Discipline lead";
         const deliverable = req.slice(0, 60).replace(/\s*\(.*$/, "").trim();
         return [`${i + 1} — ${req.slice(0, 40).replace(/\s*\(.*$/, "").trim()}`, `${deliverable} Report`, responsible, PHASE_TIMELINES[i] ?? `Week ${i * 2 + 1}–${i * 2 + 2}`, PHASE_GATES[i] ?? "PM sign-off"];
       });
       return [
         "# Section C: Technical Approach",
         "## C.1 Understanding of the Assignment",
-        `${client} requires ${tenderRef}. This assignment requires the proposed team to address the scope items in sequence, applying sector-specific technical standards and delivering each output at the quality level required for client approval. The three key technical challenges identified are: (1) alignment of the detailed scope with ${client}'s stated requirements and applicable standards; (2) ensuring the proposed team's expertise directly addresses the highest-weighted evaluation criteria; and (3) maintaining schedule discipline across a multi-stage delivery. Our approach in Section C.2 addresses each scope item in turn, naming the responsible expert and the quality gate for each deliverable.\n\nThe evaluation criteria identified in this tender require the firm to demonstrate not only technical competence but also the capacity to manage scope, schedule, and quality concurrently. Our methodology is built around a staged approach with explicit client-approval milestones at each phase transition, ensuring that ${client} retains oversight throughout the assignment and that no stage proceeds until the prior deliverable has been accepted.\n\nThe firm's comparable project portfolio demonstrates delivery of assignments of similar scope, sector, and complexity. The strongest project analogues are identified in Section B; each analogous project is cited within the methodology sections below to substantiate the proposed approach with direct precedent, not generic best-practice statements.`,
+        [
+          `${client} has invited proposals for ${tenderRef}.`,
+          scopeItems.length > 0
+            ? `The tender sets out ${scopeItems.length} scope items: ${scopeItems.map((item) => item.title).join("; ")}. Each is answered in the Scope-by-Scope Delivery Plan in this section, in the tender's own order, with its lead, inputs, deliverables, quality check and approval.`
+            : "",
+          `The work is staged, with a client approval at each stage transition, so that ${client} keeps oversight throughout and no stage proceeds until the deliverable before it has been accepted.`,
+        ].filter(Boolean).join(" "),
         "## C.2 Technical Methodology",
-        methodBlocks.length > 0 ? methodBlocks.join("\n\n") : `### C.2.1 Technical Methodology\n\nThe methodology for ${tenderRef} is structured to address each scope item in the tender's stated order. Each stage ties to a deliverable, a responsible named expert, and an internal quality-review gate. The approach applies the firm's established standards for scope review, technical analysis, and staged delivery with client approval milestones at each phase transition.`,
-        "## C.3 Work Plan and Deliverables",
-        `The assignment is structured across six overlapping stages with defined deliverables, responsible experts, and client approval milestones. The critical path runs through the detailed design stage; all prior stages feed into it and each later stage depends on approved outputs from the one before.\n\n| Stage | Deliverable | Responsible Expert | Timeline | Quality Gate |\n|---|---|---|---|---|\n${workPlanRows.map((r) => `| ${r.join(" | ")} |`).join("\n")}`,
+        scopeItems.length > 0
+          ? `The methodology follows the tender's scope of services item by item rather than a generic sequence. Each item is led by the team member whose own title holds the discipline, reviewed by a second senior lead before issue, and released to ${client} for approval before the work that depends on it begins. The item-by-item plan follows below.`
+          : methodBlocks.length > 0 ? methodBlocks.join("\n\n") : `### C.2.1 Technical Methodology\n\nThe methodology for ${tenderRef} is structured to address each scope item in the tender's stated order. Each stage ties to a deliverable and an internal quality-review gate, with client approval milestones at each phase transition.`,
+        scopeItems.length > 0 ? "" : "## C.3 Work Plan and Deliverables",
+        scopeItems.length > 0 ? "" : `The assignment is structured across overlapping stages with defined deliverables and client approval milestones. Each later stage depends on approved outputs from the one before.\n\n| Stage | Deliverable | Responsible | Timeline | Quality Gate |\n|---|---|---|---|---|\n${workPlanRows.map((r) => `| ${r.join(" | ")} |`).join("\n")}`,
         "## C.4 Quality Assurance",
         `Quality assurance for ${tenderRef} is managed through a three-gate internal review cycle: 30% gate (internal peer review by a senior engineer not on the primary design team), 60% gate (cross-discipline coordination check and client interim review), and 100% gate (director-level sign-off and final compliance verification before issue). No deliverable proceeds to the next stage without written confirmation that the prior gate has been passed.\n\nAll technical documents are version-controlled and issued with a revision history. Comments received from ${client} at each interim review are logged in a comment-response matrix and formally closed before the next stage begins. This approach ensures full traceability between ${client}'s requirements, the technical response, and the final submitted deliverables.\n\nRisk management is integrated into the QA programme: the top three technical risks for this assignment (scope ambiguity, tight schedule, and specialist availability) are tracked on a live risk register updated at each gate and shared with ${client} at every interim submission.`,
-      ].join("\n\n");
+      ].filter(Boolean).join("\n\n");
     }
 
     case "additional-and-declaration":
@@ -1270,19 +1279,17 @@ function buildCoverAndSummaryFallback(input: AIBidWriterInput): string {
   // projects string (which is formatted by expertProofLine /
   // projectProofLine in proposal-intelligence.ts). Look for the
   // first line that contains a currency amount.
-  const projectAnchorMatch = projectsBlock.match(/^([^\n]+?(?:ETB|USD|EUR|GBP)[^\n]+)/m);
-  const openingParagraph = projectAnchorMatch
+  const anchor = comparableProjectAnchor(projectsBlock);
+  const openingParagraph = anchor
     // No "the same team that delivered X is proposed": no record proves who
     // worked on a past project, and the final gate refuses the claim.
-    ? `${companyName} submits this Technical Proposal for ${tenderTitle}. The firm's comparable experience includes ${projectAnchorMatch[1].slice(0, 200)}.`
+    ? `${companyName} submits this Technical Proposal for ${tenderTitle}. The firm's comparable experience includes ${anchor.phrase}.`
     : `${companyName} submits this Technical Proposal for ${tenderTitle}. The firm's comparable assignments are presented in Section B.`;
 
-  // Executive Summary lead — same evidence-anchored opening
-  // pattern Claude uses ("We have already delivered this
-  // assignment...").
-  const execSummaryLead = projectAnchorMatch
-    ? `${companyName}'s closest comparable project is ${projectAnchorMatch[1].slice(0, 200)}, which the firm delivered for a scope comparable to this tender's.`
-    : `${companyName} submits this Technical Proposal for ${tenderTitle}. The firm's portfolio of comparable assignments is detailed in Section B; the proposed team and methodology are aligned to ${clientName}'s evaluation criteria.`;
+  // Executive Summary lead: the record, not a verdict about it.
+  const execSummaryLead = anchor
+    ? `The closest comparable project in ${companyName}'s record is ${anchor.phrase}${anchor.services ? `, where the firm's services included ${anchor.services}` : ""}.`
+    : `${companyName} submits this Technical Proposal for ${tenderTitle}. The firm's comparable assignments are detailed in Section B, and the proposed team and methodology answer ${clientName}'s evaluation criteria.`;
 
   return [
     "# Cover Letter",
@@ -1293,18 +1300,51 @@ function buildCoverAndSummaryFallback(input: AIBidWriterInput): string {
     "",
     openingParagraph,
     "",
-    "The proposed team, comparable previous roles, and team-to-project mapping are detailed in Section A.4 and A.5. Section B presents the featured project portfolio with full client references, contract values, and testimony references.",
+    "The proposed team and each expert's comparable roles are set out in Section A, and Section B presents the project references.",
     "",
-    `We confirm enclosed appendices and the signature block. The proposal is submitted in compliance with all stated requirements; commercial-terms compliance is addressed in the Compliance Matrix.`,
+    // Not "We confirm enclosed appendices": a one-file package encloses none.
+    "The proposal follows the structure the tender requests, and the Compliance Matrix maps each tender requirement to the section that answers it.",
     v.gmName ? `\nSincerely,\n\n${v.gmName}\n${v.gmTitle ?? "General Manager"}${v.gmLicense ? `\nLicense ${v.gmLicense}` : ""}\n${companyName}` : "",
     "",
     "# Executive Summary",
     execSummaryLead,
     "",
-    "Our proposal addresses each evaluation criterion stated in the tender's evaluation methodology: Section A demonstrates corporate capacity; Section B presents directly comparable past performance; Section C details the technical approach and methodology; Section D presents value-added capabilities, certifications, and the formal declaration of eligibility.",
-    "",
-    `${companyName} confirms full compliance with all stated requirements, team availability for the engagement window, and adherence to the tender's submission and commercial terms.`,
+    "The proposal answers each evaluation criterion the tender states: Section A presents the firm and the proposed team; Section B the project references; Section C the technical approach and methodology; Section D supporting capabilities and certifications.",
   ].filter((s) => s !== "").join("\n\n");
+}
+
+/**
+ * The first comparable project line, as a phrase a reader can take in.
+ *
+ * Project lines are pipe-joined records: "Hospital Project — City
+ * Administration of Abuja | Nigeria | Healthcare | USD 18.9M | Construction
+ * value of works USD 18.9M | 2024-2026 | Services: Feasibility study, ...".
+ * The cover letter printed the first 200 characters of one, cut mid-word
+ * ("... Geotechnical investigation, Archit."). A figure is used only under
+ * its own label, so a construction value is never presented as the firm's
+ * fee.
+ */
+export function comparableProjectAnchor(projectsBlock: string): { phrase: string; services: string | null } | null {
+  const line = projectsBlock.split("\n").map((l) => l.replace(/^[-*•]\s*/, "").trim()).find((l) => /\b(?:ETB|USD|EUR|GBP)\b/.test(l));
+  if (!line) return null;
+  const parts = line.split(" | ").map((part) => part.trim()).filter(Boolean);
+  const name = parts[0];
+  if (!name || name.length < 4) return null;
+  const country = parts[1] && /^[A-Z][A-Za-z .'-]{2,40}$/.test(parts[1]) ? parts[1] : null;
+  const labelledValue = parts.find((part) => /^construction value of works\s+(?:ETB|USD|EUR|GBP)\s/i.test(part));
+  const detail = [country, labelledValue ? labelledValue.charAt(0).toLowerCase() + labelledValue.slice(1) : null].filter(Boolean).join(", ");
+  const servicesPart = parts.find((part) => /^services:/i.test(part));
+  const serviceList = servicesPart
+    ? servicesPart.replace(/^services:\s*/i, "").replace(/…$/, "").split(/,\s*/).map((item) => item.trim()).filter((item) => item.length > 3)
+    : [];
+  // Records are cut to length upstream, not always with an ellipsis, so the
+  // last item may end mid-word ("..., Archit"). It is never the one printed.
+  const complete = serviceList.length > 5 ? serviceList.slice(0, 5) : serviceList.slice(0, -1);
+  // Lower-cased as running text, except an acronym ("MEP design").
+  const services = complete.length > 0
+    ? complete.map((item) => (/^[A-Z]{2,}\b/.test(item) ? item : item.charAt(0).toLowerCase() + item.slice(1))).join(", ")
+    : null;
+  return { phrase: detail ? `${name} (${detail})` : name, services };
 }
 
 // ── Section A.4/A.5 helpers — build team and mapping tables from evidence ────
@@ -1554,31 +1594,19 @@ function buildAdditionalAndDeclarationFallback(input: AIBidWriterInput): string 
     ? v.complianceLines.map((c) => `- ${c}`).join("\n")
     : "Bid-Team Action: confirm registration / certificate numbers and dates before submission. The Knowledge Vault should hold the firm's ISO certifications, professional body memberships, and donor compliance records.";
 
-  // ── D.4 Declaration of Eligibility — names a real GM if available ───
-  const d4Body = v.gmName
-    ? `**${companyName}** declares that it meets all eligibility requirements stated in this tender. Signed: ${v.gmName}${v.gmTitle ? `, ${v.gmTitle}` : ", General Manager"}${v.gmLicense ? ` (License ${v.gmLicense})` : ""}.`
-    : `**${companyName}** declares that it meets all eligibility requirements stated in this tender. Bid-Team Action: confirm signature block (GM name, title, licence) before submission.`;
-
-  // ── Declaration — formal 5-line signature block ──────────────────────
-  const sigBlock = v.gmName
-    ? [
-        `Name: ${v.gmName}`,
-        `Title: ${v.gmTitle || "General Manager"}${v.gmLicense ? ` | Licence No.: ${v.gmLicense}` : ""}`,
-        `Company: ${v.legalName ?? companyName}`,
-        "Date: YYYY-MM-DD (bid team to confirm before export)",
-        "Signature: ___________________________",
-      ].join("\n")
-    : [
-        "Name: [General Manager / Principal Full Name]",
-        "Title: [Title + Professional Body + Licence No. where applicable]",
-        `Company: ${v.legalName ?? companyName}`,
-        "Date: YYYY-MM-DD (bid team to confirm before export)",
-        "Signature: ___________________________",
-      ].join("\n");
+  // ── Declaration ──────────────────────────────────────────────────────
+  // No bracketed "[General Manager / Principal Full Name]" and no
+  // "Date: YYYY-MM-DD (bid team to confirm before export)": an instruction to
+  // the bid desk is not a signature block. Without a recorded signatory the
+  // declaration carries the company line and the sign-off pass completes it.
+  const sigBlock = [
+    ...(v.gmName ? [`Name: ${v.gmName}`, `Title: ${v.gmTitle || "General Manager"}${v.gmLicense ? ` | Licence No.: ${v.gmLicense}` : ""}`] : []),
+    `Company: ${v.legalName ?? companyName}`,
+  ].join("\n");
   const declarationBody = [
     `We, ${v.legalName ?? companyName}${v.registrationNumber ? ` (Reg. No. ${v.registrationNumber})` : ""}, hereby declare that this Technical Proposal has been prepared specifically in response to ${tenderTitle} issued by ${input.clientName || "the Client"}.`,
     "",
-    "All information, evidence, expert credentials, and project references included in this proposal are accurate and verifiable. No information has been fabricated or inserted as a placeholder.",
+    "The information in this proposal is drawn from the firm's records, which are available for verification on request.",
     "",
     sigBlock,
   ].join("\n");
@@ -1597,37 +1625,34 @@ function buildAdditionalAndDeclarationFallback(input: AIBidWriterInput): string 
       ].join("\n")
     : `${companyName} delivers value beyond the minimum tender scope through integrated project management (eliminating coordination delays), in-house multi-discipline capacity (reducing sub-consultant risk), and a structured quality-review programme (30%/60%/100% gates) that reduces the likelihood of client-review cycles and final submission revisions.`;
 
-  // ── D.2 ESG, Health & Safety, Innovation ────────────────────────────────
+  // ── D.2 ESG, Health & Safety, Innovation — only what the tender raises ──
+  // These were written into every proposal. A tender that asks for none of
+  // them got an ESG policy, a site H&S plan and an innovation pitch "deployed
+  // at no additional cost" in a technical-only envelope.
   const hasServiceLines = v.serviceLines && v.serviceLines.length > 0;
   const primaryService = hasServiceLines ? v.serviceLines![0] : "the captioned services";
-  const d2Body = [
-    "### D.2.1 Environmental and Social Governance",
-    `${companyName} complies with Environmental and Social Impact Assessment requirements and integrates ESG principles into ${primaryService} delivery. Environmental considerations (site disturbance minimisation, waste management, water use protocols) and social considerations (community engagement, local employment, gender equity in staffing) are embedded in the project management plan from inception.`,
-    "",
-    "### D.2.2 Health and Safety",
-    `All site activities are governed by the firm's Health and Safety Management Plan, compliant with applicable local regulations and international best practice (FIDIC / IFC Performance Standards where applicable). Site inductions, PPE requirements, incident reporting, and emergency response protocols are mandatory for all personnel.`,
-    "",
-    "### D.2.3 Innovation",
-    `${companyName} applies current-technology methods to ${primaryService}: BIM-enabled design coordination (where applicable), GIS-based spatial analysis, drone survey for topographic capture, and digital project management dashboards for client transparency. These capabilities are available from in-house resources and are deployed at no additional cost where they reduce schedule or improve deliverable quality.`,
-  ].join("\n");
+  const tenderText = input.tenderText ?? "";
+  const d2Parts = [
+    tenderAsksFor("sustainability", tenderText)
+      ? `### Environmental and Social Governance\n${companyName} integrates environmental and social considerations into ${primaryService} delivery: site disturbance, waste and water use on the environmental side, and community engagement on the social side, each planned from inception.`
+      : "",
+    tenderAsksFor("health-safety", tenderText)
+      ? `### Health and Safety\nSite activities follow the firm's health and safety procedures and the applicable local regulations: site inductions, PPE, incident reporting and emergency response apply to all personnel.`
+      : "",
+    tenderAsksFor("innovation", tenderText)
+      ? `### Innovation\n${companyName} applies current methods to ${primaryService} where they shorten the schedule or improve deliverable quality, such as coordinated digital design models and GIS-based spatial analysis.`
+      : "",
+  ].filter(Boolean);
+  const d2Body = d2Parts.join("\n\n");
 
   return [
     "# Section D: Additional Information",
     "## D.1 Value to the Client",
     d1Body,
-    "## D.2 In-House Capabilities, ESG and Innovation",
+    d2Body ? "## D.2 Environmental, Safety and Innovation Commitments" : "",
     d2Body,
-    "## D.3 Professional Certifications and Affiliations",
+    `## D.${d2Body ? 3 : 2} Professional Certifications and Affiliations`,
     d3Body,
-    "## D.4 Declaration of Eligibility",
-    d4Body,
-    "",
-    "# Appendix Register",
-    "- Appendix A: Company Registration Documents and Licences",
-    "- Appendix B: Audited Financial Statements",
-    "- Appendix C: Curricula Vitae of Proposed Experts",
-    "- Appendix D: Project References and Client Letters",
-    "- Appendix E: Project Photos, Drawings and Completion Evidence",
     "",
     "# Declaration",
     declarationBody,

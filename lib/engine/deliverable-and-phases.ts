@@ -245,7 +245,10 @@ export function buildPhaseNarrative(opts: {
     const lead = pickName(opts.experts, [...phase.leadKeywords], used);
     const leadLine = lead
       ? `**Phase lead:** ${lead}. **Accountable role:** ${phase.responsibleRole}.`
-      : `**Accountable role:** ${phase.responsibleRole} — the named assignee is confirmed at inception.`;
+      // A role nobody on the team holds is stated as a role. "The named
+      // assignee is confirmed at inception" told the client the post was
+      // unfilled, in words the proposal elsewhere refuses to print.
+      : `**Accountable role:** ${phase.responsibleRole}.`;
     // The artefacts come from the canonical plan rather than from a second
     // hand-written list: the canonical entries are the sector-specific ones
     // (IPC hold-points for healthcare, subgrade hold-points for roads,

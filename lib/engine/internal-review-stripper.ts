@@ -87,6 +87,30 @@ const INTERNAL_REVIEW_HEADINGS: RegExp[] = [
   // recipients". A model writer copies the shape from the fallback that used
   // to emit it.
   /^##?\s+Submission\s+Instructions\s+Acknowledged\b/i,
+  // Everything appendEvaluatorResponseMatrix appends is the writer's own
+  // working plan: its contract, criterion graph, evidence scores and export
+  // gates. These used to be removed only by accident: the deterministic draft
+  // ended in an internal "# Submission Control Sheet", so the appendix sat
+  // under it and went with it. When the last top-level section was a client
+  // one ("# Declaration"), run 36049851073 shipped 22 pages of it to the
+  // client: "EXPERT-1 EXPERT TRANSFERABLE ... WEAKPROOFSIGNAL", "Block final
+  // export until ...", "NEVER invent facts ...". Stripped by name, so the
+  // parent heading no longer decides.
+  /^##?\s+Proposal\s+Intelligence\s+Contract\b/i,
+  /^##?\s+Source-Grounded\s+Requirement\s+Map\b/i,
+  /^##?\s+Evidence\s+Graph\s+Selection\s+Model\b/i,
+  /^#{2,3}\s+Contract\s+(?:Section\s+Plan|Export\s+Gates|Writing\s+Rules)\b/i,
+  /^##?\s+Tender\s+Form\s+Strategy\b/i,
+  /^##?\s+Tender\s+Criterion\s+Graph\b/i,
+  /^##?\s+Tender\s+Response\s+Blueprint\b/i,
+  /^##?\s+Tender\s+Criteria\s+Response\s+Matrix\b/i,
+  /^##?\s+Multi-Angle\s+Proposal\s+Quality\s+Check\b/i,
+  /^##?\s+Evidence\s+Gaps\s+and\s+Anti-Hallucination\s+Controls\b/i,
+  /^##?\s+Win\s+Themes\s+and\s+Differentiators\b/i,
+  // "The bid manager runs through this checklist immediately before
+  // submission ... retained in the bid archive": the bid desk's own list, which
+  // also ticked off CVs and certificates as "attached" in a one-file package.
+  /^##?\s+Submission\s+Readiness\s+Checklist\b/i,
 ];
 
 function isInternalReviewHeading(line: string): boolean {

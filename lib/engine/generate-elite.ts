@@ -76,7 +76,7 @@ import { amplifySectionCDepth } from "./section-c-depth-amplifier";
 import { injectMethodologyTables } from "./methodology-tables";
 import { injectBeyondSpecTables } from "./beyond-spec-tables";
 import { tenderAsksFor } from "./tender-asks-for";
-import { buildScopeDeliveryPlan } from "./scope-delivery-plan";
+import { buildScopeDeliveryPlan, scopeRolesByExpert } from "./scope-delivery-plan";
 import { injectWinThemesTable } from "./win-themes-table";
 import { injectMobilizationAndChecklist } from "./mobilization-and-checklist";
 import { stripPlaceholders } from "./placeholder-stripper";
@@ -2154,13 +2154,18 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
           // list. Belt-and-braces with the post-pass enforcer (PR V).
           // companyVault block placement keeps this in lockstep with
           // the rest of the vault data.
+          // A record's type is shown as words, and only when the title does
+          // not already say it; its workflow status is not client content.
+          // The delivered D.3 read "Quality Management System Manual —
+          // QUALITY MANAGEMENT SYSTEM — Ref: HAEC/034/23 — Status: ACTIVE".
           complianceLines: (company.complianceRecords ?? [])
             .map((r) => {
               const parts: string[] = [];
               if (r.title) parts.push(r.title);
-              if (r.complianceType) parts.push(r.complianceType);
+              const type = recordTypeForDisplay(r.complianceType);
+              const titleWords = (r.title ?? "").toLowerCase();
+              if (type && !type.toLowerCase().split(/\s+/).every((word) => titleWords.includes(word))) parts.push(type);
               if (r.referenceNumber) parts.push(`Ref: ${r.referenceNumber}`);
-              if (r.status) parts.push(`Status: ${r.status}`);
               return parts.join(" — ");
             })
             .filter((s) => s.length > 0),
@@ -2388,6 +2393,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
     primarySector: intelligence.primarySector,
     assignmentRoleHint: `Aligned to ${cleanedTenderTitle} scope and ${intelligence.clientName} evaluation criteria.`,
     alreadyHasHeading: upstreamCheck,
+    scopeRoles: scopeRolesByExpert({ tenderText, experts: experts as ExpertRecord[] }),
   });
 
   // Round-2 benchmark sections — same idempotency rule. Each section is appended
@@ -2456,7 +2462,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
     round2Sections.push(buildPortfolioMetricsBlock(metrics, company.name));
   }
   if (!upstreamCheck("A.4.1 Principal Qualifications — Detailed Bios") && !upstreamCheck("Principal Qualifications") && !upstreamCheck("Detailed Bios")) {
-    const cv = buildPrincipalQualificationsSection({ experts: experts as ExpertRecord[], topN: 5 });
+    const cv = buildPrincipalQualificationsSection({ experts: experts as ExpertRecord[], projects: projects as ProjectRecord[] });
     if (cv) round2Sections.push(cv);
   }
 
@@ -3108,6 +3114,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
   const enforced = enforceClientName(humanizedMarkdown, {
     canonicalClientName: intelligence.clientName,
     knownFirmClients,
+    protectedNames: [cleanedTenderTitle, intelligence.assignmentName, tender.title],
   });
   if (enforced.substitutionsMade > 0) {
     logger.warn(`[generate-elite] Client name enforcer scrubbed ${enforced.substitutionsMade} hallucinated client substitution(s) in Cover Letter / Executive Summary zone.`);
@@ -3648,6 +3655,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
     const reEnforced = enforceClientName(workingMarkdown, {
       canonicalClientName: intelligence.clientName,
       knownFirmClients,
+      protectedNames: [cleanedTenderTitle, intelligence.assignmentName, tender.title],
     });
     if (reEnforced.substitutionsMade > 0) {
       logger.warn(`[generate-elite] Post-refinement client-name enforcer scrubbed ${reEnforced.substitutionsMade} hallucinated substitution(s) introduced by refinement.`);
