@@ -51,6 +51,7 @@ import { canonicalWorkPlan } from "./canonical-work-plan";
 import type { ExpertRecord, ProjectRecord } from "./benchmark-tables";
 import { truncateAtWordBoundary } from "./proposal-intelligence";
 import { titleStatesRole } from "./requirement-constraints";
+import { tenderAsksFor } from "./tender-asks-for";
 
 const MARKER_CROSSWALK = "<!-- deliverable:crosswalk -->";
 const MARKER_PHASES = "<!-- methodology:phase-narrative -->";
@@ -382,7 +383,11 @@ export function injectDeliverableAndPhases(
     blocks.push(buildPhaseNarrative({ experts: opts.experts, primarySector: opts.primarySector, totalDays: opts.totalDays, sourceText: opts.tenderText }));
     injected.phases = true;
   }
-  if (!hasBranded) {
+  // The hooks promise things nobody offered (a client dashboard, a 6-month
+  // post-handover advisory window, one call a month), so like the other
+  // supplementary sections they answer a tender that raises innovation, not
+  // every tender (tender-asks-for.ts).
+  if (!hasBranded && tenderAsksFor("innovation", opts.tenderText)) {
     const block = buildBrandedInnovationHooks({ tenderText: opts.tenderText, companyName: opts.companyName });
     if (block) {
       blocks.push(block);

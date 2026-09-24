@@ -5,6 +5,7 @@ import { withoutSourceProvenance, factualCardOrEmpty } from "./vault-prose";
 import { inlineEvidenceValue } from "./proposal-intelligence";
 import { withoutPersonalCvFields, withoutCvDocumentFurniture, truncateAtWordBoundary } from "./proposal-intelligence";
 import { resolveJurisdictionTokens } from "./jurisdiction-instruments";
+import { projectsNamedInCv } from "./cv-grounding";
 
 /**
  * Benchmark-quality tabular sections built deterministically from the
@@ -160,10 +161,9 @@ function parseYear(value: Date | string | null | undefined): number | null {
  */
 export function buildProposedTeamTable(experts: ExpertRecord[], assignmentRoleHint: string): string {
   if (experts.length === 0) {
-    return [
-      "## A.4 Proposed Project Team",
-      "Bid-Team Action: Add expert CVs to the knowledge vault and re-generate this proposal to populate this section with verified names, licence numbers, sector experience, and roles. Each expert row requires: full name, position, qualifications with licence number, comparable sector experience, and role on this assignment.",
-    ].join("\n\n");
+    // An instruction to the bid desk is not a client section; with no
+    // reviewed experts the section is simply not written.
+    return "";
   }
 
   const header = "| # | Expert & Position | Qualifications & Licenses | Comparable Sector Experience | Role on This Assignment |";
@@ -199,7 +199,10 @@ export function buildProposedTeamTable(experts: ExpertRecord[], assignmentRoleHi
 
   return [
     "## A.4 Proposed Project Team",
-    "All proposed team members are permanent staff with verified licenses and direct experience relevant to this assignment. Full curricula vitae, educational certificates, and professional license copies for all proposed experts are attached as Appendix C of this submission.",
+    // Neither "permanent staff" nor "attached as Appendix C" is something the
+    // app knows: no record states employment terms, and the package carries no
+    // CV annex.
+    "Each proposed team member is drawn from the firm's own CV records. Full curricula vitae and professional licence copies can be provided on request.",
     "",
     header,
     separator,
@@ -212,33 +215,23 @@ export function buildProposedTeamTable(experts: ExpertRecord[], assignmentRoleHi
  * Demonstrates that each lead expert has performed the same role on a comparable previous project.
  */
 export function buildTeamToProjectMappingTable(experts: ExpertRecord[], projects: ProjectRecord[]): string {
-  if (experts.length === 0 || projects.length === 0) {
-    return [
-      "## A.5 Team-to-Project Experience Mapping",
-      "Bid-Team Action: Add expert CVs and project references to the knowledge vault and re-generate this proposal. This table maps each proposed expert to a comparable previous project and the technical role they performed — it is required to pass evaluator scrutiny on team depth.",
-    ].join("\n\n");
-  }
+  if (experts.length === 0 || projects.length === 0) return "";
 
   const header = "| Expert & Role on This Project | Role Previously Performed | Previous Comparable Project | Key Technical Contribution |";
   const separator = "|---|---|---|---|";
 
-  // Pair each expert with the project that best matches their disciplines/sectors.
-  // Falls back to round-robin assignment when no semantic match is found.
-  const rows = experts.slice(0, 10).map((expert, idx) => {
-    const expertDisciplines = safeArr(expert.disciplines).map((s) => s.toLowerCase());
-    const expertSectors = safeArr(expert.sectors).map((s) => s.toLowerCase());
-    const matchedProject =
-      projects.find((p) => {
-        const projectSector = (p.sector ?? "").toLowerCase();
-        const projectAreas = safeArr(p.serviceAreas).map((s) => s.toLowerCase());
-        return expertDisciplines.some((d) => projectAreas.includes(d) || projectSector.includes(d)) ||
-          expertSectors.some((s) => projectSector.includes(s));
-      }) ?? projects[idx % projects.length];
+  // Pair each expert with a project their OWN CV names. This used to pair on
+  // sector and discipline tags, with a round-robin fallback, and the firm tags
+  // every CV "Healthcare": every expert was mapped to the same hospital,
+  // including experts whose CV names no hospital at all, and the "role
+  // previously performed" was their title with "Senior" prepended. An expert
+  // whose CV names none of the selected projects is left out of the table.
+  const rows = experts.slice(0, 10).flatMap((expert) => {
+    const matchedProject = projectsNamedInCv(expert.profile, projects)[0];
+    if (!matchedProject) return [];
 
     const projectLabel = fmtProjectInline(matchedProject);
-    const previousRole = expert.title?.toLowerCase().includes("lead") || expert.title?.toLowerCase().includes("principal")
-      ? expert.title
-      : `Senior ${expert.title || "Specialist"}`;
+    const previousRole = expert.title?.trim() || "Specialist";
     // The stored summary runs into the reference letter's own bookkeeping —
     // "Ref: …/1591/18 Date: 19/01/2018 E.C. Author: Tariku Abebaw (Building
     // Officer, Gimba…" reached a client-facing cell. That is provenance the app
@@ -246,12 +239,13 @@ export function buildTeamToProjectMappingTable(experts: ExpertRecord[], projects
     const contribution = truncateAtWordBoundary(withoutSourceProvenance(matchedProject.summary), 200) ||
       `${safeArr(expert.disciplines).join(", ") || "Discipline-led"} contribution covering ${safeArr(matchedProject.serviceAreas).join(", ") || matchedProject.sector || "scope-relevant works"}.`;
 
-    return `| ${escCell(`${expert.fullName}, ${expert.title || "Specialist"}`)} | ${escCell(previousRole || "Specialist Lead")} | ${escCell(projectLabel)} | ${escCell(contribution)} |`;
+    return [`| ${escCell(`${expert.fullName}, ${expert.title || "Specialist"}`)} | ${escCell(previousRole)} | ${escCell(projectLabel)} | ${escCell(contribution)} |`];
   });
+  if (rows.length === 0) return "";
 
   return [
     "## A.5 Team-to-Project Experience Mapping",
-    "The table below maps reviewed specialist disciplines to relevant project records. It does not assert personnel continuity unless an individual record proves that relationship.",
+    "Each row pairs a proposed expert with a comparable project that the expert's own CV names.",
     "",
     header,
     separator,

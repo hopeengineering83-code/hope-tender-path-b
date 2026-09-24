@@ -43,6 +43,8 @@
  * placeholder-stripper (PR J).
  */
 
+import { tenderAsksFor } from "./tender-asks-for";
+
 const MARKER_OBSTACLES = "<!-- closers:tender-obstacles -->";
 const MARKER_COMMERCIAL = "<!-- closers:commercial-understanding -->";
 const MARKER_ETHICS = "<!-- closers:ethics-declaration -->";
@@ -520,7 +522,9 @@ export function injectTenderClosers(
       injected.commercial = true;
     }
   }
-  if (!hasEthics) {
+  // A sworn anti-bribery declaration is the firm's statement to make, and
+  // only when the tender calls for one (tender-asks-for.ts).
+  if (!hasEthics && tenderAsksFor("ethics-declaration", opts.tenderText)) {
     blocks.push(buildEthicsDeclarationBlock(opts.ethicsVault));
     injected.ethics = true;
   }

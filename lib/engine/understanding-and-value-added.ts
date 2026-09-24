@@ -114,7 +114,7 @@ export function buildValueAddedServices(opts: { primarySector: string; companyNa
   let bullets: string[];
 
   if (/health|hospital|medical|clinic/.test(sector)) bullets = [
-    `**Clinical workflow audit** — patient, staff, supply, and waste flow mapping with bottleneck analysis. Provided as a free input to facility design even when not explicitly requested.`,
+    `**Clinical workflow audit** — patient, staff, supply, and waste flow mapping with bottleneck analysis. Carried into the facility design as an input.`,
     `**Medical equipment readiness review** — coordination with biomedical specialist on equipment-power, shielding, and gas requirements before procurement decisions are taken, reducing late-stage retrofit costs.`,
     `**Health Authority licensing pre-check** — pre-submission internal review of design package against current Health Authority licensing checklist, included as a project deliverable.`,
     `**O&M training pack** — facility operator training materials provided at handover, including HVAC operation, medical-gas system operation, and IPC protocol enforcement.`,
@@ -219,12 +219,12 @@ export function buildValueAddedServices(opts: { primarySector: string; companyNa
     `**Source-evidence verification on every claim** — every named project, expert, certification, or capability is verified against the original source document before it appears in this proposal.`,
     `**Final compliance pass** — pre-submission compliance audit against the tender's exact file naming, ordering, and format rules.`,
     `**Documented institutional knowledge** — handover documentation including process maps, decision records, and lessons learned.`,
-    `**Post-handover advisory** — 30-day post-handover advisory window at no extra cost.`,
+    `**Post-handover advisory** — 30-day post-handover advisory window.`,
   ];
 
   return [
     "## D.2 Value-Added Services",
-    `Beyond the minimum scope, ${opts.companyName} brings the following capabilities at no additional charge:`,
+    `Beyond the minimum scope, ${opts.companyName} brings the following capabilities to this assignment:`,
     "",
     ...bullets.map((b) => `- ${b}`),
   ].join("\n");
@@ -289,7 +289,7 @@ export function buildCertificationsSection(opts: {
 
   return [
     "## D.3 Professional Certifications and Affiliations",
-    `${opts.companyName} holds the following registrations, certifications and compliance records. Copies are attached as Appendix A alongside the company registration documents.`,
+    `${opts.companyName} holds the following registrations, certifications and compliance records. Copies can be provided on request.`,
     "",
     "| Certification / License / Registration | Type | Reference | Status |",
     "|---|---|---|---|",

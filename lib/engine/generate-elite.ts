@@ -75,6 +75,7 @@ import { injectEvidenceMarkers } from "./evidence-marker-injector";
 import { amplifySectionCDepth } from "./section-c-depth-amplifier";
 import { injectMethodologyTables } from "./methodology-tables";
 import { injectBeyondSpecTables } from "./beyond-spec-tables";
+import { tenderAsksFor } from "./tender-asks-for";
 import { injectWinThemesTable } from "./win-themes-table";
 import { injectMobilizationAndChecklist } from "./mobilization-and-checklist";
 import { stripPlaceholders } from "./placeholder-stripper";
@@ -755,18 +756,20 @@ function fallbackProposalMarkdown(params: {
   if (reviewedExperts.length > 0) {
     const topExpert = reviewedExperts[0];
     const titlePart = topExpert.title ? `, ${topExpert.title}` : "";
-    const yearsPart = topExpert.yearsExperience ?? 10;
+    // No default: this printed "10+ years" for a lead whose record states no
+    // figure at all.
+    const yearsPart = topExpert.yearsExperience ? `, whose reviewed record states ${topExpert.yearsExperience}+ years of professional experience` : "";
     lines.push(
-      `Led by ${topExpert.fullName}${titlePart}, whose reviewed record states ${yearsPart}+ years of professional experience, the proposed team is structured around the tender's required disciplines.`,
+      `Led by ${topExpert.fullName}${titlePart}${yearsPart}, the proposed team is structured around the tender's required disciplines.`,
     );
   }
   if (evalCriteria.length > 0) {
-    lines.push("## Our response maps directly to the evaluation criteria:");
+    lines.push("**Our response maps directly to the evaluation criteria:**");
     lines.push(...evalCriteria.slice(0, 5).map((c) => `- ${c}`));
   }
   const summaryDifferentiators = params.differentiators.slice(0, EXECUTIVE_SUMMARY_DIFFERENTIATORS);
   if (summaryDifferentiators.length > 0) {
-    lines.push("## Why we are best placed for this assignment:");
+    lines.push("**Why we are best placed for this assignment:**");
     lines.push(...summaryDifferentiators.map((d) => `- ${d}`));
   }
 
@@ -815,27 +818,20 @@ function fallbackProposalMarkdown(params: {
   if (legalRecs.length === 0 && complianceRecs.length === 0 && params.companyEvidenceLines.length > 0) {
     lines.push(...params.companyEvidenceLines.slice(0, 6).map((x) => `- ${x}`));
   } else if (legalRecs.length === 0 && complianceRecs.length === 0) {
-    lines.push("- Registration and compliance documents are attached as appendices.");
+    lines.push("- Registration and compliance records can be provided on request.");
   }
   lines.push("## A.4 Key Personnel");
   const topExpertsForA = reviewedExperts.slice(0, 2);
   if (topExpertsForA.length > 0) {
     for (const exp of topExpertsForA) {
       const titleStr = exp.title ? `, ${exp.title}` : "";
-      const yearsStr = exp.yearsExperience ? ` — ${exp.yearsExperience}+ years of ${params.primarySector} experience` : "";
+      const yearsStr = exp.yearsExperience ? ` — ${exp.yearsExperience}+ years of professional experience` : "";
       lines.push(`- **${exp.fullName}**${titleStr}${yearsStr}`);
     }
   } else if (params.expertLines.length > 0) {
     lines.push(...params.expertLines.slice(0, 2).map((x) => `- ${x}`));
   } else {
     lines.push("- Key personnel CVs and role assignments to be confirmed before submission.");
-  }
-  lines.push("## Submission Instructions Acknowledged");
-  if (params.submissionRules.length > 0) {
-    lines.push(...params.submissionRules.map((r) => `- ${r}`));
-  } else {
-    lines.push("- This proposal has been prepared in accordance with the submission instructions provided in the tender document.");
-    lines.push("- All required documents are formatted as specified. Bid-Team Action: verify file format, page limit, and submission method against the original tender before sending.");
   }
 
   // ── Section B: Relevant Experience ────────────────────────────────────────────
@@ -898,7 +894,7 @@ function fallbackProposalMarkdown(params: {
   if (sectionDDifferentiators.length > 0) {
     lines.push(...sectionDDifferentiators.map((d) => `- ${d}`));
   }
-  lines.push("Additional certifications, awards, company manuals, and institutional affiliations are provided in the appendices.");
+  lines.push("Additional certifications, company manuals, and institutional affiliations can be provided on request.");
 
   // ── Compliance Statement ──────────────────────────────────────────────────────
   //
@@ -927,7 +923,7 @@ function fallbackProposalMarkdown(params: {
   // compliance statement pointing at the evidence-mapped matrix that this
   // proposal already contains.
   lines.push("# Compliance Statement");
-  lines.push(`This proposal is submitted in strict compliance with the tender instructions. Every requirement stated in the tender is mapped to its response, its supporting evidence and its evidence strength in the Compliance Matrix, and the supporting documents are listed in the Appendix Register.`);
+  lines.push(`This proposal is submitted in compliance with the tender instructions. Every requirement stated in the tender is mapped to the section of this proposal that answers it in the Compliance Matrix.`);
 
   // ── Appendix Register ──────────────────────────────────────────────────────────
   lines.push("# Appendix Register");
@@ -947,7 +943,7 @@ function fallbackProposalMarkdown(params: {
   lines.push(
     `We, ${params.companyName}, hereby confirm that this technical proposal has been prepared specifically in response to ${params.tenderTitle} for ${params.clientName}. ` +
     "All information provided is accurate and supported by documentary evidence available on request. " +
-    "This proposal has been prepared using reviewed evidence and senior bid-review controls, and we commit to delivering the assigned scope with the proposed team, methodology, and schedule."
+    "We commit to delivering the assigned scope with the proposed team, methodology, and schedule."
   );
 
   // ── Submission Control Sheet ──────────────────────────────────────────────────
@@ -2526,7 +2522,10 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
       evidenceLines: companyEvidenceLines,
     }));
   }
-  if (!upstreamCheck("D.5 Declaration of No Conflict of Interest") && !upstreamCheck("Conflict of Interest") && !upstreamCheck("No Conflict of Interest")) {
+  // The declaration states facts the app cannot know — no relationship with
+  // the client, no debarment, suspension or sanction — so it is written only
+  // when the tender asks the bidder to declare them (tender-asks-for.ts).
+  if (!upstreamCheck("D.5 Declaration of No Conflict of Interest") && !upstreamCheck("Conflict of Interest") && !upstreamCheck("No Conflict of Interest") && tenderAsksFor("conflict-of-interest-declaration", tenderText)) {
     round2Sections.push(buildConflictOfInterestSection({
       companyName: company.name,
       clientName: intelligence.clientName,

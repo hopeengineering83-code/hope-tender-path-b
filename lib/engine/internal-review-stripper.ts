@@ -82,6 +82,11 @@ const INTERNAL_REVIEW_HEADINGS: RegExp[] = [
   /^##?\s+Tender\s+Proposal\s+AI[-\s]Ready\s+Summary\b/i,
   /^##?\s+Annex\s+(?:&|and)\s+Appendix\s+Readiness\s+Register\b/i,
   /^##?\s+Appendix\s+Register\b/i,
+  // The bid desk's own submission rules, restated as a section: "Technical
+  // proposal ONLY — do not include any financial offer", "Submit to ALL email
+  // recipients". A model writer copies the shape from the fallback that used
+  // to emit it.
+  /^##?\s+Submission\s+Instructions\s+Acknowledged\b/i,
 ];
 
 function isInternalReviewHeading(line: string): boolean {

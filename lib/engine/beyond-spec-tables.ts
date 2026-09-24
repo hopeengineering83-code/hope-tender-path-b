@@ -54,6 +54,7 @@
 // ─── Helpers ─────────────────────────────────────────────────────────────
 
 import { resolveJurisdictionTokens } from "./jurisdiction-instruments";
+import { tenderAsksFor } from "./tender-asks-for";
 
 const MARKER_REGEX = /<!--\s+beyond-spec-table:([a-z-]+)\s+-->/gi;
 
@@ -586,7 +587,7 @@ function findInsertPoint(markdown: string): number {
 
 export interface BeyondSpecTablesResult {
   markdown: string;
-  injected: Array<{ key: string; reason: "MISSING" | "SKIPPED_PRESENT" }>;
+  injected: Array<{ key: string; reason: "MISSING" | "SKIPPED_PRESENT" | "SKIPPED_NOT_ASKED" }>;
 }
 
 /**
@@ -605,31 +606,43 @@ export function injectBeyondSpecTables(
   },
 ): BeyondSpecTablesResult {
   const present = detectExisting(markdown);
-  const injected: Array<{ key: string; reason: "MISSING" | "SKIPPED_PRESENT" }> = [];
+  const injected: Array<{ key: string; reason: "MISSING" | "SKIPPED_PRESENT" | "SKIPPED_NOT_ASKED" }> = [];
+  // Each table commits the firm to policies and KPIs nothing in its records
+  // backs. It is written only when the tender raises the topic; see
+  // tender-asks-for.ts.
+  const asked = (key: "sustainability" | "health-safety" | "innovation" | "local-content") => tenderAsksFor(key, opts.sourceText);
   const blocks: string[] = [];
 
-  if (!present.has("sustainability")) {
+  if (!asked("sustainability")) {
+    injected.push({ key: "sustainability", reason: "SKIPPED_NOT_ASKED" });
+  } else if (!present.has("sustainability")) {
     blocks.push(buildSustainabilityTable(opts.primarySector, opts.sourceText));
     injected.push({ key: "sustainability", reason: "MISSING" });
   } else {
     injected.push({ key: "sustainability", reason: "SKIPPED_PRESENT" });
   }
 
-  if (!present.has("health-safety")) {
+  if (!asked("health-safety")) {
+    injected.push({ key: "health-safety", reason: "SKIPPED_NOT_ASKED" });
+  } else if (!present.has("health-safety")) {
     blocks.push(buildHealthSafetyTable());
     injected.push({ key: "health-safety", reason: "MISSING" });
   } else {
     injected.push({ key: "health-safety", reason: "SKIPPED_PRESENT" });
   }
 
-  if (!present.has("innovation")) {
+  if (!asked("innovation")) {
+    injected.push({ key: "innovation", reason: "SKIPPED_NOT_ASKED" });
+  } else if (!present.has("innovation")) {
     blocks.push(buildInnovationTable(opts.primarySector));
     injected.push({ key: "innovation", reason: "MISSING" });
   } else {
     injected.push({ key: "innovation", reason: "SKIPPED_PRESENT" });
   }
 
-  if (!present.has("local-content")) {
+  if (!asked("local-content")) {
+    injected.push({ key: "local-content", reason: "SKIPPED_NOT_ASKED" });
+  } else if (!present.has("local-content")) {
     blocks.push(buildLocalContentTable());
     injected.push({ key: "local-content", reason: "MISSING" });
   } else {

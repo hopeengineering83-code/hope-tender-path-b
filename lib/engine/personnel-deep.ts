@@ -41,6 +41,7 @@ import type { ExpertRecord, ProjectRecord } from "./benchmark-tables";
 import { factualCardOrEmpty } from "./vault-prose";
 import { truncateAtWordBoundary } from "./proposal-intelligence";
 import { titleStatesRole } from "./requirement-constraints";
+import { projectsNamedInCv, softwareNamedInCv } from "./cv-grounding";
 
 const MARKER_LOADING = "<!-- personnel:per-01-loading -->";
 const MARKER_PROFILES = "<!-- personnel:per-02-profiles -->";
@@ -381,74 +382,18 @@ export function buildPersonnelLoadingTable(opts: {
 
 // ─── PER 02 — Per-Expert Profile Cards ───────────────────────────────────
 
-// Words that name a kind of project rather than a particular one. A phrase
-// made only of these ("Hospital Project") cannot tie a project to a CV.
-const GENERIC_PROJECT_WORDS = new Set([
-  "project", "projects", "hospital", "general", "building", "buildings", "construction", "design",
-  "supervision", "center", "centre", "complex", "consolidated", "office", "phase", "works", "facility",
-  "renovation", "rehabilitation", "feasibility", "study", "terrace", "commercial", "residential",
-  "apartment", "hotel", "star", "blocks", "block", "master", "planning", "with", "from",
-]);
-
-function projectWords(text: string): string[] {
-  return text.toLowerCase().split(/[^a-z0-9\u1200-\u137f]+/).filter(Boolean);
-}
-
-function isDistinctive(word: string): boolean {
-  return word.length >= 4 && !GENERIC_PROJECT_WORDS.has(word) && !/^\d+$/.test(word);
-}
-
-// A CV names a project when it contains a run of the project's own words that
-// identifies it: two distinctive words side by side ("abdul seid", "dessie
-// specialized"), or the whole name when the name has one. Scattered words
-// across a thirty-page CV do not count.
-function cvNamesProject(paddedCvWords: string, name: string): boolean {
-  const words = projectWords(name);
-  for (let len = words.length; len >= 2; len -= 1) {
-    for (let i = 0; i + len <= words.length; i += 1) {
-      const phrase = words.slice(i, i + len);
-      const distinctive = phrase.filter(isDistinctive).length;
-      if (distinctive >= 2 || (len === words.length && distinctive >= 1)) {
-        if (paddedCvWords.includes(` ${phrase.join(" ")} `)) return true;
-      }
-    }
-  }
-  return false;
-}
-
-// Projects this person's OWN CV names. It used to list every project that
-// shared a sector tag with the expert; the firm tags every CV "Healthcare", so
-// each expert card claimed the same three hospitals, including for experts
-// whose CV names none of them.
+// Projects and software this person's OWN CV names (cv-grounding.ts). These
+// used to be inferred from firm-wide sector and discipline tags, so every card
+// claimed the same hospitals and the same design software.
 function expertProjectsLine(e: ExpertRecord, projects: ProjectRecord[]): string {
-  const cvWords = projectWords(String(e.profile ?? ""));
-  if (cvWords.length === 0) return "";
-  const padded = ` ${cvWords.join(" ")} `;
-  const named = projects.filter((p) => cvNamesProject(padded, p.name ?? "")).slice(0, 5);
-  return named.map((p) => {
+  return projectsNamedInCv(e.profile, projects).slice(0, 5).map((p) => {
     const v = p.contractValue && p.currency?.trim() ? `${p.currency.trim()} ${Math.round(p.contractValue).toLocaleString("en-US")}` : "";
     return `${p.name}${v ? ` (${v})` : ""}`;
   }).join(" ; ");
 }
 
-// Software named in the person's own CV. The previous "indicative" list was
-// inferred from discipline tags, which are firm-wide boilerplate, and printed
-// Revit and ETABS against an electrical engineer whose CV names neither.
-const SOFTWARE_VOCABULARY = [
-  "AutoCAD", "Civil 3D", "Revit", "ArchiCAD", "SketchUp", "Lumion", "3ds Max", "Rhino", "Navisworks",
-  "ETABS", "SAP2000", "SAFE", "STAAD", "Tekla", "Robot",
-  "ETAP", "DIALux", "EPANET", "WaterCAD", "SewerCAD", "HEC-RAS", "HEC-HMS",
-  "ArcGIS", "QGIS", "Global Mapper",
-  "Primavera", "MS Project", "Microsoft Project", "CostX",
-];
-
 function expertSoftwareLine(e: ExpertRecord): string {
-  const cv = String(e.profile ?? "");
-  if (!cv.trim()) return "";
-  return SOFTWARE_VOCABULARY
-    .filter((tool) => new RegExp(`(^|[^a-z0-9])${tool.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z0-9]|$)`, "i").test(cv))
-    .slice(0, 6)
-    .join(", ");
+  return softwareNamedInCv(e.profile).slice(0, 6).join(", ");
 }
 
 function buildOneExpertCard(e: ExpertRecord, idx: number, projects: ProjectRecord[]): string {
