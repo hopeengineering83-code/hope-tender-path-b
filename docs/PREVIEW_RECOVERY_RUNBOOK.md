@@ -86,6 +86,10 @@ a **redeploy**. After any provider env change: redeploy, then `inspect` again.
 - The pool and the Section C drill-down end `PROPOSAL_SECTION_POOL_RESERVE_MS`
   before the 220s proposal guard, so a slow run cannot lose every written
   section to "AI proposal timed out".
+- A partial result keeps the model-written sections (owner decision
+  2026-09-24): only when every section falls back is the AI output replaced
+  by the full deterministic draft. The inspection prints `MIXED AUTHORSHIP:`
+  for a partial result.
 - Z.ai JSON requests disable thinking; Z.ai/Cerebras/Gemini have worker attempt
   ceilings; a truncated answer is reported as truncated, not malformed.
 

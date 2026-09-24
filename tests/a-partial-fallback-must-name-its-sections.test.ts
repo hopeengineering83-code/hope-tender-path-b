@@ -42,10 +42,14 @@ describe("a partial fallback must name its sections", () => {
     );
   });
 
-  it("still refuses a partially-AI document — the guard is unchanged", () => {
-    // The point of this file is that naming the cause did NOT relax the rule.
+  it("discards the AI output only when EVERY section fell back; a partial result keeps the model-written sections", () => {
+    // Owner decision 2026-09-24: keep what the AI wrote. The all-fallback case
+    // still throws to the full deterministic draft; a partial result keeps
+    // the stitched markdown and records which sections were not model-written.
     assert.match(source, /if \(sectionResult\.anyFallback\) \{/);
-    assert.match(source, /throw new Error\(\s*`AI_SECTION_PARTIAL_FALLBACK:/);
+    assert.match(source, /if \(sectionResult\.allFallback\) \{\s*throw new Error\(\s*`AI_SECTION_PARTIAL_FALLBACK:/);
+    assert.match(source, /partialFallbackNote = `AI_SECTION_PARTIAL_FALLBACK:/);
+    assert.match(source, /AI partial fallback: \$\{partialFallbackNote\}/);
   });
 
   it("reports how many sections of how many failed", () => {

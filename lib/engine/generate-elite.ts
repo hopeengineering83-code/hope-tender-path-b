@@ -1866,6 +1866,9 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
   let sourceMarkdown: string;
   let mode = "deterministic benchmark";
   let aiError: string | null = null;
+  // Set when some (not all) proposal sections fell back: the model-written
+  // sections are kept and this names the ones that were not.
+  let partialFallbackNote: string | null = null;
   // Hoisted so the deep-reasoning summary block (built much later
   // alongside `summary`) can see the alignment report regardless of
   // whether the AI branch ran.
@@ -2273,9 +2276,24 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
               return parts.join(" ");
             })
             .join(" | ");
-          throw new Error(
-            `AI_SECTION_PARTIAL_FALLBACK: ${failed.length} of ${sectionResult.sections.length} section(s) used deterministic fallback, so the whole AI output was discarded. Failed: ${detail || "(no per-section detail recorded)"}`,
-          );
+          // KEEP WHAT THE AI WROTE (owner decision, 2026-09-24).
+          //
+          // Only when EVERY section fell back is the AI output discarded for
+          // the full deterministic draft, which is stronger than four
+          // per-section fallbacks stitched together. When at least one
+          // section is model-written, the stitched markdown is kept: its
+          // failed sections already carry buildSectionFallback text, so the
+          // proposal is complete, and the model-written sections are not
+          // thrown away. On the free-tier providers this app runs on, one
+          // rate-limited section used to cost the whole AI proposal on
+          // every run (runs 36015413125, 36029614230, 36033815730).
+          if (sectionResult.allFallback) {
+            throw new Error(
+              `AI_SECTION_PARTIAL_FALLBACK: ${failed.length} of ${sectionResult.sections.length} section(s) used deterministic fallback, so the whole AI output was discarded. Failed: ${detail || "(no per-section detail recorded)"}`,
+            );
+          }
+          partialFallbackNote = `AI_SECTION_PARTIAL_FALLBACK: ${failed.length} of ${sectionResult.sections.length} section(s) used deterministic section text; the other ${sectionResult.sections.length - failed.length} are model-written and were kept. Failed: ${detail || "(no per-section detail recorded)"}`;
+          logger.warn(`[generate-elite] ${partialFallbackNote.slice(0, 400)}`);
         }
         sourceMarkdown = sectionResult.markdown;
       } else {
@@ -2340,7 +2358,8 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
 
       const provider = getLastProposalProvider() ?? "ai";
       const pathLabel = useParallel ? "section-parallel" : "single-call";
-      mode = `${provider === "claude" ? "Claude" : provider === "gemini" ? "Gemini" : provider === "openai" ? "GPT-4o" : "AI"} ${pathLabel} bid-writer + evaluator response matrix + full evidence library + client-ready benchmark finalizer + professional DOCX polish`;
+      const mixedLabel = partialFallbackNote ? " (mixed: some sections deterministic)" : "";
+      mode = `${provider === "claude" ? "Claude" : provider === "gemini" ? "Gemini" : provider === "openai" ? "GPT-4o" : "AI"} ${pathLabel}${mixedLabel} bid-writer + evaluator response matrix + full evidence library + client-ready benchmark finalizer + professional DOCX polish`;
     } catch (error) {
       aiError = error instanceof Error ? error.message : String(error);
       sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, clientContactName: writerTender.clientContactName, companyName: company.name, companyLegalName: company.legalName, companyAddress: company.address, companyTIN: company.tin, companyVAT: company.vat, companyGM: company.gmName, companyGMLicense: company.gmLicense, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, experts: experts as ExpertRecord[], projects: projects as ProjectRecord[], reviewedExpertCount: experts.length, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired, themes: intelligence.themes, evaluationCriteria: intelligence.evaluationCriteria, appendixList: intelligence.appendixList, noFinancialProposal: intelligence.noFinancialProposal, exactEmails: intelligence.exactEmails, exactSubjectLine: intelligence.exactSubjectLine, gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative, requiredSections: intelligence.requiredSections, tenderDeadline: writerTender.deadline, tenderDeadlineSourceQuote: deadlineQuoteForDisplay, companyLicenseGrade: company.licenseGrade, companyHeadcount: company.headcount, companyServiceLines: safeParseArr(company.serviceLines), companySectors: safeParseArr(company.sectors), companyProfileSummary: company.profileSummary ?? company.description, companyLegalRecords: company.legalRecords ?? [], companyComplianceRecords: company.complianceRecords ?? [], serviceStreams: detectedServiceStreams });
@@ -3916,7 +3935,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
     "self-score": qualityScore.axes.selfScorePresence,
   });
   const repairLabel = repairAddendaApplied ? " Repair addenda applied (missing critical sections were auto-injected)." : "";
-  const summary = `${mode}${refinementLabel} technical proposal generated.${repairLabel} ${finalized.internalSummary}. ${auditSummary}. ${formatQualityScoreSummary(qualityScore)}. AXIS_SCORES: ${axisScoresJson}. ${formatWinProbability(winProb)}. Inputs: ${intelligence.requiredSections.length} section group(s), ${intelligence.themes.length} tender theme(s), ${experts.length} reviewed expert(s), ${projects.length} reviewed project(s), ${companyEvidenceLines.length} company evidence item(s), ${projectEvidenceLines.length} project evidence attachment(s).${deepReasoningSummary}${aiError ? ` AI fallback reason: ${aiError}` : ""}`;
+  const summary = `${mode}${refinementLabel} technical proposal generated.${repairLabel} ${finalized.internalSummary}. ${auditSummary}. ${formatQualityScoreSummary(qualityScore)}. AXIS_SCORES: ${axisScoresJson}. ${formatWinProbability(winProb)}. Inputs: ${intelligence.requiredSections.length} section group(s), ${intelligence.themes.length} tender theme(s), ${experts.length} reviewed expert(s), ${projects.length} reviewed project(s), ${companyEvidenceLines.length} company evidence item(s), ${projectEvidenceLines.length} project evidence attachment(s).${deepReasoningSummary}${aiError ? ` AI fallback reason: ${aiError}` : ""}${partialFallbackNote ? ` AI partial fallback: ${partialFallbackNote}` : ""}`;
 
   // Log the structured deep-reasoning telemetry summary — empty
   // string when nothing was tracked (flag off + no deep-reasoning
