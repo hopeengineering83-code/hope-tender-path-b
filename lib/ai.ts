@@ -893,8 +893,24 @@ export class NoAiProviderReadyError extends Error {
     errorKind: NoAiProviderReadyErrorKind;
     nextAction: NoAiProviderReadyError["nextAction"];
     message?: string;
+    /**
+     * The attempt budget that actually applied (advisory work has its own,
+     * smaller one) and whether the chain stopped on that budget or on the
+     * shared deadline. The message used to print the normal per-request budget
+     * whatever applied, so an advisory stop after one attempt read "budget (3)
+     * was consumed".
+     */
+    attemptBudget?: number;
+    stoppedBy?: "ATTEMPT_BUDGET" | "DEADLINE";
   }) {
     const failureDetails = params.failureDetails ?? [];
+    const budget = params.attemptBudget ?? MAX_PROVIDER_ATTEMPTS_PER_REQUEST;
+    const budgetLabel = budget === ADVISORY_MAX_PROVIDER_ATTEMPTS && budget !== MAX_PROVIDER_ATTEMPTS_PER_REQUEST
+      ? `advisory provider attempt budget (${budget})`
+      : `per-request provider attempt budget (${budget})`;
+    const stopClause = params.stoppedBy === "DEADLINE"
+      ? `the shared request deadline was reached for use-case "${params.useCase}"`
+      : `the ${budgetLabel} was consumed for use-case "${params.useCase}"`;
     const message = params.message ?? (
       params.errorKind === "NO_PROVIDER_CONFIGURED"
         ? `No AI provider configured — set any of: ZAI_API_KEY, CEREBRAS_API_KEY, MISTRAL_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, TOGETHER_API_KEY, DEEPSEEK_API_KEY, or ANTHROPIC_API_KEY. All 10 providers are automatic.`
@@ -905,7 +921,7 @@ export class NoAiProviderReadyError extends Error {
           // AI_PROVIDERS_RATE_LIMITED rather than ALL_PROVIDERS_EXHAUSTED.
           ? `AI_PROVIDERS_RATE_LIMITED: all ${params.providerAttempts.filter((a) => a.coolingDown).length} configured provider(s) are in cooldown after recent rate-limit/quota errors for use-case "${params.useCase}". Details: ${failureDetails.join(" | ")}. Wait for cooldowns to expire and re-run.`
           : params.errorKind === "ATTEMPT_BUDGET_EXHAUSTED"
-            ? `ATTEMPT_BUDGET_EXHAUSTED: the per-request provider attempt budget (${MAX_PROVIDER_ATTEMPTS_PER_REQUEST}) was consumed for use-case "${params.useCase}" before a provider succeeded (tried: ${params.providerAttempts.filter((a) => a.tried).map((a) => a.provider).join(", ") || "none"}). Eligible providers may remain untried. Provider errors: ${failureDetails.join(" | ") || "none captured"}.`
+            ? `ATTEMPT_BUDGET_EXHAUSTED: ${stopClause} before a provider succeeded (tried: ${params.providerAttempts.filter((a) => a.tried).map((a) => a.provider).join(", ") || "none"}). Eligible providers may remain untried. Provider errors: ${failureDetails.join(" | ") || "none captured"}.`
             : `Contacted ${params.providerAttempts.filter((a) => a.tried).length} of ${params.providerAttempts.length} configured provider(s) for use-case "${params.useCase}" and none succeeded (tried: ${params.providerAttempts.filter((a) => a.tried).map((a) => a.provider).join(", ") || "none — all skipped"}). Provider errors: ${failureDetails.join(" | ") || "none captured"}.${describeUncontactedProviders(params.providerAttempts)}`
     );
     super(message);
@@ -1518,6 +1534,8 @@ export async function generateWithFallback(
     failureDetails,
     errorKind,
     nextAction,
+    attemptBudget: isAdvisoryContext() ? ADVISORY_MAX_PROVIDER_ATTEMPTS : MAX_PROVIDER_ATTEMPTS_PER_REQUEST,
+    stoppedBy: budgetExhausted ? "ATTEMPT_BUDGET" : deadlineHit ? "DEADLINE" : undefined,
   });
 }
 

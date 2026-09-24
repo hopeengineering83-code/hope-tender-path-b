@@ -4,6 +4,7 @@
 
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   generateWithFallback,
   analyzeOneChunkWithRetry,
@@ -249,5 +250,45 @@ describe("15. invalid JSON from any provider cannot promote requirements", () =>
     } catch (err) {
       assert.match((err as Error).message, /malformed JSON|no JSON/i);
     }
+  });
+});
+
+// The ATTEMPT_BUDGET_EXHAUSTED message names the budget that actually applied.
+// It printed the normal per-request budget whatever applied, so an advisory
+// stop after its single attempt read "the per-request provider attempt budget
+// (3) was consumed", and a stop on the shared deadline claimed a budget had
+// been consumed at all.
+describe("ATTEMPT_BUDGET_EXHAUSTED reports the effective budget and the real stop", () => {
+  it("names the advisory budget when that is what applied", async () => {
+    const { NoAiProviderReadyError, ADVISORY_MAX_PROVIDER_ATTEMPTS } = await import("../lib/ai");
+    const err = new NoAiProviderReadyError({
+      useCase: "proposal", providerAttempts: [], errorKind: "ATTEMPT_BUDGET_EXHAUSTED",
+      nextAction: "RETRY_AFTER_PROVIDER_FIX", attemptBudget: ADVISORY_MAX_PROVIDER_ATTEMPTS, stoppedBy: "ATTEMPT_BUDGET",
+    });
+    assert.match(err.message, /^ATTEMPT_BUDGET_EXHAUSTED: /);
+    assert.match(err.message, new RegExp(`advisory provider attempt budget \\(${ADVISORY_MAX_PROVIDER_ATTEMPTS}\\)`));
+  });
+
+  it("says the deadline was reached when the deadline stopped the chain", async () => {
+    const { NoAiProviderReadyError } = await import("../lib/ai");
+    const err = new NoAiProviderReadyError({
+      useCase: "proposal", providerAttempts: [], errorKind: "ATTEMPT_BUDGET_EXHAUSTED",
+      nextAction: "RETRY_AFTER_PROVIDER_FIX", stoppedBy: "DEADLINE",
+    });
+    assert.match(err.message, /shared request deadline was reached/);
+    assert.doesNotMatch(err.message, /budget .* was consumed/);
+  });
+
+  it("keeps the per-request wording when no budget is passed", async () => {
+    const { NoAiProviderReadyError, MAX_PROVIDER_ATTEMPTS_PER_REQUEST } = await import("../lib/ai");
+    const err = new NoAiProviderReadyError({
+      useCase: "proposal", providerAttempts: [], errorKind: "ATTEMPT_BUDGET_EXHAUSTED", nextAction: "RETRY_AFTER_PROVIDER_FIX",
+    });
+    assert.match(err.message, new RegExp(`per-request provider attempt budget \\(${MAX_PROVIDER_ATTEMPTS_PER_REQUEST}\\)`));
+  });
+
+  it("the chain passes the budget it used", () => {
+    const src = readFileSync("lib/ai.ts", "utf8");
+    assert.match(src, /attemptBudget: isAdvisoryContext\(\) \? ADVISORY_MAX_PROVIDER_ATTEMPTS : MAX_PROVIDER_ATTEMPTS_PER_REQUEST/);
   });
 });
