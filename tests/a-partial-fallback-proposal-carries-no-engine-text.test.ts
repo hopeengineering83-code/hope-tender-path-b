@@ -271,3 +271,14 @@ describe("tables state what each person's own record holds", () => {
     assert.doesNotMatch(block, /693\.9|694\.0/);
   });
 });
+
+describe("a model-written section carries no figure the export gate refuses", () => {
+  it("drops the firm's turnover sentence and keeps the rest of the paragraph", async () => {
+    const { clientSafeModelSection } = await import("../lib/ai");
+    const md = "## A.1 Company Background\nThe firm has delivered more than 350 projects. Annual turnover progressed from ETB 5.01M in 2020/21 to ETB 28.9M in 2024/25. It holds 29 key experts.";
+    const r = clientSafeModelSection(md);
+    assert.equal(r.ok, true);
+    assert.doesNotMatch(r.markdown, /turnover|5\.01M|28\.9M/);
+    assert.match(r.markdown, /more than 350 projects\. It holds 29 key experts\./);
+  });
+});

@@ -12,6 +12,7 @@ import { redactSecrets } from "./sanitize-error";
 import { GEMINI_TIMEOUT_MS, DEEPSEEK_DEFAULT_TIMEOUT_MS, MISTRAL_EXTRACTION_TIMEOUT_MS, OPENAI_COMPAT_DEFAULT_TIMEOUT_MS, O1_O3_TIMEOUT_MS, PROPOSAL_SECTION_TIMEOUT_MS, PROPOSAL_SECTION_TIMEOUT_CEILING_MS, PROPOSAL_SECTION_MS_PER_OUTPUT_TOKEN, PROPOSAL_SECTION_BASE_OVERHEAD_MS, PROPOSAL_SECTION_STITCH_RESERVE_MS, PROPOSAL_SECTION_POOL_RESERVE_MS, PROPOSAL_SECTION_MIN_WRITE_MS, COOLDOWN_WAIT_SETTLE_MS, PROPOSAL_AI_TIMEOUT_MS, REFINEMENT_CALL_TIMEOUT_MS } from "./timeout-config";
 import { AI_TRACE_PATTERNS, countOwnPriceMentions, hasUnprovenClaim, scrubOwnPriceSentences, scrubSourceDocumentMetadata, scrubUnprovenClaimSentences } from "./engine/detection-patterns";
 import { scrubUngroundedCompanyCredentials } from "./engine/company-credential-grounding";
+import { containsPricingLeakage } from "./engine/pricing-hygiene";
 import { withoutAIWriterContractPrompt } from "./engine/ai-writer-contract-prompt";
 
 const apiKey = process.env.GEMINI_API_KEY;
@@ -821,7 +822,7 @@ export function clientSafeModelSection(markdown: string): { ok: boolean; markdow
   // sentence claiming "we have already delivered this assignment" or "the
   // same team" goes, the section stays (run 36047880422 lost the whole
   // proposal to one such sentence).
-  const cleaned = scrubUnprovenClaimSentences(scrubOwnPriceSentences(scrubSourceDocumentMetadata(markdown)));
+  const cleaned = scrubPricingLeakageSentences(scrubUnprovenClaimSentences(scrubOwnPriceSentences(scrubSourceDocumentMetadata(markdown))));
   if (hasUnprovenClaim(cleaned)) return { ok: false, markdown: cleaned, reason: "unproven relationship or attachment claim" };
   const trace = AI_TRACE_PATTERNS.find((re) => re.test(cleaned));
   if (trace) return { ok: false, markdown: cleaned, reason: `AI trace ${trace.source.slice(0, 60)}` };
@@ -845,6 +846,27 @@ export function companyGroundingText(input: AIBidWriterInput): string {
     data.projects,
     data.companyVault ? JSON.stringify(data.companyVault) : "",
   ].filter(Boolean).join("\n");
+}
+
+// The export gate's own pricing detector, applied sentence by sentence. Run
+// 36059011641 kept a model-written Section A saying "Annual turnover progressed
+// from ETB 5.01M in 2020/21 to ETB 28.9M in 2024/25"; the readiness gate then
+// refused the whole package for that one sentence. A technical-only envelope
+// carries no financial figures of the firm's own, so the sentence goes and the
+// section stays. A table row is dropped whole: removing a cell misaligns it.
+const TECHNICAL_ENVELOPE = { name: "Technical Proposal", exactFileName: "Technical Proposal.docx", documentType: "TECHNICAL_PROPOSAL", format: "DOCX" } as const;
+export function scrubPricingLeakageSentences(markdown: string): string {
+  const out: string[] = [];
+  for (const line of markdown.split("\n")) {
+    if (!line.trim() || /^\s*#/.test(line) || !containsPricingLeakage(line, TECHNICAL_ENVELOPE)) {
+      out.push(line);
+      continue;
+    }
+    if (/^\s*\|/.test(line)) continue;
+    const kept = line.split(/(?<=[.!?])\s+/).filter((sentence) => !containsPricingLeakage(sentence, TECHNICAL_ENVELOPE)).join(" ").trim();
+    if (kept) out.push(kept);
+  }
+  return out.join("\n");
 }
 
 /** Smallest budget worth starting a provider request with. */
