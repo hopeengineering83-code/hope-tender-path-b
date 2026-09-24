@@ -350,4 +350,29 @@ describe("prose that states a project value states what the value is", () => {
       "| Dessie Specialized Hospital | — | Dessie City Admin |",
     ].join("\n"));
   });
+
+  it("an amount in a prose table cell keeps its label in the same cell, or goes", async () => {
+    // Run 36068858534: the DOCX passed and its PDF did not. The PDF wraps each
+    // cell over several lines and interleaves the columns, so the gate read
+    // "... | Technical approach and | Hospital Project, USD 19M," as a price.
+    const { scrubPricingLeakageSentences } = await import("../lib/ai");
+    const md = [
+      "| Criterion | Our response | Evidence |",
+      "|---|---|---|",
+      "| Experience | Technical approach and methodology addresses scope | Riverside Hospital Project, USD 19M, delivered design |",
+      "| Value | Construction Value of Works | USD 18,900,000 |",
+      "| Reference | Clinic (construction value of works ETB 550,074,678) | Design |",
+    ].join("\n");
+    const out = scrubPricingLeakageSentences(md, { keepTableRows: true });
+    assert.equal(out, [
+      "| Criterion | Our response | Evidence |",
+      "|---|---|---|",
+      "| Experience | Technical approach and methodology addresses scope | Riverside Hospital Project, delivered design |",
+      "| Value | Construction Value of Works | USD 18,900,000 |",
+      "| Reference | Clinic (construction value of works ETB 550,074,678) | Design |",
+    ].join("\n"));
+    const { containsPricingLeakage } = await import("../lib/engine/pricing-hygiene");
+    const pdfDoc = { name: "Technical Proposal", exactFileName: "Technical Proposal.pdf", documentType: "TECHNICAL_PROPOSAL", format: "PDF" };
+    assert.equal(containsPricingLeakage("methodology addresses | Technical approach and | Hospital Project, USD 19M,", pdfDoc), true, "the wrapped fragment the gate refused");
+  });
 });

@@ -863,6 +863,46 @@ function tableRowAsRead(row: string): string {
 
 const MONEY_CELL = new RegExp(`(?:${CURRENCY_TOKEN_ALTERNATION})\\s?\\d`, "i");
 
+// An amount inside a prose table cell, with the label that says what it is.
+// A value-only cell ("USD 18,900,000" beside "Construction Value of Works") is
+// left to the row check; a cell that also holds words is not.
+const MONEY_AMOUNT_IN_CELL = new RegExp(
+  `\\s*\\(?\\s*(?:${CURRENCY_TOKEN_ALTERNATION})\\s?\\d[\\d,]*(?:\\.\\d+)?\\s*(?:[MKB]\\b|million\\b|billion\\b|thousand\\b)?\\s*\\)?`,
+  "gi",
+);
+const CELL_VALUE_LABEL = /\b(?:construction|contract|project|works?)\s+value\b|\bvalue\s+of\s+(?:the\s+)?works\b|\baggregate\s+value\b/i;
+
+// Run 36068858534: the DOCX passed and the PDF of the same proposal did not.
+// A model-written table held "Dessie Hospital Project, USD 19M, delivered
+// design" in one cell of a four-column row. Read as a row, or as a cell, it is
+// a project reference; but the PDF wraps each cell over several lines and its
+// text layer interleaves the columns line by line, so the gate read
+// "... | Technical approach and | Hospital Project, USD 19M," — an amount
+// with no project and no label — as this bid's price. A value can only be
+// relied on to stay beside its label when the label is in the same cell, so an
+// amount in a prose cell without one is removed; the value remains on the
+// project's own card under its label.
+function withoutUnlabelledProseCellAmounts(row: string): string {
+  if (/^\s*\|[\s:|-]+\|\s*$/.test(row)) return row;
+  const cells = row.split("|");
+  return cells
+    .map((cell, index) => {
+      if (index === 0 || index === cells.length - 1) return cell;
+      if (!MONEY_CELL.test(cell) || CELL_VALUE_LABEL.test(cell)) return cell;
+      const words = cell.replace(MONEY_AMOUNT_IN_CELL, " ").replace(/[\s,;:()—–-]+/g, " ").trim();
+      if (!words) return cell; // a value-only cell: the row check owns it
+      const stripped = cell
+        .replace(MONEY_AMOUNT_IN_CELL, "")
+        .replace(/\s*,\s*,/g, ",")
+        .replace(/,\s*([.;)])/g, "$1")
+        .replace(/\(\s*\)/g, "")
+        .replace(/\s{2,}/g, " ")
+        .replace(/,\s*$/g, "");
+      return stripped.trim() ? ` ${stripped.trim()} ` : cell;
+    })
+    .join("|");
+}
+
 export function scrubPricingLeakageSentences(markdown: string, opts: { keepTableRows?: boolean } = {}): string {
   const out: string[] = [];
   for (const line of markdown.split("\n")) {
@@ -873,7 +913,7 @@ export function scrubPricingLeakageSentences(markdown: string, opts: { keepTable
     }
     if (isTableRow) {
       if (!containsPricingLeakage(tableRowAsRead(line), TECHNICAL_ENVELOPE)) {
-        out.push(line);
+        out.push(opts.keepTableRows ? withoutUnlabelledProseCellAmounts(line) : line);
         continue;
       }
       if (!opts.keepTableRows) continue;
