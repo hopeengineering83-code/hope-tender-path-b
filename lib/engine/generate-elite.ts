@@ -117,6 +117,12 @@ type CompanyLogo = {
   height: number;
 };
 
+// "VAT" near a number is priced language ("VAT 15%") — except a VAT
+// registration number, which is a compliance fact. Run 36071201669 printed the
+// firm's certificate row as "VAT Registration tax compliance 15480320805".
+// The match is a lookahead, so no text after the word is consumed.
+export const VAT_RATE_MENTION = /\bvat\b(?=[^\n]{0,12}\d)(?![\s:|—–-]*(?:reg(?:istration)?\.?[\s:|—–-]*(?:no\.?|number|#)?[\s:|—–-]*)?\d{7,})/gi;
+
 export function disambiguateRepeatedHeadings(markdown: string): string {
   const seen = new Map<string, number>();
   return markdown.split("\n").map((line) => {
@@ -885,7 +891,11 @@ function fallbackProposalMarkdown(params: {
 
   lines.push("## Proposed Team and Expert Contributions");
   if (expertSelected > 0) {
-    lines.push(...params.expertLines.map((x) => `- ${x}`));
+    // Without the record's Disciplines / Sectors lists: they are the firm's
+    // tags, and printed per expert they read as the expert's own — an
+    // electrical engineer listed under "Architecture". The bios dropped them
+    // for the same reason.
+    lines.push(...params.expertLines.map((x) => `- ${x.replace(/\s*\|\s*(?:Disciplines|Sectors):[^|]*/g, "")}`));
   } else {
     lines.push("- Expert CVs and role assignments must be finalised and reviewed before submission. The tender requires a multidisciplinary team; confirm each expert's primary role and comparable previous project.");
   }
@@ -3767,7 +3777,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
     .replace(/\brate\s+card\b/gi, "resource schedule")
     .replace(/\bprice\s+schedule\b/gi, "resource schedule")
     .replace(/\btax\s+rate\b/gi, "regulatory requirement")
-    .replace(/\bvat\b(?=.{0,12}\d)/gi, "tax compliance");
+    .replace(VAT_RATE_MENTION, "tax compliance");
 
   workingMarkdown = workingMarkdown
     .replace(/\b(?:the\s+)?same\s+project\s+team\b[^.!?]*(?:[.!?]|$)/gi, "")
@@ -3815,7 +3825,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
   ).replace(/\b(?:total|unit)\s+price\b/gi, "resource allocation")
     .replace(/\b(?:rate card|price schedule|bill of quantities|boq)\b/gi, "resource schedule")
     .replace(/\btax\b.{0,12}\brate\b/gi, "regulatory requirement")
-    .replace(/\bvat\b.{0,12}\d/gi, "tax compliance")
+    .replace(VAT_RATE_MENTION, "tax compliance")
     .replace(/≥/g, ">=")
     .replace(/≤/g, "<=")
     .replace(/[→⇒]/g, "->")

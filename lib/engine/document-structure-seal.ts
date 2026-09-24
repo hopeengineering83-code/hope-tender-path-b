@@ -263,8 +263,22 @@ export function sealDocumentStructure(
   // document and that heading carries a different number, so a reference to
   // something the seal does not know about is left exactly as written.
   let resolvedCrossReferences = 0;
+  // A reference names a heading by its exact title or by the words it opens
+  // with ("A.4.1 Principal Qualifications" for "A.5.1 Principal
+  // Qualifications — Detailed Bios"). The opening-words match is used only
+  // when exactly one heading of that letter qualifies, so an ambiguous short
+  // title is left as written.
+  const numberForTitle = (refLetter: string, refTitle: string): string | undefined => {
+    const wanted = normalizeTitle(refTitle);
+    const exact = titleToNumber.get(wanted);
+    if (exact) return exact;
+    if (wanted.split(" ").length < 1 || wanted.length < 5) return undefined;
+    const candidates = [...titleToNumber.entries()]
+      .filter(([title, number]) => number.startsWith(`${refLetter.toUpperCase()}.`) && (title === wanted || title.startsWith(`${wanted} `)));
+    return candidates.length === 1 ? candidates[0][1] : undefined;
+  };
   const repoint = (refLetter: string, refNumber: string, refTitle: string): string | null => {
-    const actual = titleToNumber.get(normalizeTitle(refTitle));
+    const actual = numberForTitle(refLetter, refTitle);
     if (!actual || actual === `${refLetter}.${refNumber}`) return null;
     resolvedCrossReferences += 1;
     return actual;
@@ -278,11 +292,23 @@ export function sealDocumentStructure(
         return actual ? `Section ${actual} (${refTitle})` : whole;
       },
     )
+    // A table cell ends at "|", which the lookahead must accept: the
+    // compliance matrix and the evaluation-criteria table hold most of these
+    // references, and none of them was ever repointed.
     .replace(
-      /\bSection\s+([A-Z])\.(\d+(?:\.\d+)?)\s+([A-Z][^,.;:\n]{3,60}?)(?=\s+and\s+[A-Z]\.\d|[,.;:\n]|$)/g,
+      /\bSection\s+([A-Z])\.(\d+(?:\.\d+)?)\s+([A-Z][^,.;:|\n]{3,60}?)(?=\s+(?:and|\+)\s+(?:Section\s+)?[A-Z]\.\d|\s*\||[,.;:\n]|$)/g,
       (whole, refLetter: string, refNumber: string, refTitle: string) => {
         const actual = repoint(refLetter, refNumber, refTitle);
         return actual ? `Section ${actual} ${refTitle}` : whole;
+      },
+    )
+    // The second reference in "Section A.5 Proposed Project Team and A.4.1
+    // Principal Qualifications" / "... + A.5 Team-to-Project Mapping".
+    .replace(
+      /(\s(?:and|\+)\s+(?:Section\s+)?)([A-Z])\.(\d+(?:\.\d+)?)\s+([A-Z][^,.;:|+\n]{3,60}?)(?=\s+(?:and|\+)\s|\s*\||[,.;:\n]|$)/g,
+      (whole, lead: string, refLetter: string, refNumber: string, refTitle: string) => {
+        const actual = repoint(refLetter, refNumber, refTitle);
+        return actual ? `${lead}${actual} ${refTitle}` : whole;
       },
     );
 

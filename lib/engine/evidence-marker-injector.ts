@@ -107,7 +107,7 @@ function buildAnchorSentence(project: ProjectRecord, templateIndex = 0): string 
   const detailParts: string[] = [];
   if (project.contractValue) {
     const currency = project.currency || "ETB";
-    detailParts.push(`${currency} ${Math.round(project.contractValue).toLocaleString("en-US")}`);
+    detailParts.push(`construction value of works ${currency} ${Math.round(project.contractValue).toLocaleString("en-US")}`);
   }
   if (project.clientName) detailParts.push(project.clientName);
   if (project.country) detailParts.push(project.country);

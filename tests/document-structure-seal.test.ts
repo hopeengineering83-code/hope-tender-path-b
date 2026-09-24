@@ -360,3 +360,29 @@ describe("cross-references written without parentheses", () => {
     assert.equal(sealDocumentStructure(md).resolvedCrossReferences, 0);
   });
 });
+
+describe("cross-references inside tables and by opening words", () => {
+  // Run 36071201669's compliance matrix and evaluation table still pointed at
+  // "Section A.4 Proposed Project Team and A.4.1 Principal Qualifications"
+  // after the team moved to A.5: the references sat in table cells, which the
+  // resolver's lookahead did not accept, and named a heading by its opening
+  // words only.
+  it("repoints both references in a table cell", () => {
+    const md = [
+      "# Section A: Company Profile", "## A.1 Company Overview", "x", "## A.5 Proposed Project Team", "x",
+      "### A.5.1 Principal Qualifications — Detailed Bios", "x",
+      "# Section E: Compliance Matrix", "| Req | Where |", "|---|---|",
+      "| Team | Section A.4 Proposed Project Team and A.4.1 Principal Qualifications |",
+    ].join("\n");
+    const out = sealDocumentStructure(md as never).markdown;
+    assert.match(out, /\| Team \| Section A\.2 Proposed Project Team and A\.2\.1 Principal Qualifications \|/);
+  });
+
+  it("leaves a short title that opens more than one heading as written", () => {
+    const md = [
+      "# Section A: Company Profile", "## A.1 Team Overview", "x", "## A.2 Team Structure", "x",
+      "# Section E: Compliance Matrix", "| Req | Where |", "|---|---|", "| T | Section A.7 Team |",
+    ].join("\n");
+    assert.match(sealDocumentStructure(md as never).markdown, /\| T \| Section A\.7 Team \|/);
+  });
+});

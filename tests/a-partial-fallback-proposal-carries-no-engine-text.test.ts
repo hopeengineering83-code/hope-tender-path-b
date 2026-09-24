@@ -422,3 +422,28 @@ describe("the delivered text reads as the firm's record, not a record dump", () 
     assert.match(out, /District Hospital \(construction value of works KES 550,074,678/);
   });
 });
+
+describe("a compliance number is not priced language", () => {
+  it("keeps a VAT registration number and still rewrites a VAT rate", async () => {
+    const { VAT_RATE_MENTION } = await import("../lib/engine/generate-elite");
+    const row = "| VAT Registration | VAT 15480320805 | ACTIVE |";
+    assert.equal(row.replace(VAT_RATE_MENTION, "tax compliance"), row);
+    assert.equal("Registration no: VAT reg. no. 1548032080".replace(VAT_RATE_MENTION, "x"), "Registration no: VAT reg. no. 1548032080");
+    assert.equal("VAT 15% applies".replace(VAT_RATE_MENTION, "tax compliance"), "tax compliance 15% applies");
+  });
+});
+
+describe("the compliance matrix shows evidence, not the engine's record of it", () => {
+  it("renders no evidence enum, drafting state or .txt extraction name", async () => {
+    const { buildComplianceMatrixSection } = await import("../lib/engine/compliance-matrix-builder");
+    const out = buildComplianceMatrixSection({
+      requirements: [{ id: "r1", title: "Multidisciplinary Professional Team", priority: "MANDATORY" }],
+      matrixRows: [
+        { requirementId: "r1", evidenceType: "PROPOSAL_RESPONSE", evidenceSource: "Company Qualifications — CV evidence available for drafting", evidenceReference: "Expert CVS.pdf.txt", supportLevel: "DIRECT" },
+        { requirementId: "r1", evidenceType: "GENERATED_DOCUMENT", evidenceSource: "AUTO_GENERATED_ARTIFACT", evidenceReference: "Technical Proposal.pdf", supportLevel: "DIRECT" },
+      ],
+      gaps: [],
+    } as never) ?? "";
+    assert.doesNotMatch(out, /PROPOSAL_?RESPONSE|GENERATED_?DOCUMENT|AUTO_?GENERATED|available for drafting|\.pdf\.txt/);
+  });
+});

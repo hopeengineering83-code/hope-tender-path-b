@@ -120,7 +120,7 @@ export const PROPOSAL_THEMES: ProposalTheme[] = [
       "radiation shielding design for imaging rooms: shielding calculations, material specification, and regulatory sign-off documentation",
       "medical gas system coordination: oxygen, medical air, vacuum, nitrous oxide, and AGSS layout integrated with MEP from schematic stage",
       "medical-grade electrical design: UPS/generator for life-critical loads, isolated power systems for theatres/ICU, nurse call, BMS, and fire alarm",
-      "{{JURISDICTION:HEALTH_FACILITY_REGULATOR}} licensing documentation: design drawings, specifications, and compliance evidence package",
+      "licensing documentation for {{JURISDICTION:HEALTH_FACILITY_REGULATOR}}: design drawings, specifications, and compliance evidence package",
     ],
   },
   {

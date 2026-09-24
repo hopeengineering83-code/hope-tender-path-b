@@ -69,7 +69,7 @@ function projectAnchor(project: ProjectRecord, fallbackVerb = "demonstrated on")
   const parts: string[] = [];
   if (project.contractValue) {
     const c = project.currency || "ETB";
-    parts.push(`${c} ${Math.round(project.contractValue).toLocaleString("en-US")}`);
+    parts.push(`construction value of works ${c} ${Math.round(project.contractValue).toLocaleString("en-US")}`);
   }
   if (project.clientName) parts.push(project.clientName);
   if (project.endDate) {
@@ -172,7 +172,7 @@ function sectorMethodologyParagraphRaw(sector: string, subSection: string): stri
   if (/health|hospital|medical|clinic/.test(s)) {
     if (/understanding|C\.1/i.test(subSection)) return "The clinical brief drives every downstream decision: zone segregation between Emergency, Outpatient, In-patient, Imaging, Pharmacy, and Laboratory; Infection Prevention and Control (IPC) compliant flow patterns; medical-gas distribution coordinated with structural and MEP grids; radiation-shielding loads accounted for at structural sizing.";
     if (/methodology|C\.2/i.test(subSection)) return "Methodology follows the Ministry of Health functional programming framework: clinical-zone capacity sizing, IPC-compliant patient/staff/supply flow, biomedical equipment integration through PACS-ready cabling and lead-shielding for imaging rooms, and HEPA-rated ventilation across critical-care areas.";
-    if (/work plan|C\.3/i.test(subSection)) return "Phased deliverables: site assessment with weighted matrix → conceptual design with clinical zoning → detailed design with MEP coordination → working drawings + BOQ → construction supervision with three IPC hold-points → close-out with as-built and {{JURISDICTION:HEALTH_FACILITY_REGULATOR}} licensing pack.";
+    if (/work plan|C\.3/i.test(subSection)) return "Phased deliverables: site assessment with weighted matrix → conceptual design with clinical zoning → detailed design with MEP coordination → working drawings + BOQ → construction supervision with three IPC hold-points → close-out with as-built records and the licensing pack for {{JURISDICTION:HEALTH_FACILITY_REGULATOR}}.";
     if (/quality|QA|C\.4/i.test(subSection)) return "Quality gates at 30% Schematic, 60% Design Development, and 100% Pre-Issue. Each gate signed off by Project Principal + Senior Reviewer. Independent peer review at 100%.";
   }
   if (/water|borehole|hydraulic|sanitary/.test(s)) {

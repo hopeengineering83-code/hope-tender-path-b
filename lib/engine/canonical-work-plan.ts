@@ -47,7 +47,7 @@ function sectorPhasingRows(sector: string): PhasingRow[] {
       { phase: "2. Conceptual Design", deliverables: "Functional zoning diagram; clinical adjacency matrix; preliminary IPC flow study; concept drawings; cost order-of-magnitude", duration: "Weeks 3–6", responsible: "Architect" },
       { phase: "3. Detailed Design", deliverables: "Architectural, structural, MEP, medical-gas drawings; specifications; quantity schedules; tender documents; planning permit pack", duration: "Weeks 7–14", responsible: "Lead Engineer" },
       { phase: "4. Tender & Construction Supervision", deliverables: "Tender evaluation report; construction supervision with three IPC hold-points; monthly progress reports; payment certifications", duration: "Construction window + 4 weeks", responsible: "Resident Engineer" },
-      { phase: "5. Close-out", deliverables: "As-built drawings; O&M manuals; commissioning report; Health Authority licensing pack; defects-liability tracker", duration: "Weeks N–N+8", responsible: "Project Principal" },
+      { phase: "5. Close-out", deliverables: "As-built drawings; O&M manuals; commissioning report; Health Authority licensing pack; defects-liability tracker", duration: "8 weeks from completion of works", responsible: "Project Principal" },
     ];
   }
   if (/water|borehole|hydraulic|sanitary/.test(s)) {
@@ -56,7 +56,7 @@ function sectorPhasingRows(sector: string): PhasingRow[] {
       { phase: "2. Source Investigation", deliverables: "Borehole siting / yield test report; geophysical survey; water-quality analysis; demand projection", duration: "Weeks 3–6", responsible: "Hydrogeologist" },
       { phase: "3. Hydraulic Design", deliverables: "EPANET / WaterCAD model; pipe-network sizing; pump-station design; reservoir sizing; treatment-process design", duration: "Weeks 7–12", responsible: "Water Engineer" },
       { phase: "4. Tender & Construction Supervision", deliverables: "Tender documents (quantity schedules, drawings, specs); construction supervision; pressure-test hold-points; pump commissioning", duration: "Construction window + 4 weeks", responsible: "Resident Engineer" },
-      { phase: "5. Close-out", deliverables: "As-built drawings; O&M manual; operator training records; leakage-check report; handover certificate", duration: "Weeks N–N+6", responsible: "Project Principal" },
+      { phase: "5. Close-out", deliverables: "As-built drawings; O&M manual; operator training records; leakage-check report; handover certificate", duration: "6 weeks from completion of works", responsible: "Project Principal" },
     ];
   }
   if (/road|bridge|highway|pavement/.test(s)) {
@@ -65,7 +65,7 @@ function sectorPhasingRows(sector: string): PhasingRow[] {
       { phase: "2. Survey & Investigation", deliverables: "Topographic survey; geotechnical investigation (CBR, Proctor, boreholes); traffic count + design-traffic computation (AADT, ESAL)", duration: "Weeks 3–6", responsible: "Geotechnical Engineer" },
       { phase: "3. Detailed Design", deliverables: "Alignment design; pavement design ({{JURISDICTION:ROAD_DESIGN_STANDARD}}); drainage design; structural design (culverts/bridges); road-safety audit; tender documents", duration: "Weeks 7–14", responsible: "Highway Engineer" },
       { phase: "4. Tender & Construction Supervision", deliverables: "Tender evaluation; construction supervision with subgrade/sub-base/base/surface hold-points; Marshall mix design oversight; monthly progress", duration: "Construction window + 4 weeks", responsible: "Resident Engineer" },
-      { phase: "5. Close-out", deliverables: "As-built drawings; maintenance manual; pre-handover road-safety audit; defects-liability tracker", duration: "Weeks N–N+6", responsible: "Project Principal" },
+      { phase: "5. Close-out", deliverables: "As-built drawings; maintenance manual; pre-handover road-safety audit; defects-liability tracker", duration: "6 weeks from completion of works", responsible: "Project Principal" },
     ];
   }
   if (/urban|master plan|municipal/.test(s)) {
@@ -83,7 +83,7 @@ function sectorPhasingRows(sector: string): PhasingRow[] {
       { phase: "2. Conceptual & Preliminary Design", deliverables: "Single-line diagram; technology-selection report; SKM/ETAP load-flow model; protection relay coordination study; civil layout; preliminary quantity schedules", duration: "Weeks 4–8", responsible: "Power Systems Lead" },
       { phase: "3. Detailed Engineering", deliverables: "Full engineering design package (civil/structural, electrical, SCADA); specifications; procurement quantity schedules; grid-code compliance dossier", duration: "Weeks 9–16", responsible: "Lead Engineer" },
       { phase: "4. Procurement & Construction Supervision", deliverables: "Tender evaluation report; construction supervision with FAT hold-point; monthly progress reports; payment certificates", duration: "Construction window + 4 weeks", responsible: "Resident Engineer" },
-      { phase: "5. Commissioning & Handover", deliverables: "SAT protocol results; SCADA acceptance test; O&M manual; operator training records; regulatory commissioning certificate; handover pack", duration: "Weeks N–N+6", responsible: "Project Principal" },
+      { phase: "5. Commissioning & Handover", deliverables: "SAT protocol results; SCADA acceptance test; O&M manual; operator training records; regulatory commissioning certificate; handover pack", duration: "6 weeks from completion of works", responsible: "Project Principal" },
     ];
   }
   if (/agri|irrigation|WUA|command.*area|FAO.*Penman|crop.*water/i.test(s)) {
@@ -92,7 +92,7 @@ function sectorPhasingRows(sector: string): PhasingRow[] {
       { phase: "2. Scheme Design", deliverables: "Irrigation network design (canal or pressurised pipe); diversion/weir structure design; WUA governance draft framework; preliminary quantity schedules", duration: "Weeks 5–10", responsible: "Lead Hydraulic/Irrigation Engineer" },
       { phase: "3. Tender Documents", deliverables: "Full tender package (drawings, specifications, quantity schedules); environmental screening memo; construction supervision plan", duration: "Weeks 11–14", responsible: "Lead Engineer" },
       { phase: "4. Construction Supervision & Commissioning", deliverables: "Construction supervision; hydraulic commissioning tests; canal seepage tests; distribution efficiency measurement", duration: "Construction window + 3 weeks", responsible: "Resident Engineer" },
-      { phase: "5. WUA Handover & O&M", deliverables: "WUA establishment certificate; O&M manual; operator training records; season-performance report; agronomic follow-up memo", duration: "Weeks N–N+6", responsible: "Project Principal" },
+      { phase: "5. WUA Handover & O&M", deliverables: "WUA establishment certificate; O&M manual; operator training records; season-performance report; agronomic follow-up memo", duration: "6 weeks from completion of works", responsible: "Project Principal" },
     ];
   }
   if (/mining|JORC|tailings|ore.*body|mine.*plan|mineral.*resource|blast.*design/i.test(s)) {
@@ -101,7 +101,7 @@ function sectorPhasingRows(sector: string): PhasingRow[] {
       { phase: "2. Mine Plan & Feasibility", deliverables: "Pit or underground design; slope-stability analysis (three methods); TSF design per MAC/ANCOLD; preliminary quantity schedules; environmental and social management plan", duration: "Weeks 7–16", responsible: "Mining Engineer" },
       { phase: "3. Permitting & Detailed Engineering", deliverables: "Regulatory submission package; ESIA; detailed design drawings and specifications; procurement quantity schedules", duration: "Weeks 17–24", responsible: "Lead Engineer" },
       { phase: "4. Construction Supervision", deliverables: "Construction supervision with geotechnical hold-points; quality-control testing programme; monthly progress reports", duration: "Construction window + 4 weeks", responsible: "Resident Engineer" },
-      { phase: "5. Close-out & Closure Plan", deliverables: "As-built drawings; closure plan with financial provision; O&M manual; environmental monitoring baseline; handover pack", duration: "Weeks N–N+6", responsible: "Project Principal" },
+      { phase: "5. Close-out & Closure Plan", deliverables: "As-built drawings; closure plan with financial provision; O&M manual; environmental monitoring baseline; handover pack", duration: "6 weeks from completion of works", responsible: "Project Principal" },
     ];
   }
   if (/port|berth|quay|maritime|dredging|harbour|nautical/i.test(s)) {
@@ -110,7 +110,7 @@ function sectorPhasingRows(sector: string): PhasingRow[] {
       { phase: "2. Design Development", deliverables: "Berth structural design; dredge volume and disposal plan with sediment characterisation; fast-time nautical simulation report; shore-power layout", duration: "Weeks 6–14", responsible: "Lead Engineer" },
       { phase: "3. Tender Documents & ISPS", deliverables: "Full tender package (drawings, specifications, quantity schedules); ISPS compliance documentation; environmental and social management plan", duration: "Weeks 15–18", responsible: "Lead Engineer" },
       { phase: "4. Construction Supervision", deliverables: "Construction supervision with structural hold-points; dredge disposal monitoring; monthly progress reports; payment certificates", duration: "Construction window + 4 weeks", responsible: "Resident Engineer" },
-      { phase: "5. Commissioning & Handover", deliverables: "Commissioning test results; ISPS certification support; O&M manual; nautical acceptance trial; handover pack", duration: "Weeks N–N+6", responsible: "Project Principal" },
+      { phase: "5. Commissioning & Handover", deliverables: "Commissioning test results; ISPS certification support; O&M manual; nautical acceptance trial; handover pack", duration: "6 weeks from completion of works", responsible: "Project Principal" },
     ];
   }
   if (/HAZOP|P&ID|pipeline.*design|oil.*facilit|gas.*facilit|petrochemical|upstream.*petroleum/i.test(s)) {
@@ -119,7 +119,7 @@ function sectorPhasingRows(sector: string): PhasingRow[] {
       { phase: "2. Detailed Engineering", deliverables: "Pipeline stress analysis (Caesar II); equipment layout; cathodic-protection design; civil/structural drawings; vendor data requirements matrix", duration: "Weeks 6–16", responsible: "Lead Engineer" },
       { phase: "3. Procurement & Pre-construction", deliverables: "Tender documents (quantity schedules, specs, drawings); HAZOP action register closure certificate; environmental and social management plan; construction safety plan", duration: "Weeks 17–20", responsible: "Lead Engineer" },
       { phase: "4. Construction Supervision", deliverables: "Construction supervision with welding NDE hold-points; pigging and hydrotest supervision; monthly progress reports", duration: "Construction window + 4 weeks", responsible: "Resident Engineer" },
-      { phase: "5. Commissioning & ILI", deliverables: "Commissioning procedures executed; PSI documentation; ILI programme specification; O&M manual; operator training; handover pack", duration: "Weeks N–N+6", responsible: "Project Principal" },
+      { phase: "5. Commissioning & ILI", deliverables: "Commissioning procedures executed; PSI documentation; ILI programme specification; O&M manual; operator training; handover pack", duration: "6 weeks from completion of works", responsible: "Project Principal" },
     ];
   }
   if (/KYC|AML|core.*banking|microfinance|IFRS|Basel|fintech|payment.*system/i.test(s)) {
@@ -155,7 +155,7 @@ function sectorPhasingRows(sector: string): PhasingRow[] {
       { phase: "2. Construction Phase — Quality & Progress", deliverables: "Weekly and monthly site supervision reports; hold-point and witness-point inspection certificates; NCR log; laboratory test certificates; material approval register", duration: "Construction period", responsible: "Resident Engineer + Site Inspector" },
       { phase: "3. Payment Certification", deliverables: "Monthly IPC (Interim Payment Certificate) based on measured quantities; cost register update; cash-flow projection", duration: "Monthly throughout construction", responsible: "Resident Engineer + QS" },
       { phase: "4. Variation Order Management", deliverables: "VO register; cost assessment of contractor claims; Engineer's Instructions; updated contract sum statement", duration: "Ongoing during construction", responsible: "Resident Engineer" },
-      { phase: "5. Completion & DLP", deliverables: "Practical completion certificate; punch list / snag list; DLP inspection report; performance bond release recommendation; final account summary", duration: "Weeks N to N+6 + DLP", responsible: "Resident Engineer" },
+      { phase: "5. Completion & DLP", deliverables: "Practical completion certificate; punch list / snag list; DLP inspection report; performance bond release recommendation; final account summary", duration: "6 weeks from completion of works, then the defects liability period", responsible: "Resident Engineer" },
     ];
   }
   if (/contract administration|FIDIC|variation order|payment certificate|claims management|quantity survey/i.test(s)) {
@@ -164,7 +164,7 @@ function sectorPhasingRows(sector: string): PhasingRow[] {
       { phase: "2. Cost Control & Reporting", deliverables: "Monthly cost report (actual vs contract sum); forecast final cost; contingency drawdown register; cash-flow projection", duration: "Monthly throughout contract", responsible: "Contract Administrator + QS" },
       { phase: "3. Variation & Change Management", deliverables: "VO log; quantum assessment per each variation; Engineer's Instructions; contract sum adjustment register", duration: "Ongoing", responsible: "Contract Administrator" },
       { phase: "4. Claims Evaluation", deliverables: "EOT claim analysis (time-impact method); disruption cost assessment; formal written determination; updated programme baseline", duration: "As claims arise", responsible: "Contract Administrator" },
-      { phase: "5. Final Account & Closeout", deliverables: "Final quantity-schedule reconciliation; agreed final account statement; outstanding claims settlement; certificate of substantial completion; lessons-learned report", duration: "Weeks N to N+8", responsible: "Contract Administrator" },
+      { phase: "5. Final Account & Closeout", deliverables: "Final quantity-schedule reconciliation; agreed final account statement; outstanding claims settlement; certificate of substantial completion; lessons-learned report", duration: "8 weeks from completion of works", responsible: "Contract Administrator" },
     ];
   }
   if (/heritage|conservation|museum|historic|adaptive.*reuse|heritage.*renovation/i.test(s)) {
@@ -173,7 +173,7 @@ function sectorPhasingRows(sector: string): PhasingRow[] {
       { phase: "2. Conservation Plan & Design", deliverables: "Conservation plan; structural stabilisation design; architectural restoration drawings; MEP upgrade design; material specification using reversible/compatible materials; planning/heritage authority pre-submission", duration: "Weeks 5–12", responsible: "Lead Heritage Architect" },
       { phase: "3. Tender Documents & Approvals", deliverables: "Full tender package (drawings, specs, quantity schedules, conservation method statements); planning/heritage authority approval certificate; stakeholder consultation records", duration: "Weeks 13–16", responsible: "Lead Heritage Architect" },
       { phase: "4. Conservation Works Supervision", deliverables: "Specialist contractor supervision with material sample approval; conservation works monitoring log; NCR register; progress reports; photographic record", duration: "Construction window", responsible: "Resident Heritage Architect + Structural Inspector" },
-      { phase: "5. Completion & Documentation", deliverables: "As-built conservation drawings; photographic archive (before/after); updated condition report; maintenance manual; completion certificate; handover to cultural authority", duration: "Weeks N to N+6", responsible: "Heritage Conservation Specialist" },
+      { phase: "5. Completion & Documentation", deliverables: "As-built conservation drawings; photographic archive (before/after); updated condition report; maintenance manual; completion certificate; handover to cultural authority", duration: "6 weeks from completion of works", responsible: "Heritage Conservation Specialist" },
     ];
   }
   if (/industrial|manufactur|factory|abattoir|processing.*plant|production.*facilit|warehouse.*industrial/i.test(s)) {
