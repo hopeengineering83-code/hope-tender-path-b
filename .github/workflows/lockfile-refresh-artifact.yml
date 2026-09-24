@@ -1315,7 +1315,9 @@ jobs:
               # exception sat unread in the same field.
               marker = "AI fallback reason:"
               if marker in summary:
-                  print(f"      FELL BACK BECAUSE: {summary.split(marker, 1)[1].strip()[:400]}")
+                  # Whole reason: it names every failed section and its
+                  # provider walk. At 400 chars only the first section fit.
+                  print(f"      FELL BACK BECAUSE: {summary.split(marker, 1)[1].strip()[:6000]}")
               elif "deterministic" in head.lower():
                   print("      FELL BACK BECAUSE: (no reason recorded -- the AI writer was never attempted)")
           PYEOF

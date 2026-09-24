@@ -5368,6 +5368,16 @@ export function sectionTimeoutMsFor(spec: { maxOutputTokens?: number }): number 
   );
 }
 
+/**
+ * How many times one section may wait out provider cooldowns before it falls
+ * back. Each wait is still bounded by the worker deadline (see the round loop
+ * in generateOneSection), so this caps retries, not wall-clock time.
+ */
+export const MAX_SECTION_COOLDOWN_WAITS = 3;
+
+/** Refusals that a short wait cures: the same request works once the provider recovers. */
+const TRANSIENT_SECTION_FAILURES: ReadonlySet<string> = new Set(["RATE_LIMIT", "PROVIDER_OVERLOAD", "TIMEOUT", "NETWORK", "PROVIDER_ERROR"]);
+
 async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionResult> {
   const t0 = Date.now();
   // Authorship telemetry for this section. Recorded as the chain is walked so a
@@ -5462,12 +5472,21 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
   // before that existed the whole route had 45s and waiting was impossible,
   // which is why this could not have been fixed at this layer first.
   //
-  // Bounded on purpose: at most ONE wait, only when nothing was dispatched,
-  // only when the wait plus a usable writing window fits the section budget
-  // that resolveEffectiveTimeoutMs has already clamped to any armed worker
-  // deadline. It can therefore never push a section past the platform ceiling,
-  // and a chain that is genuinely exhausted still falls back immediately.
-  for (let round = 0; round < 2; round += 1) {
+  // Bounded on purpose: at most MAX_SECTION_COOLDOWN_WAITS waits, only when
+  // the round dispatched nothing or was refused for a TRANSIENT reason (rate
+  // limit, overload, timeout), and only when the wait plus a usable writing
+  // window fits the budget that resolveEffectiveTimeoutMs has already clamped
+  // to any armed worker deadline. It can therefore never push a section past
+  // the platform ceiling, and a chain that is genuinely exhausted still falls
+  // back immediately.
+  //
+  // One wait was not enough. Run 36015413125 (2026-09-24): with two usable
+  // providers (Groq, Z.ai) shared by four sections, a section waited once,
+  // found both cooling again from its siblings' 429s, and fell back — three of
+  // four sections did, and the one section a model DID write was discarded
+  // with them.
+  for (let round = 0; round <= MAX_SECTION_COOLDOWN_WAITS; round += 1) {
+  const roundStart = attempts.length;
   for (const pass of ["capacity-checked", "last-resort"] as const) {
   for (const provider of getAutomaticProviderOrder()) {
     // A SKIP IS NOT A FAILURE, AND THE TWO MUST NOT READ ALIKE.
@@ -5612,12 +5631,18 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
   }
   }
 
-  if (round === 0) {
-    // Only a chain where NOTHING was dispatched can be waiting on a cooldown.
-    // If any provider was actually called and refused, waiting is not the
-    // remedy and the fallback is correct.
-    const dispatched = attempts.some((attempt) => attempt.outcome === "FAILED");
-    const retryAfterMs = dispatched ? null : getMinCooldownExpiryMs();
+  if (round < MAX_SECTION_COOLDOWN_WAITS) {
+    // A chain that dispatched nothing is waiting on a cooldown. So is one
+    // whose providers refused for a TRANSIENT reason (a 429, an overload, a
+    // timeout): the same call works once the provider recovers. Only a round
+    // in which every dispatched provider refused for good (auth, billing, a
+    // bad model) has nothing to wait for, and falls back straight away.
+    const roundAttempts = attempts.slice(roundStart);
+    const dispatched = roundAttempts.some((attempt) => attempt.outcome === "FAILED");
+    const refusedTransiently = roundAttempts.some(
+      (attempt) => attempt.outcome === "FAILED" && TRANSIENT_SECTION_FAILURES.has(String(attempt.reason)),
+    );
+    const retryAfterMs = dispatched && !refusedTransiently ? null : getMinCooldownExpiryMs();
     if (retryAfterMs !== null && retryAfterMs > 0) {
       // WEIGH THE WAIT AGAINST THE WORKER DEADLINE, NOT THE SECTION'S OWN
       // WRITING BUDGET.
@@ -5654,10 +5679,10 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
         attempts.push({
           provider: "(chain)",
           outcome: "WAITED_FOR_COOLDOWN",
-          reason: `no provider dispatched; waited ${Math.round(retryAfterMs / 1000)}s for the earliest cooldown to expire`,
+          reason: `${dispatched ? "providers refused transiently" : "no provider dispatched"}; waited ${Math.round(retryAfterMs / 1000)}s for the earliest cooldown to expire`,
         });
         logger.warn(
-          `[ai] section "${spec.id}" dispatched no provider — every eligible provider was cooling down. `
+          `[ai] section "${spec.id}" ${dispatched ? "was refused transiently (rate limit/overload)" : "dispatched no provider — every eligible provider was cooling down"}. `
           + `Waiting ${Math.round(retryAfterMs / 1000)}s for the earliest expiry and re-walking the chain `
           + `(needed ${Math.round(needMs / 1000)}s of worker deadline, granted ${Math.round(grantedMs / 1000)}s).`,
         );

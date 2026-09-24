@@ -108,16 +108,22 @@ describe("a cooldown is a wait, not a verdict", () => {
     assert.match(analyze, /getMinCooldownExpiryMs\(\)/);
   });
 
-  it("waits only when nothing was dispatched", () => {
-    // A provider that was actually called and refused is not waiting on a
-    // cooldown, so waiting cannot be the remedy.
-    assert.match(SECTION_WRITER, /const dispatched = attempts\.some\(\(attempt\) => attempt\.outcome === "FAILED"\);/);
-    assert.match(SECTION_WRITER, /dispatched \? null : getMinCooldownExpiryMs\(\)/);
+  it("waits when nothing was dispatched or the refusals were transient, never after a permanent refusal", () => {
+    // A provider refused for good (auth, billing) is not waiting on a
+    // cooldown, so waiting cannot be the remedy. A 429 or an overload is:
+    // run 36015413125 lost three of four sections to sibling 429s after a
+    // single wait.
+    assert.match(SECTION_WRITER, /const roundAttempts = attempts\.slice\(roundStart\);/);
+    assert.match(SECTION_WRITER, /const dispatched = roundAttempts\.some\(\(attempt\) => attempt\.outcome === "FAILED"\);/);
+    assert.match(SECTION_WRITER, /dispatched && !refusedTransiently \? null : getMinCooldownExpiryMs\(\)/);
+    assert.match(SECTION_WRITER, /TRANSIENT_SECTION_FAILURES\.has\(/);
   });
 
-  it("waits at most one round, so it cannot loop", () => {
-    assert.match(SECTION_WRITER, /for \(let round = 0; round < 2; round \+= 1\)/);
-    assert.match(SECTION_WRITER, /if \(round === 0\)/);
+  it("waits a bounded number of rounds, so it cannot loop", async () => {
+    const { MAX_SECTION_COOLDOWN_WAITS } = await import("../lib/ai");
+    assert.ok(MAX_SECTION_COOLDOWN_WAITS >= 1 && MAX_SECTION_COOLDOWN_WAITS <= 5);
+    assert.match(SECTION_WRITER, /for \(let round = 0; round <= MAX_SECTION_COOLDOWN_WAITS; round \+= 1\)/);
+    assert.match(SECTION_WRITER, /if \(round < MAX_SECTION_COOLDOWN_WAITS\)/);
   });
 
   it("only waits when the wait AND a usable writing window fit the budget", () => {
