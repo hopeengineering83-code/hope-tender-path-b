@@ -449,3 +449,28 @@ export function countOwnPriceMentions(text: string): number {
   }
   return count;
 }
+
+/**
+ * Drop the sentences of `markdown` that carry an own-price mention (see
+ * countOwnPriceMentions), keeping everything else. A technical proposal must
+ * never state the firm's price, so such a sentence is removed rather than
+ * letting it cost the whole section. Table rows and headings that carry one
+ * are dropped whole.
+ */
+export function scrubOwnPriceSentences(markdown: string): string {
+  const out: string[] = [];
+  for (const line of markdown.split("\n")) {
+    if (countOwnPriceMentions(line) === 0) {
+      out.push(line);
+      continue;
+    }
+    if (/^\s*(?:\||#)/.test(line)) continue;
+    const kept = line
+      .split(/(?<=[.!?])\s+/)
+      .filter((sentence) => countOwnPriceMentions(sentence) === 0)
+      .join(" ")
+      .trim();
+    if (kept) out.push(kept);
+  }
+  return out.join("\n");
+}

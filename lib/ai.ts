@@ -10,7 +10,7 @@ import { containsMetadataPlaceholder, containsMetadataScaffolding } from "./engi
 import { protectPrompt, protectPromptWithBoundary } from "./ai-trust-boundary";
 import { redactSecrets } from "./sanitize-error";
 import { GEMINI_TIMEOUT_MS, DEEPSEEK_DEFAULT_TIMEOUT_MS, MISTRAL_EXTRACTION_TIMEOUT_MS, OPENAI_COMPAT_DEFAULT_TIMEOUT_MS, O1_O3_TIMEOUT_MS, PROPOSAL_SECTION_TIMEOUT_MS, PROPOSAL_SECTION_TIMEOUT_CEILING_MS, PROPOSAL_SECTION_MS_PER_OUTPUT_TOKEN, PROPOSAL_SECTION_BASE_OVERHEAD_MS, PROPOSAL_SECTION_STITCH_RESERVE_MS, PROPOSAL_SECTION_POOL_RESERVE_MS, PROPOSAL_SECTION_MIN_WRITE_MS, COOLDOWN_WAIT_SETTLE_MS, PROPOSAL_AI_TIMEOUT_MS, REFINEMENT_CALL_TIMEOUT_MS } from "./timeout-config";
-import { AI_TRACE_PATTERNS, countOwnPriceMentions, scrubSourceDocumentMetadata } from "./engine/detection-patterns";
+import { AI_TRACE_PATTERNS, countOwnPriceMentions, scrubOwnPriceSentences, scrubSourceDocumentMetadata } from "./engine/detection-patterns";
 
 const apiKey = process.env.GEMINI_API_KEY;
 // Anthropic key is read at request time via getAnthropicApiKey() — never cached
@@ -806,12 +806,16 @@ export const MAX_OWN_PRICE_MENTIONS_PER_SECTION = 0;
 
 /**
  * Would this model-written section pass the final gate's client-safety rules?
- * Source-document metadata lines are scrubbed first (they are never proposal
- * content); after that, any AI trace or more than
- * MAX_OWN_PRICE_MENTIONS_PER_SECTION own-price mentions rejects the section.
+ * Source-document metadata lines and own-price sentences are scrubbed first
+ * (neither is ever technical-proposal content); after that, any AI trace or
+ * more than MAX_OWN_PRICE_MENTIONS_PER_SECTION own-price mentions rejects the
+ * section.
  */
 export function clientSafeModelSection(markdown: string): { ok: boolean; markdown: string; reason?: string } {
-  const cleaned = scrubSourceDocumentMetadata(markdown);
+  // Scrub what is never proposal content first: copied source-document
+  // headings, and any sentence stating the firm's own price (run 36041511483
+  // rejected a whole model-written cover section over two such sentences).
+  const cleaned = scrubOwnPriceSentences(scrubSourceDocumentMetadata(markdown));
   const trace = AI_TRACE_PATTERNS.find((re) => re.test(cleaned));
   if (trace) return { ok: false, markdown: cleaned, reason: `AI trace ${trace.source.slice(0, 60)}` };
   const prices = countOwnPriceMentions(cleaned);

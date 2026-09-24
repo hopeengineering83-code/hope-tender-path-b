@@ -13,7 +13,7 @@ import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 import { clientSafeModelSection, MAX_OWN_PRICE_MENTIONS_PER_SECTION } from "../lib/ai";
-import { countOwnPriceMentions, scrubSourceDocumentMetadata } from "../lib/engine/detection-patterns";
+import { countOwnPriceMentions, scrubOwnPriceSentences, scrubSourceDocumentMetadata } from "../lib/engine/detection-patterns";
 import { validateGeneratedDocumentQuality } from "../lib/document-generation/generated-document-quality-validator";
 
 describe("source-document metadata is scrubbed, not shipped", () => {
@@ -44,10 +44,23 @@ describe("a section the gate would reject is not kept", () => {
     assert.match(String(r.reason), /AI trace/);
   });
 
-  it("rejects a section quoting the firm's own prices", () => {
-    const md = "Our fee is USD 40,000. The unit price per visit is USD 500, payable at the quoted rate.";
+  it("drops the firm's own price sentences and keeps the rest of the section", () => {
+    // Run 36041511483: a whole model-written cover section was rejected over
+    // two price sentences. The sentences go; the section stays.
+    const md = "We will mobilise within two weeks. Our fee is USD 40,000. The design team is led by a registered architect.";
     assert.ok(countOwnPriceMentions(md) > MAX_OWN_PRICE_MENTIONS_PER_SECTION);
-    assert.equal(clientSafeModelSection(md).ok, false);
+    const r = clientSafeModelSection(md);
+    assert.equal(r.ok, true);
+    assert.doesNotMatch(r.markdown, /USD|fee/);
+    assert.match(r.markdown, /mobilise within two weeks/);
+    assert.match(r.markdown, /registered architect/);
+  });
+
+  it("drops a price table row whole", () => {
+    const md = "| Item | Value |\n|---|---|\n| Lump sum fee | USD 40,000 |\n| Team | 12 experts |";
+    const out = scrubOwnPriceSentences(md);
+    assert.doesNotMatch(out, /Lump sum/);
+    assert.match(out, /12 experts/);
   });
 
   it("does not count reference-project costs or a no-offer disclaimer as prices", () => {
