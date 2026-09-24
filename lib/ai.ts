@@ -13,6 +13,7 @@ import { GEMINI_TIMEOUT_MS, DEEPSEEK_DEFAULT_TIMEOUT_MS, MISTRAL_EXTRACTION_TIME
 import { AI_TRACE_PATTERNS, countOwnPriceMentions, hasUnprovenClaim, scrubOwnPriceSentences, scrubSourceDocumentMetadata, scrubUnprovenClaimSentences } from "./engine/detection-patterns";
 import { scrubUngroundedCompanyCredentials } from "./engine/company-credential-grounding";
 import { containsPricingLeakage } from "./engine/pricing-hygiene";
+import { CURRENCY_TOKEN_ALTERNATION } from "./engine/currency-reference";
 import { withoutAIWriterContractPrompt } from "./engine/ai-writer-contract-prompt";
 
 const apiKey = process.env.GEMINI_API_KEY;
@@ -855,15 +856,40 @@ export function companyGroundingText(input: AIBidWriterInput): string {
 // carries no financial figures of the firm's own, so the sentence goes and the
 // section stays. A table row is dropped whole: removing a cell misaligns it.
 const TECHNICAL_ENVELOPE = { name: "Technical Proposal", exactFileName: "Technical Proposal.docx", documentType: "TECHNICAL_PROPOSAL", format: "DOCX" } as const;
+// A table row as the DOCX gate reads it: the cells joined with ", ".
+function tableRowAsRead(row: string): string {
+  return row.split("|").map((cell) => cell.trim()).filter(Boolean).join(", ");
+}
+
+const MONEY_CELL = new RegExp(`(?:${CURRENCY_TOKEN_ALTERNATION})\\s?\\d`, "i");
+
 export function scrubPricingLeakageSentences(markdown: string, opts: { keepTableRows?: boolean } = {}): string {
   const out: string[] = [];
   for (const line of markdown.split("\n")) {
     const isTableRow = /^\s*\|/.test(line);
-    if (!line.trim() || /^\s*#/.test(line) || (isTableRow && opts.keepTableRows) || !containsPricingLeakage(line, TECHNICAL_ENVELOPE)) {
+    if (!line.trim() || /^\s*#/.test(line)) {
       out.push(line);
       continue;
     }
-    if (isTableRow) continue;
+    if (isTableRow) {
+      if (!containsPricingLeakage(tableRowAsRead(line), TECHNICAL_ENVELOPE)) {
+        out.push(line);
+        continue;
+      }
+      if (!opts.keepTableRows) continue;
+      // Run 36063806865: "Dessie Specialized Hospital | ETB 125M | Dessie
+      // City Admin" read as "..., ETB 125M, ..." and the gate refused it. The
+      // row stays; only its money cells are blanked, and the value remains on
+      // the project's card under its "Construction Value of Works" label.
+      const cells = line.split("|");
+      const blanked = cells.map((cell, index) => (index > 0 && index < cells.length - 1 && MONEY_CELL.test(cell) ? " — " : cell)).join("|");
+      if (!containsPricingLeakage(tableRowAsRead(blanked), TECHNICAL_ENVELOPE)) out.push(blanked);
+      continue;
+    }
+    if (!containsPricingLeakage(line, TECHNICAL_ENVELOPE)) {
+      out.push(line);
+      continue;
+    }
     const kept = line.split(/(?<=[.!?])\s+/).filter((sentence) => !containsPricingLeakage(sentence, TECHNICAL_ENVELOPE)).join(" ").trim();
     if (kept) out.push(kept);
   }

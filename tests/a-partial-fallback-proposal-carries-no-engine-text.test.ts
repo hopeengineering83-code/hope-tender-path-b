@@ -294,10 +294,19 @@ describe("prose that states a project value states what the value is", () => {
     assert.equal(containsPricingLeakage("Firm presents G+6 General Hospital (construction value of works ETB 550,074,678) for Gimba City as a project record.", doc), false);
   });
 
-  it("the final sweep drops a refused prose sentence and keeps labelled table rows", async () => {
+  it("the final sweep drops a refused sentence, keeps labelled rows, and blanks only an unlabelled money cell", async () => {
     const { scrubPricingLeakageSentences } = await import("../lib/ai");
-    const md = "Firm presents X (ETB 550,074,678) for Y. The team is ready.\n| Contract Value | ETB 550,074,678 |";
+    const md = [
+      "Firm presents X (ETB 550,074,678) for Y. The team is ready.",
+      "| Construction Value of Works | USD 18,900,000 |",
+      "| Dessie Specialized Hospital | ETB 125M | Dessie City Admin |",
+    ].join("\n");
     const out = scrubPricingLeakageSentences(md, { keepTableRows: true });
-    assert.equal(out, "The team is ready.\n| Contract Value | ETB 550,074,678 |");
+    // Run 36063806865: the gate reads a row as its cells joined with ", ".
+    assert.equal(out, [
+      "The team is ready.",
+      "| Construction Value of Works | USD 18,900,000 |",
+      "| Dessie Specialized Hospital | — | Dessie City Admin |",
+    ].join("\n"));
   });
 });
