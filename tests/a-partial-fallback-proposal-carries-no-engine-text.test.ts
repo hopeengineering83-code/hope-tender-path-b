@@ -22,6 +22,7 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
+import { readFileSync } from "node:fs";
 import { appendEvaluatorResponseMatrix } from "../lib/engine/proposal-evaluator-matrix";
 import { stripInternalReviewSections } from "../lib/engine/internal-review-stripper";
 import { enforceClientName } from "../lib/engine/client-name-enforcer";
@@ -280,5 +281,23 @@ describe("a model-written section carries no figure the export gate refuses", ()
     assert.equal(r.ok, true);
     assert.doesNotMatch(r.markdown, /turnover|5\.01M|28\.9M/);
     assert.match(r.markdown, /more than 350 projects\. It holds 29 key experts\./);
+  });
+});
+
+describe("prose that states a project value states what the value is", () => {
+  it("the why-us sentence labels the construction value, and the gate accepts it", async () => {
+    const { containsPricingLeakage } = await import("../lib/engine/pricing-hygiene");
+    const src = readFileSync("lib/engine/why-us-summary.ts", "utf8");
+    assert.match(src, /\(construction value of works \$\{value\}\)/);
+    const doc = { name: "Technical Proposal", exactFileName: "Technical Proposal.docx", documentType: "TECHNICAL_PROPOSAL", format: "DOCX" } as const;
+    assert.equal(containsPricingLeakage("Firm presents G+6 General Hospital (ETB 550,074,678) for Gimba City as a project record.", doc), true, "the unlabelled form is what the gate refused");
+    assert.equal(containsPricingLeakage("Firm presents G+6 General Hospital (construction value of works ETB 550,074,678) for Gimba City as a project record.", doc), false);
+  });
+
+  it("the final sweep drops a refused prose sentence and keeps labelled table rows", async () => {
+    const { scrubPricingLeakageSentences } = await import("../lib/ai");
+    const md = "Firm presents X (ETB 550,074,678) for Y. The team is ready.\n| Contract Value | ETB 550,074,678 |";
+    const out = scrubPricingLeakageSentences(md, { keepTableRows: true });
+    assert.equal(out, "The team is ready.\n| Contract Value | ETB 550,074,678 |");
   });
 });

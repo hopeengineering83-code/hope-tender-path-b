@@ -46,7 +46,11 @@ export function buildWhyUsSummary(opts: {
   if (top) {
     const value = fmtMoney(top.contractValue, top.currency);
     bullets.push(
-      `**Relevant reviewed experience.** ${opts.companyName} presents ${top.name}${value ? ` (${value})` : ""}${top.clientName ? ` for ${top.clientName}` : ""} as a project record whose applicable lessons inform the approach for ${opts.clientName}.`,
+      // The figure carries its label: a bare "(ETB 550,074,678)" after a
+      // project name reads as a price, and run 36061396565 failed the export
+      // gate's pricing check on exactly this sentence. It is the value of the
+      // works, not the firm's fee.
+      `**Relevant reviewed experience.** ${opts.companyName} presents ${top.name}${value ? ` (construction value of works ${value})` : ""}${top.clientName ? ` for ${top.clientName}` : ""} as a project record whose applicable lessons inform the approach for ${opts.clientName}.`,
     );
   }
 

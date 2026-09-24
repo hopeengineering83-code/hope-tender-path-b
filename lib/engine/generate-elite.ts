@@ -5,7 +5,7 @@ import { withTransactionalGenerationGate } from "./transactional-generation-gate
 import { AlignmentType, BorderStyle, Document, Footer, Header, HeadingLevel, ImageRun, Packer, PageNumber, Paragraph, Table, TableBorders, TableCell, TableOfContents, TableRow, TextRun, WidthType } from "docx";
 import { prisma } from "../prisma";
 import { getStorageAdapter } from "../storage";
-import { generateBenchmarkProposalWithAI, generateProposalSectionsParallel, getLastProposalProvider, isAIEnabled, refineProposalWithAI, withProposalWrapperBudget } from "../ai";
+import { generateBenchmarkProposalWithAI, generateProposalSectionsParallel, getLastProposalProvider, isAIEnabled, refineProposalWithAI, scrubPricingLeakageSentences, withProposalWrapperBudget } from "../ai";
 import { resolveProposalExecutionBudget, type ProposalExecutionContext, type ProposalExecutionBudget } from "../ai-runtime-capability";
 import { detectAnalysisSource } from "./analysis-source";
 import { isDeepReasoningEnabled, isToolUseGenerationEnabled, shouldUseDeepReasoning } from "./feature-flags";
@@ -3773,6 +3773,22 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
     .replace(/^.*\b(?:Signature|Company Stamp|Stamp|Date)\s*:\s*_+.*$/gim, keepDeclarationSignatureRule)
     .replace(/\[\s*\]/g, "—")
     .replace(/\n{3,}/g, "\n\n");
+
+  // The export gate's pricing detector, applied before render rather than after
+  // it. Deterministic builders print a project's value in prose, and one
+  // without its label ("presents G+6 General Hospital (ETB 550,074,678) for
+  // ...") failed run 36061396565 at readiness after a full generation. A
+  // sentence the gate would refuse is dropped here, where the loss is one
+  // sentence instead of the whole package; nothing is reworded.
+  {
+    const beforePricingSweep = workingMarkdown;
+    // Prose only: a labelled value row ("| Contract Value | ETB ... |") reads
+    // in its card's context, which the gate already accepts.
+    workingMarkdown = scrubPricingLeakageSentences(workingMarkdown, { keepTableRows: true });
+    if (workingMarkdown !== beforePricingSweep) {
+      logger.warn(`[generate-elite] Pricing sweep removed text the export gate would refuse as pricing in a technical envelope (${beforePricingSweep.length - workingMarkdown.length} chars).`);
+    }
+  }
 
   // Final placeholder sweep — repair addenda may have injected placeholder text.
   // Run stripPlaceholders one more time so markdownToDocx never sees raw placeholders.

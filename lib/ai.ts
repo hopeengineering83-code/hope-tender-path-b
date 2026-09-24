@@ -855,14 +855,15 @@ export function companyGroundingText(input: AIBidWriterInput): string {
 // carries no financial figures of the firm's own, so the sentence goes and the
 // section stays. A table row is dropped whole: removing a cell misaligns it.
 const TECHNICAL_ENVELOPE = { name: "Technical Proposal", exactFileName: "Technical Proposal.docx", documentType: "TECHNICAL_PROPOSAL", format: "DOCX" } as const;
-export function scrubPricingLeakageSentences(markdown: string): string {
+export function scrubPricingLeakageSentences(markdown: string, opts: { keepTableRows?: boolean } = {}): string {
   const out: string[] = [];
   for (const line of markdown.split("\n")) {
-    if (!line.trim() || /^\s*#/.test(line) || !containsPricingLeakage(line, TECHNICAL_ENVELOPE)) {
+    const isTableRow = /^\s*\|/.test(line);
+    if (!line.trim() || /^\s*#/.test(line) || (isTableRow && opts.keepTableRows) || !containsPricingLeakage(line, TECHNICAL_ENVELOPE)) {
       out.push(line);
       continue;
     }
-    if (/^\s*\|/.test(line)) continue;
+    if (isTableRow) continue;
     const kept = line.split(/(?<=[.!?])\s+/).filter((sentence) => !containsPricingLeakage(sentence, TECHNICAL_ENVELOPE)).join(" ").trim();
     if (kept) out.push(kept);
   }
