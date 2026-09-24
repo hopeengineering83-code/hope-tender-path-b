@@ -88,6 +88,47 @@ describe("the writer's working appendix never reaches the client", () => {
       assert.equal(issue.severity, "HIGH");
     }
   });
+
+  it("the last sweep before render removes every line, row and heading the gate would refuse", async () => {
+    // Run 36066042996: every section passed its own guard, and the finalizer
+    // still refused the rendered PDF for "WEAKPROOFSIGNAL" and for the
+    // header of the owner's own company-profile upload. The sweep uses the
+    // gate's own pattern list, so whatever builder emits such a line, it
+    // never reaches the document.
+    const { stripInternalDiagnosticContent } = await import("../lib/engine/internal-review-stripper");
+    const client = "Proposal for the district clinic, delivered by a registered design team.";
+    const md = [
+      "# Technical Proposal",
+      client,
+      "## Tender Proposal AI-Ready Summary",
+      "Prepared for AI-assisted tender proposal generation",
+      "| Project | Class | Risks |",
+      "|---|---|---|",
+      "| PROJECT-2 | TRANSFERABLE | WEAK_PROOF_SIGNAL |",
+      "| Riverside Clinic | Health | None |",
+      "- Criterion TCG-4 mapped to SRC-REQ-12.",
+      "Evidence graph: directProjects=1; transferableProjects=2.",
+      "The design review runs weekly.",
+    ].join("\n");
+    const out = stripInternalDiagnosticContent(md).markdown;
+    assert.doesNotMatch(out, /WEAK_PROOF_SIGNAL|AI-Ready|AI-assisted|TCG-4|directProjects/);
+    assert.match(out, /\| Project \| Class \| Risks \|\n\|---\|---\|---\|\n\| Riverside Clinic \| Health \| None \|/);
+    assert.match(out, /The design review runs weekly\./);
+    const base = `${client}\n\n`.repeat(20);
+    const result = assessGeneratedDocumentQuality({
+      doc: { id: "x", name: "Technical Proposal", exactFileName: "Technical Proposal.pdf", documentType: "TECHNICAL_PROPOSAL", format: "PDF" },
+      visibleText: `${base}${out.replace(/_/g, "")}\n`,
+    });
+    assert.equal(result.issues.find((i) => i.code === "INTERNAL_TRACEABILITY"), undefined);
+  });
+
+  it("the gate and the sweep read one list of engine identifiers", () => {
+    const gate = readFileSync("lib/engine/document-quality-gate.ts", "utf8");
+    const sweep = readFileSync("lib/engine/internal-review-stripper.ts", "utf8");
+    assert.match(gate, /\.\.\.ENGINE_IDENTIFIER_PATTERNS/);
+    assert.match(sweep, /ENGINE_IDENTIFIER_PATTERNS\.some/);
+    assert.match(sweep, /SOURCE_DOCUMENT_METADATA_PATTERNS\.some/);
+  });
 });
 
 describe("the tender title is not a substituted client", () => {

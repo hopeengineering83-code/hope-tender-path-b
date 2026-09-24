@@ -395,6 +395,34 @@ export const OFFICIAL_ORIGINAL_LABEL_PATTERNS: RegExp[] = [
 ];
 
 /**
+ * Identifiers and field syntax the proposal engine prints in its own contract,
+ * criterion graph and evidence scores — never words a proposal uses. Run
+ * 36049851073 delivered 22 pages of them. The final document gate refuses a
+ * document carrying any of them (INTERNAL_TRACEABILITY), and the last sweep
+ * before render removes the line or table row that carries one, so the gate
+ * and the sweep cannot disagree about what counts.
+ *
+ * Markdown renders WEAK_PROOF_SIGNAL with italics, so the delivered text reads
+ * WEAKPROOFSIGNAL; both spellings are matched.
+ */
+export const ENGINE_IDENTIFIER_PATTERNS: RegExp[] = [
+  /\bWEAK_?PROOF_?SIGNAL\b/,
+  /\bNEEDS_?CONFIRMATION\b/,
+  /\b(?:UNSAFE_?SECTOR_?MISMATCH|NO_?SERVICE_?CAPABILITY_?OVERLAP|NO_?SECTOR_?OVERLAP|PLACEHOLDER_?OR_?UNCONFIRMED)\b/,
+  /\bobey\s+before\s+drafting\b/i,
+  /\bevidence=(?:DIRECT|PARTIAL|NEEDS_?CONFIRMATION)\b/,
+  /\b(?:direct|transferable)(?:Projects|Experts)=\d/,
+  /\bunsafeMismatches=\d/,
+  /\bTCG-\d+\b/,
+  /\bSRC-REQ-\d+\b/,
+  /\b(?:EXPERT|PROJECT)-\d+\s+(?:EXPERT|PROJECT)\b/,
+  /\bblock\s+final\s+export\b/i,
+  /\bproposal\s+intelligence\s+contract\b/i,
+  /\banti-hallucination\b/i,
+  /\bNEVER\s+invent\s+facts\b/i,
+];
+
+/**
  * Header/metadata lines of the owner's own uploaded source documents, e.g. a
  * company profile titled "Tender Proposal AI-Ready Summary — Prepared for
  * AI-assisted tender proposal generation". A model-written section can copy

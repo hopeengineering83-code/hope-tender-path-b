@@ -32,7 +32,7 @@
 import { documentHygieneIssues } from "./export-readiness";
 import { looksLikeMetadataPlaceholder, METADATA_PLACEHOLDER_PATTERNS } from "./tender-metadata-completeness";
 import { ALWAYS_PLACEHOLDER_PATTERNS, valuePositionPlaceholderMatches } from "./detection-patterns";
-import { UNPROVEN_RELATIONSHIP_CLAIM_PATTERNS, PHANTOM_ATTACHMENT_CLAIM } from "./detection-patterns";
+import { UNPROVEN_RELATIONSHIP_CLAIM_PATTERNS, PHANTOM_ATTACHMENT_CLAIM, ENGINE_IDENTIFIER_PATTERNS } from "./detection-patterns";
 
 // ── Document-type gating ─────────────────────────────────────────────────────
 
@@ -399,23 +399,9 @@ const INTERNAL_TRACEABILITY_PATTERNS: RegExp[] = [
   /\b(?:internal\s+use(?:\s+only)?|internal\s+notes?|for\s+internal\s+review|internal\s+review\s+only|reviewer\s+notes?)\b/i,
   /\btraceability\s+map\b/i,
   /\baudit\s+metadata\b/i,
-  // The writer's own contract, criterion graph and evidence scores. Run
-  // 36049851073 delivered 22 pages of them and scored 95 here, because none
-  // of the phrases above occurs in them. These are identifiers and field
-  // syntax the engine prints, never words a proposal uses.
-  /\bWEAKPROOFSIGNAL\b/,
-  /\bNEEDS_CONFIRMATION\b/,
-  /\bobey\s+before\s+drafting\b/i,
-  /\bevidence=(?:DIRECT|PARTIAL|NEEDS_CONFIRMATION)\b/,
-  /\b(?:direct|transferable)(?:Projects|Experts)=\d/,
-  /\bunsafeMismatches=\d/,
-  /\bTCG-\d+\b/,
-  /\bSRC-REQ-\d+\b/,
-  /\b(?:EXPERT|PROJECT)-\d+\s+(?:EXPERT|PROJECT)\b/,
-  /\bblock\s+final\s+export\b/i,
-  /\bproposal\s+intelligence\s+contract\b/i,
-  /\banti-hallucination\b/i,
-  /\bNEVER\s+invent\s+facts\b/i,
+  // The writer's own contract, criterion graph and evidence scores — one
+  // list, shared with the final pre-render sweep that removes them.
+  ...ENGINE_IDENTIFIER_PATTERNS,
 ];
 
 const UNSUPPORTED_CLAIM_PATTERNS: RegExp[] = [

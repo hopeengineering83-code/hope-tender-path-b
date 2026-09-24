@@ -36,6 +36,7 @@
  *
  * NEVER FABRICATES — strips only. Doesn't replace, doesn't reword.
  */
+import { ENGINE_IDENTIFIER_PATTERNS, SOURCE_DOCUMENT_METADATA_PATTERNS } from "./detection-patterns";
 
 const INTERNAL_REVIEW_HEADINGS: RegExp[] = [
   /^##?\s+Evaluator\s+Response\s+Matrix\b/i,
@@ -233,7 +234,18 @@ const INTERNAL_DIAGNOSTIC_SHAPES: RegExp[] = [
 ];
 
 function isInternalDiagnosticText(text: string): boolean {
-  return INTERNAL_DIAGNOSTIC_SHAPES.some((p) => p.test(text));
+  return INTERNAL_DIAGNOSTIC_SHAPES.some((p) => p.test(text)) || isEngineOrSourceMetadataText(text);
+}
+
+// Text no proposal ever contains, whatever builder produced it: the engine's
+// own identifiers (the list the final gate refuses as INTERNAL_TRACEABILITY)
+// and the header lines of the owner's uploaded source documents (which every
+// final gate refuses as an AI trace). Run 36066042996 delivered a proposal
+// whose every section passed its own guard and which the finalizer still
+// refused for "WEAKPROOFSIGNAL" — so the last boundary before render removes
+// the carrying line, row or heading using the gate's own patterns.
+function isEngineOrSourceMetadataText(text: string): boolean {
+  return ENGINE_IDENTIFIER_PATTERNS.some((p) => p.test(text)) || SOURCE_DOCUMENT_METADATA_PATTERNS.some((p) => p.test(text));
 }
 
 /** A markdown table row that is not the |---|---| separator. */
@@ -278,6 +290,10 @@ export function stripInternalDiagnosticContent(markdown: string): InternalDiagno
     const line = lines[i];
 
     if (/^\s*#{1,6}\s/.test(line)) {
+      if (isEngineOrSourceMetadataText(line)) {
+        removedLines.push(line.trim());
+        continue;
+      }
       out.push(line);
       continue;
     }
@@ -286,7 +302,7 @@ export function stripInternalDiagnosticContent(markdown: string): InternalDiagno
     // standalone-line check below would delete a protected header row whose
     // column label happens to match a shape, and that breaks the table.
     if (isTableRow(line)) {
-      if (!headerRowIndexes.has(i) && isInternalDiagnosticText(line)) {
+      if ((!headerRowIndexes.has(i) && isInternalDiagnosticText(line)) || isEngineOrSourceMetadataText(line)) {
         removedLines.push(line.trim());
         continue;
       }

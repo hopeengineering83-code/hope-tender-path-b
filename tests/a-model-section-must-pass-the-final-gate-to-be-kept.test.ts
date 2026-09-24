@@ -118,7 +118,7 @@ describe("the final gate's unproven-claim rule applies per section, and the prom
 
   it("the final gate and the section guard share one definition", () => {
     const gate = readFileSync("lib/engine/document-quality-gate.ts", "utf8");
-    assert.match(gate, /import \{ UNPROVEN_RELATIONSHIP_CLAIM_PATTERNS, PHANTOM_ATTACHMENT_CLAIM \} from "\.\/detection-patterns"/);
+    assert.match(gate, /import \{ UNPROVEN_RELATIONSHIP_CLAIM_PATTERNS, PHANTOM_ATTACHMENT_CLAIM(?:, \w+)* \} from "\.\/detection-patterns"/);
     assert.doesNotMatch(gate, /const UNPROVEN_RELATIONSHIP_CLAIM_PATTERNS/);
   });
 
