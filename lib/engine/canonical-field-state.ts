@@ -564,30 +564,20 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
     let evidenceReviewNeeded = false;
     let warningReason: string | null = null;
 
+    // Owner policy ABSENT_TENDER_FACT_IS_NOT_REQUIRED (tender-fact-authority):
+    // a detail the tender does not state is not required, so "not applicable"
+    // and "not stated" are accepted for every field, critical or not.
     if (override?.fieldState === "NOT_APPLICABLE") {
-      if (NEVER_NOT_APPLICABLE.has(fieldKey) || isCritical) {
-        status = "BLOCKED";
-        blockerReason = `Field "${label}" is critical. Not Applicable cannot unblock it. Record a candidate value or resolve from an active tender source.`;
-      } else {
-        status = "NOT_APPLICABLE";
-      }
+      status = "NOT_APPLICABLE";
     } else if (override?.fieldState === "IGNORED_WITH_REASON") {
       status = "NOT_STATED";
-      if (isCritical) {
-        blockerReason = `Field "${label}" is critical. Not Stated cannot unblock it. Critical fields remain blocked until source-grounded.`;
-      }
     } else if (ledgerAuthorityState === "NOT_APPLICABLE") {
       // ── Ledger NOT_APPLICABLE (without override) ──────────────────────
       // The ledger says this fact does not apply. Mirror the override
       // NOT_APPLICABLE branch so a ledger N/A entry does NOT produce
       // status=INVALID (which would block final export — the opposite of
       // the user's intent when marking a fact N/A).
-      if (NEVER_NOT_APPLICABLE.has(fieldKey) || isCritical) {
-        status = "BLOCKED";
-        blockerReason = `Field "${label}" is critical. Ledger Not Applicable cannot unblock it. Record a candidate value or resolve from an active tender source.`;
-      } else {
-        status = "NOT_APPLICABLE";
-      }
+      status = "NOT_APPLICABLE";
     } else if (ledgerAuthorityState === "CONDITIONAL_OR_UNSCHEDULED" && !override) {
       // The source states this conditionally or without a firm schedule
       // (e.g. "site visit by arrangement", "pre-bid meeting TBD"). Real
@@ -609,9 +599,17 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
         status = "PORTAL_CONTAMINATION";
         blockerReason = `Field "${label}" appears contaminated by tender-portal navigation or unrelated-tender text. Correct it with a value proven by active tender-source evidence (matching page + quote) before generating documents.`;
       }
-    } else if (!effectiveStr) {
+    } else if (!effectiveStr && isCritical && (fieldKey === "submissionEmails" || fieldKey === "submissionAddress")) {
+      // The delivery endpoint a STATED submission method depends on (email
+      // address for email, place for hand delivery). Without it the package
+      // cannot be delivered, so it stays blocking — mirrors the BuildPlan gate.
       status = "INVALID";
-      blockerReason = isCritical ? `Missing critical field: ${label}.` : null;
+      blockerReason = `Missing critical field: ${label}.`;
+    } else if (!effectiveStr) {
+      // Absent from the tender → not stated, not required (owner policy
+      // ABSENT_TENDER_FACT_IS_NOT_REQUIRED). The bid omits it; nothing blocks.
+      status = "NOT_STATED";
+      warningReason = `Field "${label}" is not stated in the tender, so it is not required. The proposal is prepared without it.`;
     } else if (!validation.valid) {
       status = validation.reason?.includes("placeholder") ? "INTERNAL_PLACEHOLDER"
         : validation.reason?.includes("heading") ? "GENERIC_FIELD_LABEL"
@@ -752,7 +750,6 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
       status === "INTERNAL_PLACEHOLDER" ||
       status === "GENERIC_FIELD_LABEL" ||
       status === "INVALID_FORMAT" ||
-      status === "BLOCKED" ||
       // A conditional/unscheduled critical field never counts as grounded
       // for export purposes, regardless of whether the tender's own scalar
       // source-evidence columns happen to be populated for this field key.
@@ -761,8 +758,8 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
       (isIndispensable && !effectiveStr?.trim() && !override) || // only indispensable fields block when empty
       (isCritical && isManualValuePresent && !isGrounded && !(auditSufficientForFinal(override, fieldKey, policyCtx)));
 
-    const generationEligible = !draftHardBlockReasons && (!isBlocked || (!isCritical && status !== "BLOCKED") || isManualValuePresent);
-    const exportEligible = !exportHardBlockReasons && (!isBlocked || (!isCritical && status !== "BLOCKED") || (isManualValuePresent && auditSufficientForFinal(override, fieldKey, policyCtx)));
+    const generationEligible = !draftHardBlockReasons && (!isBlocked || !isCritical || isManualValuePresent);
+    const exportEligible = !exportHardBlockReasons && (!isBlocked || !isCritical || (isManualValuePresent && auditSufficientForFinal(override, fieldKey, policyCtx)));
     const zipEligible = exportEligible; // ZIP = final export
 
     const isHardBlock = exportHardBlockReasons;
@@ -781,7 +778,9 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
     if (!effectiveStr || !effectiveValid) permittedActions.push("edit");
     if (effectiveValid && !effectiveGrounded && !override) permittedActions.push("confirm");
     if (override && override.fieldState === "USER_EDITED") permittedActions.push("confirm");
-    if (!NEVER_NOT_APPLICABLE.has(fieldKey) && !isCritical) permittedActions.push("not_applicable");
+    // Owner policy: any field may be marked not applicable — an absent detail is
+    // not required (ABSENT_TENDER_FACT_IS_NOT_REQUIRED).
+    permittedActions.push("not_applicable");
     if (effectiveStr && !override) permittedActions.push("not_stated");
     if (evidence.page) permittedActions.push("review_source");
 

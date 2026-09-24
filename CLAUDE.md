@@ -173,10 +173,14 @@ AI Analyze must extract and display **all available client details** from the te
 **Rules:**
 
 - Do **not** fill missing client fields with placeholders such as "Bid-Team to confirm", "unknown", "not specified", or "N/A" as if they are valid.
-- If a field is missing from the tender source, mark it `MISSING_SOURCE` and require manual confirmation.
+- If a field is missing from the tender source, it is **not required** (owner policy, 2026-09-24:
+  "if particular things are not found in the tender details, that means they are not necessary …
+  the App must act accordingly and use the information available and generate proposals").
+  Mark it not stated (`NOT_STATED_IN_SOURCE`) as an advisory and build the proposal without it.
+  `ABSENT_TENDER_FACT_IS_NOT_REQUIRED` in `lib/engine/tender-fact-authority.ts` is the code authority.
 - If multiple client names appear, distinguish: procuring entity, project owner, funder/donor, implementing agency, and consultant/client contact.
 - If the extracted client name is polluted by unrelated tender portal text, navigation text, old tender alerts, or unrelated tenders, flag it as **contaminated** and block final generation until corrected.
-- Client/procuring entity, submission method, submission endpoint/email/address, and deadline are **critical fields** and must block final generation/export when missing or invalid.
+- Client/procuring entity, submission method, submission endpoint/email/address, and deadline are **critical fields**: a value that is **present but invalid** (placeholder, scaffolding, contamination, ungrounded or mismatched) blocks final generation/export. A value that is **absent** from the tender does not block. The one exception is the delivery endpoint a *stated* method depends on — an email method with no email address, a hand-delivery method with no address, a portal method with no grounded endpoint — because without it the package cannot be delivered.
 
 ---
 
@@ -294,7 +298,7 @@ Every extracted requirement, client detail, submission rule, evaluation criterio
 3. The app extracts client/procuring entity name correctly.
 4. The app extracts all available client contact/submission details with source page/quote.
 5. The app blocks generation when important tender pages are weak or missing.
-6. The app blocks generation when client/procuring details are missing or contaminated.
+6. The app blocks generation when client/procuring details are contaminated or invalid (not when the tender simply does not state them).
 7. The app does not use placeholders as valid metadata.
 8. The app does not build an empty submission plan when requirements exist.
 9. The app does not generate documents before extraction, requirements, client details, and submission plan are usable.

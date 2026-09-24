@@ -222,13 +222,17 @@ export function validateCriticalMetadataEvidenceForBuildPlan(
     draftOptional: boolean = false,
   ) {
     if (!value || !value.trim()) {
-      // In draft phase, non-critical metadata gaps are warnings, not blockers.
-      // The core tender task is requirement extraction and draft-proposal readiness,
-      // not metadata completeness. Final submission gates (Tool A) enforce strictness.
-      if (isDraft && draftOptional) {
-        return;
+      // Owner policy ABSENT_TENDER_FACT_IS_NOT_REQUIRED (tender-fact-authority):
+      // a detail the tender does not state is not required, in draft or final.
+      // Nothing to ground, nothing to block; the bid is built without it.
+      //
+      // The one exception is the delivery endpoint a STATED method depends on:
+      // an email submission with no address, or a hand delivery with no
+      // place, cannot be delivered at all. That stays a blocker.
+      void draftOptional;
+      if (fieldKey === "submissionEmails" || fieldKey === "submissionAddress") {
+        blockers.push(`Critical metadata field ${label} has no value.`);
       }
-      blockers.push(`Critical metadata field ${label} has no value.`);
       return;
     }
     // Reject placeholder values outright (TBD, N/A, Bid-Team to confirm, etc.)
@@ -346,8 +350,15 @@ export function validateCriticalMetadataEvidenceForBuildPlan(
     } else {
       checkField("submissionAddress", effAddress, tender.submissionAddressSourceFileId, tender.submissionAddressSourcePage, tender.submissionAddressSourceQuote, true, "submissionAddress");
     }
+  } else if (!String(method ?? "").trim()) {
+    // No submission method stated in the tender: not required
+    // (ABSENT_TENDER_FACT_IS_NOT_REQUIRED). Any stated endpoint is still
+    // checked, so a present-but-ungrounded email or address cannot slip by.
+    if (effEmails?.trim()) checkField("submissionEmails", effEmails, tender.submissionEmailSourceFileId, tender.submissionEmailSourcePage, tender.submissionEmailSourceQuote, true, "submissionEmails");
+    if (effAddress?.trim()) checkField("submissionAddress", effAddress, tender.submissionAddressSourceFileId, tender.submissionAddressSourcePage, tender.submissionAddressSourceQuote, true, "submissionAddress");
   } else {
-    // Unknown/empty/malformed submission method: BLOCK — do not fall back.
+    // A method is STATED but unrecognisable ("Not", garbage): present but
+    // unusable, so it still blocks — do not fall back.
     blockers.push(`Unsupported or unknown submission method: "${method ?? ""}". Only email, physical, or portal methods are supported.`);
   }
 

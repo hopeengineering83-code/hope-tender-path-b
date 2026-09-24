@@ -188,8 +188,11 @@ describe("export gate — effective-value wiring (G4 fix)", () => {
   });
 
   it("email and address checks are guarded by submission method being present", () => {
-    const submissionMissingIdx = SRC.indexOf('"SUBMISSION_METHOD_MISSING"');
-    assert.ok(submissionMissingIdx !== -1, "SUBMISSION_METHOD_MISSING blocker must exist");
+    // Owner policy ABSENT_TENDER_FACT_IS_NOT_REQUIRED: a tender that states no
+    // submission method is not blocked — it gets an advisory instead.
+    const submissionMissingIdx = SRC.indexOf('"SUBMISSION_METHOD_NOT_STATED"');
+    assert.ok(submissionMissingIdx !== -1, "SUBMISSION_METHOD_NOT_STATED advisory must exist");
+    assert.ok(!SRC.includes('"SUBMISSION_METHOD_MISSING"'), "an unstated method must not be a hard blocker");
     const elseIdx = SRC.indexOf("} else {", submissionMissingIdx);
     const emailIdx = SRC.indexOf("isEmailSubmissionMethod(effMethod)", elseIdx);
     assert.ok(emailIdx > elseIdx, "email/address checks must be inside the else branch (only when method is set)");

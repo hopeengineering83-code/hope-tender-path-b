@@ -377,9 +377,10 @@ describe("central readiness gate covers EVERY download export path", () => {
 });
 
 describe("deferred gap fixes — post-618 hardening", () => {
-  it("final-submission-readiness blocks on empty clientName", () => {
+  it("final-submission-readiness does not block on an unstated clientName (owner policy)", () => {
+    // ABSENT_TENDER_FACT_IS_NOT_REQUIRED: an absent client name is advisory.
     const source = readFileSync("lib/engine/final-submission-readiness.ts", "utf8");
-    assert.match(source, /CLIENT_NAME_MISSING/);
+    assert.doesNotMatch(source, /category: "CLIENT_NAME_MISSING"/);
     assert.match(source, /clientName/);
   });
   it("export-readiness checks for duplicate exactOrder", () => {

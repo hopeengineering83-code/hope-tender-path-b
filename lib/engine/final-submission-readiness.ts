@@ -1037,14 +1037,10 @@ export async function getFinalSubmissionReadiness(
   // client-name condition under two category codes (verified by a real
   // screenshot showing both blockers rendered together for one issue).
   const effectiveClientName = (tender.clientName ?? "").trim() || (tender.procuringEntityName ?? "").trim();
-  if (!effectiveClientName && !tenderLevelBlockers.some((b) => b.category === "CLIENT_NAME_REQUIRED")) {
-    tenderLevelBlockers.push({
-      category: "CLIENT_NAME_MISSING",
-      severity: "HIGH",
-      title: "Client/procuring entity name is missing or blank.",
-      recommendedAction: "Enter the official procuring entity name in Tender Detail before final export.",
-    });
-  }
+  // Owner policy ABSENT_TENDER_FACT_IS_NOT_REQUIRED: an absent client name is
+  // not a blocker (export-readiness records it as the advisory
+  // CLIENT_NAME_NOT_STATED); a present-but-invalid one still blocks there.
+  void effectiveClientName;
   // Contamination gate — any entity identity field (clientName, legalClientName,
   // donorAgency, implementingAgency) polluted with portal nav text or status
   // banners must block export until corrected.

@@ -691,7 +691,13 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
   // Accept procuringEntityName as fallback — older tenders may have it set without clientName.
   // Use EFFECTIVE values (override ?? raw) so a USER_EDITED clientName override is respected.
   const effectiveExportClientName = effectiveValue("clientName", tender.clientName) || effectiveValue("procuringEntityName", tender.procuringEntityName);
-  if (!isValidClientName(effectiveExportClientName) && !isOverridden("clientName")) blockers.push(tenderBlocker("CLIENT_NAME_REQUIRED", "Client/procuring entity name is missing or invalid. Edit Tender Details to enter the exact official procuring entity name.", "Edit Tender Detail and enter the exact official procuring entity name."));
+  // Owner policy ABSENT_TENDER_FACT_IS_NOT_REQUIRED: a tender that does not
+  // name its client is not blocked — the proposal is addressed generically. A
+  // client name that IS present but invalid still blocks: it would put a
+  // wrong name on the bid.
+  if (!(effectiveExportClientName ?? "").trim()) {
+    advisoryWarnings.push({ category: "CLIENT_NAME_NOT_STATED", severity: "MEDIUM" as const, title: "The tender does not state a client/procuring entity name, so the proposal is addressed without one.", recommendedAction: "No action needed. Add the client name in Tender Details if you know it." });
+  } else if (!isValidClientName(effectiveExportClientName) && !isOverridden("clientName")) blockers.push(tenderBlocker("CLIENT_NAME_REQUIRED", "Client/procuring entity name is invalid. Edit Tender Details to enter the exact official procuring entity name.", "Edit Tender Detail and enter the exact official procuring entity name."));
 
   // ── Extraction quality blocker ────────────────────────────────────────────
   if (tender.files && tender.files.some(f => (f as { extractionScore?: number | null }).extractionScore !== null && ((f as { extractionScore: number }).extractionScore) < 20)) {
@@ -857,13 +863,17 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
   const effMethod = effectiveValue("submissionMethod", tender.submissionMethod);
   const effEmails = effectiveValue("submissionEmails", tender.submissionEmails);
   const effAddress = effectiveValue("submissionAddress", tender.submissionAddress);
+  // Owner policy ABSENT_TENDER_FACT_IS_NOT_REQUIRED: a submission method the
+  // tender does not state is not required — advisory only. The endpoint a
+  // STATED email method depends on still blocks: without it the package
+  // cannot be delivered.
   if (!effMethod) {
-    blockers.push(tenderBlocker(
-      "SUBMISSION_METHOD_MISSING",
-      "Submission method has not been extracted or confirmed — the package may be submitted incorrectly.",
-      "Run AI Analyze or manually enter the submission method in Tender Detail before exporting.",
-      "HIGH",
-    ));
+    advisoryWarnings.push({
+      category: "SUBMISSION_METHOD_NOT_STATED",
+      severity: "MEDIUM" as const,
+      title: "The tender does not state a submission method, so none is required by the package.",
+      recommendedAction: "No action needed. Deliver the package as the client instructs.",
+    });
   } else {
     if (isEmailSubmissionMethod(effMethod) && !effEmails) {
       blockers.push(tenderBlocker(
