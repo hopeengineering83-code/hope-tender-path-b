@@ -70,6 +70,21 @@ describe("the section writer uses the pool", () => {
 
   it("bounds every queued section by one shared deadline", () => {
     assert.match(body, /withProviderDeadline\(poolDeadlineAt/);
-    assert.match(body, /PROPOSAL_SECTION_STITCH_RESERVE_MS/);
+    assert.match(body, /PROPOSAL_SECTION_POOL_RESERVE_MS/);
+  });
+
+  it("bounds the Section C drill-down by the same deadline, and skips it when no time is left", () => {
+    // Run 36018502529: the pool plus an unbounded drill-down ran past the
+    // 220s guard and the whole AI proposal was discarded.
+    const fnEnd = src.indexOf("\nexport ", start + 10);
+    const whole = src.slice(start, fnEnd > start ? fnEnd : start + 20000);
+    assert.match(whole, /withProviderDeadline\(poolDeadlineAt, \(\) => generateOneSection\(drillSpec\)\)/);
+    assert.match(whole, /poolDeadlineAt - Date\.now\(\) >= PROPOSAL_SECTION_MIN_WRITE_MS/);
+  });
+
+  it("leaves real room inside the whole-proposal guard", async () => {
+    const t = await import("../lib/timeout-config");
+    assert.ok(t.PROPOSAL_SECTION_POOL_RESERVE_MS >= 20_000);
+    assert.ok(t.PROPOSAL_SECTION_POOL_RESERVE_MS > t.PROPOSAL_SECTION_STITCH_RESERVE_MS);
   });
 });

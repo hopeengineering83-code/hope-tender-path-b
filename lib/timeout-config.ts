@@ -120,6 +120,17 @@ export const PROPOSAL_SECTION_BASE_OVERHEAD_MS = 8_000;
 // up to the guard and abort the entire proposal instead of one section.
 export const PROPOSAL_SECTION_STITCH_RESERVE_MS = 5_000;
 
+// Time the paced section pool leaves unspent inside the whole-proposal guard.
+//
+// The sections now queue and may wait out provider cooldowns, so they can
+// legitimately use almost all of the guard. The stitch reserve alone (5s) was
+// not enough: the guard's clock starts before the section pool does (input
+// assembly), and the Section C drill-down plus stitching run after it. On run
+// 36018502529 the pool ran to the guard and the whole AI proposal was lost to
+// "AI proposal timed out after 220 seconds". Anything the pool starts must
+// finish this long before the guard fires.
+export const PROPOSAL_SECTION_POOL_RESERVE_MS = 25_000;
+
 /**
  * The writing window a section must still have AFTER waiting out a provider
  * cooldown for that wait to be worth taking.

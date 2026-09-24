@@ -9,7 +9,7 @@ import { resolveCurrencyToken } from "./engine/currency-reference";
 import { containsMetadataPlaceholder, containsMetadataScaffolding } from "./engine/metadata-validators";
 import { protectPrompt, protectPromptWithBoundary } from "./ai-trust-boundary";
 import { redactSecrets } from "./sanitize-error";
-import { GEMINI_TIMEOUT_MS, DEEPSEEK_DEFAULT_TIMEOUT_MS, MISTRAL_EXTRACTION_TIMEOUT_MS, OPENAI_COMPAT_DEFAULT_TIMEOUT_MS, O1_O3_TIMEOUT_MS, PROPOSAL_SECTION_TIMEOUT_MS, PROPOSAL_SECTION_TIMEOUT_CEILING_MS, PROPOSAL_SECTION_MS_PER_OUTPUT_TOKEN, PROPOSAL_SECTION_BASE_OVERHEAD_MS, PROPOSAL_SECTION_STITCH_RESERVE_MS, PROPOSAL_SECTION_MIN_WRITE_MS, COOLDOWN_WAIT_SETTLE_MS, PROPOSAL_AI_TIMEOUT_MS, REFINEMENT_CALL_TIMEOUT_MS } from "./timeout-config";
+import { GEMINI_TIMEOUT_MS, DEEPSEEK_DEFAULT_TIMEOUT_MS, MISTRAL_EXTRACTION_TIMEOUT_MS, OPENAI_COMPAT_DEFAULT_TIMEOUT_MS, O1_O3_TIMEOUT_MS, PROPOSAL_SECTION_TIMEOUT_MS, PROPOSAL_SECTION_TIMEOUT_CEILING_MS, PROPOSAL_SECTION_MS_PER_OUTPUT_TOKEN, PROPOSAL_SECTION_BASE_OVERHEAD_MS, PROPOSAL_SECTION_STITCH_RESERVE_MS, PROPOSAL_SECTION_POOL_RESERVE_MS, PROPOSAL_SECTION_MIN_WRITE_MS, COOLDOWN_WAIT_SETTLE_MS, PROPOSAL_AI_TIMEOUT_MS, REFINEMENT_CALL_TIMEOUT_MS } from "./timeout-config";
 
 const apiKey = process.env.GEMINI_API_KEY;
 // Anthropic key is read at request time via getAnthropicApiKey() — never cached
@@ -5830,7 +5830,7 @@ export async function generateProposalSectionsParallel(input: AIBidWriterInput, 
   // instead of running past the guard and aborting the entire proposal.
   const armedDeadlineAt = currentProviderDeadlineAt();
   const poolDeadlineAt = Math.min(
-    t0 + currentProposalWrapperBudgetMs() - PROPOSAL_SECTION_STITCH_RESERVE_MS,
+    t0 + currentProposalWrapperBudgetMs() - PROPOSAL_SECTION_POOL_RESERVE_MS,
     armedDeadlineAt ?? Number.POSITIVE_INFINITY,
   );
   const results = await mapInOrderWithConcurrency(
@@ -5875,8 +5875,17 @@ export async function generateProposalSectionsParallel(input: AIBidWriterInput, 
     if (sectionCResult && sectionCResult.source !== "fallback") {
       const firstPassSectionC = sectionCResult.markdown;
       const drillSpec = buildSectionCDrillDownSpec(input, firstPassSectionC);
-      const drillResult = await generateOneSection(drillSpec);
-      if (drillResult.source !== "fallback") {
+      // The drill-down is an optional improvement, so it runs only when a
+      // usable writing window is left before the pool deadline, and it is
+      // clamped to that deadline. Unbounded, it could run the whole proposal
+      // past its guard and lose every section already written.
+      const drillResult = poolDeadlineAt - Date.now() >= PROPOSAL_SECTION_MIN_WRITE_MS
+        ? await withProviderDeadline(poolDeadlineAt, () => generateOneSection(drillSpec))
+        : null;
+      if (!drillResult) {
+        logger.warn(`[ai] section-C drill-down skipped — too little time left before the proposal guard; keeping first-pass Section C.`);
+        drillDownInfo = ` [section-c-drilldown=skipped(no-time)]`;
+      } else if (drillResult.source !== "fallback") {
         // Replace the first-pass Section C in the sections array.
         const idx = sections.findIndex((s) => s.id === "technical-approach");
         if (idx >= 0) {
