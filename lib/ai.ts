@@ -10,7 +10,7 @@ import { containsMetadataPlaceholder, containsMetadataScaffolding } from "./engi
 import { protectPrompt, protectPromptWithBoundary } from "./ai-trust-boundary";
 import { redactSecrets } from "./sanitize-error";
 import { GEMINI_TIMEOUT_MS, DEEPSEEK_DEFAULT_TIMEOUT_MS, MISTRAL_EXTRACTION_TIMEOUT_MS, OPENAI_COMPAT_DEFAULT_TIMEOUT_MS, O1_O3_TIMEOUT_MS, PROPOSAL_SECTION_TIMEOUT_MS, PROPOSAL_SECTION_TIMEOUT_CEILING_MS, PROPOSAL_SECTION_MS_PER_OUTPUT_TOKEN, PROPOSAL_SECTION_BASE_OVERHEAD_MS, PROPOSAL_SECTION_STITCH_RESERVE_MS, PROPOSAL_SECTION_POOL_RESERVE_MS, PROPOSAL_SECTION_MIN_WRITE_MS, COOLDOWN_WAIT_SETTLE_MS, PROPOSAL_AI_TIMEOUT_MS, REFINEMENT_CALL_TIMEOUT_MS } from "./timeout-config";
-import { AI_TRACE_PATTERNS, countOwnPriceMentions, scrubOwnPriceSentences, scrubSourceDocumentMetadata } from "./engine/detection-patterns";
+import { AI_TRACE_PATTERNS, countOwnPriceMentions, hasUnprovenClaim, scrubOwnPriceSentences, scrubSourceDocumentMetadata, scrubUnprovenClaimSentences } from "./engine/detection-patterns";
 
 const apiKey = process.env.GEMINI_API_KEY;
 // Anthropic key is read at request time via getAnthropicApiKey() — never cached
@@ -815,7 +815,12 @@ export function clientSafeModelSection(markdown: string): { ok: boolean; markdow
   // Scrub what is never proposal content first: copied source-document
   // headings, and any sentence stating the firm's own price (run 36041511483
   // rejected a whole model-written cover section over two such sentences).
-  const cleaned = scrubOwnPriceSentences(scrubSourceDocumentMetadata(markdown));
+  // The final gate's unproven-claim rule is applied the same way: the
+  // sentence claiming "we have already delivered this assignment" or "the
+  // same team" goes, the section stays (run 36047880422 lost the whole
+  // proposal to one such sentence).
+  const cleaned = scrubUnprovenClaimSentences(scrubOwnPriceSentences(scrubSourceDocumentMetadata(markdown)));
+  if (hasUnprovenClaim(cleaned)) return { ok: false, markdown: cleaned, reason: "unproven relationship or attachment claim" };
   const trace = AI_TRACE_PATTERNS.find((re) => re.test(cleaned));
   if (trace) return { ok: false, markdown: cleaned, reason: `AI trace ${trace.source.slice(0, 60)}` };
   const prices = countOwnPriceMentions(cleaned);
@@ -4343,7 +4348,7 @@ export async function generateBenchmarkProposalWithAI(params: AIBidWriterInput):
     ? `
 HEALTHCARE-SPECIFIC PROPOSAL GUIDANCE (mandatory for this tender):
 - Cover letter MUST cite the company's specific hospital project experience by name and contract value in the currency the evidence states from the evidence.
-- Executive Summary must lead with: "We have already delivered this assignment" framing if hospital evidence exists.
+- Executive Summary must lead with the closest comparable hospital project by name, scale and the services the firm performed on it. Never write "already delivered this assignment", "directly comparable assignment" or "the same team": no record proves that relationship.
 - Team section must show each expert's ROLE on a PREVIOUS HOSPITAL PROJECT — not just qualifications.
 - Include a Team-to-Project Experience Mapping section showing expert → previous hospital project → role performed.
 - Technical Approach must address: clinical zone segregation (Emergency/OPD/In-patient/Laboratory/Imaging/Pharmacy), patient-staff-supply flow, IPC compliance, radiation shielding for imaging, medical gas coordination, accessible design.
@@ -4920,7 +4925,7 @@ Write ALL of these in order:
 - All sections with sub-sections and approximate structure
 
 ### EXECUTIVE SUMMARY (3-4 strong paragraphs, no bullet lists)
-- Lead sentence: "We have already delivered this assignment. [Company] designed / supervised / assessed [Project Name] ([contract value], Client Y) — a [parallel description]. The same team is available for this engagement."
+- Lead sentence: "[Company] designed / supervised / assessed [Project Name] ([value as the evidence labels it], Client Y) — a [parallel description]." Name the closest comparable project; do not claim the firm has already delivered this assignment or that the same team is proposed.
 - Second paragraph: address the top evaluation criterion directly with evidence
 - Third paragraph: explain the technical approach at a high level — why it is the right approach for this specific scope and client
 - Fourth paragraph: confirm compliance, team availability, and commitment

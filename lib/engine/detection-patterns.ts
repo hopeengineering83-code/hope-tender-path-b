@@ -474,3 +474,49 @@ export function scrubOwnPriceSentences(markdown: string): string {
   }
   return out.join("\n");
 }
+
+
+// ─── Unproven relationship and attachment claims ───────────────────────────
+//
+// One definition, read by the final document gate (document-quality-gate.ts)
+// and by the per-section guard in the proposal writer (clientSafeModelSection
+// in lib/ai.ts). Run 36047880422: the first model-written section in weeks
+// followed its own prompt ("We have already delivered this assignment ... The
+// same team is available") and the final gate refused the whole proposal for
+// exactly that sentence. A claim that the firm has done THIS assignment, or
+// that the same team did, needs relationship evidence no record carries.
+export const UNPROVEN_RELATIONSHIP_CLAIM_PATTERNS: RegExp[] = [
+  /\balready\s+delivered\s+this\s+assignment\b/i,
+  /\bsame\s+project\s+team\b.{0,100}\b(?:available|proposed|zero\s+learning\s+curve)\b/i,
+  /\bdirectly\s+comparable\s+assignment\b/i,
+  /\beach\s+proposed\s+lead\b.{0,120}\bcomparable\s+role\b/i,
+];
+export const PHANTOM_ATTACHMENT_CLAIM = /\b(?:credentials|contracts|testimony letters|certificates|supporting documents)\b.{0,160}\b(?:attached|provided)\b.{0,80}\b(?:appendix|appendices|annex|annexes)\b/i;
+
+/** True when the text carries a claim the final gate refuses. */
+export function hasUnprovenClaim(text: string): boolean {
+  return UNPROVEN_RELATIONSHIP_CLAIM_PATTERNS.some((re) => re.test(text)) || PHANTOM_ATTACHMENT_CLAIM.test(text);
+}
+
+/**
+ * Drop the sentences (or whole table rows / headings) that carry an unproven
+ * relationship or attachment claim, keeping the rest of the section. A line
+ * whose claim spans sentences is dropped whole.
+ */
+export function scrubUnprovenClaimSentences(markdown: string): string {
+  const out: string[] = [];
+  for (const line of markdown.split("\n")) {
+    if (!hasUnprovenClaim(line)) {
+      out.push(line);
+      continue;
+    }
+    if (/^\s*(?:\||#)/.test(line)) continue;
+    const kept = line
+      .split(/(?<=[.!?])\s+/)
+      .filter((sentence) => !hasUnprovenClaim(sentence))
+      .join(" ")
+      .trim();
+    if (kept && !hasUnprovenClaim(kept)) out.push(kept);
+  }
+  return out.join("\n");
+}

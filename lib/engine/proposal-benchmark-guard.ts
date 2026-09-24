@@ -208,7 +208,7 @@ export function scoreBenchmarkProposalMarkdown(markdown: string, input: Benchmar
     score += 5;
     strengths.push("Executive Summary opens with specific evidence — project name or contract value.");
   } else if (execSummaryMatch.length > 0) {
-    gaps.push("Executive Summary lacks a specific project name or contract value in the opening — must lead with 'We have already delivered this assignment.'");
+    gaps.push("Executive Summary lacks a specific project name or contract value in the opening — must lead with the closest comparable project by name and scale.");
   }
 
   if (input.expertCount > 0 && /expert|team|cv|personnel|specialist|key staff/i.test(markdown)) {

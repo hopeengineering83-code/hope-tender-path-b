@@ -497,7 +497,7 @@ function buildRelevanceStatement(project: ProjectRecord, tenderTitle: string, pr
     return `Demonstrates transferable competency for ${tenderTitle}: ${truncateAtWordBoundary(summary, 280)}`;
   }
   if (sectorMatch) {
-    return `Direct ${primarySector} project — same team and methodology applicable to ${tenderTitle}.`;
+    return `Direct ${primarySector} project; its methodology applies to ${tenderTitle}.`;
   }
   return `Transferable technical competency: ${safeArr(project.serviceAreas).join(", ") || "scope-relevant scope"} — directly applicable to the methodology required by ${tenderTitle}.`;
 }

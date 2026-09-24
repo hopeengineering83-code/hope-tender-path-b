@@ -90,3 +90,44 @@ describe("one definition of own-price contamination", () => {
     assert.ok(r.finalBlockers.some((b) => /Financial content detected/.test(b)), JSON.stringify(r.finalBlockers));
   });
 });
+
+describe("the final gate's unproven-claim rule applies per section, and the prompts stop asking for it", () => {
+  // Run 36047880422: the first model-written section in weeks followed its
+  // prompt ("We have already delivered this assignment ... The same team is
+  // available for this engagement") and the final gate refused the whole
+  // proposal at UNSUPPORTED_CLAIM_RISK [HIGH] for that sentence.
+  it("drops the claim sentence and keeps the section", () => {
+    const md = "We have already delivered this assignment. The firm designed the G+6 hospital in 2018. The same project team is proposed for this engagement.";
+    const r = clientSafeModelSection(md);
+    assert.equal(r.ok, true, String(r.reason));
+    assert.doesNotMatch(r.markdown, /already delivered this assignment|same project team/i);
+    assert.match(r.markdown, /designed the G\+6 hospital/);
+  });
+
+  it("drops a table row or heading carrying the claim, and a phantom attachment", () => {
+    const md = "## Why us\n| Claim | Proof |\n|---|---|\n| Directly comparable assignment | Project X |\n| Team | 8 experts |\nCertificates are provided as Appendix A. We deliver on time.";
+    const r = clientSafeModelSection(md);
+    assert.equal(r.ok, true);
+    assert.doesNotMatch(r.markdown, /Directly comparable assignment|Appendix A/);
+    assert.match(r.markdown, /8 experts/);
+    assert.match(r.markdown, /We deliver on time/);
+  });
+
+  it("the final gate and the section guard share one definition", () => {
+    const gate = readFileSync("lib/engine/document-quality-gate.ts", "utf8");
+    assert.match(gate, /import \{ UNPROVEN_RELATIONSHIP_CLAIM_PATTERNS, PHANTOM_ATTACHMENT_CLAIM \} from "\.\/detection-patterns"/);
+    assert.doesNotMatch(gate, /const UNPROVEN_RELATIONSHIP_CLAIM_PATTERNS/);
+  });
+
+  it("no writer prompt or template asks for the claim the gate refuses", () => {
+    for (const file of ["lib/ai.ts", "lib/engine/proposal-intelligence.ts", "lib/engine/proposal-sections.ts", "lib/engine/evidence-marker-injector.ts", "lib/engine/benchmark-tables.ts"]) {
+      const src = readFileSync(file, "utf8");
+      assert.doesNotMatch(src, /Lead sentence: "We have already delivered this assignment/, file);
+      assert.doesNotMatch(src, /must (?:open|lead) with:? ['"]We have already delivered/, file);
+      assert.doesNotMatch(src, /End with "the same team is proposed/, file);
+      assert.doesNotMatch(src, /is the strongest line a cover letter can carry/, file);
+      assert.doesNotMatch(src, /same scope, same lead team|same team and methodology applicable/, file);
+      assert.doesNotMatch(src, /has already delivered this assignment\.\*\*/, file);
+    }
+  });
+});

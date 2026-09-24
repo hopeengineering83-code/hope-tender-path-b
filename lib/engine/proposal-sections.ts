@@ -59,7 +59,7 @@ Your operating principles for the Cover Letter and Executive Summary:
 
 1. PROJECT-ANCHORED OPENING. The first paragraph of BOTH the cover letter and the executive summary names the company's strongest 1–2 specific comparable projects BY NAME and contract value. No "we are pleased to submit" boilerplate, ever. The reader must finish the first paragraph thinking "this firm has already done this."
 
-2. SAME-TEAM CONTINUITY. If the proposed lead expert(s) delivered the named comparable project(s), say so explicitly. "The same team that delivered Project X is proposed for this engagement" is the strongest line a cover letter can carry.
+2. PERSONNEL CONTINUITY ONLY WHERE A CV PROVES IT. Say a proposed expert worked on a named project only when that expert's own CV names it, and say it of that person ("X was the lead sanitary engineer on Project Y"). Never write "the same team", "already delivered this assignment" or "directly comparable assignment": no record proves those relationships and the final gate refuses them.
 
 3. EVALUATOR FIRST. The executive summary's middle paragraph addresses the TOP evaluation criterion directly with evidence. Not generic claims of capability — specific evidence of capability against this criterion.
 
@@ -426,9 +426,9 @@ LENGTH REQUIREMENTS (BENCHMARK MATCH — non-negotiable):
 Cover Letter structure (each paragraph ~70–120 words):
 - Para 1 — Opening: Name the firm; address the client (use ONLY the
   CLIENT field); state the exact tender title; reference the strongest
-  1–2 comparable projects BY NAME with contract value AND name the lead
-  expert from each. End with "the same team is proposed for this
-  engagement."
+  1–2 comparable projects BY NAME with the value as the evidence labels
+  it. Name a proposed expert against a project only when that expert's
+  CV names the project; never write "the same team is proposed".
 - Para 2 — Tender understanding: Echo 2–3 verbatim phrases from the
   tender's evaluation criteria or scope. Demonstrate the bidder has
   read the tender end-to-end.
@@ -444,10 +444,11 @@ Cover Letter structure (each paragraph ~70–120 words):
   licence + company).
 
 Executive Summary structure (each paragraph ~70–120 words):
-- Para 1 — Evidence anchor: "We have already delivered this assignment.
-  [Company] designed/supervised/assessed [Project Name] (contract value,
-  Client) — a [parallel description]. The same team is available for
-  this engagement."
+- Para 1 — Evidence anchor: "[Company] designed/supervised/assessed
+  [Project Name] (value as the evidence labels it, Client) — a [parallel
+  description]." Name the closest comparable project. Do not claim the
+  firm has already delivered this assignment or that the same team is
+  proposed: no record proves that relationship.
 - Para 2 — Top evaluation criterion: Address the highest-weighted
   evaluation criterion directly with concrete evidence (project name,
   expert role on it, deliverable that scored).
@@ -1271,14 +1272,16 @@ function buildCoverAndSummaryFallback(input: AIBidWriterInput): string {
   // first line that contains a currency amount.
   const projectAnchorMatch = projectsBlock.match(/^([^\n]+?(?:ETB|USD|EUR|GBP)[^\n]+)/m);
   const openingParagraph = projectAnchorMatch
-    ? `${companyName} submits this Technical Proposal for ${tenderTitle}. The same team that delivered ${projectAnchorMatch[1].slice(0, 200)} is proposed for this engagement, ensuring continuity of methodology and proven delivery.`
-    : `${companyName} submits this Technical Proposal for ${tenderTitle}. Comparable project anchor: see Section B Featured Project Cards for the firm's prior comparable assignments and the same-team continuity proposed for this engagement.`;
+    // No "the same team that delivered X is proposed": no record proves who
+    // worked on a past project, and the final gate refuses the claim.
+    ? `${companyName} submits this Technical Proposal for ${tenderTitle}. The firm's comparable experience includes ${projectAnchorMatch[1].slice(0, 200)}.`
+    : `${companyName} submits this Technical Proposal for ${tenderTitle}. The firm's comparable assignments are presented in Section B.`;
 
   // Executive Summary lead — same evidence-anchored opening
   // pattern Claude uses ("We have already delivered this
   // assignment...").
   const execSummaryLead = projectAnchorMatch
-    ? `**${companyName} has already delivered this assignment.** ${projectAnchorMatch[1].slice(0, 200)} demonstrates the firm's capacity for the exact scope this tender requires. The same lead team is proposed for this engagement.`
+    ? `${companyName}'s closest comparable project is ${projectAnchorMatch[1].slice(0, 200)}, which the firm delivered for a scope comparable to this tender's.`
     : `${companyName} submits this Technical Proposal for ${tenderTitle}. The firm's portfolio of comparable assignments is detailed in Section B; the proposed team and methodology are aligned to ${clientName}'s evaluation criteria.`;
 
   return [

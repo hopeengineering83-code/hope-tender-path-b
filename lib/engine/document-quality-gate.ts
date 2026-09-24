@@ -32,6 +32,7 @@
 import { documentHygieneIssues } from "./export-readiness";
 import { looksLikeMetadataPlaceholder, METADATA_PLACEHOLDER_PATTERNS } from "./tender-metadata-completeness";
 import { ALWAYS_PLACEHOLDER_PATTERNS, valuePositionPlaceholderMatches } from "./detection-patterns";
+import { UNPROVEN_RELATIONSHIP_CLAIM_PATTERNS, PHANTOM_ATTACHMENT_CLAIM } from "./detection-patterns";
 
 // ── Document-type gating ─────────────────────────────────────────────────────
 
@@ -407,13 +408,7 @@ const UNSUPPORTED_CLAIM_PATTERNS: RegExp[] = [
   /\branked\s+(?:first|top|#1)\b/i,
 ];
 
-const UNPROVEN_RELATIONSHIP_CLAIM_PATTERNS: RegExp[] = [
-  /\balready\s+delivered\s+this\s+assignment\b/i,
-  /\bsame\s+project\s+team\b.{0,100}\b(?:available|proposed|zero\s+learning\s+curve)\b/i,
-  /\bdirectly\s+comparable\s+assignment\b/i,
-  /\beach\s+proposed\s+lead\b.{0,120}\bcomparable\s+role\b/i,
-];
-const PHANTOM_ATTACHMENT_CLAIM = /\b(?:credentials|contracts|testimony letters|certificates|supporting documents)\b.{0,160}\b(?:attached|provided)\b.{0,80}\b(?:appendix|appendices|annex|annexes)\b/i;
+// Shared with the proposal writer's per-section guard (detection-patterns.ts).
 const TRUNCATED_SUBMISSION_METADATA = /^(?:[-*]\s*)?Submission\s+(?:Address|Portal)[^:\n]*:\s*.*\b[a-z]{1,2}\s*$/im;
 const MALFORMED_SUBMISSION_LINE = /^(?:[-*]\s*)?(?:Submission\s+)?Email(?:\(s\))?\s*:[^\n]*(?:[;,]\s*[a-z0-9._%+\-]{1,20}\.?)\s*$|\bSubmission\b[^\n]{0,30}\s;\s[a-z]/im;
 
