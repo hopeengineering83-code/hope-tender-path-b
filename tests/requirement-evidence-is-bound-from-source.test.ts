@@ -32,6 +32,19 @@ describe("AI Analyze requirement evidence binding", () => {
     assert.equal(bound.sourcePage, 2);
   });
 
+  it("proves page one when the file's later form feeds establish page boundaries", () => {
+    const firstPage = bindRequirementEvidenceToActiveFile({
+      ...requirement,
+      sourceQuote: "Site assessment is mandatory.",
+    } as never, [{
+      id: "file-path",
+      extractedText: "Site assessment is mandatory.\fSecond page",
+      totalPages: 2,
+    }]);
+    assert.equal(firstPage.sourcePage, 1);
+    assert.equal(firstPage.sourceTenderFileId, "file-path");
+  });
+
   it("fails closed when the quote is absent or appears in more than one active file", () => {
     const absent = bindRequirementEvidenceToActiveFile(requirement as never, [{
       id: "file-a",

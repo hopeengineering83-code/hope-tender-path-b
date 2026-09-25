@@ -26,7 +26,12 @@ export function computeProvenPageNumber(
 
   // 1. Form feeds (\f) are hard page boundaries.
   const formFeeds = (before.match(/\f/g) || []).length;
-  if (formFeeds > 0) {
+  // A document containing form feeds has a hard page map from its first
+  // character: text before the first delimiter is page 1. Requiring a form
+  // feed *before* the match made page 1 uniquely unprovable while pages 2+
+  // were accepted from the same extraction. The PATH tender exposed this on
+  // mandatory first-page evidence.
+  if (text.includes("\f")) {
     const page = formFeeds + 1;
     if (knownTotal !== null && (page < 1 || page > knownTotal)) return null;
     return page;
