@@ -1054,6 +1054,47 @@ function mapToDraft(
     };
 }
 
+type GroundingFile = { id: string; extractedText: string | null; totalPages: number | null };
+
+/**
+ * Bind model-returned requirement evidence to the active source bytes.
+ *
+ * The model is asked to echo the opaque FILE_ID header, but that echo is not
+ * evidence: the quote is. A real PATH tender analysis returned seven
+ * mandatory requirements with verbatim quotes and omitted the opaque token;
+ * the provider completed structured extraction, then promotion discarded the
+ * entire result. Resolve the file and page from exact normalized quote
+ * containment instead. Ambiguous or absent quotes remain ungrounded and keep
+ * failing closed.
+ */
+export function bindRequirementEvidenceToActiveFile(
+    req: AIRequirement,
+    activeFiles: readonly GroundingFile[],
+): AIRequirement {
+    const quote = typeof req.sourceQuote === "string" ? req.sourceQuote.trim() : "";
+    if (!quote) return req;
+
+    const statedId = typeof req.sourceTenderFileId === "string" && req.sourceTenderFileId.trim()
+        ? req.sourceTenderFileId.trim()
+        : typeof req.sourceFileToken === "string" && req.sourceFileToken.trim()
+            ? req.sourceFileToken.trim()
+            : null;
+    const candidates = statedId
+        ? activeFiles.filter((file) => file.id === statedId)
+        : activeFiles.filter((file) => normalizeForContainment(file.extractedText ?? "").includes(normalizeForContainment(quote)));
+    if (candidates.length !== 1) return req;
+
+    const [file] = candidates;
+    const page = locateQuoteProvenPage(file.extractedText ?? "", quote, file.totalPages);
+    if (page === null) return req;
+    return {
+        ...req,
+        sourceTenderFileId: file.id,
+        sourceFileToken: file.id,
+        sourcePage: page,
+    };
+}
+
 export async function finalizeJob(jobId: string, userId: string) {
     const job = await prisma.aiJob.findUnique({
         where: { id: jobId, userId },
@@ -1149,9 +1190,17 @@ export async function finalizeJob(jobId: string, userId: string) {
     // "valid" — including guessed/foreign/unsupported tokens.
     const activeFilesForGrounding = await prisma.tenderFile.findMany({
         where: { tenderId: job.tenderId!, deletionStatus: "ACTIVE" },
-        select: { id: true },
+        select: { id: true, extractedText: true, totalPages: true },
     });
     const activeFileIdSet = new Set(activeFilesForGrounding.map((f: any) => f.id));
+
+    // Opaque file-token echo is a convenience, never the source authority.
+    // Prove each quote against the tenant-owned active files and derive its
+    // page before enforcing mandatory grounding. This rescues valid provider
+    // output without accepting a guessed token or page.
+    merged.requirements = merged.requirements.map((req) =>
+        bindRequirementEvidenceToActiveFile(req, activeFilesForGrounding),
+    );
 
     const mandatoryReqs = merged.requirements.filter((r: any) => /mandatory|critical/i.test(r.priority ?? ""));
     const invalidMandatory = mandatoryReqs.filter((r: any) => {

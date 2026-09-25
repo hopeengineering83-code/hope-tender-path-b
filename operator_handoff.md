@@ -217,6 +217,22 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 - **Next action:** push the marked commit, inspect the uploaded real provider trace, then change provider planning/routing only if that trace proves a code-controlled cause.
 - **Merge status:** **DO NOT MERGE**; Production untouched.
 
+**Reproduction result — run 36151195013, exact Preview `932d8dc8`:** the
+existing non-Pharo tender was `PATH Ethiopia – Architectural Design for New`
+(`134ffee4-…`). The provider did complete the real one-chunk structured
+analysis; finalization then changed the job to FAILED with `Promotion blocked:
+7 mandatory requirements lack valid source grounding (file/page/quote).` The
+failure was therefore not provider connectivity, cooldown, timeout, or payload
+capacity. It was the promotion boundary requiring the model to echo an opaque
+TenderFile UUID even though its verbatim quotes can prove the source directly.
+
+**Code-controlled fix:** `bindRequirementEvidenceToActiveFile` proves each
+model quote against the tenant-owned ACTIVE file text, accepts exactly one
+matching file, derives the page with the canonical full-quote page resolver,
+and leaves absent, ambiguous, or foreign-token evidence blocked. Targeted
+regression: 3 passed; TypeScript and `git diff --check` passed. Next: deploy
+and repeat the same PATH analysis before any proposal-layout work.
+
 ### 2026-09-25 UTC — Codex (PR #1175-only recovery verification)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / existing draft PR #1175. No new PR, merge, approval, rebase, or Production promotion.
