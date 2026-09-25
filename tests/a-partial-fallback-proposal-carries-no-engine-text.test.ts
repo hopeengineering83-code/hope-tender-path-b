@@ -298,8 +298,15 @@ describe("tables state what each person's own record holds", () => {
     const { buildProjectPortfolioCards } = await import("../lib/engine/benchmark-tables");
     const md = buildProjectPortfolioCards([
       { name: "Clinic A", sector: "Healthcare", serviceAreas: '["Architectural design","MEP design"]', summary: "9 Clinic A / Council Testimony letter 1. Construction Cost: 18,900,000 USD 2. Design Cost: 945,000 USD" },
-    ] as never, "Design of a District Clinic", "Healthcare / Medical Facility Design");
-    assert.match(md, /Same sector as this assignment \(Healthcare\)\. Services the firm provided: architectural design, MEP design\./);
+    ] as never, "Design of a District Clinic", "Healthcare / Medical Facility Design", [
+      { title: "Architectural Design", description: "The consultant shall prepare the architectural design of the clinic." },
+      { title: "Engineering Coordination", description: "The consultant shall coordinate mechanical, electrical and plumbing systems." },
+      { title: "Site Supervision", description: "The consultant shall supervise the works." },
+    ]);
+    // The relevance row links the record's own services to the tender's own
+    // scope items; it does not restate the services row above it.
+    assert.match(md, /Same sector as this assignment \(Healthcare\)\. The firm's recorded services on this project correspond to these scope items of this tender: Architectural Design \(architectural design\) and Engineering Coordination \(MEP design\)\./);
+    assert.doesNotMatch(md, /Services the firm provided/);
     assert.doesNotMatch(md, /Testimony letter|Design Cost: 945,000/);
   });
 

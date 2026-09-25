@@ -69,7 +69,7 @@ function mobilizationRows(experts: ExpertRecord[]): MobilizationRow[] {
   // of employment. The tools and kit are the ones the team's own CVs name, not
   // a list written for water and road schemes ("EPANET / WaterCAD", "sand-cone
   // density", "hydrology kit") that reached a hospital-design proposal.
-  const teamLabel = teamSize > 0 ? `the ${teamSize} named specialist(s) listed in Section A` : "the named specialists listed in Section A";
+  const teamLabel = teamSize > 0 ? `the ${teamSize} named experts of Section A` : "the named experts of Section A";
   const software = Array.from(new Set(experts.flatMap((e) => softwareNamedInCv(e.profile)))).slice(0, 8);
   const softwareLine = software.length > 0
     ? `Design and project software the team's CVs name (${software.join(", ")}) provisioned to the team; shared project workspace set up`
@@ -78,8 +78,10 @@ function mobilizationRows(experts: ExpertRecord[]): MobilizationRow[] {
   return [
     {
       category: "Core Team Mobilization",
-      week1to2: `Project Principal + Lead Specialist on site / virtual engagement; ${teamLabel}`,
-      week3to8: "Full multi-discipline team mobilized; specialist sub-consultants if required",
+      week1to2: `Project lead and discipline leads engaged; ${teamLabel} confirmed on the assignment`,
+      // No "specialist sub-consultants if required": the proposal names its
+      // team, and no record names a sub-consultant.
+      week3to8: "Full multi-discipline team active on the design and coordination work",
       week9plus: "Phased ramp-down as deliverables close; resident engineer remains for supervision",
     },
     {
@@ -102,7 +104,7 @@ function mobilizationRows(experts: ExpertRecord[]): MobilizationRow[] {
     },
     {
       category: "Support Staff",
-      week1to2: "Document control, drafting and administrative support active from week 1",
+      week1to2: "Document control, drafting and administrative support active from the start",
       week3to8: "Continued support with phase-aligned ramp; technical writers engaged for deliverable production",
       week9plus: "Admin + document control active until close-out memo signed",
     },
@@ -123,14 +125,16 @@ function mobilizationRows(experts: ExpertRecord[]): MobilizationRow[] {
 
 function buildMobilizationTable(experts: ExpertRecord[]): string {
   const rows = mobilizationRows(experts);
-  const head = "| Resource Category | Weeks 1–2 (Inception / Mobilization) | Weeks 3–8 (Active Delivery) | Week 9+ (Steady State / Close-out) |";
+  // Stages, not week windows. "Weeks 1–2 / 3–8 / Week 9+" was a programme
+  // nobody stated; the work plan places each phase by what starts it.
+  const head = "| Resource Category | Inception / Mobilisation | Active Delivery | Close-out |";
   const sep = "|-------------------|--------------------------------------|-----------------------------|------------------------------------|";
   const body = rows.map((r) => `| ${r.category} | ${r.week1to2} | ${r.week3to8} | ${r.week9plus} |`);
   return [
     MARKER_MOBILIZATION,
     "## Mobilization and Resourcing Plan",
     "",
-    "Mobilization is structured in three windows: an Inception window (Weeks 1–2) that establishes team, workspace, tools, and reporting cadence; an Active Delivery window (Weeks 3–8) that runs the design / methodology with full team commitment; and a Steady State / Close-out window (Week 9 onwards) that transitions to construction supervision or handover. The plan below shows what is in place at each window.",
+    "Mobilisation follows the work plan in three stages: inception, which establishes the team, workspace, tools and reporting cadence; active delivery, which runs the design and coordination work with the full team; and close-out, which transitions to supervision or handover. The plan below shows what is in place at each stage.",
     "",
     head,
     sep,

@@ -1,3 +1,4 @@
+import { isCurrentRecordStatus } from "./record-status";
 import { recordTypeForDisplay } from "./vault-prose";
 /**
  * Five evaluator-facing additions packaged into one module:
@@ -88,20 +89,13 @@ export function buildUnderstandingSection(opts: {
       `${opts.clientName} requires a disciplined consultancy partner who maps each scope item to a deliverable, a responsible expert, and a quality gate. This proposal therefore demonstrates scope understanding through evidence rather than generic capability statements.`;
   }
 
-  // "The winning proposal must demonstrate..." is the bid desk telling itself
-  // what it takes to win, written in the second person about a document the
-  // reader is already holding. The commitment underneath it — every criterion
-  // answered with a named, checkable evidence anchor — is exactly what an
-  // evaluator wants to read, so it is now stated as what this proposal does.
-  const evaluatorAnchor = opts.evaluationCriteria.length > 0
-    ? `For each evaluation criterion, this proposal gives a specific evidence anchor (named project, expert, license, certification, or institutional capability). The evaluation criteria stated for this assignment are addressed below in Section C.2 (Technical Methodology), Section A.4 (Proposed Project Team), Section B (Relevant Experience), and Section D.1 (Value Framework).`
-    : `For each scope item, this proposal gives a specific evidence anchor (named project, expert, license, certification, or institutional capability) drawn from the firm's reviewed records.`;
-
+  // No closing paragraph about the proposal itself. It promised "a specific
+  // evidence anchor" for every criterion and pointed at section numbers that
+  // had moved (run 36074770709: "Section A.4 (Proposed Project Team)").
+  // Where each criterion is answered is Section F's job.
   return [
     "## C.1 Understanding of the Assignment",
     sectorParagraph,
-    "",
-    evaluatorAnchor,
   ].join("\n\n");
 }
 
@@ -260,47 +254,39 @@ export function buildCertificationsSection(opts: {
   }
   const sortedCerts = Array.from(allCerts).sort();
 
+  // The firm's own registrations, certifications and compliance records, each
+  // one reviewed record with the reference it carries. Only records the firm
+  // currently holds are listed, and the stored status is not printed (see
+  // record-status.ts). This is the one place they are listed: A.3 used to
+  // print the first six of them as well.
+  const cell = (value?: string | null) => (value ?? "").replace(/\|/g, "/").trim() || "—";
+  const corporate = [...(opts.legalRecords ?? []), ...(opts.complianceRecords ?? [])]
+    .filter((record) => (record.title ?? "").trim().length > 2 && isCurrentRecordStatus(record.status))
+    .slice(0, 12);
+
+  if (corporate.length === 0 && sortedCerts.length === 0) return "";
+
+  const lines: string[] = ["## D.3 Professional Certifications and Affiliations"];
+  if (corporate.length > 0) {
+    lines.push(
+      `${opts.companyName} holds the following registrations, certifications and compliance records. Copies can be provided on request.`,
+      "",
+      "| Certification / License / Registration | Type | Reference |",
+      "|---|---|---|",
+      ...corporate.map((record) => `| ${cell(record.title)} | ${cell(recordTypeForDisplay(record.recordType ?? record.complianceType))} | ${cell(record.referenceNumber)} |`),
+    );
+  }
   if (sortedCerts.length > 0) {
-    return [
-      "## D.3 Professional Certifications and Affiliations",
-      `${opts.companyName} maintains documented professional certifications and registrations across the proposed team. Original certificates can be provided on request, with the curricula vitae.`,
+    lines.push(
+      "",
+      `Professional registrations held by the proposed team, as their records state them. Original certificates can be provided on request, with the curricula vitae.`,
       "",
       "| Certification / License / Registration |",
       "|---|",
       ...sortedCerts.map((c) => `| ${c.replace(/\|/g, "/")} |`),
-    ].join("\n");
+    );
   }
-
-  // No expert record carries certifications. This used to emit the heading over
-  // an internal "Source-evidence action: ensure each reviewed expert record
-  // carries …" note; the internal-content stripper removed the note, the
-  // structure seal then dropped the heading with nothing under it, and the
-  // delivered proposal had no certifications section at all — a gap an
-  // evaluator scoring compliance notices immediately.
-  //
-  // The firm's own certifications are held as reviewed legal and compliance
-  // records — PPA supplier registration, tax clearance, competency certificate,
-  // quality-management manual — and A.3 already prints them. D.3 is where an
-  // evaluator looks for them, so the section is composed from the same records
-  // rather than left absent. Nothing is invented: each row is one reviewed
-  // record, with the reference number it carries.
-  const corporate = [...(opts.legalRecords ?? []), ...(opts.complianceRecords ?? [])]
-    .filter((record) => (record.title ?? "").trim().length > 2)
-    .slice(0, 12);
-
-  if (corporate.length === 0) return "";
-
-  return [
-    "## D.3 Professional Certifications and Affiliations",
-    `${opts.companyName} holds the following registrations, certifications and compliance records. Copies can be provided on request.`,
-    "",
-    "| Certification / License / Registration | Type | Reference | Status |",
-    "|---|---|---|---|",
-    ...corporate.map((record) => {
-      const cell = (value?: string | null) => (value ?? "").replace(/\|/g, "/").trim() || "—";
-      return `| ${cell(record.title)} | ${cell(recordTypeForDisplay(record.recordType ?? record.complianceType))} | ${cell(record.referenceNumber)} | ${cell(record.status)} |`;
-    }),
-  ].join("\n");
+  return lines.join("\n");
 }
 
 // ───────────────────────────────────────────────────────────────────────────

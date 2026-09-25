@@ -202,13 +202,18 @@ describe("4-5. Conceptual service-stream methodologies", () => {
 // ─── 6-7. Wiring tests ──────────────────────────────────────────────────────
 
 describe("6-7. Wiring tests", () => {
-  it("6. generate-elite.ts imports classifyTender and buildServiceStreamMethodologyBlock", () => {
+  // The service-stream methodology block used to be injected into Section C
+  // of the fallback as well. It restated, stream by stream, the work Section
+  // C's scope-by-scope plan already assigns to each of the tender's own scope
+  // items, so the same proposal described its method twice in two different
+  // shapes. Section C is now built from the tender's scope items alone; the
+  // classification still decides which streams apply and is still passed on.
+  it("6. generate-elite.ts classifies the tender and passes its streams on, without a second methodology block", () => {
     const src = read("lib/engine/generate-elite.ts");
     assert.ok(src.includes('from "./tender-classification"'), "must import classifyTender");
     assert.ok(src.includes("classifyTender("), "must call classifyTender");
-    assert.ok(src.includes("buildServiceStreamMethodologyBlock"), "must import buildServiceStreamMethodologyBlock");
     assert.ok(src.includes("serviceStreams: detectedServiceStreams"), "must pass serviceStreams to fallbackProposalMarkdown");
-    assert.ok(src.includes("buildServiceStreamMethodologyBlock(params.serviceStreams)"), "must inject methodology block in Section C");
+    assert.ok(!src.includes("buildServiceStreamMethodologyBlock(params.serviceStreams)"), "Section C carries one methodology, from the tender's scope items");
   });
 
   it("7. validate route imports checkFullExportReadinessWithQualityGate and buildTenderDocumentContext", () => {

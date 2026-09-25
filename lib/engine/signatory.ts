@@ -38,7 +38,7 @@ const EXECUTIVE_OFFICE = /\b(?:general\s+manager|managing\s+director|chief\s+exe
 // letter unsigned.
 const SUBORDINATE_OFFICE = /\b(?:deputy|assistant|vice|acting|associate)\s+(?:general\s+manager|managing\s+director|chief\s+executive|ceo|managing\s+partner)\b/gi;
 
-function holdsExecutiveOffice(title: string): boolean {
+export function holdsExecutiveOffice(title: string): boolean {
   return EXECUTIVE_OFFICE.test(title.replace(SUBORDINATE_OFFICE, " "));
 }
 

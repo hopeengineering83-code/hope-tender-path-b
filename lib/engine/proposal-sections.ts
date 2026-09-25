@@ -50,6 +50,7 @@ import { resolveJurisdictionTokens } from "./jurisdiction-instruments";
 import { withoutAIWriterContractPrompt } from "./ai-writer-contract-prompt";
 import { extractScopeItems } from "./scope-delivery-plan";
 import { tenderAsksFor } from "./tender-asks-for";
+import { possessive } from "./possessive";
 
 // ─── Section-specific system prompts ─────────────────────────────────────────
 // Each persona is the EXACT senior bid-team specialist who would write
@@ -1169,7 +1170,7 @@ export function buildSectionFallback(spec: ProposalSectionSpec, writerInput: AIB
         const isGeneric = i >= reqLines.length;
         const body = isGeneric
           ? `The ${req.toLowerCase()} phase follows the firm's staged-delivery methodology. The discipline lead applies the applicable technical standards and the firm's quality-gate process, and each stage deliverable is prepared at schematic, detailed and final levels with internal peer review before submission to ${client} for approval.`
-          : `Our approach to this requirement begins with a review of ${client}'s stated scope, constraints and applicable standards. The deliverable is prepared at schematic, detailed and final stages with internal review at each gate before submission to ${client} for approval.\n\nQuality gate: internal review at 30%, cross-discipline check at 60% and senior sign-off at 100%.`;
+          : `Our approach to this requirement begins with a review of ${possessive(client)} stated scope, constraints and applicable standards. The deliverable is prepared at schematic, detailed and final stages with internal review at each gate before submission to ${client} for approval.\n\nQuality gate: internal review at 30%, cross-discipline check at 60% and senior sign-off at 100%.`;
         return `### C.2.${i + 1} ${req.slice(0, 80)}\n\n${body}`;
       });
       // Work-plan rows derived from normalised requirement scope items (scales to 10 items)
@@ -1197,7 +1198,7 @@ export function buildSectionFallback(spec: ProposalSectionSpec, writerInput: AIB
         scopeItems.length > 0 ? "" : "## C.3 Work Plan and Deliverables",
         scopeItems.length > 0 ? "" : `The assignment is structured across overlapping stages with defined deliverables and client approval milestones. Each later stage depends on approved outputs from the one before.\n\n| Stage | Deliverable | Responsible | Timeline | Quality Gate |\n|---|---|---|---|---|\n${workPlanRows.map((r) => `| ${r.join(" | ")} |`).join("\n")}`,
         "## C.4 Quality Assurance",
-        `Quality assurance for ${tenderRef} is managed through a three-gate internal review cycle: 30% gate (internal peer review by a senior engineer not on the primary design team), 60% gate (cross-discipline coordination check and client interim review), and 100% gate (director-level sign-off and final compliance verification before issue). No deliverable proceeds to the next stage without written confirmation that the prior gate has been passed.\n\nAll technical documents are version-controlled and issued with a revision history. Comments received from ${client} at each interim review are logged in a comment-response matrix and formally closed before the next stage begins. This approach ensures full traceability between ${client}'s requirements, the technical response, and the final submitted deliverables.\n\nRisk management is integrated into the QA programme: the top three technical risks for this assignment (scope ambiguity, tight schedule, and specialist availability) are tracked on a live risk register updated at each gate and shared with ${client} at every interim submission.`,
+        `Quality assurance for ${tenderRef} is managed through a three-gate internal review cycle: 30% gate (internal peer review by a senior engineer not on the primary design team), 60% gate (cross-discipline coordination check and client interim review), and 100% gate (director-level sign-off and final compliance verification before issue). No deliverable proceeds to the next stage without written confirmation that the prior gate has been passed.\n\nAll technical documents are version-controlled and issued with a revision history. Comments received from ${client} at each interim review are logged in a comment-response matrix and formally closed before the next stage begins. This approach ensures full traceability between ${possessive(client)} requirements, the technical response, and the final submitted deliverables.\n\nRisk management is integrated into the QA programme: the top three technical risks for this assignment (scope ambiguity, tight schedule, and specialist availability) are tracked on a live risk register updated at each gate and shared with ${client} at every interim submission.`,
       ].filter(Boolean).join("\n\n");
     }
 
@@ -1288,7 +1289,7 @@ function buildCoverAndSummaryFallback(input: AIBidWriterInput): string {
 
   // Executive Summary lead: the record, not a verdict about it.
   const execSummaryLead = anchor
-    ? `The closest comparable project in ${companyName}'s record is ${anchor.phrase}${anchor.services ? `, where the firm's services included ${anchor.services}` : ""}.`
+    ? `The closest comparable project in ${possessive(companyName)} record is ${anchor.phrase}${anchor.services ? `, where the firm's services included ${anchor.services}` : ""}.`
     : `${companyName} submits this Technical Proposal for ${tenderTitle}. The firm's comparable assignments are detailed in Section B, and the proposed team and methodology answer ${clientName}'s evaluation criteria.`;
 
   return [

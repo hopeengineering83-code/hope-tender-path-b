@@ -252,7 +252,7 @@ describe("Tender Workflow E2E Gates Regression Pack", () => {
          finalizerSrc.includes("markdown: renderText") || finalizerSrc.includes("markdown: text"),
          "finalizer must pass the extracted visible text (renderText or text) as the PDF body",
        );
-       assert.ok(finalizerSrc.includes("extractDocxMarkdownText"), "finalizer must use the structured markdown extractor for content parity");
+       assert.ok(finalizerSrc.includes("extractDocxProposalParts"), "finalizer must use the structured markdown extractor for content parity");
        assert.ok(!routeSrc.includes("target.contentSummary ?? target.name ?? tender.title"), "PDF route must not fall back to contentSummary/title as PDF body");
     });
   });

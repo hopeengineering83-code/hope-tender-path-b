@@ -176,6 +176,11 @@ export function buildDeliverableCrosswalk(opts: {
 // canonical-work-plan.ts now owns the single spine; its per-sector entries were
 // already the more specific of the two at every phase.
 
+/** The named expert who holds a phase's role, or "" when nobody on the team does. */
+export function namedPhaseLead(experts: ExpertRecord[], keywords: readonly string[], used: Set<string>): string {
+  return pickName(experts, [...keywords], used);
+}
+
 function pickName(experts: ExpertRecord[], keywords: string[], used: Set<string>): string {
   for (const k of keywords) {
     // The title only. The real record behind the defect below carried the
@@ -372,7 +377,12 @@ export function injectDeliverableAndPhases(
   const injected = { crosswalk: false, phases: false, branded: false };
 
   const hasCrosswalk = markdown.includes(MARKER_CROSSWALK) || HEADING_PATTERNS_CROSSWALK.some((p) => p.test(markdown));
-  const hasPhases = markdown.includes(MARKER_PHASES) || HEADING_PATTERNS_PHASES.some((p) => p.test(markdown));
+  // The work-plan table renders the same canonical phases with their named
+  // leads; a narrative of them beside it said everything twice and, in run
+  // 36074770709, gave the same phase a different accountable role.
+  const hasPhases = markdown.includes(MARKER_PHASES)
+    || markdown.includes("<!-- methodology-table:phasing -->")
+    || HEADING_PATTERNS_PHASES.some((p) => p.test(markdown));
   const hasBranded = markdown.includes(MARKER_BRANDED) || HEADING_PATTERNS_BRANDED.some((p) => p.test(markdown));
 
   if (!hasCrosswalk) {

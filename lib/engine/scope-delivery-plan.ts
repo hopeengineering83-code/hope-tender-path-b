@@ -142,6 +142,11 @@ const KINDS: Array<{ kind: ScopeKind; title: RegExp; description: RegExp }> = [
   { kind: "closing", title: /close[-\s]?out|handover|hand[-\s]over|commission|final\s+inspection/, description: /final\s+inspection|handover/ },
 ];
 
+/** The kinds of work a scope item is (assessing, designing, services, ...). */
+export function scopeKindsOf(item: ScopeItem): string[] {
+  return kindsOf(item);
+}
+
 function kindsOf(item: ScopeItem): ScopeKind[] {
   const title = item.title.toLowerCase();
   const fromTitle = KINDS.filter((k) => k.title.test(title)).map((k) => k.kind);
@@ -297,6 +302,28 @@ export function scopeRolesByExpert(opts: { tenderText: string | null | undefined
     for (const member of planned.support) entry(member.fullName).supports.push(planned.item.title);
   }
   return roles;
+}
+
+export interface ScopePlanEntry {
+  item: ScopeItem;
+  lead: ExpertRecord | null;
+  support: ExpertRecord[];
+  /** The item's principal risk, e.g. "Approval delays". */
+  risk: string;
+  /** How the plan controls it, e.g. "requirements are checked against the design before submission". */
+  control: string;
+}
+
+/**
+ * The same assignment of people and risks the delivery plan prints, for
+ * builders that summarise it (the Executive Summary), so a summary cannot name
+ * a different lead or risk than Section C.
+ */
+export function scopePlan(opts: { tenderText: string | null | undefined; experts: ExpertRecord[] }): ScopePlanEntry[] {
+  return planScopeItems(opts.tenderText, opts.experts).map(({ item, traits, lead, support }) => {
+    const [risk, ...rest] = traits.risk.split(/\s+—\s+/);
+    return { item, lead, support, risk: risk.trim(), control: rest.join(" — ").trim().replace(/\.$/, "") };
+  });
 }
 
 export function buildScopeDeliveryPlan(opts: { tenderText: string | null | undefined; experts: ExpertRecord[] }): string {

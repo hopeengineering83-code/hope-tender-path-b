@@ -25,6 +25,8 @@
  */
 
 import { canonicalWorkPlan } from "./canonical-work-plan";
+import { namedPhaseLead } from "./deliverable-and-phases";
+import type { ExpertRecord } from "./benchmark-tables";
 
 function escCell(text: string): string {
   return text.replace(/\r?\n+/g, " ").replace(/\|/g, "/").replace(/\s{2,}/g, " ").trim();
@@ -38,11 +40,18 @@ export function buildWorkPlanTable(opts: {
    * reviewing authority; those are named only when this text names them.
    */
   sourceText?: string;
+  /**
+   * The proposed team. A phase is led by the expert whose own title holds its
+   * role; a role nobody on the team holds is stated as the role.
+   */
+  experts?: ExpertRecord[];
 }): string {
   const phases = canonicalWorkPlan({ sector: opts.primarySector, totalDays: opts.totalDays, sourceText: opts.sourceText });
-  const rows = phases.map(
-    (p) => `| ${escCell(p.title)} | ${escCell(p.deliverables)} | ${escCell(p.responsibleRole)} | ${escCell(p.durationLabel)} |`,
-  );
+  const used = new Set<string>();
+  const rows = phases.map((p) => {
+    const lead = opts.experts && opts.experts.length > 0 ? namedPhaseLead(opts.experts, p.leadKeywords, used) : "";
+    return `| ${escCell(p.title)} | ${escCell(p.deliverables)} | ${escCell(lead || p.responsibleRole)} | ${escCell(p.durationLabel)} |`;
+  });
 
   const intro = opts.totalDays
     ? `The engagement is delivered in ${phases.length} phases over ${opts.totalDays} calendar days. Each phase produces a named deliverable, carries a documented hand-off, and requires written client sign-off before the next phase commences.`
@@ -55,7 +64,7 @@ export function buildWorkPlanTable(opts: {
     "## C.6 Work Plan and Schedule",
     intro,
     "",
-    "| Phase | Key Deliverables | Responsible Role | Indicative Duration |",
+    `| Phase | Key Deliverables | ${opts.experts && opts.experts.length > 0 ? "Lead" : "Responsible Role"} | ${opts.totalDays ? "Indicative Duration" : "Sequence"} |`,
     "|---|---|---|---|",
     ...rows,
   ].join("\n");

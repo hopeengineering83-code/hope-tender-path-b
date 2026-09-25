@@ -35,7 +35,9 @@ const SECTOR_VOCABULARY: Record<string, VocabularyEntry[]> = {
     { term: "medical gas", context: "Medical gas pipeline systems (oxygen, medical air, vacuum, nitrous oxide) are designed with zone valve boxes, pressure alarm panels, and emergency shutoff systems." },
     { term: "lead shielding", context: "Radiation shielding (lead-lined wall, floor, and ceiling specifications) is applied to all imaging areas including X-ray, CT, and fluoroscopy rooms." },
     { term: "Legionella", context: "Hot and cold water temperatures are specified to prevent Legionella, with documented commissioning checks." },
-    { term: "HTM 02-01", context: "Medical gas systems are aligned with HTM 02-01 principles where the local Health Authority does not specify a stricter standard." },
+    // Not "HTM 02-01": a named foreign standard that neither the tender nor the
+    // firm's records support. The approach is stated by function instead.
+    { term: "medical-gas standard", context: "Medical gas systems follow the medical-gas standard the approving authority applies; where the tender and the authority name none, the standard is agreed with the client at inception and recorded in the design basis." },
   ],
   water: [
     { term: "EPANET", context: "Hydraulic modelling uses EPANET for network analysis, pressure-zone definition, and demand-projection scenarios." },

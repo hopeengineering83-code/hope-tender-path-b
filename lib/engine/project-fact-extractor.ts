@@ -413,3 +413,23 @@ export function mergeProjectFacts(
   }
   return out;
 }
+
+/**
+ * The services a project record says the firm provided: the structured list
+ * when it is filled, otherwise the terms literally present in the record's own
+ * text. Every consumer that states a project's services — the portfolio card,
+ * its relevance row, Section F, the Section C anchors — reads this one list,
+ * so they cannot disagree; the structured column is empty on many real
+ * records ("[]" on all three Pharo references).
+ */
+export function recordedProjectServices(project: { serviceAreas?: unknown; summary?: string | null }): string[] {
+  const raw = project.serviceAreas ?? [];
+  let list: unknown = raw;
+  if (typeof raw === "string") {
+    try { list = JSON.parse(raw); } catch { list = raw.split(/[;,|]/); }
+  }
+  const stored = (Array.isArray(list) ? list : [])
+    .map((v) => String(v ?? "").trim())
+    .filter((v) => v.length > 2 && !/^[-—–]+$/.test(v));
+  return stored.length > 0 ? stored : extractServicesProvided(project.summary ?? "");
+}

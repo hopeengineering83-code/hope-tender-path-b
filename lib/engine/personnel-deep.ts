@@ -42,6 +42,7 @@ import { factualCardOrEmpty } from "./vault-prose";
 import { truncateAtWordBoundary } from "./proposal-intelligence";
 import { titleStatesRole } from "./requirement-constraints";
 import { licencesNamedInCv, projectsNamedInCv, softwareNamedInCv } from "./cv-grounding";
+import { holdsExecutiveOffice } from "./signatory";
 
 const MARKER_LOADING = "<!-- personnel:per-01-loading -->";
 const MARKER_PROFILES = "<!-- personnel:per-02-profiles -->";
@@ -55,6 +56,11 @@ const HEADING_PATTERNS_LOADING: RegExp[] = [
 ];
 const HEADING_PATTERNS_PROFILES: RegExp[] = [
   /^##\s+PER\s*0?2\b/im,
+  // The per-expert bios already give each expert's role, registration, the
+  // projects and the tools the CV names; profile cards restating them were a
+  // second copy of the same facts (run 36074770709: A.5.1 and PER 02).
+  /^#{2,3}\s+(?:[A-Z]\.\d+(?:\.\d+)*\s+)?Principal\s+Qualifications\b/im,
+  /^#{2,3}\s+(?:[A-Z]\.\d+(?:\.\d+)*\s+)?(?:Detailed\s+)?(?:Expert\s+)?Bios\b/im,
   /^##\s+Expert\s+Profiles?/im,
   /^##\s+Per-Expert\s+Profile/im,
   /^##\s+Expert\s+CV\s+Cards/im,
@@ -557,8 +563,14 @@ export function buildOrganogram(opts: {
   primarySector: string;
 }): string {
   const pool = [...opts.experts];
-  // Pick PM first
-  const pm = pickAndRemove(pool, ["principal", "director", "manager", "pm"]);
+  // The Project Manager is the expert whose own title says so. Run 36074770709
+  // named the firm's General Manager as Project Manager ("manager" matched
+  // first) while another proposed expert's title read "Project Manager". The
+  // executive, when a different person, is the Project Principal above.
+  const namedPm = pickAndRemove(pool, ["project manager"]);
+  const pm = namedPm ?? pickAndRemove(pool, ["principal", "director", "manager", "pm"]);
+  const principalIdx = namedPm ? pool.findIndex((e) => holdsExecutiveOffice(e.title ?? "")) : -1;
+  const principal = principalIdx >= 0 ? pool.splice(principalIdx, 1)[0] : undefined;
   // A licence is shown only when there is one: the old fallback printed the
   // title a second time ("Name, Senior Architect (Senior Architect)").
   const licenceSuffix = (e: ExpertRecord) => expertLicences(e).slice(0, 1).join("");
@@ -592,8 +604,9 @@ export function buildOrganogram(opts: {
     "",
     // No "Technical Director" (nobody proposed holds the post) and no "led by a
     // senior with directly comparable experience" (a claim no record makes).
-    "Reporting structure for this engagement. The Project Manager is the single point of accountability to the client; each stream groups the team members whose own titles hold its disciplines.",
+    `Reporting structure for this engagement. The Project Manager is the single point of accountability to the client${principal ? " and reports to the Project Principal" : ""}; each stream groups the team members whose own titles hold its disciplines.`,
     "",
+    ...(principal ? [`**Project Principal**: ${principal.fullName}${principal.title ? `, ${principal.title}` : ""}${licenceSuffix(principal) ? ` (${licenceSuffix(principal)})` : ""}`, ""] : []),
     ...(pmLabel ? [`**Project Manager (single point of accountability)**: ${pmLabel}`, ""] : []),
     "| Stream | Members |",
     "|--------|---------|",
@@ -625,7 +638,11 @@ export function injectPersonnelDeep(
   const hasProfiles = markdown.includes(MARKER_PROFILES) || HEADING_PATTERNS_PROFILES.some((p) => p.test(markdown));
   const hasOrganogram = markdown.includes(MARKER_ORGANOGRAM) || HEADING_PATTERNS_ORGANOGRAM.some((p) => p.test(markdown));
 
-  if (!hasLoading) {
+  // Person-days are sized from the tender's stated duration. Without one the
+  // table invented them: "sized for the expected engagement window (90
+  // working days total)" in run 36074770709, for a tender that states no
+  // duration, beside role labels no title holds.
+  if (!hasLoading && opts.totalDays && opts.totalDays > 0) {
     const loading = buildPersonnelLoadingTable({ experts: opts.experts, primarySector: opts.primarySector, totalDays: opts.totalDays });
     if (loading) {
       blocks.push(loading);

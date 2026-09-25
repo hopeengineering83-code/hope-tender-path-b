@@ -133,6 +133,9 @@ describe("a closing sentence that restates the paragraph is not appended", () =>
       companyName: "Hope Engineering",
     });
     // The project anchor says something the sector paragraph cannot, so it stays.
-    assert.match(markdown, /Approach (?:validated|demonstrated|applied) on G\+6 General Hospital/);
+    // It states the comparable record, not that this proposal's method was
+    // "demonstrated on" it — the record says which services the firm provided.
+    assert.match(markdown, /Comparable reference: G\+6 General Hospital/);
+    assert.doesNotMatch(markdown, /Approach (?:validated|demonstrated|applied|delivered) on/);
   });
 });

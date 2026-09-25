@@ -13,6 +13,7 @@
  */
 
 import { resolveJurisdictionTokens } from "./jurisdiction-instruments";
+import { possessive } from "./possessive";
 
 type SectorRisk = { risk: string; impact: "High" | "Medium" | "Low"; likelihood: "High" | "Medium" | "Low"; mitigation: string };
 
@@ -220,7 +221,7 @@ export function buildRisksMitigationsTable(opts: {
 
   return [
     "## C.5 Risk Register and Mitigation Strategy",
-    `Top delivery risks identified for this assignment, with named mitigations grounded in ${opts.clientName === "the client" ? "the firm's" : `${opts.clientName}'s engagement and the firm's`} institutional controls. Risk and likelihood are scored on a three-point scale (High / Medium / Low).`,
+    `Top delivery risks identified for this assignment, with named mitigations grounded in ${opts.clientName === "the client" ? "the firm's" : `${possessive(opts.clientName)} engagement and the firm's`} institutional controls. Risk and likelihood are scored on a three-point scale (High / Medium / Low).`,
     "",
     "| Risk | Impact | Likelihood | Mitigation |",
     "|---|---|---|---|",

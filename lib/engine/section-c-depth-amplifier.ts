@@ -44,6 +44,7 @@
  * the evidence-marker injector (PR #248) and the scorer/refinement step.
  */
 
+import { recordedProjectServices } from "./project-fact-extractor";
 import type { ProjectRecord } from "./benchmark-tables";
 import { inlineEvidenceValue } from "./proposal-intelligence";
 import { resolveJurisdictionTokens } from "./jurisdiction-instruments";
@@ -64,7 +65,14 @@ interface SubSectionSpec {
 // Helper: emit a single evidence-anchor sentence from a project record.
 // Always carries at least one scorer marker (currency amount, year context,
 // or named-asset citation).
-function projectAnchor(project: ProjectRecord, fallbackVerb = "demonstrated on"): string {
+// The anchor states what the record says the firm did on a comparable
+// project. It used to read "Approach demonstrated on <project>" after a
+// paragraph describing this proposal's methodology — "three IPC hold-points",
+// "30% / 60% / 100% gates" — which claims that methodology was used on that
+// project; the record says only which services the firm provided. A project
+// whose recorded end date is still ahead is not called completed (run
+// 36074770709 printed "completed 2026" for a 2024–2026 project).
+function projectAnchor(project: ProjectRecord, _verb = ""): string {
   if (!project?.name) return "";
   const parts: string[] = [];
   if (project.contractValue) {
@@ -73,8 +81,8 @@ function projectAnchor(project: ProjectRecord, fallbackVerb = "demonstrated on")
   }
   if (project.clientName) parts.push(project.clientName);
   if (project.endDate) {
-    const y = new Date(project.endDate as Date | string).getFullYear();
-    if (Number.isFinite(y)) parts.push(`completed ${y}`);
+    const end = new Date(project.endDate as Date | string);
+    if (Number.isFinite(end.getTime()) && end.getTime() < Date.now()) parts.push(`completed ${end.getFullYear()}`);
   }
   // Vault values carry their own punctuation and must not be rewritten on the
   // record — they are hashed against their source provenance, so an edit there
@@ -82,7 +90,9 @@ function projectAnchor(project: ProjectRecord, fallbackVerb = "demonstrated on")
   // "… Amhara Region," renders as "(… Amhara Region,)".
   const cleanedParts = parts.map((part) => inlineEvidenceValue(part)).filter(Boolean);
   const detail = cleanedParts.length > 0 ? ` (${cleanedParts.join(", ")})` : "";
-  return `Approach ${fallbackVerb} ${project.name}${detail}.`;
+  const services = recordedProjectServices(project).slice(0, 4);
+  const scope = services.length > 0 ? `, where the firm's recorded services included ${services.join(", ").toLowerCase()}` : "";
+  return `Comparable reference: ${project.name}${detail}${scope}.`;
 }
 
 /**
@@ -171,7 +181,7 @@ function sectorMethodologyParagraphRaw(sector: string, subSection: string): stri
   const s = sector.toLowerCase();
   if (/health|hospital|medical|clinic/.test(s)) {
     if (/understanding|C\.1/i.test(subSection)) return "The clinical brief drives every downstream decision: zone segregation between Emergency, Outpatient, In-patient, Imaging, Pharmacy, and Laboratory; Infection Prevention and Control (IPC) compliant flow patterns; medical-gas distribution coordinated with structural and MEP grids; radiation-shielding loads accounted for at structural sizing.";
-    if (/methodology|C\.2/i.test(subSection)) return "Methodology follows the Ministry of Health functional programming framework: clinical-zone capacity sizing, IPC-compliant patient/staff/supply flow, biomedical equipment integration through PACS-ready cabling and lead-shielding for imaging rooms, and HEPA-rated ventilation across critical-care areas.";
+    if (/methodology|C\.2/i.test(subSection)) return "Methodology works from a functional programme of the clinical brief: clinical-zone capacity sizing, IPC-compliant patient/staff/supply flow, biomedical equipment integration (data cabling for imaging and, where the confirmed equipment brief requires it, radiation shielding), and ventilation and filtration matched to the clinical risk of each area.";
     if (/work plan|C\.3/i.test(subSection)) return "Phased deliverables: site assessment with weighted matrix → conceptual design with clinical zoning → detailed design with MEP coordination → working drawings + BOQ → construction supervision with three IPC hold-points → close-out with as-built records and the licensing pack for {{JURISDICTION:HEALTH_FACILITY_REGULATOR}}.";
     if (/quality|QA|C\.4/i.test(subSection)) return "Quality gates at 30% Schematic, 60% Design Development, and 100% Pre-Issue. Each gate signed off by Project Principal + Senior Reviewer. Independent peer review at 100%.";
   }
@@ -440,53 +450,12 @@ function buildAddendum(opts: {
   // inject a criterion-specific sub-section carrying sector vocabulary and
   // an evidence anchor. This ensures the methodology depth directly mirrors
   // what the evaluator will score.
-  if (opts.evaluationCriteria && opts.evaluationCriteria.length > 0) {
-    const CANONICAL_TOKENS = new Set(["understanding", "assignment", "methodology", "approach", "work", "plan", "deliverable", "quality", "assurance"]);
-    const criterionIsMapped = (c: string) => {
-      const tokens = c.toLowerCase().match(/[a-z]{5,}/g) ?? [];
-      return tokens.some((t) => CANONICAL_TOKENS.has(t));
-    };
-    // A criterion string is drafting guidance, not a heading. The internal
-    // fallback list reads "Relevant project experience — lead with
-    // highest-value comparable projects by sector"; only the label before the
-    // dash is client-facing, and the guidance tail must never reach the page.
-    //
-    // Three of these labels — relevant project experience, team
-    // qualifications, company capacity — are the subjects of Sections B, A.4
-    // and A.7. A delivered proposal carried them here as C.13, C.14 and C.15
-    // with the guidance stripped and nothing put in its place: three contents
-    // entries promising sections that had no text at all. A criterion already
-    // answered elsewhere in the proposal belongs in the Compliance Matrix
-    // mapping, not in a second empty sub-section of its own.
-    const ANSWERED_ELSEWHERE_RX =
-      /^(?:relevant\s+project\s+experience|quality\s+and\s+relevance\s+of\s+project\s+portfolio|team\s+qualifications|strength\s+of\s+professional\s+team|company\s+(?:capacity|profile)|compliance\s+with\s+all\s+submission)/i;
-    const unmapped = opts.evaluationCriteria
-      .map((c) => c.replace(/\s*[-:]\s*\d+\s*(?:%|points?|marks?|pts).*$/i, "").trim())
-      .map((c) => c.split(/\s+[—–]\s+/)[0].trim())
-      .filter((c) => c.length >= 8 && !criterionIsMapped(c) && !ANSWERED_ELSEWHERE_RX.test(c));
-    const seen = new Set<string>();
-    let dynIdx = 5;
-    for (const criterion of unmapped.slice(0, 3)) {
-      const key = criterion.toLowerCase().slice(0, 40);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      const project = opts.projects[dynIdx % Math.max(1, opts.projects.length)];
-      // Without a reviewed project to anchor it, the sub-section's only body
-      // used to be an internal "Bid-Team Action" line — which the client-facing
-      // sanitiser then deleted, leaving the heading standing over nothing.
-      // Say nothing rather than promise a section with no content.
-      if (!project) continue;
-      blocks.push(
-        `## C.${dynIdx} ${criterion}`,
-        "",
-        // Not "approach to <criterion>": the heading already states the
-        // criterion, and repeating it verbatim in the first sentence reads as
-        // filler to an evaluator who has just read it.
-        `${opts.companyName}'s response to this criterion is grounded in the firm's reviewed portfolio of ${opts.primarySector.toLowerCase()} assignments. ${projectAnchor(project, "demonstrated on")}`,
-      );
-      dynIdx++;
-    }
-  }
+  // No sub-section per evaluation criterion. Each such stub carried one
+  // generic sentence ("<firm>'s response to this criterion is grounded in the
+  // firm's reviewed portfolio ...") and a project anchor — run 36074770709
+  // answered "Compliance with submission requirements" with a hospital
+  // project. Where each criterion is answered, and with what evidence, is
+  // Section F's job.
 
   return blocks.join("\n\n");
 }

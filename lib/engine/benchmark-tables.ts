@@ -1,11 +1,14 @@
+import { scopeRelevanceSentence } from "./project-scope-relevance";
+import type { ScopeItem } from "./scope-delivery-plan";
 import { safeParseJsonArray, safeParseJsonObject } from "../safe-json";
-import { extractProjectFacts, extractProjectAmounts, extractServicesProvided } from "./project-fact-extractor";
+import { extractProjectFacts, extractProjectAmounts, extractServicesProvided, recordedProjectServices } from "./project-fact-extractor";
 import { recordFactsFor } from "./portfolio-card-repair";
 import { withoutSourceProvenance, factualCardOrEmpty } from "./vault-prose";
 import { inlineEvidenceValue } from "./proposal-intelligence";
 import { withoutPersonalCvFields, withoutCvDocumentFurniture, truncateAtWordBoundary } from "./proposal-intelligence";
 import { resolveJurisdictionTokens } from "./jurisdiction-instruments";
 import { projectsNamedInCv, licencesNamedInCv } from "./cv-grounding";
+import { possessive } from "./possessive";
 
 /**
  * Benchmark-quality tabular sections built deterministically from the
@@ -289,7 +292,7 @@ export function buildTeamToProjectMappingTable(experts: ExpertRecord[], projects
  * full reference numbers + dates + author names; the app's portfolio
  * file dumped them as a single garbled line).
  */
-export function buildProjectPortfolioCards(projects: ProjectRecord[], tenderTitle: string, primarySector: string): string {
+export function buildProjectPortfolioCards(projects: ProjectRecord[], tenderTitle: string, primarySector: string, scopeItems: ScopeItem[] = []): string {
   if (projects.length === 0) {
     return [
       "## B.2 Project Portfolio",
@@ -299,7 +302,7 @@ export function buildProjectPortfolioCards(projects: ProjectRecord[], tenderTitl
 
   const cards: string[] = ["## B.2 Project Portfolio"];
   cards.push(
-    `${projects.length} reviewed project reference(s) directly relevant to ${tenderTitle} are presented below. ` +
+    `${projects.length} reviewed project reference${projects.length === 1 ? " directly relevant to " + tenderTitle + " is" : "s directly relevant to " + tenderTitle + " are"} presented below. ` +
     `Each card maps the project's specific transferable technical competencies to a ${primarySector || "tender-specific"} requirement of this assignment. ` +
     "Original testimony letters, signed contracts and completion evidence can be provided on request.",
   );
@@ -389,9 +392,10 @@ export function buildProjectPortfolioCards(projects: ProjectRecord[], tenderTitl
 
     if (hasContractValue(project.contractValue) && !storedIsTheConstructionAmount && !storedIsTheConsultancyFee) {
       rows.push(`| Contract Value | ${escCell(fmtMoney(project.contractValue, project.currency))} |`);
-    } else {
-      rows.push(`| Contract Value | ${escCell("Stated in the project reference, available on request")} |`);
     }
+    // No "Contract Value | Stated in the project reference, available on
+    // request" row: a field with no value in the record is left out, and the
+    // construction value below is the figure the record does state.
     if (constructionValue) {
       rows.push(`| Construction Value of Works | ${escCell(fmtMoney(constructionValue.value, constructionValue.currency ?? project.currency))} |`);
     }
@@ -417,7 +421,7 @@ export function buildProjectPortfolioCards(projects: ProjectRecord[], tenderTitl
     if (inferredServices.trim().length > 0) {
       rows.push(`| Services Provided | ${escCell(inferredServices)} |`);
     }
-    rows.push(`| Relevance to This Assignment | ${escCell(buildRelevanceStatement(project, tenderTitle, primarySector))} |`);
+    rows.push(`| Relevance to This Assignment | ${escCell(buildRelevanceStatement(project, tenderTitle, primarySector, scopeItems))} |`);
 
     cards.push(`| Field | Detail |`, `|---|---|`, ...rows, "");
   }
@@ -506,14 +510,18 @@ function extractTestimonyFields(evidences: ProjectEvidenceRecord[]): {
 // Abuja / ... Testimony letter from client 1. Construction Cost: 18,900,000
 // USD 2. Feasibility Study, Geotechnical & New Design Cost: 945,000 USD ..."
 // reached a client card, with the firm's past fees in it.
-function buildRelevanceStatement(project: ProjectRecord, tenderTitle: string, primarySector: string): string {
+//
+// The services are not repeated here: the card's "Services Provided" row
+// already lists them, and run 36074770709 printed "Services the firm
+// provided: —." once the repetition guard blanked the copy. What the row adds
+// is the link to THIS tender: which of its scope items the project's recorded
+// services correspond to (project-scope-relevance.ts).
+function buildRelevanceStatement(project: ProjectRecord, tenderTitle: string, primarySector: string, scopeItems: ScopeItem[] = []): string {
   const sectorMatch = Boolean(project.sector) && (project.sector ?? "").toLowerCase().includes(primarySector.toLowerCase().split(/[\s/]+/)[0] ?? "");
-  const services = safeArr(project.serviceAreas).map((service) => service.trim()).filter(Boolean);
-  const serviceText = services.length > 0 ? services.slice(0, 6).map((service) => (/^[A-Z]{2,}\b/.test(service) ? service : service.charAt(0).toLowerCase() + service.slice(1))).join(", ") : "";
   void tenderTitle;
   const sectorLine = sectorMatch ? `Same sector as this assignment (${(project.sector ?? primarySector).trim()}).` : "";
-  const servicesLine = serviceText ? `Services the firm provided: ${serviceText}.` : "";
-  return [sectorLine, servicesLine].filter(Boolean).join(" ") || "Comparable project in the firm's record.";
+  const scopeLine = scopeRelevanceSentence(recordedProjectServices(project), scopeItems);
+  return [sectorLine, scopeLine].filter(Boolean).join(" ") || "Comparable project in the firm's record.";
 }
 
 /**
@@ -698,6 +706,8 @@ export function buildBenchmarkTablesBlock(opts: {
   assignmentRoleHint: string;
   alreadyHasHeading: (heading: string) => boolean;
   scopeRoles?: Map<string, { leads: string[]; supports: string[] }>;
+  /** The tender's scope items, which each project card's relevance row answers. */
+  scopeItems?: ScopeItem[];
 }): string {
   const blocks: string[] = [];
 
@@ -708,7 +718,7 @@ export function buildBenchmarkTablesBlock(opts: {
     blocks.push(buildTeamToProjectMappingTable(opts.experts, opts.projects));
   }
   if (!opts.alreadyHasHeading("B.2 Project Portfolio") && !opts.alreadyHasHeading("Project Portfolio")) {
-    blocks.push(buildProjectPortfolioCards(opts.projects, opts.tenderTitle, opts.primarySector));
+    blocks.push(buildProjectPortfolioCards(opts.projects, opts.tenderTitle, opts.primarySector, opts.scopeItems ?? []));
   }
 
   const matrix = buildAssessmentMatrix({ tenderTitle: opts.tenderTitle, primarySector: opts.primarySector });
@@ -1172,7 +1182,7 @@ export function buildExecutiveSummaryOpener(opts: {
   // No bold. Closing a bold run mid-sentence put the run boundary immediately
   // before a comma, and the delivered PDF read "a 7,000 m² project in Ethiopia
   // , on which the firm performed ...". The sentence carries its own weight.
-  const lead = projectEvidenceClause(top[0], `${opts.companyName}'s closest comparable assignment is`);
+  const lead = projectEvidenceClause(top[0], `${possessive(opts.companyName)} closest comparable assignment is`);
   if (top.length === 1) return `${lead}${expertClause}`.trim();
   return `${lead} ${projectEvidenceClause(top[1], "The firm also delivered")}${expertClause}`.trim();
 }

@@ -315,7 +315,10 @@ export function scoreBenchmarkProposalMarkdown(markdown: string, input: Benchmar
 
 function completeMissingClientSections(markdown: string, input: BenchmarkGuardInput): string {
   let output = markdown.trim();
-  const missing = benchmarkMissingSections(output);
+  // "Technical Proposal" is the document's own title: the rendered document
+  // carries it on its cover page. Appended here as a section it was a heading
+  // and a "Prepared by" line printed after the Declaration.
+  const missing = benchmarkMissingSections(output).filter((section) => section !== "Technical Proposal");
   for (const section of missing) {
     output += `\n\n## ${section}\n`;
     if (section === "Cover Letter") {

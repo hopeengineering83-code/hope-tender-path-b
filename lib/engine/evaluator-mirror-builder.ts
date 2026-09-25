@@ -22,6 +22,7 @@
  * Section F heading.
  */
 
+import { recordedProjectServices } from "./project-fact-extractor";
 import { CLIENT_FACING_SECTION_F_HEADING, SECTION_F_HEADING_RX } from "./client-facing-section-titles";
 
 type EvaluationWeightLite = { criterion: string; weight: string; rawMatch: string };
@@ -142,9 +143,7 @@ function specificEvidence(criterion: string, input: EvaluatorMirrorBuilderInput)
   if (/portfolio|quality/.test(c) && projects.length > 0) {
     const services = new Map<string, string>();
     for (const p of projects) {
-      let list: unknown = [];
-      try { list = JSON.parse(p.serviceAreas ?? "[]"); } catch { list = []; }
-      for (const item of Array.isArray(list) ? list : []) {
+      for (const item of recordedProjectServices(p)) {
         const label = String(item ?? "").trim();
         if (label.length > 2 && !services.has(label.toLowerCase())) services.set(label.toLowerCase(), label);
       }
@@ -267,7 +266,7 @@ export function buildEvaluatorMirrorSection(input: EvaluatorMirrorBuilderInput):
     : criteria.slice(0, 20).map((criterion) => `| ${escCell(criterion)} | ${escCell(inferAnswerSection(criterion))} | ${escCell(inferEvidenceAnchor(criterion, input))} |`);
 
   return [
-    `## ${CLIENT_FACING_SECTION_F_HEADING.toUpperCase()}`,
+    `# ${CLIENT_FACING_SECTION_F_HEADING.toUpperCase()}`,
     "",
     // No tactic commentary: this paragraph once told the client that quoting
     // their own criteria back "is a high-leverage scoring tactic".

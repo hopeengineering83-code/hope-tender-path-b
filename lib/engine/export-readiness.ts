@@ -24,6 +24,7 @@ import { isEmailSubmissionMethod, isPhysicalSubmissionMethod } from "./submissio
 import { validateGeneratedDocumentQuality } from "../document-generation/generated-document-quality-validator";
 import { buildTenderDocumentContext, type TenderDocumentGenerationContext } from "../document-generation/tender-document-context";
 import { generatedDocumentVisibleText } from "./generated-document-text";
+import { COVER_DETAIL_STYLE, COVER_STYLE, TOC_HEADING_STYLE } from "./docx-paragraph-styles";
 
 export type ExportReadyDocument = {
   id: string;
@@ -273,8 +274,51 @@ function walkTableToMarkdown(tblXml: string): string {
   return rows.join("\n");
 }
 
-function visibleXmlTextStructured(xml: string): string {
+/**
+ * What a paragraph IS, read from its own properties.
+ *
+ * The walk used to read runs only, so every heading, list item, contents
+ * title and cover line came out as a plain line of text. The PDF is rendered
+ * from this markdown, and it showed: "SECTION A: COMPANY PROFILE" and "A.1
+ * Company Overview" drawn at body size in body colour, no section opening a
+ * page, bullets without bullets, the DOCX cover block printed again as the
+ * first lines of page 2 beneath the PDF's own cover. The DOCX carried all of
+ * it as paragraph styles (Heading1-6, list numbering, TOCHeading, the cover
+ * styles in docx-paragraph-styles.ts); only this reader discarded it.
+ */
+type ParagraphRole =
+  | { kind: "heading"; level: number }
+  | { kind: "list"; level: number }
+  | { kind: "tocTitle" }
+  | { kind: "cover" }
+  | { kind: "coverDetail" }
+  | { kind: "body" };
+
+function paragraphRole(pXml: string): ParagraphRole {
+  const pPr = /<w:pPr>([\s\S]*?)<\/w:pPr>/.exec(pXml)?.[1] ?? "";
+  const style = /<w:pStyle w:val="([^"]+)"/.exec(pPr)?.[1] ?? "";
+  const heading = /^Heading([1-6])$/i.exec(style);
+  if (heading) return { kind: "heading", level: Number(heading[1]) };
+  if (style === TOC_HEADING_STYLE) return { kind: "tocTitle" };
+  if (style === COVER_STYLE) return { kind: "cover" };
+  if (style === COVER_DETAIL_STYLE) return { kind: "coverDetail" };
+  if (/<w:numPr>/.test(pPr) || /^List(?:Paragraph|Bullet\d?)$/.test(style)) {
+    const ilvl = Number(/<w:ilvl w:val="(\d+)"/.exec(pPr)?.[1] ?? "0");
+    return { kind: "list", level: Math.min(ilvl, 8) };
+  }
+  return { kind: "body" };
+}
+
+export interface DocxProposalParts {
+  /** The body as markdown: headings, lists, tables and the contents marker. */
+  markdown: string;
+  /** Cover-page facts the PDF cover prints (registration, signatory, dates). */
+  coverDetails: string[];
+}
+
+function visibleXmlProposalParts(xml: string): DocxProposalParts {
   const out: string[] = [];
+  const coverDetails: string[] = [];
   const bodyMatch = xml.match(/<w:body>([\s\S]*?)<\/w:body>/);
   const body = bodyMatch ? bodyMatch[1] : xml;
   const re = /<w:(p|tbl|sectPr)([\s>][\s\S]*?)<\/w:\1>/g;
@@ -293,28 +337,55 @@ function visibleXmlTextStructured(xml: string): string {
       continue;
     }
     if (tag === "p") {
+      const role = paragraphRole(inner);
       const line = walkParagraphToMarkdown(inner);
-      out.push(line);
+      switch (role.kind) {
+        case "cover":
+          break;
+        case "coverDetail":
+          if (line) coverDetails.push(line.replace(/\*+/g, "").trim());
+          break;
+        case "tocTitle":
+          out.push("", "# Table of Contents", "");
+          break;
+        case "heading":
+          if (line) out.push("", `${"#".repeat(role.level)} ${line.replace(/\*+/g, "").trim()}`, "");
+          break;
+        case "list":
+          if (line) out.push(`${"  ".repeat(role.level)}- ${line}`);
+          break;
+        default:
+          out.push(line);
+      }
     }
   }
-  return out
+  const markdown = out
     .join("\n")
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+  return { markdown, coverDetails };
 }
 
 export async function extractDocxMarkdownText(
   value: string | null | undefined,
   filename: string,
 ): Promise<string | null> {
+  return (await extractDocxProposalParts(value, filename))?.markdown ?? null;
+}
+
+/** The DOCX body as markdown plus the cover facts, for the PDF renderer. */
+export async function extractDocxProposalParts(
+  value: string | null | undefined,
+  filename: string,
+): Promise<DocxProposalParts | null> {
   if (!maybeBase64Docx(value, filename) || !value) return null;
   try {
     const buffer = Buffer.from(value, "base64");
     const JSZip = (await import("jszip")).default;
     const zip = await JSZip.loadAsync(buffer);
     const documentXml = await zip.file("word/document.xml")?.async("string");
-    return documentXml ? visibleXmlTextStructured(documentXml) : null;
+    return documentXml ? visibleXmlProposalParts(documentXml) : null;
   } catch {
     return null;
   }

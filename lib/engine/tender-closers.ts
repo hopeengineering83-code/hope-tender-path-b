@@ -176,7 +176,11 @@ function detectObstacles(tenderText: string, clientName?: string | null): Obstac
   // tender never used as an identity.
   const websiteMatch = text.match(/\b(?:https?:\/\/|www\.)\S+/i);
   const brandLabel = brandAlignmentClientName(clientName);
-  if (websiteMatch || brandLabel) {
+  // Only when the tender itself raises branding. The block says its rows are
+  // "directly traceable to clauses in this tender"; run 36074770709 built this
+  // row from the client's name alone, on a tender that never mentions a brand.
+  const tenderRaisesBranding = /\b(?:brand(?:ing|ed)?|visual\s+identity|corporate\s+identity|logo|style\s+guide)\b/i.test(text);
+  if ((websiteMatch || brandLabel) && tenderRaisesBranding) {
     const identityClause = brandLabel
       ? `The client's identity (${brandLabel.slice(0, 40)}) implies brand-alignment requirements.`
       : `The tender references the client's own web presence, which implies brand-alignment requirements.`;
@@ -380,7 +384,11 @@ export function buildCommercialUnderstandingBlock(
   opts: CommercialUnderstandingOptions = {},
 ): string {
   const rows = detectCommercialDetails(tenderText, opts.authoritativeDeliverableFormat);
-  if (rows.length === 0) return "";
+  // The deliverable format is a submission instruction, answered in the cover
+  // letter and the Compliance Matrix. A "Commercial Understanding" block whose
+  // only row is the file format has no commercial clause to acknowledge — run
+  // 36074770709 printed one for a technical-only tender.
+  if (rows.every((r) => r.field === "Deliverable Format")) return "";
 
   const head = "| Commercial Field | Tender Says | Bidder's Acknowledgement |";
   const sep = "|------------------|-------------|--------------------------|";
@@ -535,8 +543,11 @@ export function injectTenderClosers(
   // end of Section D / pre-compliance), or at end of doc.
   const lines = markdown.split("\n");
   let insertAt = lines.length;
+  // Section E may be a second-level heading, and a proposal may have no
+  // Section E at all; the closers then sit before the Declaration, never
+  // after it.
   for (let i = 0; i < lines.length; i += 1) {
-    if (/^#\s+Section\s+E\b/i.test(lines[i]) || /^#\s+Compliance\s+Matrix/i.test(lines[i])) {
+    if (/^#{1,2}\s+Section\s+E\b/i.test(lines[i]) || /^#{1,2}\s+Compliance\s+Matrix/i.test(lines[i]) || /^#\s+(?:Formal\s+)?Declaration\b/i.test(lines[i])) {
       insertAt = i;
       break;
     }

@@ -157,8 +157,10 @@ describe("proposal PDF rendering", () => {
     const text = await textOf(bytes);
     const numbers = [...text.matchAll(/Page\s+(\d+)\s+of\s+(\d+)/g)].map((match) => [Number(match[1]), Number(match[2])]);
     assert.ok(numbers.length > 2, "fixture spans several pages");
-    assert.deepEqual(numbers.map(([page]) => page), Array.from({ length: numbers.length }, (_, i) => i + 1));
-    assert.ok(numbers.every(([, total]) => total === numbers.length));
+    // The cover carries no running footer but still counts as page 1, so the
+    // numbered pages run 2..N of N — the numbers the contents page cites.
+    assert.deepEqual(numbers.map(([page]) => page), Array.from({ length: numbers.length }, (_, i) => i + 2));
+    assert.ok(numbers.every(([, total]) => total === numbers.length + 1));
     assert.match(text, /Engineering and Architectural Consultancy Headquarters/);
   });
 

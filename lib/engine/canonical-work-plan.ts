@@ -253,6 +253,26 @@ function rewritePhasesToDays(rows: PhasingRow[], totalDays: number): PhasingRow[
   });
 }
 
+/**
+ * Relative sequencing for a tender that states no programme.
+ *
+ * The week windows in the sector rows ("Weeks 1–2", "Weeks 7–14", "8 weeks
+ * from completion of works") are the rows' internal proportions, not a
+ * programme anybody stated. Printed as they were, run 36074770709 committed
+ * the firm to a 14-week design programme on a tender that gives no duration.
+ * Without a stated total, each phase is placed by what starts it.
+ */
+function rewritePhasesToSequence<T extends { duration: string }>(rows: T[]): T[] {
+  return rows.map((row, i) => {
+    let duration: string;
+    if (/construction\s+window|during\s+(?:the\s+)?works/i.test(row.duration)) duration = "Throughout the works";
+    else if (/from\s+completion\s+of\s+works/i.test(row.duration)) duration = "On completion of the works";
+    else if (i === 0) duration = "From the start of the assignment";
+    else duration = `After client sign-off of Phase ${i}`;
+    return { ...row, duration };
+  });
+}
+
 /** One phase of the canonical work plan, as every representation sees it. */
 export interface CanonicalWorkPlanPhase {
   /** 1-based position in the plan. */
@@ -261,7 +281,7 @@ export interface CanonicalWorkPlanPhase {
   readonly title: string;
   /** Semicolon-separated artefacts this phase produces. */
   readonly deliverables: string;
-  /** "Weeks 3-6", or "Days 8-21" when the tender states a total day count. */
+  /** "After client sign-off of Phase 2", or "Days 8-21" when the tender states a total day count. */
   readonly durationLabel: string;
   /** The role accountable for the phase, e.g. "Resident Engineer". */
   readonly responsibleRole: string;
@@ -301,7 +321,7 @@ function leadKeywordsFor(role: string): readonly string[] {
  */
 export function canonicalWorkPlan(opts: { sector: string; totalDays?: number; sourceText?: string }): readonly CanonicalWorkPlanPhase[] {
   let rows = sectorPhasingRows(opts.sector).map((row) => ({ ...row, deliverables: resolveJurisdictionTokens(row.deliverables, opts.sourceText) }));
-  if (opts.totalDays && opts.totalDays > 0) rows = rewritePhasesToDays(rows, opts.totalDays);
+  rows = opts.totalDays && opts.totalDays > 0 ? rewritePhasesToDays(rows, opts.totalDays) : rewritePhasesToSequence(rows);
   return rows.map((row, i) => ({
     index: i + 1,
     title: row.phase,

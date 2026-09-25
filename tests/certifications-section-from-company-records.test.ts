@@ -77,7 +77,7 @@ describe("D.3 is built from the firm's own records when the experts carry none",
     );
   });
 
-  it("still prefers the experts' own certifications when they have them", () => {
+  it("lists the experts' own certifications beside the firm's records", () => {
     const section = buildCertificationsSection({
       experts: [{ fullName: "A", certifications: JSON.stringify(["PhD Structural Engineering", "ECSA Registered"]) }] as unknown as ExpertRecord[],
       companyName: "Hope Engineering",
@@ -86,6 +86,9 @@ describe("D.3 is built from the firm's own records when the experts carry none",
     });
     assert.match(section, /ECSA Registered/);
     assert.match(section, /PhD Structural Engineering/);
-    assert.ok(!/HAEC\/034\/23/.test(section), "the expert list is the section when it exists");
+    // D.3 is the one place the firm's records are listed (A.3 no longer
+    // repeats them), so the experts' registrations are added beside them,
+    // not instead of them.
+    assert.match(section, /HAEC\/034\/23/);
   });
 });

@@ -25,7 +25,7 @@
  */
 import { logger } from "../../observability";
 import { generateProposalPdf } from "../proposal-pdf";
-import { extractDocxVisibleText, extractDocxMarkdownText, documentHygieneIssues, renderedArtifactHygieneIssues } from "../export-readiness";
+import { extractDocxVisibleText, extractDocxProposalParts, documentHygieneIssues, renderedArtifactHygieneIssues } from "../export-readiness";
 import type { PdfBrandImage } from "../proposal-pdf";
 import { validateDocumentQuality } from "../document-quality-validator";
 import {
@@ -431,8 +431,11 @@ export async function finalizeRequiredPdf(input: {
   // never block PDF generation when the DOCX XML is malformed but the visible
   // text is intact.
   let renderMarkdown: string | null = null;
+  let coverDetails: string[] = [];
   try {
-    renderMarkdown = await extractDocxMarkdownText(doc.fileContent, doc.exactFileName ?? doc.name ?? "source.docx");
+    const parts = await extractDocxProposalParts(doc.fileContent, doc.exactFileName ?? doc.name ?? "source.docx");
+    renderMarkdown = parts?.markdown ?? null;
+    coverDetails = parts?.coverDetails ?? [];
   } catch (error) {
     logger.error("pdf-finalizer: structured markdown extraction threw", { documentId: doc.id, detail: error });
     renderMarkdown = null;
@@ -506,6 +509,7 @@ export async function finalizeRequiredPdf(input: {
       companyName: company?.name ?? null,
       companyAddress: company?.address ?? null,
       companyContact: contactParts.length ? contactParts.join("  |  ") : null,
+      coverDetails,
       signature: brandImages.signature,
       stamp: brandImages.stamp,
     });

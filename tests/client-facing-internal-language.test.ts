@@ -294,16 +294,28 @@ describe("the brand-alignment obstacle names the real client", () => {
     }
   });
 
+  // The row is built only when the tender raises branding itself; these two
+  // cases use a tender that does.
+  const brandedTenderText = tenderText + "\nDesigns shall follow the Client's brand guidelines.";
+
+  it("builds no brand-alignment row when the tender never raises branding", async () => {
+    // Run 36074770709 told the client its identity "implies brand-alignment
+    // requirements" in a table of obstacles "directly traceable to clauses in
+    // this tender" — on a tender with no such clause.
+    const { buildTenderObstaclesBlock } = await import("../lib/engine/tender-closers");
+    assert.doesNotMatch(buildTenderObstaclesBlock(tenderText, "Pharo Ventures"), /brand/i);
+  });
+
   it("names the client when the extracted identity is a real organisation", async () => {
     const { buildTenderObstaclesBlock } = await import("../lib/engine/tender-closers");
-    const block = buildTenderObstaclesBlock(tenderText, "Pharo Ventures");
+    const block = buildTenderObstaclesBlock(brandedTenderText, "Pharo Ventures");
     assert.match(block, /Pharo Ventures/, "the grounded client name belongs in the brand-alignment row");
     assert.doesNotMatch(block, /\(CLIENT\)|\(FILE\)/);
   });
 
   it("falls back to the web-presence wording rather than inventing an identity", async () => {
     const { buildTenderObstaclesBlock } = await import("../lib/engine/tender-closers");
-    const block = buildTenderObstaclesBlock(tenderText, null);
+    const block = buildTenderObstaclesBlock(brandedTenderText, null);
     assert.match(
       block,
       /references the client's own web presence/,
