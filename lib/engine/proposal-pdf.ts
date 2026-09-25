@@ -16,15 +16,16 @@ const FONT_SIZE_H2 = 12;
 const FONT_SIZE_H3 = 11;
 const FONT_SIZE_SMALL = 9;
 const FONT_SIZE_TABLE = 9;
-const LINE_HEIGHT_TABLE = 12;
+const LINE_HEIGHT_TABLE = 13;
 const PARAGRAPH_GAP = 6;
 const SECTION_GAP = 16;
 
 const BRAND_COLOR: [number, number, number] = [0.1, 0.18, 0.36];
+const ACCENT_COLOR: [number, number, number] = [0.72, 0.53, 0.16];
 const TEXT_COLOR: [number, number, number] = [0.05, 0.05, 0.05];
 const MUTED_COLOR: [number, number, number] = [0.45, 0.45, 0.45];
 const TABLE_BORDER: [number, number, number] = [0.7, 0.7, 0.7];
-const TABLE_HEADER_BG: [number, number, number] = [0.94, 0.95, 0.97];
+const TABLE_ALT_BG: [number, number, number] = [0.975, 0.98, 0.988];
 
 interface RenderContext {
   doc: PDFDocument;
@@ -382,7 +383,10 @@ function drawTable(ctx: RenderContext, rows: string[][]): void {
   const cols = Math.max(...rows.map((r) => r.length));
   if (cols === 0) return;
   const colWidth = CONTENT_WIDTH / cols;
-  const cellPad = 4;
+  // Six points gives descenders and multi-line cells clear air above the
+  // border. The earlier four-point pad visibly struck through the final line
+  // of expert-profile rows after PDF rasterisation.
+  const cellPad = 6;
 
   // Pre-wrap cell text so we know how many lines each row needs.
   const wrappedRows = rows.map((r, ri) => {
@@ -398,21 +402,37 @@ function drawTable(ctx: RenderContext, rows: string[][]): void {
         return wrapText(clean, ctx.fonts, "regular", FONT_SIZE_TABLE, colWidth - cellPad * 2);
       });
   });
-  const rowHeights = wrappedRows.map((wr) => Math.max(...wr.map((lines) => lines.length), 1) * LINE_HEIGHT_TABLE + cellPad * 2);
+  // pdf-lib's width metrics and the rasteriser's glyph extents can differ by
+  // a fraction at narrow column edges. Reserve one safety line so a final
+  // wrapped line can never cross the row border (observed on the last expert
+  // row of a delivered proposal).
+  const rowHeights = wrappedRows.map((wr) => (Math.max(...wr.map((lines) => lines.length), 1) + 1) * LINE_HEIGHT_TABLE + cellPad * 2);
+  ensureSpace(ctx, rowHeights[0]);
+  const tableTopY = ctx.y;
+  const tableStartPage = currentPage(ctx);
 
   for (let ri = 0; ri < rows.length; ri++) {
     const rowHeight = rowHeights[ri];
     ensureSpace(ctx, rowHeight);
     const yTop = ctx.y;
     const yBottom = ctx.y - rowHeight;
-    // Header row gets a fill background
+    // Strong navy header and subtle alternating rows improve scanability
+    // without introducing unsupported content or relying on colour alone.
     if (ri === 0) {
       currentPage(ctx).drawRectangle({
         x: PAGE_MARGIN,
         y: yBottom,
         width: CONTENT_WIDTH,
         height: rowHeight,
-        color: rgb(...TABLE_HEADER_BG),
+        color: rgb(...BRAND_COLOR),
+      });
+    } else if (ri % 2 === 0) {
+      currentPage(ctx).drawRectangle({
+        x: PAGE_MARGIN,
+        y: yBottom,
+        width: CONTENT_WIDTH,
+        height: rowHeight,
+        color: rgb(...TABLE_ALT_BG),
       });
     }
     // Cell borders + text
@@ -435,7 +455,7 @@ function drawTable(ctx: RenderContext, rows: string[][]): void {
           y: ty,
           size: FONT_SIZE_TABLE,
           font: ctx.fonts.fontFor(ln, cellStyle),
-          color: rgb(...TEXT_COLOR),
+          color: ri === 0 ? rgb(1, 1, 1) : rgb(...TEXT_COLOR),
         });
         ty -= LINE_HEIGHT_TABLE;
       }
@@ -456,10 +476,12 @@ function drawTable(ctx: RenderContext, rows: string[][]): void {
     });
     ctx.y = yBottom;
   }
-  // Top border of table (above first row's top)
-  currentPage(ctx).drawLine({
-    start: { x: PAGE_MARGIN, y: ctx.y + rowHeights[0] },
-    end: { x: PAGE_MARGIN + CONTENT_WIDTH, y: ctx.y + rowHeights[0] },
+  // Top border belongs at the table's original top. Computing it from the
+  // final ctx.y put this line inside the final row whenever a table contained
+  // more than one row — the visible strike-through in delivered expert tables.
+  tableStartPage.drawLine({
+    start: { x: PAGE_MARGIN, y: tableTopY },
+    end: { x: PAGE_MARGIN + CONTENT_WIDTH, y: tableTopY },
     thickness: 0.4,
     color: rgb(...TABLE_BORDER),
   });
@@ -483,6 +505,7 @@ async function buildCoverPage(
 
   // Dark header band
   page.drawRectangle({ x: 0, y: PAGE_HEIGHT - 120, width: PAGE_WIDTH, height: 120, color: rgb(...BRAND_COLOR) });
+  page.drawRectangle({ x: 0, y: PAGE_HEIGHT - 126, width: PAGE_WIDTH, height: 6, color: rgb(...ACCENT_COLOR) });
 
   const titleLines = wrapText(opts.title, ctx.fonts, "bold", 18, CONTENT_WIDTH - 20);
   let ty = PAGE_HEIGHT - 60;

@@ -233,6 +233,25 @@ and leaves absent, ambiguous, or foreign-token evidence blocked. Targeted
 regression: 3 passed; TypeScript and `git diff --check` passed. Next: deploy
 and repeat the same PATH analysis before any proposal-layout work.
 
+**Closed:** exact-head Preview acceptance run `36156858399` succeeded on the
+same PATH tender. Its persisted structured chunk records provider `zai`; the
+job promoted successfully after active-file/page/quote proof. The seven initial
+failures reduced to two real PDF-extraction typography mismatches (a private
+font bullet between clauses and non-breaking-hyphen versus en dash); canonical
+containment/page location now normalizes only those presentational glyphs.
+Page-one text in a form-feed-delimited document is also correctly proven as
+page 1. Missing, ambiguous, foreign-file, or substantively different quotes
+remain blocked. The temporary branch-triggered evidence runner was removed
+after acceptance.
+
+**Layout continuation:** the PDF renderer now uses a navy table header, white
+header text, restrained alternating rows, larger cell padding/leading, and a
+gold cover accent. The table top rule is anchored before rendering rows; its
+previous `ctx.y + rowHeights[0]` calculation used the final cursor and visibly
+struck through the last table row. A 4-page stress fixture rendered every page
+with correct page totals and no clipping, overflow, footer collision, or table
+text/border overlap; all pages were visually inspected.
+
 ### 2026-09-25 UTC — Codex (PR #1175-only recovery verification)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / existing draft PR #1175. No new PR, merge, approval, rebase, or Production promotion.
