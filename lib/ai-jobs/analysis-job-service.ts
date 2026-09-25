@@ -452,7 +452,10 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
           // but not sufficient: the strict snapshot comparison above separately
           // proves file IDs, source bytes, extracted text and chunk boundaries.
           sourceIntegrityIntact,
-          providerAvailable: isAnyProviderEligible(),
+          // Re-proving an already-SUCCEEDED chunk spends no provider request;
+          // requiring live provider capacity here would keep a repaired
+          // promotion permanently blocked during an unrelated outage.
+          providerAvailable: promotionGroundingMayBeReproved ? true : isAnyProviderEligible(),
         });
         if (historicalOwnershipRevalidated) {
           await tx.aiAnalyzeRetryState.updateMany({
