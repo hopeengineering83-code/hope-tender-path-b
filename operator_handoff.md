@@ -27,6 +27,10 @@ Before making changes:
 
 Update this file in the same commit as the substantive work. Do not make a separate push only for a handoff entry.
 
+Owner communication preference (2026-09-25): complete one bounded item at a
+time, then provide a concise, standalone summary that can be copied directly
+without editing or reconstructing context from earlier messages.
+
 Add a newest-first Session Log entry containing:
 
 - UTC timestamp and tool name;
