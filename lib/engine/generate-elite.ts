@@ -19,6 +19,8 @@ import { enforceCanonicalNames } from "./entity-name-normalizer";
 import { exactSelectionLimit, forbidsBranding, forbidsCoverPage, requiresSignatureOrStamp } from "./scope-policy";
 import { finalizeClientReadyProposalMarkdown } from "./proposal-benchmark-guard";
 import { appendEvaluatorResponseMatrix } from "./proposal-evaluator-matrix";
+import { resolveSignatory, signOffLines } from "./signatory";
+import { sourceGroundedEvaluationCriteria } from "./tender-evaluation-criteria";
 import { loadDurableCompanySupportRecords } from "../prisma-schema-compatibility";
 import { canUseVaultRecord, sourceVerifiedListElements } from "../vault-review-provenance";
 import { buildClientProposalStrengtheningSections } from "./proposal-strengthening-sections";
@@ -54,7 +56,7 @@ import { applyClientRegister } from "./client-register";
 import { buildBidComplianceMapping } from "./bid-compliance-mapping";
 import { buildComplianceMatrixSection, hasComplianceMatrixHeading } from "./compliance-matrix-builder";
 import { buildEvaluatorMirrorSection, hasEvaluatorMirrorHeading } from "./evaluator-mirror-builder";
-import { buildWinThemesSection, hasWinThemesHeading } from "./win-themes-builder";
+import { hasWinThemesHeading } from "./win-themes-builder";
 import { buildSelfScoreSection, hasSelfScoreHeading, stripSelfScoreSections } from "./self-score-builder";
 import { extractTenderLanguageEchoes, formatEchoesForPrompt } from "./tender-language-echoes";
 import { extractTenderFacts, formatFactsForPrompt, buildTenderSpecificsBlock } from "./tender-facts-extractor";
@@ -76,8 +78,7 @@ import { amplifySectionCDepth } from "./section-c-depth-amplifier";
 import { injectMethodologyTables } from "./methodology-tables";
 import { injectBeyondSpecTables } from "./beyond-spec-tables";
 import { tenderAsksFor } from "./tender-asks-for";
-import { buildScopeDeliveryPlan, scopeRolesByExpert } from "./scope-delivery-plan";
-import { injectWinThemesTable } from "./win-themes-table";
+import { buildScopeDeliveryPlan, extractScopeItems, scopeRolesByExpert } from "./scope-delivery-plan";
 import { injectMobilizationAndChecklist } from "./mobilization-and-checklist";
 import { stripPlaceholders } from "./placeholder-stripper";
 import { stripInternalReviewSections, stripInternalDiagnosticContent } from "./internal-review-stripper";
@@ -122,6 +123,12 @@ type CompanyLogo = {
 // firm's certificate row as "VAT Registration tax compliance 15480320805".
 // The match is a lookahead, so no text after the word is consumed.
 export const VAT_RATE_MENTION = /\bvat\b(?=[^\n]{0,12}\d)(?![\s:|—–-]*(?:reg(?:istration)?\.?[\s:|—–-]*(?:no\.?|number|#)?[\s:|—–-]*)?\d{7,})/gi;
+
+/** A record status that means the firm holds it now, or no status recorded. */
+export function isCurrentRecordStatus(status: string | null | undefined): boolean {
+  const value = (status ?? "").trim();
+  return !value || /^(?:active|valid|current|verified|in\s+force)$/i.test(value);
+}
 
 export function disambiguateRepeatedHeadings(markdown: string): string {
   const seen = new Map<string, number>();
@@ -692,7 +699,10 @@ function fallbackProposalMarkdown(params: {
       .slice(EXECUTIVE_SUMMARY_DIFFERENTIATORS, EXECUTIVE_SUMMARY_DIFFERENTIATORS + COVER_LETTER_DIFFERENTIATORS)
       .map((d) => `- ${d}`));
   }
-  lines.push(`We trust this proposal demonstrates our capacity, commitment, and technical depth.\n\nSincerely,\n${params.companyName}`);
+  // The signatory is taken from the firm's own records (lib/engine/signatory.ts).
+  const signatory = resolveSignatory({ gmName: params.companyGM, gmLicense: params.companyGMLicense, experts: reviewedExperts });
+  lines.push("We trust this proposal demonstrates our capacity, commitment, and technical depth.");
+  lines.push(signOffLines(params.companyName, signatory).join("\n"));
 
   // ── Cover Page ────────────────────────────────────────────────────────────────
   lines.push("# Technical Proposal");
@@ -816,11 +826,16 @@ function fallbackProposalMarkdown(params: {
   lines.push("## A.3 Evidence of Compliance");
   const legalRecs = params.companyLegalRecords ?? [];
   const complianceRecs = params.companyComplianceRecords ?? [];
+  // Only current records are presented as held, and the stored status code is
+  // not printed: "[ACTIVE]" after every line is the database's state field, not
+  // something a reader needs — listing a record here already says it is held.
+  // A record whose status says otherwise (expired, pending, revoked) is not
+  // claimed at all.
   if (legalRecs.length > 0) {
-    lines.push(...legalRecs.slice(0, 3).map((r) => `- ${r.title}${recordTypeForDisplay(r.recordType) ? ` (${recordTypeForDisplay(r.recordType)})` : ""}${r.authority ? ` — ${r.authority}` : ""}${r.referenceNumber ? ` Ref: ${r.referenceNumber}` : ""}${r.status ? ` [${r.status}]` : ""}`));
+    lines.push(...legalRecs.filter((r) => isCurrentRecordStatus(r.status)).slice(0, 3).map((r) => `- ${r.title}${recordTypeForDisplay(r.recordType) ? ` (${recordTypeForDisplay(r.recordType)})` : ""}${r.authority ? ` — ${r.authority}` : ""}${r.referenceNumber ? ` Ref: ${r.referenceNumber}` : ""}`));
   }
   if (complianceRecs.length > 0) {
-    lines.push(...complianceRecs.slice(0, 3).map((r) => `- ${r.title}${recordTypeForDisplay(r.complianceType) ? ` (${recordTypeForDisplay(r.complianceType)})` : ""}${r.referenceNumber ? ` Ref: ${r.referenceNumber}` : ""}${r.status ? ` [${r.status}]` : ""}`));
+    lines.push(...complianceRecs.filter((r) => isCurrentRecordStatus(r.status)).slice(0, 3).map((r) => `- ${r.title}${recordTypeForDisplay(r.complianceType) ? ` (${recordTypeForDisplay(r.complianceType)})` : ""}${r.referenceNumber ? ` Ref: ${r.referenceNumber}` : ""}`));
   }
   if (legalRecs.length === 0 && complianceRecs.length === 0 && params.companyEvidenceLines.length > 0) {
     lines.push(...params.companyEvidenceLines.slice(0, 6).map((x) => `- ${x}`));
@@ -961,6 +976,9 @@ function fallbackProposalMarkdown(params: {
     "All information provided is accurate and supported by documentary evidence available on request. " +
     "We commit to delivering the assigned scope with the proposed team, methodology, and schedule."
   );
+  if (signatory) {
+    lines.push([`For and on behalf of ${params.companyName}:`, `**${signatory.name}**`, signatory.title].join("\n"));
+  }
 
   // ── Submission Control Sheet ──────────────────────────────────────────────────
   lines.push("# Submission Control Sheet");
@@ -1481,6 +1499,17 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
   // the provenance surfaces that report what the source said.
   const deadlineQuoteForDisplay = ownerConfirmedFields.has("deadline") ? null : tender.deadlineSourceQuote;
   const intelligence = buildProposalIntelligence({ tender: writerTender, company, requirements: tender.requirements, experts, projects });
+  // The tender's own evaluation criteria, where AI Analyze recorded them with
+  // a source quote, replace the keyword detector's sector defaults: Section F,
+  // the Executive Summary and the writer all name criteria, and each must be
+  // the tender's (lib/engine/tender-evaluation-criteria.ts).
+  const groundedCriteria = sourceGroundedEvaluationCriteria((tender as { evaluationCriteriaSourceJson?: string | null }).evaluationCriteriaSourceJson);
+  if (groundedCriteria.length > 0) {
+    intelligence.evaluationCriteria = groundedCriteria.map((c) => c.criterion);
+    intelligence.evaluationWeights = groundedCriteria
+      .filter((c) => c.weight)
+      .map((c) => ({ criterion: c.criterion, weight: c.weight as string, rawMatch: c.criterion }));
+  }
   // Cleaned tender title (sanitized via cleanTenderTitle inside
   // buildProposalIntelligence). Used everywhere a user-facing label is
   // needed; the raw tender.title is intentionally kept out of generated
@@ -2593,20 +2622,19 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
         topExpertName: (experts as ExpertRecord[])[0]?.fullName ?? null,
         primarySector: intelligence.primarySector,
         requirements: tender.requirements,
+        projects: projects as ProjectRecord[],
+        experts: experts as ExpertRecord[],
+        scopeItemCount: extractScopeItems(tenderText).length,
+        submission: { fileNames: safeParseArr(tender.exactFileNaming), method: writerTender.submissionMethod },
       })
     : null;
-  const deterministicWinThemes = !hasWinThemesHeading(upstreamMarkdownForBackstops)
-    ? buildWinThemesSection({
-        differentiators: intelligence.differentiators,
-        evaluationCriteria: intelligence.evaluationCriteria,
-        topProjects: (projects as ProjectRecord[]).slice(0, 5),
-        topExperts: (experts as ExpertRecord[]).slice(0, 5),
-        companyName: company.name,
-        clientName: intelligence.clientName,
-        primarySector: intelligence.primarySector,
-        requirements: tender.requirements,
-      })
-    : null;
+  // No deterministic Section G. Its rows restated the differentiators the
+  // cover letter, Executive Summary and Section D already carry, and each row
+  // printed the same differentiator twice — its opening words as "Capability"
+  // and its first sentence as "What This Means for the Client" (run
+  // 36074770709). What it was for — each criterion, the evidence that answers
+  // it — is Section F, which now states that evidence from the records.
+  const deterministicWinThemes: string | null = null;
 
   // Section H must observe whether E/F/G are now in place — its score
   // heuristic credits the proposal for having them. We compose the
@@ -2916,18 +2944,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
   // `intelligence.gapsToAddressInNarrative` is deliberately NOT passed: it is
   // the internal gap channel, and its entries are instructions the bid team
   // writes to itself. See the note on tenderSpecificRows in win-themes-table.ts.
-  const winThemes = injectWinThemesTable(humanizedMarkdown, {
-    primarySector: intelligence.primarySector,
-    projects: evidenceLibrary,
-    differentiators: intelligence.differentiators,
-    themes: (intelligence.themes ?? []).map((t) => t.label),
-    evaluationCriteria: intelligence.evaluationCriteria,
-    companyName: company.name,
-  });
-  if (winThemes.injected) {
-    logger.info(`[generate-elite] Win Themes table injected (Section G).`);
-  }
-  humanizedMarkdown = winThemes.markdown;
+  // Section G's win-themes table is no longer injected (see deterministicWinThemes).
 
   // ─── Mobilization plan + Submission Readiness checklist (PR H) ──────────
   // Two more deterministic sections that elite proposals carry:

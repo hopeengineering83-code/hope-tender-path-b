@@ -66,6 +66,10 @@ function pharoAnalysis(prompt: string) {
       req("Healthcare Compliance and Workflow Planning Approach", "The proposal must describe the healthcare compliance and workflow planning approach.", "TECHNICAL", "Healthcare Compliance and Workflow Planning Approach", 4),
       req("Additional Information / Certifications", "The proposal must include additional information and certifications.", "DECLARATION", "Additional Information / Certifications", 4),
       req("Annexes / Supporting Documents", "The proposal must include annexes and supporting documents.", "ANNEX", "Annexes / Supporting Documents", 4),
+      // The two eligibility requirements the real analyzer extracted on Preview
+      // (run 36074770709's compliance matrix), quoting the tender's own words.
+      req("Valid Business License and Registration", "Valid business license and registration in Ethiopia.", "ELIGIBILITY", "Valid business license and registration in Ethiopia", 7),
+      req("Multidisciplinary Professional Team", "Availability of a multidisciplinary professional team: architects, engineers, biomedical engineer, MEP experts, and other relevant specialists.", "EXPERT", "Architects, engineers, biomedical engineer, MEP experts, and other relevant specialists", 7),
     ],
     exactFileNaming: ["Technical Proposal.pdf"],
     exactFileOrder: ["Technical Proposal.pdf"],
@@ -142,6 +146,15 @@ async function startModel(): Promise<string> {
       const file = `${OUT}/prompts/${String(++promptIndex).padStart(3, "0")}-${kind}.txt`;
       writeFileSync(file, prompt);
       promptLog.push({ kind, chars: prompt.length, file });
+      // BENCH_DRAFT_MODE=unavailable answers every drafting request the way an
+      // out-of-credit provider does (HTTP 402), so each proposal section falls
+      // back to the deterministic writer — the condition Preview runs under
+      // when every provider is exhausted.
+      if (!isAnalysis && process.env.BENCH_DRAFT_MODE === "unavailable") {
+        res.writeHead(402, { "content-type": "application/json" });
+        res.end(JSON.stringify({ message: "Payment required (benchmark: provider unavailable)", type: "payment_required_error", code: "payment_required" }));
+        return;
+      }
       const content = isAnalysis ? JSON.stringify(pharoAnalysis(prompt)) : draftAnswer(prompt);
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({
@@ -170,6 +183,14 @@ async function main() {
   process.env.CEREBRAS_BASE_URL = baseUrl;
   for (const n of ["GEMINI_API_KEY","GROQ_API_KEY","MISTRAL_API_KEY","ZAI_API_KEY","OPENROUTER_API_KEY","OPENAI_API_KEY","TOGETHER_API_KEY","DEEPSEEK_API_KEY","ANTHROPIC_API_KEY"]) delete process.env[n];
 
+  // The vault import is one interactive transaction over ~115 projects; on a
+  // local Postgres it runs past Prisma's 5 s default. lib/prisma reuses a
+  // client already on globalThis, so the benchmark supplies one with a longer
+  // window. Product code is unchanged.
+  if (!(globalThis as any).prisma) {
+    const { PrismaClient } = require("@prisma/client");
+    (globalThis as any).prisma = new PrismaClient({ transactionOptions: { timeout: 180_000, maxWait: 30_000 } });
+  }
   const prismaModule = require("../lib/prisma");
   const prisma = prismaModule.prisma;
   await prismaModule.prismaReady;

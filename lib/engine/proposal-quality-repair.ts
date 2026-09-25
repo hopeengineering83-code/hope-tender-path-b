@@ -1,5 +1,5 @@
 import { filterCleanLines } from "./pattern-filter";
-import { CLIENT_FACING_SECTION_F_HEADING, CLIENT_FACING_SECTION_G_HEADING, SECTION_F_HEADING_RX, SECTION_G_HEADING_RX } from "./client-facing-section-titles";
+import { CLIENT_FACING_SECTION_F_HEADING, SECTION_F_HEADING_RX } from "./client-facing-section-titles";
 import { truncateDisplayLine, withoutProvenanceTags } from "./proposal-labels";
 import type { EvaluatorMatrixInput } from "./proposal-evaluator-matrix";
 import { buildTenderResponseBlueprint } from "./tender-response-blueprint";
@@ -78,33 +78,6 @@ function sectionF(input: EvaluatorMatrixInput): string {
   ].join("\n\n");
 }
 
-function sectionG(input: EvaluatorMatrixInput): string {
-  const differentiators = take(input.differentiators, 5, 220);
-  const fallback = [
-    "Evidence-led response based on reviewed company, project and expert records.",
-    "Multidisciplinary capability across design, interior design, supervision, contract administration, geotechnical investigation, urban planning and asset management.",
-    "Proposal structure that maps scope, criteria, evidence and submission controls.",
-  ];
-  const finalItems = differentiators.length > 0 ? differentiators : fallback;
-  const rows = [
-    "| Our Capability | Linked evaluation criterion | Where it is evidenced |",
-    "|---|---|---|",
-  ];
-  const requirements = take(input.requirements, finalItems.length, 180);
-  finalItems.forEach((item, index) => {
-    // The third column used to read "Use reviewed evidence and remove
-    // unsupported claims before export." — an instruction the engine writes to
-    // the bid team, printed in the client's copy as though it were proof. It
-    // now names where the reader can actually check the capability.
-    rows.push(`| ${clean(item)} | ${requirements[index] ?? "Technical quality and evidence strength"} | Reviewed company, project and expert records — see Section B (Relevant Experience) and the Compliance Matrix. |`);
-  });
-  return [
-    `## ${CLIENT_FACING_SECTION_G_HEADING}`,
-    "Each capability below is stated only where a reviewed record supports it, and is linked to the evaluation criterion it addresses.",
-    rows.join("\n"),
-  ].join("\n\n");
-}
-
 function sectionH(input: EvaluatorMatrixInput): string {
   const blueprint = buildTenderResponseBlueprint(input).slice(0, 8);
   const direct = blueprint.filter((item) => item.evidenceSupport === "DIRECT").length;
@@ -135,7 +108,8 @@ export function applyProposalQualityRepairAddenda(markdown: string, input: Evalu
   // names these sections now ship under and the older internal names, so a
   // proposal that already has the section never gets a second copy appended.
   if (!hasHeading(output, SECTION_F_HEADING_RX)) repairs.push(sectionF(input));
-  if (!hasHeading(output, SECTION_G_HEADING_RX)) repairs.push(sectionG(input));
+  // Section G is not appended: its capability rows restated differentiators
+  // already in the document; Section F carries criterion-by-criterion evidence.
   if (!hasHeading(output, /(^|\n)\s*#{1,4}\s*(?:section\s*[H:.\-\s]*)?\s*(?:proposal\s+)?self.score/i)) repairs.push(sectionH(input));
   if (repairs.length === 0) return output;
   // No engine self-narration in the deliverable. This block used to open with

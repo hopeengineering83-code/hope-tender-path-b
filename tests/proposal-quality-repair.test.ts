@@ -20,26 +20,22 @@ const input = {
 };
 
 describe("applyProposalQualityRepairAddenda", () => {
-  it("adds evaluator-critical Section E/F/G/H controls when missing", () => {
+  it("adds evaluator-critical Section E/F/H controls when missing, and no Section G", () => {
     const repaired = applyProposalQualityRepairAddenda("# Cover Letter\n\nWe submit this proposal.\n\n# Executive Summary\n\nHospital project response.", input);
 
     assert.match(repaired, /Section E: Compliance Matrix/i);
-    // Sections F and G ship under client-facing names. "Evaluation Criteria
+    // Section F ships under its client-facing name. "Evaluation Criteria
     // Response Mirror", "Win Themes" and "Discriminators" are bid-desk
     // vocabulary and a real proposal shipped them to the procuring entity.
     assert.match(repaired, /Section F: Response to Evaluation Criteria/i);
-    assert.match(repaired, /Section G: Why We Are Well Suited/i);
+    // Section G is not appended: its capability rows restated differentiators
+    // the document already carries, each printed twice across two columns
+    // (run 36074770709). Section F carries the criterion-by-criterion evidence.
+    assert.doesNotMatch(repaired, /Section G/i);
+    assert.doesNotMatch(repaired, /Why We Are Well Suited/i);
     assert.doesNotMatch(repaired, /response\s+mirror/i);
     assert.doesNotMatch(repaired, /win\s+themes?/i);
     assert.doesNotMatch(repaired, /\bdiscriminators?\b/i);
-    // The third column of Section G used to print the engine's instruction to
-    // its own bid team ("Use reviewed evidence and remove unsupported claims
-    // before export.") in the cell reserved for the client's proof. Scope the
-    // check to Section G: Section H is an internal self-score that the
-    // internal-review stripper removes before render, and it legitimately
-    // talks about pre-export controls.
-    const sectionGBody = repaired.slice(repaired.search(/## Section G:/i), repaired.search(/## Section H:/i));
-    assert.doesNotMatch(sectionGBody, /before\s+export/i);
     assert.match(repaired, /Section H: Proposal Self-Score/i);
     assert.match(repaired, /FULLY MET|PARTIALLY MET|NOT MET/i);
     assert.match(repaired, /\d+\/10/i);

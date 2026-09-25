@@ -39,6 +39,7 @@
 // proposal-intelligence outputs. AI calls there would be wasted budget
 // because the source data is already structured.
 
+import { resolveSignatory, signatoryExpertsFromProofLines, signOffLines } from "./signatory";
 import type { AIBidWriterInput } from "../ai";
 import {
   selectTenderContext,
@@ -810,7 +811,6 @@ Section D additions (auto-injected end of Section D):
 - Health and Safety Plan
 - Innovation and Value Engineering Proposals
 - Local Content and Capacity Building
-- Why We Are Well Suited
 
 Closers (auto-injected before Section E):
 - Tender-Specific Obstacles and Mitigation
@@ -1304,7 +1304,14 @@ function buildCoverAndSummaryFallback(input: AIBidWriterInput): string {
     "",
     // Not "We confirm enclosed appendices": a one-file package encloses none.
     "The proposal follows the structure the tender requests, and the Compliance Matrix maps each tender requirement to the section that answers it.",
-    v.gmName ? `\nSincerely,\n\n${v.gmName}\n${v.gmTitle ?? "General Manager"}${v.gmLicense ? `\nLicense ${v.gmLicense}` : ""}\n${companyName}` : "",
+    // Signed from the firm's own records: the vault GM, else the one proposed
+    // expert whose title states an executive office (lib/engine/signatory.ts).
+    signOffLines(companyName, resolveSignatory({
+      gmName: v.gmName,
+      gmTitle: v.gmTitle,
+      gmLicense: v.gmLicense,
+      experts: signatoryExpertsFromProofLines(input.experts),
+    })).join("\n"),
     "",
     "# Executive Summary",
     execSummaryLead,

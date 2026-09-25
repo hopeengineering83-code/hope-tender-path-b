@@ -108,6 +108,12 @@ const INTERNAL_REVIEW_HEADINGS: RegExp[] = [
   /^##?\s+Multi-Angle\s+Proposal\s+Quality\s+Check\b/i,
   /^##?\s+Evidence\s+Gaps\s+and\s+Anti-Hallucination\s+Controls\b/i,
   /^##?\s+Win\s+Themes\s+and\s+Differentiators\b/i,
+  // Section G under any of its names. Its capability rows restated the
+  // differentiators the cover letter, Executive Summary and Section D already
+  // carry, and printed each one twice across two columns (run 36074770709).
+  // No builder emits it now; this stops a model writer or the refinement pass
+  // from shipping it.
+  /^##?\s+(?:Section\s+G\s*[:.\-–—]\s*)?(?:Win\s+Themes?(?:\s+(?:and|&)\s+(?:Discriminators?|Differentiators?))?|Themes?\s+(?:and|&)\s+Discriminators?|Why\s+We\s+Are\s+Well\s+Suited)\s*$/i,
   // "The bid manager runs through this checklist immediately before
   // submission ... retained in the bid archive": the bid desk's own list, which
   // also ticked off CVs and certificates as "attached" in a one-file package.

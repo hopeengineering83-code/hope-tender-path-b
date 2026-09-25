@@ -99,9 +99,16 @@ function detectExisting(markdown: string): Set<string> {
 
   // Heading text — covers the case where the AI emitted the table
   // organically and we shouldn't duplicate it.
+  //
+  // Tested against the headings with their section numbers removed as well.
+  // The sector risk table is emitted as "## C.5 Risk Register and Mitigation
+  // Strategy"; /^##\s+Risk\s+Register/ could not see past "C.5", so a second,
+  // generic register was appended and run 36074770709 delivered two risk
+  // registers in C.8.
+  const unnumbered = markdown.replace(/^(#{2,4}\s+)(?:Section\s+)?[A-Z]\.\d+(?:\.\d+)*[a-z]?\s*[:.\-–—]?\s+/gim, "$1");
   for (const [key, patterns] of Object.entries(HEADING_PATTERNS)) {
     if (present.has(toMarker(key))) continue;
-    if (patterns.some((p) => p.test(markdown))) {
+    if (patterns.some((p) => p.test(markdown) || p.test(unnumbered))) {
       present.add(toMarker(key));
     }
   }
