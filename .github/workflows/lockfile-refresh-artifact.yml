@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - integration/production-engine-2026-06
+      - release/consolidated-recovery-20260717
   pull_request:
     branches:
       - release/production-engine-2026-06
@@ -122,6 +123,112 @@ jobs:
             package-lock.json
           if-no-files-found: error
           retention-days: 1
+
+  # The API token available to repository automation can read Actions but
+  # cannot dispatch workflows. This branch-only, commit-message-gated probe
+  # lets an owner-authorized session exercise one existing non-Pharo Preview
+  # tender without weakening the two manual application gates. It performs AI
+  # Analyze only, records the real job/provider trace, and never runs Engine,
+  # export, deployment promotion, or any Production route. Remove it after the
+  # provider-gap acceptance is complete.
+  temporary-non-pharo-analysis-acceptance:
+    if: >-
+      github.event_name == 'push'
+      && github.ref == 'refs/heads/release/consolidated-recovery-20260717'
+      && contains(github.event.head_commit.message, '[run-non-pharo-analysis]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      OWNER_EMAIL: ${{ secrets.PREVIEW_OWNER_EMAIL }}
+      OWNER_PASSWORD: ${{ secrets.PREVIEW_OWNER_PASSWORD }}
+      WORKER_SECRET: ${{ secrets.AI_JOBS_WORKER_SECRET }}
+      BASE_URL: https://hope-tender-path-b-git-0db72a-hopeengineering83-codes-projects.vercel.app
+    steps:
+      - uses: actions/checkout@v4
+      - name: Wait for the exact-head Preview
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          for attempt in $(seq 1 60); do
+            body=$(curl -fsS --connect-timeout 10 --max-time 20 "$BASE_URL/api/health" || true)
+            actual=$(printf '%s' "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("commitSha") or d.get("gitCommitSha") or d.get("deployment",{}).get("commitSha") or "")' 2>/dev/null || true)
+            if [ "$actual" = "$EXPECTED_SHA" ] || [ "${actual:0:8}" = "${EXPECTED_SHA:0:8}" ]; then
+              echo "Exact-head Preview is ready at ${EXPECTED_SHA:0:8}."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::Exact-head Preview did not become healthy in ten minutes."
+          exit 1
+      - name: Sign in and select an existing non-Pharo tender
+        run: |
+          test -n "$OWNER_EMAIL" && test -n "$OWNER_PASSWORD" && test -n "$WORKER_SECRET"
+          umask 077
+          python3 - <<'PY' >/tmp/login.json
+          import json, os
+          print(json.dumps({'email': os.environ['OWNER_EMAIL'], 'password': os.environ['OWNER_PASSWORD']}))
+          PY
+          curl -fsS -D /tmp/headers -o /dev/null -X POST \
+            -H 'Content-Type: application/json' -H "Origin: $BASE_URL" -H "Referer: $BASE_URL/login" \
+            --data-binary @/tmp/login.json "$BASE_URL/api/auth/login"
+          cookie=$(grep -i '^set-cookie:' /tmp/headers | grep -o 'hope_session=[^;]*' | head -1)
+          test -n "$cookie"
+          echo "::add-mask::$cookie"
+          echo "SESSION_COOKIE=$cookie" >> "$GITHUB_ENV"
+          curl -fsS -H "Cookie: $cookie" "$BASE_URL/api/tenders" >/tmp/tenders.json
+          python3 - <<'PY' >/tmp/tender.env
+          import json
+          d=json.load(open('/tmp/tenders.json'))
+          rows=d if isinstance(d,list) else (d.get('items') or d.get('tenders') or [])
+          rows=[r for r in rows if 'pharo' not in str(r.get('title','')).lower()]
+          if not rows: raise SystemExit('No existing non-Pharo tender is visible to the Preview owner')
+          rows.sort(key=lambda r: str(r.get('updatedAt') or r.get('createdAt') or ''), reverse=True)
+          r=rows[0]
+          print('TENDER_ID='+str(r['id']))
+          print('TENDER_TITLE='+str(r.get('title','')).replace('\n',' '))
+          PY
+          cat /tmp/tender.env >> "$GITHUB_ENV"
+          sed -E 's/^(TENDER_ID=).*/\1[recorded in artifact]/' /tmp/tender.env
+      - name: Run real AI Analyze and capture its provider trace
+        run: |
+          curl -fsS -X POST -H "Cookie: $SESSION_COOKIE" -H "Origin: $BASE_URL" -H "Referer: $BASE_URL/tenders/$TENDER_ID" \
+            "$BASE_URL/api/tenders/$TENDER_ID/manual-ai-analyze" | tee /tmp/analyze-trigger.json
+          for tick in $(seq 1 80); do
+            curl -fsS -X POST -H "X-Worker-Secret: $WORKER_SECRET" \
+              "$BASE_URL/api/ai-jobs/run-next?jobType=AI_ANALYZE&tenderId=$TENDER_ID" | tee /tmp/worker-latest.json
+            curl -fsS -H "Cookie: $SESSION_COOKIE" "$BASE_URL/api/ai-jobs?tenderId=$TENDER_ID&take=20" >/tmp/jobs.json
+            state=$(python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/jobs.json')); rows=d if isinstance(d,list) else (d.get('jobs') or d.get('items') or [])
+          rows=[r for r in rows if r.get('jobType')=='AI_ANALYZE']
+          print(rows[0].get('status','MISSING') if rows else 'MISSING')
+          PY
+            )
+            echo "AI Analyze state: $state"
+            case "$state" in SUCCEEDED|FAILED|PARTIAL_SUCCESS|CANCELED) break;; esac
+            sleep 10
+          done
+          curl -fsS -H "Cookie: $SESSION_COOKIE" "$BASE_URL/api/tenders/$TENDER_ID/analysis-quality" >/tmp/analysis-quality.json
+          python3 scripts/tmp-summarize-tender-jobs.py /tmp/jobs.json | tee /tmp/job-summary.txt || true
+          python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/jobs.json')); rows=d if isinstance(d,list) else (d.get('jobs') or d.get('items') or [])
+          rows=[r for r in rows if r.get('jobType')=='AI_ANALYZE']
+          if not rows or rows[0].get('status')!='SUCCEEDED':
+              raise SystemExit('Real non-Pharo AI Analyze did not persist a successful structured result')
+          print('REAL_NON_PHARO_ANALYSIS_SUCCEEDED')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: non-pharo-analysis-acceptance
+          path: |
+            /tmp/analyze-trigger.json
+            /tmp/worker-latest.json
+            /tmp/jobs.json
+            /tmp/job-summary.txt
+            /tmp/analysis-quality.json
+          retention-days: 2
 
   # ─── TEMPORARY — owner-authorized, single-use ──────────────────────────────
   #

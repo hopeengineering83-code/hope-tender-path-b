@@ -207,6 +207,16 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-25 UTC — Codex (non-Pharo AI Analyze evidence runner)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / existing draft PR #1175 only.
+- **Scope:** add a temporary, branch- and commit-message-gated GitHub-hosted acceptance job because the available repository token can read Actions but receives HTTP 403 on workflow dispatch. The job waits for the exact-head Preview, signs in with the existing owner Actions secrets, selects an existing tender whose title is not Pharo, invokes only the owner-authorized manual AI Analyze route, drains only AI_ANALYZE work, and uploads the real job/provider evidence. It never invokes Engine, export, Production, merge, or deployment promotion.
+- **Files changed:** `.github/workflows/lockfile-refresh-artifact.yml`, `operator_handoff.md`.
+- **Tests planned before push:** parse the workflow YAML, `git diff --check`, and the workflow's existing source guards. Exact-head Preview execution is intentionally triggered only by the commit marker `[run-non-pharo-analysis]`.
+- **Risk / assumption:** this is temporary acceptance infrastructure and must be removed after the provider gap is reproduced and repaired. A missing non-Pharo tender or missing owner secret fails explicitly rather than silently substituting Pharo.
+- **Next action:** push the marked commit, inspect the uploaded real provider trace, then change provider planning/routing only if that trace proves a code-controlled cause.
+- **Merge status:** **DO NOT MERGE**; Production untouched.
+
 ### 2026-09-25 UTC — Codex (PR #1175-only recovery verification)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / existing draft PR #1175. No new PR, merge, approval, rebase, or Production promotion.
