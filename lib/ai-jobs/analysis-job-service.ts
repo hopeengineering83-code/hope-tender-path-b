@@ -440,7 +440,11 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
           jobStatus: existing.status,
         });
         const decision = decideManualRearm({
-          failureCategory: effectiveCategory,
+          // SOURCE_GROUNDING_INVALID is normally terminal. This exact legacy
+          // promotion message is different: the source did not change and the
+          // repaired finalizer can now prove the stored quote. Pass no stale
+          // terminal category so the explicit manual retry reaches that proof.
+          failureCategory: promotionGroundingMayBeReproved ? null : effectiveCategory,
           nonRetryable: promotionGroundingMayBeReproved ? false : (existing.retryState?.nonRetryable ?? false),
           // The advisory lock above is held on (actor, tender, jobType, current
           // content hash), and `existing` was matched on analysisInputHash ===
