@@ -209,6 +209,7 @@ jobs:
             sleep 10
           done
           curl -fsS -H "Cookie: $SESSION_COOKIE" "$BASE_URL/api/tenders/$TENDER_ID/analysis-quality" >/tmp/analysis-quality.json
+          curl -fsS -H "Cookie: $SESSION_COOKIE" "$BASE_URL/api/tenders/$TENDER_ID" >/tmp/tender-detail.json
           job_id=$(python3 -c 'import json; print(json.load(open("/tmp/analyze-trigger.json")).get("jobId", ""))')
           if [ -n "$job_id" ]; then
             curl -fsS -H "Cookie: $SESSION_COOKIE" "$BASE_URL/api/ai-jobs/$job_id" >/tmp/job-detail.json || true
@@ -233,6 +234,7 @@ jobs:
             /tmp/job-summary.txt
             /tmp/analysis-quality.json
             /tmp/job-detail.json
+            /tmp/tender-detail.json
           retention-days: 2
 
   # ─── TEMPORARY — owner-authorized, single-use ──────────────────────────────
