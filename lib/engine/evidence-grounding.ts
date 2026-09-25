@@ -77,7 +77,16 @@ export type GroundingActiveFile = {
  * through this, or two checks will disagree about the same requirement.
  */
 export function normalizeForContainment(text: string): string {
-  return text.toLowerCase().replace(/\s+/g, " ").trim();
+  return text
+    .toLowerCase()
+    // PDF extractors represent the same printed dash with several Unicode
+    // code points. Treat typography as typography, not a changed claim.
+    .replace(/[\u2010-\u2015\u2212]/g, "-")
+    // List glyphs may be emitted as private/font bullet characters between
+    // two otherwise verbatim clauses. They delimit text; they are not words.
+    .replace(/[•●▪◦\uf0b7]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /**

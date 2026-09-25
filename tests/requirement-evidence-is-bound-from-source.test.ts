@@ -45,6 +45,28 @@ describe("AI Analyze requirement evidence binding", () => {
     assert.equal(firstPage.sourceTenderFileId, "file-path");
   });
 
+  it("treats PDF bullet glyphs and typographic dash variants as extraction typography", () => {
+    const bullet = bindRequirementEvidenceToActiveFile({
+      ...requirement,
+      sourceQuote: "Qualifications include: A profile of relevant corporate qualifications.",
+    } as never, [{
+      id: "file-path",
+      extractedText: "[Page 3]\nQualifications include:\n\uf0b7 A profile of relevant corporate qualifications.",
+      totalPages: 3,
+    }]);
+    assert.equal(bullet.sourcePage, 3);
+
+    const dash = bindRequirementEvidenceToActiveFile({
+      ...requirement,
+      sourceQuote: "Available 8:00 AM – 5:00 PM.",
+    } as never, [{
+      id: "file-path",
+      extractedText: "[Page 1]\nAvailable 8:00 AM ‑ 5:00 PM.\fPage two",
+      totalPages: 2,
+    }]);
+    assert.equal(dash.sourcePage, 1);
+  });
+
   it("fails closed when the quote is absent or appears in more than one active file", () => {
     const absent = bindRequirementEvidenceToActiveFile(requirement as never, [{
       id: "file-a",
