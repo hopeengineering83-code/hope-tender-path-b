@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { bindRequirementEvidenceToActiveFile } from "../lib/ai-jobs/analysis-job-service";
+import { bindRequirementEvidenceToActiveFile, canReprovePromotionGrounding } from "../lib/ai-jobs/analysis-job-service";
 
 const requirement = {
   title: "Submit a technical proposal",
@@ -14,6 +14,12 @@ const requirement = {
 };
 
 describe("AI Analyze requirement evidence binding", () => {
+  it("permits a manual retry to re-prove only the historical promotion-grounding failure", () => {
+    assert.equal(canReprovePromotionGrounding("Promotion blocked: 7 mandatory requirements lack valid source grounding (file/page/quote)."), true);
+    assert.equal(canReprovePromotionGrounding("SOURCE_BYTE_DRIFT: uploaded bytes changed"), false);
+    assert.equal(canReprovePromotionGrounding("Promotion blocked: requirements were weak"), false);
+  });
+
   it("derives the active file and page from a verbatim quote when the model omits the opaque file token", () => {
     const bound = bindRequirementEvidenceToActiveFile(requirement as never, [{
       id: "file-path",

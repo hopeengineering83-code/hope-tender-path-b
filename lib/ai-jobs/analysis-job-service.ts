@@ -72,6 +72,11 @@ export type AnalysisJobCreateInput = {
 
 const AI_ANALYZE_JOB_TYPE = "AI_ANALYZE" as const;
 
+export function canReprovePromotionGrounding(errorMessage: string | null | undefined): boolean {
+  return /^Promotion blocked: \d+ mandatory requirements lack valid source grounding \(file\/page\/quote\)\.$/i
+    .test(errorMessage ?? "");
+}
+
 /**
  * Stable signed 64-bit advisory-lock key for one logical AI Analyze job.
  * Every identity dimension is included so unrelated actors, tenders, job
@@ -421,6 +426,13 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
         // genuine current missing/foreign tender fails before this transaction.
         const recordedCategory = existing.retryState?.failureCategory ?? null;
         const historicalOwnershipRevalidated = recordedCategory === "TENDER_NOT_FOUND";
+        // A historical promotion failure is evidence about the old binding
+        // algorithm, not immutable source corruption. The current finalizer
+        // can now re-prove a verbatim quote against active source bytes. Allow
+        // an explicit manual retry to reach that stricter proof step while
+        // retaining the exact snapshot/hash checks above. If the quote is
+        // absent or ambiguous, finalization still fails closed again.
+        const promotionGroundingMayBeReproved = canReprovePromotionGrounding(existing.errorMessage);
         const effectiveCategory = reclassifyHistoricalTenderFailure({
           recordedCategory,
           errorMessage: existing.errorMessage ?? undefined,
@@ -429,7 +441,7 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
         });
         const decision = decideManualRearm({
           failureCategory: effectiveCategory,
-          nonRetryable: existing.retryState?.nonRetryable ?? false,
+          nonRetryable: promotionGroundingMayBeReproved ? false : (existing.retryState?.nonRetryable ?? false),
           // The advisory lock above is held on (actor, tender, jobType, current
           // content hash), and `existing` was matched on analysisInputHash ===
           // contentHash. Ownership and the aggregate input hash are necessary
