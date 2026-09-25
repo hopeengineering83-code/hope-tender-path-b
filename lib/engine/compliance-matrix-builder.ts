@@ -135,7 +135,7 @@ function inferProposalLocation(req: RequirementLite): string {
   if (/financial.*statement|audited.*account|turnover/.test(text))
     return "Appendix E (Audited Financial Statements)";
   if (/declaration|eligibility|conflict.*interest/.test(text))
-    return "Section D.4 Declaration of Eligibility";
+    return "Declaration";
   if (/safeguard|esmp|environmental|social/.test(text))
     return "Section C.2 Methodology + C.5 Risk Register";
   if (/photo|drawing|floor plan/.test(text))

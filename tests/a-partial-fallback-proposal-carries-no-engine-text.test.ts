@@ -447,3 +447,14 @@ describe("the compliance matrix shows evidence, not the engine's record of it", 
     assert.doesNotMatch(out, /PROPOSAL_?RESPONSE|GENERATED_?DOCUMENT|AUTO_?GENERATED|available for drafting|\.pdf\.txt/);
   });
 });
+
+describe("an eligibility requirement points at a section the proposal has", () => {
+  it("names the Declaration, not a D.4 no builder writes", () => {
+    // Run 36074770709's bid-compliance mapping sent "Valid Business License
+    // and Registration" to "Section D.4 Declaration of Eligibility"; the
+    // delivered proposal has a Declaration and no D.4.
+    for (const file of ["lib/engine/bid-compliance-mapping.ts", "lib/engine/compliance-matrix-builder.ts"]) {
+      assert.doesNotMatch(readFileSync(file, "utf8"), /Section D\.4 Declaration of Eligibility/, file);
+    }
+  });
+});

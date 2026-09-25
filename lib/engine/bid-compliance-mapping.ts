@@ -42,9 +42,9 @@ const LOCATION_BY_TYPE: Readonly<Record<string, string>> = {
   METHODOLOGY: "Section C.1 Understanding and C.2 Technical Methodology",
   SCHEDULE: "Section C.6 Work Plan and Schedule",
   FINANCIAL: "Appendix E (Audited Financial Statements)",
-  ELIGIBILITY: "Section D.4 Declaration of Eligibility",
+  ELIGIBILITY: "Declaration",
   COMPANY_PROFILE: "Section A.1 Company Background and A.2 Corporate Information",
-  DECLARATION: "Section D.4 Declaration of Eligibility",
+  DECLARATION: "Declaration",
   FORMAT: "Compliance Matrix annex (cross-referenced to proposal sections)",
   SUBMISSION_RULE: "Compliance Matrix annex (cross-referenced to proposal sections)",
   ANNEX: "Compliance Matrix annex (cross-referenced to proposal sections)",
@@ -91,7 +91,7 @@ function inferProposalLocation(req: TenderRequirementLite): string {
     return "Appendix E (Audited Financial Statements)";
   }
   if (/declaration|eligibility|conflict.*interest/.test(text)) {
-    return "Section D.4 Declaration of Eligibility";
+    return "Declaration";
   }
   if (/safeguard|esmp|environmental|social/.test(text)) {
     return "Sections C.2 Methodology and C.5 Risk Register; Compliance Matrix in proposal annex";
