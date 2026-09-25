@@ -151,7 +151,7 @@ jobs:
         run: |
           for attempt in $(seq 1 60); do
             body=$(curl -fsS --connect-timeout 10 --max-time 20 "$BASE_URL/api/health" || true)
-            actual=$(printf '%s' "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("commitSha") or d.get("gitCommitSha") or d.get("deployment",{}).get("commitSha") or "")' 2>/dev/null || true)
+            actual=$(printf '%s' "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("release") or d.get("commitSha") or d.get("gitCommitSha") or d.get("deployment",{}).get("commitSha") or "")' 2>/dev/null || true)
             if [ "$actual" = "$EXPECTED_SHA" ] || [ "${actual:0:8}" = "${EXPECTED_SHA:0:8}" ]; then
               echo "Exact-head Preview is ready at ${EXPECTED_SHA:0:8}."
               exit 0
