@@ -113,12 +113,14 @@ for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
     if (Number(label[2]) !== pageCount) {
       problems.push(`page ${pageNumber}: labelled "of ${label[2]}" but the document has ${pageCount} pages`);
     }
-  } else {
+  } else if (pageNumber !== 1) {
+    // The cover carries no running footer by design (proposal-pdf.ts
+    // drawHeaderFooter); it still counts as page 1 of M.
     problems.push(`page ${pageNumber}: no "Page N of M" label found`);
   }
 }
 
-console.log(`pages carrying a correct "Page N of M" label: ${labelledPages}/${pageCount}`);
+console.log(`pages carrying a correct "Page N of M" label: ${labelledPages}/${pageCount} (the cover is unnumbered by design)`);
 if (problems.length === 0) {
   console.log("layout: no clipping, overflow, footer collision or pagination problem found on any page");
   process.exit(0);

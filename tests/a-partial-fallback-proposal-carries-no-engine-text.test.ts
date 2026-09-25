@@ -465,3 +465,39 @@ describe("an eligibility requirement points at a section the proposal has", () =
     }
   });
 });
+
+// Hosted run 36168535103 (per-section path) shipped the vault's profile digest
+// as seven pages of A.1 — "Convenience digest ... for use in AI-assisted
+// tender drafting. Use this summary to populate ..." — two "See deterministic
+// ... table built downstream" lines, a second Client References section and
+// a second certifications section.
+describe("the per-section fallback ships neither the vault's drafting digest nor placeholders", () => {
+  const digest = [
+    "Firm PLC",
+    "Company Profile Summary",
+    "Purpose of this summary",
+    "Convenience digest of the corporate profile for use in AI-assisted tender drafting.",
+    "Use this summary to populate company background.",
+    "Head office | Nairobi, Kenya",
+    "Date of establishment | 12 March 2015",
+  ].join("\n");
+
+  it("A.1 carries the firm's own facts, not its profile document", () => {
+    const md = buildSectionFallback(spec("company-and-experience"), writerInput({ companyVault: { name: "Firm PLC", profileSummary: digest } as AIBidWriterInput["companyVault"] }));
+    assert.doesNotMatch(md, /AI-assisted|Use this summary|Convenience digest|Purpose of this summary/);
+    assert.match(md, /\| Head office \| Nairobi, Kenya \|/);
+    assert.match(md, /\| Date of establishment \| 12 March 2015 \|/);
+  });
+
+  it("leaves the portfolio and client references to their own builders", () => {
+    const md = buildSectionFallback(spec("company-and-experience"), writerInput());
+    assert.doesNotMatch(md, /built downstream|See deterministic/);
+    assert.doesNotMatch(md, /Client References/);
+  });
+
+  it("leaves certifications to the record-based D.3 builder", () => {
+    const md = buildSectionFallback(spec("additional-and-declaration"), writerInput());
+    assert.doesNotMatch(md, /Professional Certifications and Affiliations/);
+    assert.match(md, /# Declaration/);
+  });
+});

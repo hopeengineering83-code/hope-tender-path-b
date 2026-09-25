@@ -195,3 +195,30 @@ describe("the PDF lays the proposal out as a proposal", () => {
     assert.deepEqual(plan.entries.map((e) => [e.level, e.text]), [[1, "Cover Letter"], [2, "A.1 Company Overview"]]);
   });
 });
+
+describe("a table row never has more columns than its header", () => {
+  it("keeps a record quoted with | separators in the row's last cell", async () => {
+    const { fitRowsToHeader } = await import("../lib/engine/proposal-pdf");
+    const rows = fitRowsToHeader([
+      ["Requirement", "Status", "Where", "Evidence"],
+      ["Experience", "FULLY MET", "B.2", "Hospital Project", "Nigeria", "Healthcare", "USD 18.9M"],
+      ["Team", "FULLY MET", "A.3"],
+    ]);
+    assert.deepEqual(rows[1], ["Experience", "FULLY MET", "B.2", "Hospital Project; Nigeria; Healthcare; USD 18.9M"]);
+    assert.deepEqual(rows[2], ["Team", "FULLY MET", "A.3"]);
+  });
+
+  it("the DOCX table takes its width from the header row too", async () => {
+    const { xml } = await docxFor([
+      "# Section E: Compliance Matrix",
+      "",
+      "| Requirement | Status | Where | Evidence |",
+      "|---|---|---|---|",
+      "| Experience | FULLY MET | B.2 | Hospital Project | Nigeria | Healthcare |",
+    ].join("\n"));
+    const table = xml.slice(xml.indexOf("<w:tbl>"), xml.indexOf("</w:tbl>"));
+    const firstRow = table.slice(table.indexOf("<w:tr"), table.indexOf("</w:tr>"));
+    assert.equal(firstRow.match(/<w:tc>/g)?.length, 4);
+    assert.match(table, /Hospital Project; Nigeria; Healthcare/);
+  });
+});

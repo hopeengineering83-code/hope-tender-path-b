@@ -207,6 +207,21 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-25 UTC — Claude Code (hosted acceptance of `a8137799`, and what it exposed)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175 only. Production untouched.
+- **Exact-head evidence for `a8137799`:** Vercel Preview `dpl_7kaKATGWQWEXDPm73XXLDrdHKtNc` READY on the branch alias; acceptance run **36168535103** (`confirm=accept`, tender `63395457-…`) succeeded end to end: AI Analyze → Run Engine → generation → AUTO_FINALIZE → export-readiness `READY`, 0 blockers, audit score 88 / PASSED, final ZIP downloaded; **43 pages**, geometry check found no clipping/overflow/footer collision; 42/43 pages labelled — page 1 is the cover, now unnumbered by design (`scripts/tmp-render-pdf-pages.mjs` updated to say so). The artifact ZIP itself could not be fetched into this session (organisation proxy denies the Actions blob host, HTTP 403), so the hosted pages were reviewed from the job's full text dump, not rasterised.
+- **Defects the hosted run showed (per-section writer path, which the local whole-document fallback does not exercise), fixed at source:**
+  1. A.1 printed the vault's profile digest verbatim for ~7 pages, including its drafting instructions ("Convenience digest … for use in AI-assisted tender drafting. Use this summary to populate …"). `buildCompanyAndExperienceFallback` no longer pastes `profileSummary`; only its own `Label | Value` facts join the A.2 table (`corporateFactsFromProfile`).
+  2. "See deterministic project portfolio table built downstream." / "… Client References table …" shipped to the client, and left two Client References sections. The placeholder headings are gone; the downstream builders own those tables.
+  3. Two "Professional Certifications and Affiliations" sections (D.3 and D.5). The per-section D copy (raw compliance lines) is removed; the record-based D.3 builder is the one owner.
+  4. Section E drew nine columns under a four-column header: evidence cells quote project records written with `|` between fields. Both table renderers (`parseMdTable` in the DOCX, `fitRowsToHeader` in the PDF) now take the column count from the header row (GFM rule) and keep any excess in the row's last cell. **Note:** escaping the pipes inside `proposal-quality-repair.ts` instead was tried and reverted — it changes the first document's text, which the second generation reads for evidence rotation, and on the local fallback run that flipped project order and tipped the quality gate (PRICING_LEAKAGE + MISSING_REQUIREMENT_COVERAGE). Fixing it at the renderers leaves the source markdown byte-identical.
+  5. A contents list that overran its page by one entry ("Declaration … 43" alone on page 3) is now set slightly tighter to fit.
+  6. Remaining `'s` possessives on client names (`Pharo Ventures's written sign-off`) use `possessive()`.
+- **Still open (content, not layout):** in the per-section path the Executive Summary and Cover Letter are the thin per-section fallbacks, not `composeExecutiveSummary`; a "Why … for Pharo Ventures" H2 lands under A.4.1. Next agent: route the per-section cover/summary fallback through `composeExecutiveSummary`.
+- **Tests:** new cases in `tests/a-partial-fallback-proposal-carries-no-engine-text.test.ts` (no digest, no placeholders, no duplicate certifications) and `tests/proposal-pdf-table-layout.test.ts` (row width fixed by the header, DOCX and PDF). Gate on the committed tree: `tsc` clean, `next lint` clean, `git diff --check` clean, `npm test` with `RUN_DB_INTEGRATION=true` **12578 / 12578 pass, 0 fail, 0 skipped**, `next build` exit 0. Local full pipeline (fallback path) twice in a row: AUTO_FINALIZE ok, ZIP HTTP 200, 32 pages, geometry check clean, all pages rendered and inspected.
+- **Merge status:** **DO NOT MERGE**.
+
 ### 2026-09-25 UTC — Claude Code (full-proposal professional layout, rendered page by page)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / existing draft PR #1175 only. Started from `de0c111f` (Codex head, verified identical to origin before editing). No merge, no Production, no DB/secret change.

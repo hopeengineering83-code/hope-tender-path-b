@@ -405,6 +405,19 @@ function parseMarkdownLine(line: string): LineToken {
   return { type: "body", text: line };
 }
 
+/**
+ * A row never has more columns than its header (GFM: the header row fixes the
+ * column count). Evidence cells quote project records written with "|"
+ * between fields, and every one of those opened a column: a delivered
+ * compliance matrix drew nine columns under a four-column header. The excess
+ * stays in the row's last cell rather than being dropped.
+ */
+export function fitRowsToHeader(rows: string[][]): string[][] {
+  const width = rows[0]?.length ?? 0;
+  if (width === 0) return rows;
+  return rows.map((row, i) => (i === 0 || row.length <= width ? row : [...row.slice(0, width - 1), row.slice(width - 1).filter(Boolean).join("; ")]));
+}
+
 function parseMarkdownBlocks(markdown: string): LineToken[] {
   const tokens: LineToken[] = [];
   const lines = markdown.split("\n");
@@ -438,7 +451,7 @@ function parseMarkdownBlocks(markdown: string): LineToken[] {
         );
         i += 1;
       }
-      tokens.push({ type: "table", rows });
+      tokens.push({ type: "table", rows: fitRowsToHeader(rows) });
       continue;
     }
     tokens.push(parseMarkdownLine(line));
@@ -881,10 +894,16 @@ export function planTableOfContents(tokens: readonly LineToken[]): TocPlan | nul
 const TOC_NUMBER_WIDTH = 28;
 
 function drawTableOfContentsEntries(ctx: RenderContext, toc: TocPlan): void {
+  // A contents list that overruns its page by a few entries is set a little
+  // tighter rather than leaving one entry ("Declaration ... 43") alone on the
+  // next page.
+  const natural = toc.entries.reduce((h, e) => h + (e.level === 1 ? LINE_HEIGHT_BODY + 3 : LINE_HEIGHT_BODY), 0);
+  const room = ctx.y - CONTENT_FLOOR;
+  const squeeze = natural > room && natural <= room / 0.8 ? (room - 1) / natural : 1;
   for (const entry of toc.entries) {
     const top = entry.level === 1;
     const size = top ? FONT_SIZE_BODY : FONT_SIZE_BODY - 0.5;
-    const lineHeight = top ? LINE_HEIGHT_BODY + 3 : LINE_HEIGHT_BODY;
+    const lineHeight = (top ? LINE_HEIGHT_BODY + 3 : LINE_HEIGHT_BODY) * squeeze;
     const indent = top ? 0 : 16;
     const style: PdfFontStyle = top ? "bold" : "regular";
     ensureSpace(ctx, lineHeight);

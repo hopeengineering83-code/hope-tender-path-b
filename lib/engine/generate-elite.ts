@@ -325,15 +325,20 @@ function splitTableCells(rowLine: string): string[] {
 
 function parseMdTable(tableLines: string[]): Table {
   const dataRows = tableLines.filter((l) => !isSeparatorRow(l));
-  const colCount = Math.max(...dataRows.map((r) =>
-    splitTableCells(r).length
-  ), 1);
+  // The header row fixes the column count (GFM). A data row quoting a record
+  // written with "|" between its fields used to widen the whole table: a
+  // delivered compliance matrix drew nine columns under a four-column header.
+  // The excess stays in that row's last cell.
+  const colCount = Math.max(splitTableCells(dataRows[0] ?? "").length, 1);
   // PR FF: for wide tables (5+ cols) use tighter column width so the table
   // fits within the page margins without overflowing.
   const colWidth = Math.floor(8100 / colCount);
 
   const rows = dataRows.map((rowLine, rowIndex) => {
-    const cells = splitTableCells(rowLine);
+    const split = splitTableCells(rowLine);
+    const cells = split.length > colCount
+      ? [...split.slice(0, colCount - 1), split.slice(colCount - 1).filter(Boolean).join("; ")]
+      : split;
     const isHeader = rowIndex === 0;
 
     return new TableRow({

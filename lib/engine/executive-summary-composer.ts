@@ -149,7 +149,7 @@ function teamParagraph(input: ExecutiveSummaryInput): string {
 
 function approachParagraph(input: ExecutiveSummaryInput): string {
   if (input.scopePlan.length === 0) return "";
-  return `For each scope item, Section C sets out the lead, the inputs, the deliverables, the quality check and the point at which ${input.clientName} approves the work before the dependent item proceeds. The work plan sequences the items as phases, each closing on ${input.clientName}'s written sign-off.`;
+  return `For each scope item, Section C sets out the lead, the inputs, the deliverables, the quality check and the point at which ${input.clientName} approves the work before the dependent item proceeds. The work plan sequences the items as phases, each closing on ${possessive(input.clientName)} written sign-off.`;
 }
 
 function standingParagraph(input: ExecutiveSummaryInput): string {

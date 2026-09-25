@@ -1111,7 +1111,7 @@ export function buildCoverLetterOpener(opts: {
 }): string {
   const top = opts.projects.slice(0, 2);
   if (top.length === 0) {
-    return `${opts.companyName} is pleased to submit this Technical Proposal for **${opts.tenderTitle}** in response to the request issued by ${opts.clientName}. The firm brings a reviewed specialist team with sector experience directly applicable to ${opts.clientName}'s requirements. Full credentials, comparable project references, and technical methodology are presented in the sections that follow.`;
+    return `${opts.companyName} is pleased to submit this Technical Proposal for **${opts.tenderTitle}** in response to the request issued by ${opts.clientName}. The firm brings a reviewed specialist team with sector experience directly applicable to ${possessive(opts.clientName)} requirements. Full credentials, comparable project references, and technical methodology are presented in the sections that follow.`;
   }
 
   const projectFragment = top
@@ -1152,7 +1152,7 @@ export function buildExecutiveSummaryOpener(opts: {
     // "confirmed through the firm's knowledge vault" named this application's
     // evidence store to the client. What the evaluator can act on is that the
     // experience is documented and available, not where this app filed it.
-    return `**${opts.companyName}** brings ${expertStr} to this assignment, each with prior comparable delivery experience documented in the firm's records. The firm's sector expertise and evidence-mapped technical methodology — detailed in Sections A and C — directly address ${opts.clientName}'s evaluation criteria.`;
+    return `**${opts.companyName}** brings ${expertStr} to this assignment, each with prior comparable delivery experience documented in the firm's records. The firm's sector expertise and evidence-mapped technical methodology — detailed in Sections A and C — directly address ${possessive(opts.clientName)} evaluation criteria.`;
   }
 
   // THE SUMMARY MAKES THE CASE; IT DOES NOT INTRODUCE THE APPENDIX.

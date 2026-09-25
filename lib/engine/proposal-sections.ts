@@ -51,6 +51,7 @@ import { withoutAIWriterContractPrompt } from "./ai-writer-contract-prompt";
 import { extractScopeItems } from "./scope-delivery-plan";
 import { tenderAsksFor } from "./tender-asks-for";
 import { possessive } from "./possessive";
+import { corporateFactsFromProfile } from "./company-profile-facts";
 
 // ─── Section-specific system prompts ─────────────────────────────────────────
 // Each persona is the EXACT senior bid-team specialist who would write
@@ -1290,7 +1291,7 @@ function buildCoverAndSummaryFallback(input: AIBidWriterInput): string {
   // Executive Summary lead: the record, not a verdict about it.
   const execSummaryLead = anchor
     ? `The closest comparable project in ${possessive(companyName)} record is ${anchor.phrase}${anchor.services ? `, where the firm's services included ${anchor.services}` : ""}.`
-    : `${companyName} submits this Technical Proposal for ${tenderTitle}. The firm's comparable assignments are detailed in Section B, and the proposed team and methodology answer ${clientName}'s evaluation criteria.`;
+    : `${companyName} submits this Technical Proposal for ${tenderTitle}. The firm's comparable assignments are detailed in Section B, and the proposed team and methodology answer ${possessive(clientName)} evaluation criteria.`;
 
   return [
     "# Cover Letter",
@@ -1524,9 +1525,13 @@ function buildCompanyAndExperienceFallback(input: AIBidWriterInput): string {
   const a1SectorsSentence = v.sectors && v.sectors.length > 0
     ? `Sector experience spans: ${v.sectors.join(", ")}.`
     : "";
-  const a1Profile = v.profileSummary?.trim()
-    ? v.profileSummary.trim()
-    : "";
+  // The profile summary is a document ABOUT the firm, often written as a
+  // drafting digest ("Convenience digest of the January 2026 corporate
+  // profile for use in AI-assisted tender drafting. Use this summary to
+  // populate ..."). It was pasted into A.1 verbatim and ran to seven pages of
+  // a delivered proposal, instructions included. Only its own "Label | Value"
+  // rows are the firm's statements; they join the A.2 table below.
+  const profileFacts = corporateFactsFromProfile(v.profileSummary);
 
   // ── A.2 Corporate Information Table — real values per row ────────────
   // PR S FIX — Build the table as ONE string with single-newline row
@@ -1553,6 +1558,9 @@ function buildCompanyAndExperienceFallback(input: AIBidWriterInput): string {
     `| Founding year | ${vaultField(v.foundingYear, "founding year")} |`,
     `| Staff headcount | ${vaultField(v.headcount, "staff headcount")} |`,
     `| Licence grade | ${vaultField(v.licenseGrade, "licence grade")} |`,
+    ...profileFacts
+      .filter((f) => !/^(?:legal name|tin|vat|general manager|licen[cs]e grade|category|contact|phone|email|website)\b/i.test(f.label))
+      .map((f) => `| ${f.label.replace(/\|/g, "/")} | ${f.value.replace(/\|/g, "/")} |`),
   ].join("\n");
 
   // ── A.3 Core Service Lines — actual list or inferred from sectors ────
@@ -1569,7 +1577,6 @@ function buildCompanyAndExperienceFallback(input: AIBidWriterInput): string {
     "# Section A: Company Profile",
     "## A.1 Company Background",
     a1Sentence,
-    a1Profile,
     a1ServicesSentence,
     a1SectorsSentence,
     "## A.2 Corporate Information Table",
@@ -1585,10 +1592,11 @@ function buildCompanyAndExperienceFallback(input: AIBidWriterInput): string {
     "## B.1 Portfolio Overview",
     buildSectionBPortfolioOverview(input),
     ...buildSectionBFeaturedCards(input),
-    "## B.4 Additional Projects",
-    "See deterministic project portfolio table built downstream.",
-    "## B.5 Client References",
-    "See deterministic Client References table built downstream.",
+    // The portfolio and client-reference tables are added downstream under
+    // their own headings. Holding "B.4 Additional Projects" / "B.5 Client
+    // References" here with a "See deterministic ... table built downstream"
+    // line shipped that line to the client and left two Client References
+    // sections in the same proposal.
   ].filter((s) => s !== "").join("\n\n");
 }
 
@@ -1596,11 +1604,6 @@ function buildAdditionalAndDeclarationFallback(input: AIBidWriterInput): string 
   const v = input.companyVault ?? {};
   const companyName = v.name?.trim() || "the firm";
   const tenderTitle = input.tenderTitle?.trim() || "the captioned tender";
-
-  // ── D.3 Professional Certifications — real compliance lines ──────────
-  const d3Body = v.complianceLines && v.complianceLines.length > 0
-    ? v.complianceLines.map((c) => `- ${c}`).join("\n")
-    : "Bid-Team Action: confirm registration / certificate numbers and dates before submission. The Knowledge Vault should hold the firm's ISO certifications, professional body memberships, and donor compliance records.";
 
   // ── Declaration ──────────────────────────────────────────────────────
   // No bracketed "[General Manager / Principal Full Name]" and no
@@ -1659,8 +1662,11 @@ function buildAdditionalAndDeclarationFallback(input: AIBidWriterInput): string 
     d1Body,
     d2Body ? "## D.2 Environmental, Safety and Innovation Commitments" : "",
     d2Body,
-    `## D.${d2Body ? 3 : 2} Professional Certifications and Affiliations`,
-    d3Body,
+    // No certifications list here: the record-based builder
+    // (understanding-and-value-added.ts buildCertificationsSection) always
+    // adds D.3 from the firm's current legal and compliance records, and
+    // this copy — raw compliance lines — shipped beside it as a second
+    // "Professional Certifications and Affiliations" section.
     "",
     "# Declaration",
     declarationBody,
