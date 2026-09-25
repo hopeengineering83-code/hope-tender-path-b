@@ -58,7 +58,7 @@ a pass: two intermediate SHAs on this branch (`5e2518ca`, `20d2d7db`) show
 
 | Owner tool | Branch / PR | Scope | Locked files or areas | Status | Next action |
 |---|---|---|---|---|---|
-| Codex → Claude Code | `release/consolidated-recovery-20260717` (PR #1175, draft, base `integration/controlled-recovery`) | Consolidated release recovery: 10-provider fallback chain, provider-diversity request planning, durable fallback staging, canonical readiness/export convergence, artifact identity, real DOCX/PDF/ZIP bytes | `lib/ai.ts`, `lib/ai-jobs/analysis-job-service.ts`, `lib/ai-analyze/retry-service.ts`, `lib/engine/*`, `app/api/tenders/[id]/*`, `docs/pr1175-frozen-regression-ledger.md` | Open (draft). Head **`f809f4d2`**; exact-head CI **verified green by CONCLUSION on `f809f4d2`** — CI push run 6597 `success`, CI pull_request run 6598 `success`, Dependency Security Audit `success`, Exact-head route/screenshot audit run 1265 `success`; Vercel Preview READY. Hosted acceptance still FAILS on external provider exhaustion (7 consecutive runs, `Contacted 0 of 10 configured provider(s) … tried: none — all skipped`) | **BLOCKED — OWNER ACTION** (see the two blockers below). Do not merge; do not promote Production. |
+| Codex → Claude Code | `release/consolidated-recovery-20260717` (PR #1175, draft, base `integration/controlled-recovery`) | Consolidated release recovery: 10-provider fallback chain, provider-diversity request planning, durable fallback staging, canonical readiness/export convergence, artifact identity, real DOCX/PDF/ZIP bytes | `lib/ai.ts`, `lib/ai-jobs/analysis-job-service.ts`, `lib/ai-analyze/retry-service.ts`, `lib/engine/*`, `app/api/tenders/[id]/*`, `docs/pr1175-frozen-regression-ledger.md` | Open (draft). Head **`3b11507c`** at the 2026-09-25 recheck; exact-head CI, Dependency Security Audit, Exact-head route/screenshot audit, and Vercel all report `SUCCESS`. The four client-facing defects from run 36074770709 are fixed and covered by 31 focused passing tests. | **DO NOT MERGE OR PROMOTE PRODUCTION.** Continue exact-head Preview artifact acceptance only when requested/authorized. |
 
 #### CURRENT STATE — as of 2026-09-14T15:25Z (head `e59eca99`)
 
@@ -202,6 +202,17 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 - Avoid unnecessary Vercel previews; run local checks before pushing work.
 
 ## Session Log
+
+### 2026-09-25 UTC — Codex (PR #1175-only recovery verification)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / existing draft PR #1175. No new PR, merge, approval, rebase, or Production promotion.
+- **Scope:** recovered after the chat-side diff extraction failure reported by the owner and verified that the intended client-facing repairs are present on the actual PR branch at `3b11507c`: record-grounded cover-letter signatory, Section G removed from client output, one authoritative risk register, and A.3 status used as a record filter rather than printed as `[ACTIVE]`. Also confirmed the source-grounded Section F refinement included in the same coherent change.
+- **Files changed this verification commit:** `operator_handoff.md` only. The substantive application/test changes were already committed at `3b11507c` on this branch and were not duplicated into another oversized commit.
+- **Tests:** `npx tsx --test tests/a-cover-letter-is-signed-from-the-records.test.ts tests/a-proposal-carries-one-risk-register.test.ts tests/record-status-is-not-printed-as-a-tag.test.ts tests/section-g-is-not-shipped-to-the-client.test.ts tests/section-f-answers-the-tenders-own-criteria.test.ts tests/proposal-quality-repair.test.ts` — 31 passed, 0 failed, 0 skipped.
+- **Remote / CI:** fetched `origin/release/consolidated-recovery-20260717`; local and remote were identical (0 ahead / 0 behind) before this handoff commit. GitHub reported PR #1175 OPEN, DRAFT, MERGEABLE, with exact-head CI, dependency audit, route/screenshot audit, and Vercel checks successful. All historical inline CodeQL comments have owner replies recording their resolution; no new unresolved inline comment targets this change.
+- **Risk / assumption:** this verification does not claim a fresh post-change Pharo artifact run beyond the acceptance evidence already recorded above. The next push changes documentation only, so it must not be represented as a new application build acceptance.
+- **Next action:** keep all work on PR #1175; do not merge or promote Production. Run fresh artifact acceptance only if application HEAD changes or the owner requests the remaining runtime acceptance.
+- **Merge status:** **DO NOT MERGE** — owner review/authorization remains required.
 
 ### 2026-09-24 UTC (latest) — Benchmark-quality pass: team breadth, role truth, client-only content, scope-by-scope approach
 
