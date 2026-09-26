@@ -1093,6 +1093,38 @@ jobs:
             echo "TENDER_ID=$tid" >> "$GITHUB_ENV"
           fi
 
+      - name: Print the Build Plan and the rows it is derived from
+        if: env.NO_TENDER != '1'
+        run: |
+          # BUILD_PLAN_AUTOMATION_BLOCKED says the derived plan and the
+          # re-derived authority disagree, but not what either contained. Both
+          # come from buildSubmissionPlan over the tender's declared file names
+          # and its requirement rows, so print exactly those (read-only GETs).
+          for path in "" "/build-plan" "/requirements"; do
+            curl -sS --connect-timeout 15 --max-time 60 \
+              -H "Cookie: hope_session=$SESSION_COOKIE" \
+              "$BASE_URL/api/tenders/$TENDER_ID$path" > "/tmp/plan-input$(echo "$path" | tr '/' '-').json" || true
+          done
+          python3 - <<'PYEOF' | tee /tmp/build-plan-inputs.txt
+          import json
+          def load(p):
+              try: return json.load(open(p, encoding='utf-8'))
+              except Exception as e: return {"_unreadable": str(e)}
+          t = load('/tmp/plan-input.json'); t = t.get('tender', t) if isinstance(t, dict) else t
+          print("=== BUILD PLAN INPUTS ===")
+          for k in ("title", "exactFileNaming", "exactFileOrder", "pageLimit", "submissionMethod", "tenderCategory", "analysisExtractionStatus"):
+              print(f"  tender.{k} = {json.dumps((t or {}).get(k))[:300]}")
+          bp = load('/tmp/plan-input-build-plan.json')
+          print(f"  build-plan state={bp.get('state')} revision={bp.get('revision')} blocker={json.dumps(bp.get('blocker'))[:300]}")
+          for it in bp.get('items') or []:
+              print(f"    item order={it.get('exactOrder')} name={it.get('exactFileName')!r} type={it.get('documentType')} required={it.get('required')} reqIds={len(it.get('sourceRequirementIds') or [])} notes={json.dumps(it.get('notes'))[:200]}")
+          rq = load('/tmp/plan-input-requirements.json').get('requirements') or []
+          print(f"  requirements = {len(rq)}")
+          for r in rq:
+              print("    " + json.dumps({k: r.get(k) for k in ("id", "title", "requirementType", "priority", "exactFileName", "exactOrder", "requiredQuantity", "pageLimit", "restrictions", "sectionReference")}, ensure_ascii=False)[:600])
+              print("       description: " + json.dumps(r.get('description'), ensure_ascii=False)[:400])
+          PYEOF
+
       - name: Name the blocker that is currently locking the ZIP
         if: env.NO_TENDER != '1'
         run: |
