@@ -422,7 +422,18 @@ export function buildSubmissionPlan(tender: TenderLike): SubmissionPlan {
     if ((requirement.exactFileName ?? "").trim()) return null;
     const base = normalize(file.exactFileName.replace(/\.[a-z0-9]+$/i, ""));
     if (!base) return null;
-    return declaredBaseNames.find((declared) => declared !== base && (base.includes(declared) || declared.includes(base))) ?? null;
+    const byName = declaredBaseNames.find((declared) => declared !== base && (base.includes(declared) || declared.includes(base)));
+    if (byName) return byName;
+    // A row that states which declared file it belongs to is a part of that
+    // file, not a file beside it. AI Analyze returned "Cover Letter" and
+    // "Company Profile" as MANDATORY rows with sectionReference "Technical
+    // Proposal - Required Sections" on a tender that asks for one PDF; the
+    // planner made each its own .docx and the ZIP carried three files. A
+    // financial-envelope row is never folded into another file.
+    if (file.envelope === "FINANCIAL") return null;
+    const container = normalize(requirement.sectionReference ?? "");
+    if (!container) return null;
+    return declaredBaseNames.find((declared) => declared !== base && container.includes(declared)) ?? null;
   };
   const foldedRequirementIds = new Map<string, string[]>();
 
