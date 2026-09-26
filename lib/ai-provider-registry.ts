@@ -17,6 +17,7 @@
 import {
   CANONICAL_AI_PROVIDER_ORDER as CATALOG_ORDER,
   ALL_CONFIGURED_PROVIDERS as CATALOG_ALL_PROVIDERS,
+  automaticProviderOrder as catalogAutomaticOrder,
   PROVIDER_API_KEY_ENV,
 } from "./ai-provider-catalog.cjs";
 
@@ -35,9 +36,9 @@ export type AiProviderName =
 // The canonical automatic provider order. The single literal lives in the
 // plain-CJS catalog (lib/ai-provider-catalog.cjs) so build-time scripts
 // (next.config.js, scripts/check-env.mjs) consume the SAME order without any
-// duplication. Currently-working tier first (zai → cerebras → mistral → groq →
-// openrouter), remaining supported providers after OpenRouter in the required
-// order (gemini → openai → together → deepseek → anthropic).
+// duplication. The order is the owner's directive — gemini → groq → mistral →
+// zai → cerebras → openrouter → openai → together → deepseek → anthropic —
+// and every one of them is reachable by automatic routing. Nothing filters it.
 export const CANONICAL_AI_PROVIDER_ORDER: readonly AiProviderName[] = CATALOG_ORDER;
 
 export type AiUseCase = "default" | "extraction" | "proposal" | "validation" | "fast" | "reasoning";
@@ -77,10 +78,42 @@ export type ProviderRetryPolicy = {
   retryOnBilling: false;
 };
 
+/**
+ * Informational cost classification for diagnostics only. It never changes
+ * automatic eligibility or the configured model identifier.
+ *
+ *   "free"             — usable on a free account with no payment method.
+ *   "conditional-free" — pricing depends on the configured provider model.
+ *   "paid"             — provider ordinarily requires paid access.
+ */
+export type ProviderAccessClass = "free" | "conditional-free" | "paid";
+
 export type ProviderRegistryEntry = {
   provider: AiProviderName;
   displayName: string;
   rank: number;
+  access: ProviderAccessClass;
+  /**
+   * Path (relative to baseUrl) of the provider's own model-listing endpoint,
+   * or null when it has none reachable this way.
+   *
+   * This is how the app answers "which models may this account actually call?"
+   * WITHOUT keeping a local copy of a third party's catalogue. A hardcoded model
+   * list is a second authority on a question only the provider can answer, and
+   * it goes stale the moment they retire a snapshot — which is exactly how a
+   * retired model ends up pinned in a default and every request 404s. The
+   * capability test lists models live and verifies the resolved one really
+   * works before the provider is called usable.
+   */
+  modelsEndpoint: string | null;
+  /**
+   * Ordered PREFERENCE HINTS used when discovering a model — not assertions that
+   * these models exist. Each candidate is checked against the provider's live
+   * model list, and the first one the account can actually call wins. If none
+   * matches, the resolver falls back to what the provider itself reports rather
+   * than sending a name this codebase invented.
+   */
+  freeTierPreference: readonly string[];
   env: ProviderEnvVars;
   requestFormat: ProviderRequestFormat;
   defaults: {
@@ -91,6 +124,13 @@ export type ProviderRegistryEntry = {
   };
   outputCaps: ProviderOutputCaps;
   timeoutMs: number;
+  /**
+   * How long one call may run when the caller has declared a real budget (a
+   * durable worker's armed deadline). Absent means `timeoutMs` is also the
+   * ceiling there. Never used without an armed deadline, and always clamped to
+   * the time that deadline leaves -- see resolveProviderAttemptTimeoutMs.
+   */
+  workerTimeoutMs?: number;
   retry: ProviderRetryPolicy;
   // Whether the provider can return guaranteed structured JSON (response_format
   // json_object). When true, structured-extraction calls request JSON mode.
@@ -118,10 +158,24 @@ const HOBBY_SAFE_CAPS: ProviderOutputCaps = { analysis: 8000, proposal: 8000, fa
 
 const DEFAULT_TIMEOUT_MS = 20_000;
 // FIX: Z.ai and Cerebras need longer timeouts for AI Analyze. The analysis
-// prompt is very large (thousands of tokens) and glm-4-flash / gpt-oss-120b
+// prompt is very large (thousands of tokens) and glm-4.7-flash / gpt-oss-120b
 // can take 15-40s to generate a complete JSON response. 20s causes TIMEOUT
 // on the first provider, consuming an attempt budget slot for nothing.
 const ANALYSIS_TIMEOUT_MS = 45_000;
+// Inside a durable worker (300s ceiling, ~220s usable) the same slow providers
+// may take this long for one structured extraction. On 2026-09-22 AI Analyze
+// on a 7,242-input-token request failed with "Z.ai GLM timed out after
+// 45000ms" while the worker still had well over two minutes left and every
+// provider after Z.ai was billing-locked -- the 45s constant, written for 60s
+// request routes, decided the outcome, not the worker's real budget.
+const ANALYSIS_WORKER_TIMEOUT_MS = 150_000;
+// Gemini is first in the chain, so its worker ceiling is kept below the
+// others': a slow Gemini must still leave the rest of the chain a real attempt
+// inside the same worker budget. Its static 60s (GEMINI_TIMEOUT_MS) is
+// unchanged outside a worker. On 2026-09-22 a Gemini request that was accepted
+// on its third rate-limit retry was aborted at exactly 60s while the worker had
+// ~170s left.
+const GEMINI_WORKER_TIMEOUT_MS = 100_000;
 
 const FALLBACK_RETRY: ProviderRetryPolicy = { maxRetries: 0, retryOnAuth: false, retryOnBilling: false };
 
@@ -131,7 +185,10 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
   zai: {
     provider: "zai",
     displayName: "Z.ai GLM",
-    rank: 1,
+    rank: 4,
+    access: "free",
+    modelsEndpoint: "/models",
+    freeTierPreference: ["glm-4.7-flash", "glm-4-flash"],
     env: {
       apiKey: PROVIDER_API_KEY_ENV.zai,
       baseUrl: "ZAI_BASE_URL",
@@ -143,15 +200,16 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     defaults: {
       // General Z.ai API endpoint (NOT a Coding Plan endpoint).
       baseUrl: "https://api.z.ai/api/paas/v4",
-      proposalModel: "glm-4-flash",
-      analysisModel: "glm-4-flash",
-      fastModel: "glm-4-flash",
+      proposalModel: "glm-4.7-flash",
+      analysisModel: "glm-4.7-flash",
+      fastModel: "glm-4.7-flash",
     },
     outputCaps: HOBBY_SAFE_CAPS, // 8K proposal tokens — safe for Vercel Hobby 45s
     // FIX: 45s timeout for analysis — the large AI Analyze prompt needs
-    // more than the 20s default. Z.ai glm-4-flash can take 15-40s on
+    // more than the 20s default. Z.ai glm-4.7-flash can take 15-40s on
     // a full tender analysis JSON response.
     timeoutMs: ANALYSIS_TIMEOUT_MS,
+    workerTimeoutMs: ANALYSIS_WORKER_TIMEOUT_MS,
     retry: FALLBACK_RETRY,
     supportsStructuredJson: true,
     emergencyOnly: false,
@@ -159,7 +217,10 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
   cerebras: {
     provider: "cerebras",
     displayName: "Cerebras",
-    rank: 2,
+    rank: 5,
+    access: "paid",
+    modelsEndpoint: "/models",
+    freeTierPreference: [],
     env: {
       apiKey: PROVIDER_API_KEY_ENV.cerebras,
       baseUrl: "CEREBRAS_BASE_URL",
@@ -171,13 +232,24 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     requestFormat: "cerebras",
     defaults: {
       baseUrl: "https://api.cerebras.ai/v1",
-      proposalModel: "gpt-oss-120b",
-      analysisModel: "gpt-oss-120b",
-      fastModel: "gpt-oss-120b",
+      // gpt-oss-120b is VISIBLE to this account but has no quota: the live
+      // capability probe returned HTTP 402 payment_required with param="quota"
+      // on it, from two different keys created on the account where credit is
+      // present. Visibility in /models is not entitlement to call it.
+      //
+      // The account exposes exactly three models — qwen-3.8-27b, gemma-4-31b
+      // and gpt-oss-120b — so this is the alternative with the strongest
+      // instruction-following and structured-output behaviour of the two that
+      // remain. Changed on the owner's explicit instruction to switch to a
+      // working model; the provider ORDER is untouched.
+      proposalModel: "qwen-3.8-27b",
+      analysisModel: "qwen-3.8-27b",
+      fastModel: "qwen-3.8-27b",
     },
     outputCaps: HOBBY_SAFE_CAPS, // 8K proposal tokens — safe for Vercel Hobby 45s
     // FIX: 45s timeout — same rationale as Z.ai.
     timeoutMs: ANALYSIS_TIMEOUT_MS,
+    workerTimeoutMs: ANALYSIS_WORKER_TIMEOUT_MS,
     retry: FALLBACK_RETRY,
     supportsStructuredJson: true,
     emergencyOnly: false,
@@ -186,6 +258,9 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     provider: "mistral",
     displayName: "Mistral",
     rank: 3,
+    access: "free",
+    modelsEndpoint: "/models",
+    freeTierPreference: ["mistral-small-latest", "open-mistral-nemo", "ministral-8b-latest"],
     env: {
       apiKey: PROVIDER_API_KEY_ENV.mistral,
       baseUrl: "MISTRAL_BASE_URL",
@@ -196,8 +271,10 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     requestFormat: "openai-compatible",
     defaults: {
       baseUrl: "https://api.mistral.ai/v1",
-      proposalModel: "mistral-large-latest",
-      analysisModel: "mistral-large-latest",
+      // mistral-large-latest is a paid model. Zero-paid defaults to the
+      // free-tier small model, matching freeTierPreference.
+      proposalModel: "mistral-small-latest",
+      analysisModel: "mistral-small-latest",
       fastModel: "ministral-8b-latest",
     },
     outputCaps: STANDARD_CAPS,
@@ -209,7 +286,10 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
   groq: {
     provider: "groq",
     displayName: "Groq",
-    rank: 4,
+    rank: 2,
+    access: "free",
+    modelsEndpoint: "/models",
+    freeTierPreference: ["llama-3.1-8b-instant"],
     env: {
       apiKey: PROVIDER_API_KEY_ENV.groq,
       baseUrl: "GROQ_BASE_URL",
@@ -220,9 +300,13 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     requestFormat: "openai-compatible",
     defaults: {
       baseUrl: "https://api.groq.com/openai/v1",
-      proposalModel: "llama-3.3-70b-versatile",
-      analysisModel: "llama-3.3-70b-versatile",
-      fastModel: "llama-3.1-8b-instant",
+      // Groq has no runtime default. Its retired 70B default must never be
+      // reached, and discovery alone cannot prove that a replacement is free
+      // for this account. Operators must configure the currently verified
+      // free-tier model explicitly.
+      proposalModel: "",
+      analysisModel: "",
+      fastModel: "",
     },
     outputCaps: STANDARD_CAPS,
     timeoutMs: DEFAULT_TIMEOUT_MS,
@@ -233,7 +317,10 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
   openrouter: {
     provider: "openrouter",
     displayName: "OpenRouter",
-    rank: 5,
+    rank: 6,
+    access: "conditional-free",
+    modelsEndpoint: "/models",
+    freeTierPreference: [],
     env: {
       apiKey: PROVIDER_API_KEY_ENV.openrouter,
       baseUrl: "OPENROUTER_BASE_URL",
@@ -244,8 +331,13 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     requestFormat: "openai-compatible",
     defaults: {
       baseUrl: "https://openrouter.ai/api/v1",
-      // No safe default model: OpenRouter requires an explicit `:free` model.
-      // `openrouter/auto` is rejected to avoid creating paid usage.
+      // No model default. OpenRouter is an aggregator: the model identifier
+      // selects both the vendor and the price, so there is no sensible value to
+      // guess on the operator's behalf. Set OPENROUTER_PROPOSAL_MODEL /
+      // OPENROUTER_ANALYSIS_MODEL / OPENROUTER_FAST_MODEL to whichever model
+      // this account should use. Without one the provider is skipped, because a
+      // request cannot be built — not because of any cost policy, which this
+      // deployment no longer has.
       proposalModel: "",
       analysisModel: "",
       fastModel: "",
@@ -259,7 +351,10 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
   gemini: {
     provider: "gemini",
     displayName: "Gemini",
-    rank: 6,
+    rank: 1,
+    access: "free",
+    modelsEndpoint: "/v1beta/models",
+    freeTierPreference: ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest"],
     env: {
       apiKey: PROVIDER_API_KEY_ENV.gemini,
       proposalModel: "GEMINI_MODEL",
@@ -269,12 +364,18 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     requestFormat: "gemini",
     defaults: {
       baseUrl: null,
-      proposalModel: "gemini-2.5-pro",
-      analysisModel: "gemini-2.5-pro",
+      // Flash, not Pro: gemini-2.5-pro is not served on the free tier, so
+      // defaulting to it made rank-1 Gemini fail on a free-tier account before
+      // it could answer anything. Each value here is the head of the matching
+      // freeTierPreference list, so the source default and the live-verified
+      // choice can never disagree.
+      proposalModel: "gemini-2.5-flash",
+      analysisModel: "gemini-2.5-flash",
       fastModel: "gemini-2.0-flash",
     },
     outputCaps: STANDARD_CAPS,
     timeoutMs: 28_000,
+    workerTimeoutMs: GEMINI_WORKER_TIMEOUT_MS,
     retry: FALLBACK_RETRY,
     supportsStructuredJson: false,
     emergencyOnly: false,
@@ -283,6 +384,9 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     provider: "openai",
     displayName: "OpenAI",
     rank: 7,
+    access: "paid",
+    modelsEndpoint: "/models",
+    freeTierPreference: [],
     env: {
       apiKey: PROVIDER_API_KEY_ENV.openai,
       baseUrl: "OPENAI_BASE_URL",
@@ -307,6 +411,9 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     provider: "together",
     displayName: "Together",
     rank: 8,
+    access: "paid",
+    modelsEndpoint: "/models",
+    freeTierPreference: [],
     env: {
       apiKey: PROVIDER_API_KEY_ENV.together,
       baseUrl: "TOGETHER_BASE_URL",
@@ -331,6 +438,9 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     provider: "deepseek",
     displayName: "DeepSeek",
     rank: 9,
+    access: "paid",
+    modelsEndpoint: "/models",
+    freeTierPreference: [],
     env: {
       apiKey: PROVIDER_API_KEY_ENV.deepseek,
       apiKeyAliases: ["DEEP_SEEK_API_KEY", "DEEPSEEK_KEY"],
@@ -356,6 +466,9 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     provider: "anthropic",
     displayName: "Anthropic / Claude",
     rank: 10,
+    access: "paid",
+    modelsEndpoint: null,
+    freeTierPreference: [],
     env: {
       apiKey: PROVIDER_API_KEY_ENV.anthropic,
       proposalModel: "ANTHROPIC_PROPOSAL_MODELS",
@@ -450,9 +563,7 @@ export function isProviderConfigured(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
   if (provider === "openrouter") {
-    // OpenRouter is only "configured" when it has a key AND a valid explicit
-    // `:free` model — otherwise a request could create paid usage.
-    return Boolean(readProviderKey(provider, env)) && openRouterModelValidity(env).valid;
+    return Boolean(readProviderKey(provider, env)) && getProviderModel(provider, "proposal", env).length > 0;
   }
   if (provider === "zai") {
     // Z.ai requires a valid endpoint/model pairing — Coding Plan keys cannot
@@ -461,6 +572,13 @@ export function isProviderConfigured(
     return resolveZaiConfiguration("proposal", env).valid
       && resolveZaiConfiguration("extraction", env).valid
       && resolveZaiConfiguration("fast", env).valid;
+  }
+  if (provider === "groq") {
+    return Boolean(readProviderKey(provider, env))
+      && (["proposal", "extraction", "fast"] as const).every((useCase) => {
+        const model = getProviderModel(provider, useCase, env);
+        return model.length > 0;
+      });
   }
   return Boolean(readProviderKey(provider, env));
 }
@@ -474,6 +592,41 @@ export function getProviderBaseUrl(
   const fromEnv = envName ? env[envName]?.trim() : undefined;
   const base = fromEnv && fromEnv.length > 0 ? fromEnv : entry.defaults.baseUrl;
   return base ? base.replace(/\/+$/, "") : null;
+}
+
+/**
+ * One model identifier, from an env var that may legitimately hold a list.
+ *
+ * THE DEFECT THIS FIXES.
+ * ----------------------
+ * Anthropic's model env var is ANTHROPIC_PROPOSAL_MODELS -- plural, and
+ * deliberately comma-separated: the proposal path splits it and walks the
+ * models in order. But the registry maps only `proposalModel` for Anthropic,
+ * so every OTHER use case fell through to the branch below that borrows the
+ * proposal env, and returned the whole list as if it were one model name.
+ *
+ * On the owner's Preview that produced, verbatim, in provider diagnostics:
+ *
+ *   anthropic CONFIGURED analyze=False
+ *     model=claude-sonnet-4-5,claude-opus-4-1,claude-3-5-sonnet-latest,claude-3-5-haiku-latest
+ *     analysis: MALFORMED_RESPONSE -- empty response
+ *
+ * No API resolves that string, so the last provider in the chain could never
+ * answer an AI Analyze, and the reason reaching the operator was "empty
+ * response" -- indistinguishable from a model that replied with nothing.
+ * It was also quiet: Anthropic's capability-profile rule is anchored on
+ * `claude-`, so the joined string still matched it and reported a normal 200K
+ * context. The limits looked healthy while the identifier being dispatched
+ * could never resolve.
+ *
+ * Taking the FIRST entry matches how the proposal path already reads the same
+ * variable, and matches the registry default (`claude-sonnet-4-5`) that this
+ * fallback was standing in for. A single-model value is returned unchanged, so
+ * no other provider's behaviour moves.
+ */
+function firstModelIdentifier(raw: string | undefined): string | undefined {
+  const first = (raw ?? "").split(",")[0]?.trim();
+  return first && first.length > 0 ? first : undefined;
 }
 
 export function getProviderModel(
@@ -495,31 +648,27 @@ export function getProviderModel(
         ? entry.env.fastModel
         : entry.env.proposalModel;
 
-  // Z.ai uses a dedicated resolver that validates endpoint/model compatibility.
-  // Coding Plan keys only support glm-4-coding/glm-4v-coding.
-  // General API keys (api.z.ai) only support glm-4-flash/glm-4-flashx.
-  // Invalid configurations are skipped before consuming an attempt.
+  // Z.ai uses a dedicated resolver that validates the endpoint and the shape of
+  // the model identifier. A malformed configuration is skipped before consuming
+  // an attempt; which GLM models a key may actually use is Z.ai's to answer.
   if (provider === "zai") return resolveZaiConfiguration(useCase, env).model;
 
-  const fromEnv = envName ? env[envName]?.trim() : undefined;
-  if (fromEnv && fromEnv.length > 0) return fromEnv;
+  const fromEnv = envName ? firstModelIdentifier(env[envName]) : undefined;
+  if (fromEnv) return fromEnv;
   // Analysis/fast fall back to the proposal model env if their specific env is
   // unset (mirrors prior getMistralAnalysisModel behaviour), then to defaults.
   if (slot !== "proposalModel") {
-    const proposalEnv = entry.env.proposalModel ? env[entry.env.proposalModel]?.trim() : undefined;
-    if (proposalEnv && proposalEnv.length > 0) return proposalEnv;
+    const proposalEnv = entry.env.proposalModel ? firstModelIdentifier(env[entry.env.proposalModel]) : undefined;
+    if (proposalEnv) return proposalEnv;
   }
   return entry.defaults[slot];
 }
 
 // ─── Z.ai Configuration Resolver ────────────────────────────────────
-// Z.ai has two distinct API products with different endpoints and models:
-//   1. General API (api.z.ai) — glm-4-flash, glm-4-flashx
-//   2. Coding Plan () — glm-4-coding, glm-4v-coding
-// Mixing a Coding Plan key with the General endpoint (or vice versa)
-// produces HTTP 400 code 1211 "Unknown Model". This resolver detects the
-// plan type from the base URL and validates the model/endpoint pairing
-// so invalid configurations are skipped before consuming an attempt.
+// Z.ai's General API and Coding Plan are both served from api.z.ai; the plan is
+// carried by the key, not the URL. This resolver therefore checks the three
+// things the app can know locally — key present, endpoint is api.z.ai, model
+// identifier is well-formed — and leaves model entitlement to the provider.
 
 export type ZaiPlanType = "general" | "coding-plan" | "unknown";
 
@@ -534,28 +683,37 @@ export type ZaiConfigurationResult = {
 };
 
 const ZAI_GENERAL_BASE_URL = "https://api.z.ai/api/paas/v4";
-// Z.ai support confirmed: Coding Plan keys use the SAME endpoint as General API
-// (api.z.ai). The  endpoint is a DIFFERENT platform (Zhipu AI)
-// that does NOT accept Z.ai Coding Plan keys. Both plans share the same URL.
-const ZAI_CODING_PLAN_BASE_URL = "https://api.z.ai/api/paas/v4";
-const ZAI_GENERAL_MODELS = new Set(["glm-4-flash", "glm-4-flashx"]);
-// Z.ai Coding Plan models. The valid model identifiers on api.z.ai are:
-//   - glm-4-coding (text)
-//   - glm-4v-coding (vision)
-// "glm-coding" (without the "-4-" segment) is NOT a valid Z.ai model identifier
-// and returns HTTP 400 code 1211 "Unknown Model". The previous allowlist
-// included "glm-coding" as the Coding Plan default — that was the root cause
-// of the Z.ai 400 errors observed in Vercel runtime. It has been removed.
-// If a user explicitly configures ZAI_PROPOSAL_MODEL=glm-coding, the resolver
-// now rejects it as MODEL_UNSUPPORTED and the provider is skipped safely
-// without consuming an attempt budget slot.
-const ZAI_CODING_PLAN_MODELS = new Set(["glm-4-coding", "glm-4v-coding"]);
 
+/**
+ * Z.ai model identifiers are validated by SHAPE, not by an enumerated list.
+ *
+ * This used to be two hardcoded Sets mirroring Z.ai's catalogue
+ * (`{glm-4-flash, glm-4-flashx}` and `{glm-4-coding, glm-4v-coding}`). A local
+ * copy of a third party's model list is a second authority on a question only
+ * the provider can answer, and it goes stale the moment they ship a model. It
+ * did: when the operator configured the current `glm-4.7-flash` family, the
+ * allowlist rejected it as MODEL_UNSUPPORTED and rank-1 Z.ai was skipped
+ * before it ever made a request — every call silently fell through to
+ * Cerebras, with no error anywhere because the skip was "safe".
+ *
+ * A shape check keeps the genuine protection (an empty value, or another
+ * vendor's identifier pasted into ZAI_*_MODEL, is still refused before an
+ * attempt is spent) while letting Z.ai be the authority on which of its own
+ * models exist. A model this app does not recognise now produces a real,
+ * classified MODEL_UNAVAILABLE from the provider instead of an invisible skip.
+ */
+const ZAI_MODEL_SHAPE = /^glm-[0-9][0-9a-z.\-]*$/;
+
+function isPlausibleZaiModel(model: string): boolean {
+  return ZAI_MODEL_SHAPE.test(model.trim().toLowerCase());
+}
+
+// Both the General API and the Coding Plan are served from api.z.ai; the plan
+// is determined by which key the operator holds, not by the URL. The endpoint
+// therefore identifies the platform only.
 function zaiPlanTypeForBaseUrl(baseUrl: string): ZaiPlanType {
   const normalized = baseUrl.replace(/\/+$/, "").toLowerCase();
-  if (normalized === ZAI_GENERAL_BASE_URL) return "general";
-  if (normalized === ZAI_CODING_PLAN_BASE_URL) return "coding-plan";
-  return "unknown";
+  return normalized === ZAI_GENERAL_BASE_URL ? "general" : "unknown";
 }
 
 export function resolveZaiConfiguration(
@@ -571,37 +729,24 @@ export function resolveZaiConfiguration(
   const specific = envName ? env[envName]?.trim() : undefined;
   const proposal = entry.env.proposalModel ? env[entry.env.proposalModel]?.trim() : undefined;
 
-  // Determine the effective model. If no env override is set, use the
-  // correct default for the detected plan type:
-  //   - General API → glm-4-flash (entry.defaults)
-  //   - Coding Plan → glm-4-coding (plan-specific default — the valid Z.ai
-  //     Coding Plan model identifier. "glm-coding" is NOT valid and returns
-  //     HTTP 400 code 1211 "Unknown Model".)
-  const registryDefault = entry.defaults[slot];
-  const planDefault = planType === "coding-plan" ? "glm-4-coding" : registryDefault;
+  // Effective model: the specific env override, else the proposal override for
+  // non-proposal slots, else the registry default.
   const model = (specific && specific.length > 0
     ? specific
     : slot !== "proposalModel" && proposal && proposal.length > 0
       ? proposal
-      : planDefault
+      : entry.defaults[slot]
   ).trim();
-  const lowerModel = model.toLowerCase();
   const keyPresent = Boolean(readProviderKey("zai", env));
-  const general = ZAI_GENERAL_MODELS.has(lowerModel);
-  const coding = ZAI_CODING_PLAN_MODELS.has(lowerModel);
 
   if (!keyPresent) return { valid: false, reason: "API_KEY_MISSING", safeMessage: "Z.ai API key is not configured.", baseUrl, model, planType, useCase };
-  if (planType === "unknown") return { valid: false, reason: "BASE_URL_MISSING", safeMessage: "Z.ai base URL is not a supported General or Coding Plan endpoint.", baseUrl, model, planType, useCase };
-  if (!general && !coding) return { valid: false, reason: "MODEL_UNSUPPORTED", safeMessage: "Z.ai model is not in the supported allowlist for AI Analyze.", baseUrl, model, planType, useCase };
-  // Z.ai support confirmed: both General API and Coding Plan use the SAME
-  // endpoint (api.z.ai). The plan type is determined by which API key the
-  // user has, NOT by the endpoint URL. Since we can't distinguish plan type
-  // by URL (they're identical), we accept ANY valid Z.ai model on the
-  // api.z.ai endpoint. If the key doesn't support the model, the API will
-  // return HTTP 400 code 1211 and the chain will fall through to the next
-  // provider.
-  // (The old code rejected coding models on the general endpoint — this was
-  // WRONG because both plans share the same URL.)
+  if (planType === "unknown") return { valid: false, reason: "BASE_URL_MISSING", safeMessage: "Z.ai base URL is not the supported api.z.ai endpoint.", baseUrl, model, planType, useCase };
+  if (!isPlausibleZaiModel(model)) return { valid: false, reason: "MODEL_UNSUPPORTED", safeMessage: "Z.ai model identifier is empty or does not look like a Z.ai GLM model.", baseUrl, model, planType, useCase };
+  // Beyond this point the configuration is well-formed, so the provider is the
+  // authority on whether the key may use the model. If it may not, Z.ai answers
+  // with an error that classifyAiError() turns into MODEL_UNAVAILABLE (or AUTH,
+  // RATE_LIMIT, PROVIDER_ERROR…) and the chain falls through to rank 2 with a
+  // recorded reason — rather than the provider being skipped silently here.
 
   return { valid: true, reason: "OK", safeMessage: "Z.ai configuration is valid.", baseUrl, model, planType, useCase };
 }
@@ -625,6 +770,11 @@ export function getProviderTimeoutMs(provider: AiProviderName): number {
   return REGISTRY[provider].timeoutMs;
 }
 
+/** The longer per-call ceiling a provider may use under an armed worker deadline, if any. */
+export function getProviderWorkerTimeoutMs(provider: AiProviderName): number | undefined {
+  return REGISTRY[provider].workerTimeoutMs;
+}
+
 // ─── OpenRouter free-model policy ─────────────────────────────────────────────
 
 export type OpenRouterModelValidity = {
@@ -634,11 +784,7 @@ export type OpenRouterModelValidity = {
   message: string | null;
 };
 
-/**
- * OpenRouter must use an explicit free model. `openrouter/auto` is rejected and
- * any model whose identifier does not end in `:free` is rejected so the app can
- * never create paid OpenRouter usage.
- */
+/** OpenRouter uses the exact configured model identifier without rewriting it. */
 export function openRouterModelValidity(env: NodeJS.ProcessEnv = process.env): OpenRouterModelValidity {
   const configured = (env.OPENROUTER_PROPOSAL_MODEL || env.OPENROUTER_ANALYSIS_MODEL || "").trim();
   if (!configured) {
@@ -646,24 +792,80 @@ export function openRouterModelValidity(env: NodeJS.ProcessEnv = process.env): O
       valid: false,
       model: null,
       reason: "CONFIGURATION_INVALID",
-      message: "OPENROUTER_PROPOSAL_MODEL is not set — configure an explicit ':free' model.",
-    };
-  }
-  if (configured.toLowerCase() === "openrouter/auto") {
-    return {
-      valid: false,
-      model: configured,
-      reason: "MODEL_UNAVAILABLE",
-      message: "openrouter/auto is rejected — it can route to paid models. Configure an explicit ':free' model.",
-    };
-  }
-  if (!configured.endsWith(":free")) {
-    return {
-      valid: false,
-      model: configured,
-      reason: "CONFIGURATION_INVALID",
-      message: `OpenRouter model '${configured}' does not end in ':free' — refusing to risk paid usage.`,
+      message: "OPENROUTER_PROPOSAL_MODEL is not set.",
     };
   }
   return { valid: true, model: configured, reason: "OK", message: null };
+}
+
+/**
+ * The provider order the automatic fallback chain uses: the complete canonical
+ * order, every time. There is no mode, flag or cost class that narrows it.
+ */
+export function getAutomaticProviderOrder(
+  _env: NodeJS.ProcessEnv = process.env,
+): readonly AiProviderName[] {
+  // The env parameter is retained for call-site compatibility and is
+  // deliberately ignored: the chain is the canonical order for every
+  // environment. Nothing may narrow or reorder it.
+  return catalogAutomaticOrder() as readonly AiProviderName[];
+}
+
+export type ProviderEligibility = {
+  provider: AiProviderName;
+  eligible: boolean;
+  // PAID_ACCESS_BLOCKED, CONDITIONAL_FREE_UNVERIFIED and
+  // MODEL_FREE_STATUS_UNPROVEN were removed with the cost-class policy. They
+  // are deliberately absent rather than kept as unreachable members: leaving
+  // them would let dead branches keep compiling in every consumer, which is how
+  // a removed policy goes on quietly shaping behaviour.
+  reason: "OK" | "NOT_CONFIGURED" | "NOT_IN_AUTOMATIC_ORDER";
+  safeMessage: string;
+};
+
+/**
+ * Whether the automatic chain may contact this provider at all, before any
+ * runtime health state is consulted. This is the money gate: it answers "could
+ * calling this cost anything?", not "is it working?".
+ */
+export function providerAutomaticEligibility(
+  provider: AiProviderName,
+  env: NodeJS.ProcessEnv = process.env,
+): ProviderEligibility {
+  const entry = REGISTRY[provider];
+
+  if (!getAutomaticProviderOrder(env).includes(provider)) {
+    return {
+      provider,
+      eligible: false,
+      reason: "NOT_IN_AUTOMATIC_ORDER",
+      safeMessage: `${entry.displayName} is not part of the active automatic provider order.`,
+    };
+  }
+
+  if (!isProviderConfigured(provider, env)) {
+    return {
+      provider,
+      eligible: false,
+      reason: "NOT_CONFIGURED",
+      safeMessage: `${entry.displayName} is not configured.`,
+    };
+  }
+
+  return { provider, eligible: true, reason: "OK", safeMessage: "OK" };
+}
+
+/** Providers the automatic chain may contact right now, in priority order. */
+export function automaticallyEligibleProviders(
+  env: NodeJS.ProcessEnv = process.env,
+): AiProviderName[] {
+  return getAutomaticProviderOrder(env).filter(
+    (provider) => providerAutomaticEligibility(provider, env).eligible,
+  );
+}
+
+/** Human-readable description of the active automatic chain, incl. the tail. */
+export function automaticChainDisplay(env: NodeJS.ProcessEnv = process.env): string {
+  const names = getAutomaticProviderOrder(env).map((p) => REGISTRY[p].displayName);
+  return `${names.join(" → ")} → deterministic draft fallback`;
 }

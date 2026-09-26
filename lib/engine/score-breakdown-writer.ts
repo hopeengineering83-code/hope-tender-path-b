@@ -25,8 +25,8 @@ import { logger } from "../observability";
 // trend tracking, and Copilot reasoning.
 //
 // Source values:
-//   "AI_REMATCH"             — written by the rematch route after the
-//                              12-perspective AI call returns
+//   "AI_REMATCH"             — written by Run Engine after its
+//                              12-perspective AI scoring pass returns
 //   "ENGINE_MATCH"           — written by the engine matcher when it
 //                              first scores experts/projects against a
 //                              tender

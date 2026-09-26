@@ -283,6 +283,12 @@ export function buildProposalIntelligenceContract(input: ProposalIntelligenceCon
       "Tender-source quotes/page references are authoritative; ungrounded mandatory requirements must be traced or formally waived before final export.",
       "Tender-form strategy controls the proposal shape: EOI/prequalification, RFP, RFQ, ITT, framework and two-envelope responses must not use the same narrative pattern.",
       "Commercial/pricing content must stay out of technical/two-envelope outputs unless the tender explicitly combines envelopes.",
+      // Per Pillar 4: source-citation enforcement — every factual claim must
+      // trace to a source document. Never invent facts, experts, projects,
+      // legal facts, financial facts, required documents, or standard
+      // proposal sections that are not grounded in the uploaded tender files.
+      "NEVER invent facts, experts, projects, legal facts, financial facts, required documents, or standard proposal sections. Every factual claim must trace to a source document with a valid sourceDocumentId, page/sheet/slide number, and quotation. If no source exists for a claim, omit the claim entirely — do not fabricate.",
+      "Do not generate generic legal, financial, annex, declaration, or methodology sections unless the tender explicitly requires them. If the tender does not mention a document type, do not create it.",
     ],
   };
 }

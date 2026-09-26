@@ -17,6 +17,8 @@
 
 import { prisma } from "@/lib/prisma";
 import type { PrismaClient } from "@prisma/client";
+import { redactSecrets } from "../sanitize-error";
+import { logger } from "@/lib/observability";
 
 export const AI_ANALYZE_JOB_TYPE = "AI_ANALYZE" as const;
 
@@ -105,11 +107,11 @@ export interface DeriveAnalysisStateInput {
 
 /** Redact API keys and obvious secrets from a free-text error for safe UI display. */
 function redactSafe(message: string): string {
-  return message
-    .replace(/sk-[a-zA-Z0-9-]+/g, "[KEY]")
-    .replace(/(api[_-]?key\s*[=:]\s*)\S+/gi, "$1[KEY]")
-    .replace(/Bearer\s+\S+/gi, "Bearer [KEY]")
-    .slice(0, 200);
+  // Delegate to the canonical redactSecrets() helper so the redaction
+  // patterns cannot diverge from the other 4 call sites. Previously this
+  // used a weaker regex (/sk-[a-zA-Z0-9-]+/g — no underscore, no min length)
+  // that could miss short keys or false-positive on legitimate strings.
+  return redactSecrets(message).slice(0, 200);
 }
 
 /** Parse the staged result's analysisSource without throwing on malformed JSON. */
@@ -279,15 +281,15 @@ export function deriveAnalysisStateDetail(input: DeriveAnalysisStateInput): Tend
     NOT_STARTED: "Run AI Analyze to extract requirements and metadata.",
     QUEUED: "AI Analyze queued. Processing will start shortly.",
     RUNNING: `Processing: ${succeededChunks}/${totalChunks} chunks completed. Current chunk in progress...`,
-    AI_SUCCEEDED: "Analysis complete. Proceed to Build Submission Plan.",
+    AI_SUCCEEDED: "Analysis complete. Run Engine to continue automatic processing.",
     PARTIAL_NEEDS_RESUME: `Resume Analysis: ${succeededChunks}/${totalChunks} chunks done. Click Resume to complete.`,
     REGEX_FALLBACK_UNAPPROVED:
-      "Provider exhausted. Regex fallback available (lower quality). Review and approve with a note, or retry AI Analyze.",
-    HUMAN_APPROVED_FALLBACK: "Fallback analysis approved. Proceed with caution (lower confidence).",
-    FAILED: "Analysis failed. Check provider status and retry, or proceed with manual entry.",
+      "AI fallback was used. Re-run AI Analyze with a healthy provider before Run Engine.",
+    HUMAN_APPROVED_FALLBACK: "Fallback review is recorded for audit only (lower confidence). Re-run AI Analyze successfully before Run Engine.",
+    FAILED: "Analysis failed. Check provider status and re-run AI Analyze before Run Engine.",
     SUPERSEDED: "This analysis was replaced by a newer run. Review the latest analysis.",
     SECTION_DETECTED_REQUIREMENTS_NOT_STRUCTURED:
-      "Tender sections detected but no structured requirements found. Retry AI extraction or manually add requirements.",
+      "Tender sections were detected but structured requirements are missing. Resolve the extraction issue and re-run AI Analyze before Run Engine.",
   };
 
   // ─── Safe diagnostic summary (no secrets, no raw errors) ─────────────────
@@ -393,8 +395,10 @@ export async function resolveTenderAnalysisState(
             break;
           }
         }
-      } catch {
-        // Malformed JSON — skip
+      } catch (error) {
+        logger.warn("[analysis-state-resolver] malformed staged JSON — skipping", {
+          errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+        });
       }
     }
   }

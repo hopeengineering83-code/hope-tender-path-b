@@ -19,6 +19,104 @@ export const METADATA_PLACEHOLDER_PATTERNS: RegExp[] = [
   /\bwith\s+consultant'?s\s+assistance\b/i,
 ];
 
+// ─── Placeholder vocabulary: value-position vs anywhere ──────────────────────
+//
+// METADATA_PLACEHOLDER_PATTERNS above is correct for what it was written for:
+// checking a single extracted FIELD VALUE. If a tender's "client name" field
+// reads "not available", that is a placeholder, full stop.
+//
+// Scanning a whole DOCUMENT's prose is a different problem, and reusing the
+// same list there produced a false block. Live evidence, tender
+// 08e250af / Company Profile.docx, quality 75 / QUALITY_FAILED:
+//
+//   BID_TEAM_TO_CONFIRM: Document contains 1 internal placeholder
+//   reference(s): "not available".
+//
+//   …through email to the designated contacts only. Hard copy submissions or
+//   portal uploads are not available.
+//
+// That is the TENDER'S OWN sentence, quoted into the document because
+// narrativeDraftContent() lists the requirements a file addresses. "Not
+// available" there is a fact about submission channels, not an unfilled slot.
+// One ordinary English phrase blocked the entire export.
+//
+// So the vocabulary splits by how much the phrase alone tells you:
+//
+//   ALWAYS  — no innocent reading in a proposal. "Bid-Team to confirm",
+//             "placeholder", "fill in", "TBD". These match anywhere.
+//   VALUE   — ordinary English that only signals an unfilled slot when it IS
+//             the value: "Client: not available" is a placeholder,
+//             "portal uploads are not available" is a sentence.
+//
+// This narrows WHERE the ambiguous half applies, never WHETHER it applies.
+// A genuine "Contact person: unknown" still fails.
+
+/** Placeholder markers with no innocent reading — match anywhere in prose. */
+export const ALWAYS_PLACEHOLDER_PATTERNS: RegExp[] = [
+  /\bbid[\s-]?team\s+to\s+confirm\b/i,
+  /\b(?:tbd|tbc|tba)\b/i,
+  /\bplaceholder\b/i,
+  /\b(?:insert|add|fill)\b.{0,40}\b(?:here|later|manually)\b/i,
+  /\b\[?fill[\s_-]?in\]?/i,
+  /\bexact\s+site\s+to\s+be\s+determined\b/i,
+  /\bwith\s+consultant'?s\s+assistance\b/i,
+];
+
+/**
+ * Ordinary English that indicates an unfilled slot only in value position.
+ * Source fragments (not anchored) so the position anchors can be composed
+ * around them below.
+ */
+const VALUE_POSITION_PLACEHOLDER_SOURCES: string[] = [
+  "not\\s+provided",
+  "not\\s+available",
+  "not\\s+specified",
+  "unknown",
+  "pending",
+  "n\\/?a",
+  "to\\s+be\\s+(?:confirmed|determined|provided|completed|inserted)",
+];
+
+/**
+ * Value position, as it survives DOCX/PDF text extraction:
+ *   "Client: not available"      → a labelled field whose value is the phrase
+ *   "not available"              → a table cell, extracted as its own line
+ *   "[not available]"            → an explicit bracketed slot
+ * A phrase inside a running sentence is deliberately NOT value position.
+ */
+export function valuePositionPlaceholderMatches(text: string): string[] {
+  if (!text) return [];
+  const found: string[] = [];
+  for (const source of VALUE_POSITION_PLACEHOLDER_SOURCES) {
+    const anchors = [
+      // "Label: <phrase>" ending the line (a label, not a whole sentence).
+      new RegExp(`^[^\\n:]{1,60}:[ \\t]*(${source})[ \\t]*\\.?[ \\t]*$`, "gim"),
+      // The phrase alone on its own line — how a table cell extracts.
+      new RegExp(`^[ \\t]*(${source})[ \\t]*\\.?[ \\t]*$`, "gim"),
+      // An explicit bracketed slot.
+      new RegExp(`[\\[\\(<]{1,2}[ \\t]*(${source})[ \\t]*[\\]\\)>]{1,2}`, "gi"),
+    ];
+    for (const anchor of anchors) {
+      for (const match of text.matchAll(anchor)) {
+        const phrase = (match[1] ?? match[0]).trim();
+        if (phrase && !found.includes(phrase)) found.push(phrase);
+      }
+    }
+  }
+  return found;
+}
+
+/** Sources already spelled out in the document list, so the unambiguous
+ *  metadata patterns spread in below cannot duplicate one. */
+const DOCUMENT_PLACEHOLDER_PATTERN_SOURCES = new Set<string>([
+  /\[insert [^\]]+\]/i.source,
+  /\[TBD\]/i.source,
+  /\[NAME\]/i.source,
+  /\[DATE\]/i.source,
+  /\bplaceholder\b/i.source,
+  /\bTBD\b/i.source,
+]);
+
 /** Document-level placeholder patterns — superset of metadata patterns plus
  *  bracket/template markers common in generated proposal text.
  *  Commonly used in components/document-validator-panel.tsx. */
@@ -33,6 +131,7 @@ export const DOCUMENT_PLACEHOLDER_PATTERNS: RegExp[] = [
   /\[COMPANY[^\]]*\]/i,
   /\[Company Name\]/i,        // explicit variant preserved for test compatibility
   /\[CLIENT(?:\s+TO\s+BE\s+CONFIRMED)?\]/i,
+  /\[\s*\]/,
   /\{[A-Z_]{3,}\}/,              // {FIELD_NAME} template slots
   /<<(?:INSERT|NAME|DATE|COMPANY|PLACEHOLDER|YOUR)[^>]{0,60}>>/i, // <<INSERT NAME>>
   /\{\{(?:INSERT|NAME|DATE|COMPANY|PLACEHOLDER|YOUR)[^}]{0,60}\}\}/i, // {{INSERT NAME}}
@@ -52,10 +151,102 @@ export const DOCUMENT_PLACEHOLDER_PATTERNS: RegExp[] = [
   /\bXXX\b/,
   /\bTODO\b/i,
   /\bFIXME\b/i,
-  /to\s+be\s+(?:added|filled|completed|provided|confirmed|determined)\b/i,
   /n\/a\s+\(pending\)/i,
-  ...METADATA_PLACEHOLDER_PATTERNS,
+  // The UNAMBIGUOUS half of the metadata vocabulary belongs here — "TBC",
+  // "TBA", "Bid-Team to confirm" and friends have no innocent reading in a
+  // proposal, so they match anywhere in prose exactly as before. Only the
+  // ambiguous half (ordinary English like "not available") is withheld, and
+  // it is reachable through documentPlaceholderMatches() below. De-duplicated
+  // by source because a few entries appear in both lists and a repeated
+  // pattern would double-count occurrences.
+  ...ALWAYS_PLACEHOLDER_PATTERNS.filter(
+    (rx) => !DOCUMENT_PLACEHOLDER_PATTERN_SOURCES.has(rx.source),
+  ),
 ];
+
+// The ambiguous half deliberately does NOT live in the list above.
+//
+// DOCUMENT_PLACEHOLDER_PATTERNS used to end with
+// `...METADATA_PLACEHOLDER_PATTERNS` plus a bare
+// /to\s+be\s+(?:added|filled|completed|provided|confirmed|determined)\b/,
+// so every consumer scanning a document's PROSE with this list inherited the
+// field-value vocabulary and matched it anywhere. That is the same false
+// positive that blocked Company Profile.docx on "…portal uploads are not
+// available", and fixing only document-quality-gate.ts left it live in
+// document-quality-validator.ts, which then blocked the very same document
+// through a different path (qualityBlocked -> PLANNED_DOCUMENT_BLOCKED) while
+// the gate scored it 100/PASSED. Two authorities, one sentence, opposite
+// verdicts.
+//
+// So there is now ONE function every document-prose consumer calls, and the
+// ambiguous vocabulary is reachable only through it.
+
+/** The ambiguous half, as document-level prose sees it: value position only. */
+const DOCUMENT_VALUE_POSITION_EXTRA_SOURCES: string[] = [
+  "to\\s+be\\s+(?:added|filled|completed|provided|confirmed|determined)",
+];
+
+/**
+ * Every placeholder a DOCUMENT's prose should be blocked for.
+ *
+ * Unambiguous markers match anywhere; ordinary English only where it is the
+ * value of a field or cell. Returns the matched phrases so a caller can name
+ * them — a fail-closed gate that cannot say what it matched is not actionable.
+ */
+export function documentPlaceholderMatches(text: string): string[] {
+  if (!text) return [];
+  const found: string[] = [];
+  for (const rx of DOCUMENT_PLACEHOLDER_PATTERNS) {
+    const global = new RegExp(rx.source, rx.flags.includes("g") ? rx.flags : `${rx.flags}g`);
+    for (const match of text.matchAll(global)) {
+      const phrase = match[0].trim();
+      if (phrase && !found.includes(phrase)) found.push(phrase);
+    }
+  }
+  for (const phrase of valuePositionPlaceholderMatches(text)) {
+    if (!found.includes(phrase)) found.push(phrase);
+  }
+  for (const source of DOCUMENT_VALUE_POSITION_EXTRA_SOURCES) {
+    for (const anchor of [
+      new RegExp(`^[^\\n:]{1,60}:[ \\t]*(${source})[ \\t]*\\.?[ \\t]*$`, "gim"),
+      new RegExp(`^[ \\t]*(${source})[ \\t]*\\.?[ \\t]*$`, "gim"),
+      new RegExp(`[\\[\\(<]{1,2}[ \\t]*(${source})[ \\t]*[\\]\\)>]{1,2}`, "gi"),
+    ]) {
+      for (const match of text.matchAll(anchor)) {
+        const phrase = (match[1] ?? match[0]).trim();
+        if (phrase && !found.includes(phrase)) found.push(phrase);
+      }
+    }
+  }
+  return found;
+}
+
+/**
+ * How MANY placeholder occurrences a document's prose contains.
+ *
+ * Same rules as documentPlaceholderMatches, but counting every hit rather
+ * than distinct phrases: callers that report "N placeholder reference(s)"
+ * mean occurrences, and collapsing two "Bid-Team to confirm" into one
+ * understates the problem.
+ */
+export function documentPlaceholderOccurrences(text: string): number {
+  if (!text) return 0;
+  let count = 0;
+  for (const rx of DOCUMENT_PLACEHOLDER_PATTERNS) {
+    const global = new RegExp(rx.source, rx.flags.includes("g") ? rx.flags : `${rx.flags}g`);
+    count += [...text.matchAll(global)].length;
+  }
+  for (const source of [...VALUE_POSITION_PLACEHOLDER_SOURCES, ...DOCUMENT_VALUE_POSITION_EXTRA_SOURCES]) {
+    for (const anchor of [
+      new RegExp(`^[^\\n:]{1,60}:[ \\t]*(${source})[ \\t]*\\.?[ \\t]*$`, "gim"),
+      new RegExp(`^[ \\t]*(${source})[ \\t]*\\.?[ \\t]*$`, "gim"),
+      new RegExp(`[\\[\\(<]{1,2}[ \\t]*(${source})[ \\t]*[\\]\\)>]{1,2}`, "gi"),
+    ]) {
+      count += [...text.matchAll(anchor)].length;
+    }
+  }
+  return count;
+}
 
 /** Alias for backward compatibility with older modules. */
 export const PLACEHOLDER_PATTERNS = DOCUMENT_PLACEHOLDER_PATTERNS;
@@ -63,9 +254,25 @@ export const PLACEHOLDER_PATTERNS = DOCUMENT_PLACEHOLDER_PATTERNS;
 /** Phrases identifying content as AI-generated.
  *  Merged from proposal-quality-scorer.ts and other gates. */
 export const AI_TRACE_PATTERNS: RegExp[] = [
+  /\bAI[-\s]assisted\s+(?:tender\s+)?proposal\s+generation\b/i,
+  /\b(?:tender\s+)?proposal\s+AI[-\s]ready\s+summary\b/i,
+  /\bproposal\s+evaluator\s+loop\b/i,
+  /\bproposal\s+self[-\s]score\b/i,
+  /\bcompliance\s+and\s+bid\s+review\s+strategy\b/i,
+  /\b(?:bid[-\s]team|internal)\s+(?:review|strategy|scoring|evaluation)\b/i,
+  /\bprepared\s+for\s+(?:AI|model)[-\s]assisted\b/i,
   /as an ai/i,
   /\bi am an ai\b/i,
   /\bas a language model\b/i,
+  // Bare "language model" with no "as a"/"AI" prefix. The generators already
+  // strip this exact phrase before rendering — FORBIDDEN_TRACE_PATTERNS in
+  // lib/engine/expert-cv-docx.ts carries /\blanguage model\b/gi and its comment
+  // states that the export quality gate "rejects any CV that still carries it".
+  // The gate only ever matched the prefixed forms, so a stripped-prefix
+  // leftover such as "I am a language model." passed every gate, while the
+  // Document Validator panel's own private copy of these patterns caught it.
+  // Unifying the panel onto this list would have LOST that detection.
+  /\blanguage\s+model\b/i,
   /\bas a large language\b/i,
   /\bi cannot\b/i,
   /\bi'?m sorry,? i\b/i,
@@ -95,7 +302,15 @@ export const AI_TRACE_PATTERNS: RegExp[] = [
   /\bpreparation\s+trace\b/i,
   // Round 4 expansion items from scorer
   /\bI have prepared\b/i,
-  /\bBelow is\b/i,
+  // NOT a bare /\bBelow is\b/: "below" is an ordinary adverb and the bare
+  // pattern condemned correct English — "The methodology below is tailored to
+  // the following identified service streams", "The table below is
+  // indicative". The AI tell is the PREAMBLE shape, which the precise
+  // /\bbelow is (?:a|the|my)\b/ further down already matches; the bare
+  // duplicate added nothing but false positives. It cost a delivered proposal
+  // a real sentence: a rewrite existed only to satisfy this pattern, and it
+  // turned that sentence into "The methodology the following provides
+  // tailored to the following identified service streams".
   /\bPlease find\b/i,
   /\bat the end of the day\b/i,
   /\bgoing forward\b/i,
@@ -118,7 +333,15 @@ export const INTERNAL_BOILERPLATE_PATTERNS: RegExp[] = [
   /\bmatch[-_\s]?score\b/i,
   /\bwin\s+probability\b/i,
   /\bevaluator[-_\s]?score\b/i,
-  /\b(?:internal\s+(?:use|note|review)|reviewer\s+note)\b/i,
+  // Genuine internal-annotation markers only. This was
+  // /\b(?:internal\s+(?:use|note|review)|reviewer\s+note)\b/i, whose bare
+  // "internal review" alternative fired on ordinary QA-process prose — "quality
+  // assurance is applied through independent internal review before any
+  // deliverable is issued" is a description of how the firm works, not a
+  // working note leaking into a submission. It failed a real technical proposal
+  // at HIGH severity, which is a refusal the owner cannot act on because there
+  // is nothing wrong with the sentence.
+  /\b(?:internal\s+use(?:\s+only)?|internal\s+notes?|for\s+internal\s+review|internal\s+review\s+only|reviewer\s+notes?)\b/i,
   /\btraceability\s+map\b/i,
   /\baudit\s+metadata\b/i,
   /\bTODO\b/i,
@@ -170,3 +393,158 @@ export const OFFICIAL_ORIGINAL_LABEL_PATTERNS: RegExp[] = [
   /\bbusiness\s+licen/i,
   /\bregistration\s+certificate\b/i,
 ];
+
+/**
+ * Identifiers and field syntax the proposal engine prints in its own contract,
+ * criterion graph and evidence scores — never words a proposal uses. Run
+ * 36049851073 delivered 22 pages of them. The final document gate refuses a
+ * document carrying any of them (INTERNAL_TRACEABILITY), and the last sweep
+ * before render removes the line or table row that carries one, so the gate
+ * and the sweep cannot disagree about what counts.
+ *
+ * Markdown renders WEAK_PROOF_SIGNAL with italics, so the delivered text reads
+ * WEAKPROOFSIGNAL; both spellings are matched.
+ */
+export const ENGINE_IDENTIFIER_PATTERNS: RegExp[] = [
+  /\bWEAK_?PROOF_?SIGNAL\b/,
+  /\bNEEDS_?CONFIRMATION\b/,
+  /\b(?:UNSAFE_?SECTOR_?MISMATCH|NO_?SERVICE_?CAPABILITY_?OVERLAP|NO_?SECTOR_?OVERLAP|PLACEHOLDER_?OR_?UNCONFIRMED)\b/,
+  /\bobey\s+before\s+drafting\b/i,
+  /\bevidence=(?:DIRECT|PARTIAL|NEEDS_?CONFIRMATION)\b/,
+  /\b(?:direct|transferable)(?:Projects|Experts)=\d/,
+  /\bunsafeMismatches=\d/,
+  /\bTCG-\d+\b/,
+  /\bSRC-REQ-\d+\b/,
+  /\b(?:EXPERT|PROJECT)-\d+\s+(?:EXPERT|PROJECT)\b/,
+  /\bblock\s+final\s+export\b/i,
+  /\bproposal\s+intelligence\s+contract\b/i,
+  /\banti-hallucination\b/i,
+  /\bNEVER\s+invent\s+facts\b/i,
+];
+
+/**
+ * Header/metadata lines of the owner's own uploaded source documents, e.g. a
+ * company profile titled "Tender Proposal AI-Ready Summary — Prepared for
+ * AI-assisted tender proposal generation". A model-written section can copy
+ * such a heading verbatim from the vault context it was given; it is never
+ * proposal content and every final gate rejects it as an AI trace.
+ */
+export const SOURCE_DOCUMENT_METADATA_PATTERNS: RegExp[] = [
+  /\bAI[-\s]assisted\s+(?:tender\s+)?proposal\s+generation\b/i,
+  /\b(?:tender\s+)?proposal\s+AI[-\s]ready\s+summary\b/i,
+  /\bprepared\s+for\s+(?:AI|model)[-\s]assisted\b/i,
+];
+
+/** Remove whole lines that carry source-document metadata (see above). */
+export function scrubSourceDocumentMetadata(markdown: string): string {
+  return markdown
+    .split("\n")
+    .filter((line) => !SOURCE_DOCUMENT_METADATA_PATTERNS.some((re) => re.test(line)))
+    .join("\n");
+}
+
+const FINANCIAL_KEYWORD_RE = /\b(?:price|pricing|quotation|ETB|USD|EUR|GBP|fee|rate|lump\s+sum|unit\s+price)\b/gi;
+const REFERENCE_COST_CONTEXT_RE = /\b(?:construction|design|supervision|contract|project|feasibility|geotechnical)\s+cost\b|contract\s+value|cost\s+details|comparable\s+project|project\s+reference/i;
+const NO_OFFER_DISCLAIMER_RE = /no\s+financial\s+offer|no\s+pricing|not\s+include[sd]?\s+(?:any\s+)?(?:financial|price|pricing)|technical\s+proposal\s+only|do\s+not\s+include\s+any\s+financial/i;
+// "at no fee" / "at no additional fee" / "budgeted into fee" state that
+// something is NOT separately charged — a value-add commitment, the opposite
+// of a price disclosure. And "rate" is one of the most overloaded words in
+// engineering/HSE writing: "frequency rate (LTIFR)", "injury rate",
+// "success/completion/defect/response rate" are safety and quality KPIs a
+// methodology or QA/QC section is expected to state, never a price.
+const NO_CHARGE_RE = /\bat\s+no\s+(?:additional\s+)?(?:fee|cost|charge)\b|\bfree\s+of\s+charge\b|\bbudgeted\s+into\b|\bno\s+extra\s+(?:fee|cost|charge)\b/i;
+const NON_FINANCIAL_RATE_RE = /\b(?:frequency|injury|success|completion|defect|rejection|response|conversion|failure|pass|attendance|literacy|vacancy|occupancy|utili[sz]ation|growth|compliance|error|accuracy|retention)\s+rate\b|\brate\s*\([A-Z]+\)/i;
+
+/**
+ * How many pricing/currency mentions in `text` read as the FIRM'S OWN price
+ * for this assignment — i.e. not a reference-project cost, a no-offer
+ * disclaimer, a no-charge commitment or a non-financial "rate". The technical
+ * proposal gate treats more than 3 as financial-envelope contamination.
+ */
+export function countOwnPriceMentions(text: string): number {
+  let count = 0;
+  for (const match of text.matchAll(FINANCIAL_KEYWORD_RE)) {
+    const start = Math.max(0, (match.index ?? 0) - 80);
+    const end = Math.min(text.length, (match.index ?? 0) + match[0].length + 80);
+    const surrounding = text.slice(start, end);
+    if (
+      REFERENCE_COST_CONTEXT_RE.test(surrounding)
+      || NO_OFFER_DISCLAIMER_RE.test(surrounding)
+      || NO_CHARGE_RE.test(surrounding)
+      || NON_FINANCIAL_RATE_RE.test(surrounding)
+    ) continue;
+    count += 1;
+  }
+  return count;
+}
+
+/**
+ * Drop the sentences of `markdown` that carry an own-price mention (see
+ * countOwnPriceMentions), keeping everything else. A technical proposal must
+ * never state the firm's price, so such a sentence is removed rather than
+ * letting it cost the whole section. Table rows and headings that carry one
+ * are dropped whole.
+ */
+export function scrubOwnPriceSentences(markdown: string): string {
+  const out: string[] = [];
+  for (const line of markdown.split("\n")) {
+    if (countOwnPriceMentions(line) === 0) {
+      out.push(line);
+      continue;
+    }
+    if (/^\s*(?:\||#)/.test(line)) continue;
+    const kept = line
+      .split(/(?<=[.!?])\s+/)
+      .filter((sentence) => countOwnPriceMentions(sentence) === 0)
+      .join(" ")
+      .trim();
+    if (kept) out.push(kept);
+  }
+  return out.join("\n");
+}
+
+
+// ─── Unproven relationship and attachment claims ───────────────────────────
+//
+// One definition, read by the final document gate (document-quality-gate.ts)
+// and by the per-section guard in the proposal writer (clientSafeModelSection
+// in lib/ai.ts). Run 36047880422: the first model-written section in weeks
+// followed its own prompt ("We have already delivered this assignment ... The
+// same team is available") and the final gate refused the whole proposal for
+// exactly that sentence. A claim that the firm has done THIS assignment, or
+// that the same team did, needs relationship evidence no record carries.
+export const UNPROVEN_RELATIONSHIP_CLAIM_PATTERNS: RegExp[] = [
+  /\balready\s+delivered\s+this\s+assignment\b/i,
+  /\bsame\s+project\s+team\b.{0,100}\b(?:available|proposed|zero\s+learning\s+curve)\b/i,
+  /\bdirectly\s+comparable\s+assignment\b/i,
+  /\beach\s+proposed\s+lead\b.{0,120}\bcomparable\s+role\b/i,
+];
+export const PHANTOM_ATTACHMENT_CLAIM = /\b(?:credentials|contracts|testimony letters|certificates|supporting documents)\b.{0,160}\b(?:attached|provided)\b.{0,80}\b(?:appendix|appendices|annex|annexes)\b/i;
+
+/** True when the text carries a claim the final gate refuses. */
+export function hasUnprovenClaim(text: string): boolean {
+  return UNPROVEN_RELATIONSHIP_CLAIM_PATTERNS.some((re) => re.test(text)) || PHANTOM_ATTACHMENT_CLAIM.test(text);
+}
+
+/**
+ * Drop the sentences (or whole table rows / headings) that carry an unproven
+ * relationship or attachment claim, keeping the rest of the section. A line
+ * whose claim spans sentences is dropped whole.
+ */
+export function scrubUnprovenClaimSentences(markdown: string): string {
+  const out: string[] = [];
+  for (const line of markdown.split("\n")) {
+    if (!hasUnprovenClaim(line)) {
+      out.push(line);
+      continue;
+    }
+    if (/^\s*(?:\||#)/.test(line)) continue;
+    const kept = line
+      .split(/(?<=[.!?])\s+/)
+      .filter((sentence) => !hasUnprovenClaim(sentence))
+      .join(" ")
+      .trim();
+    if (kept && !hasUnprovenClaim(kept)) out.push(kept);
+  }
+  return out.join("\n");
+}

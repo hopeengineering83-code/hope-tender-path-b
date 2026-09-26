@@ -1,11 +1,5 @@
-// Stage 1 of execution-path unification: prove the synchronous AI Analyze route
-// and the durable job service now build IDENTICAL analysis content + hash from
-// the same shared builder, so their AiAnalyzeChunk rows share one identity.
-//
-// The earlier consolidation attempt was reverted because the route hashed a
-// sophisticated 16-char content hash while the job service hashed a full
-// sha256 of raw extractedText — producing disjoint chunk rows. These tests lock
-// the shared builder's determinism and the single-source wiring.
+// Prove every analysis authority builds identical content and a full SHA-256
+// source revision from the same shared builder.
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -13,6 +7,7 @@ import { readFileSync } from "node:fs";
 import {
   buildTenderAnalysisContent,
   computeAnalysisContentHash,
+  computePersistedTenderAnalysisHash,
   MAX_TOTAL_AI_CHARS,
 } from "../lib/engine/tender-analysis-content";
 
@@ -31,7 +26,7 @@ describe("buildTenderAnalysisContent — deterministic + canonical", () => {
     assert.match(content, /\[FILE_ID:f1\|FILE_NAME:tender\.pdf\]/);
   });
 
-  it("produces identical content regardless of input file order (canonical sort)", () => {
+  it("produces identical content regardless of input file order", () => {
     const a = file({ id: "a", createdAt: new Date("2026-01-01T00:00:00Z") });
     const b = file({ id: "b", createdAt: new Date("2026-02-01T00:00:00Z") });
     const c1 = buildTenderAnalysisContent({ title: "T", files: [a, b] });
@@ -40,7 +35,7 @@ describe("buildTenderAnalysisContent — deterministic + canonical", () => {
     assert.equal(computeAnalysisContentHash(c1), computeAnalysisContentHash(c2));
   });
 
-  it("the company-document digest changes the hash when vault content changes", () => {
+  it("changes the revision when Company Vault content changes", () => {
     const tender = { title: "T", files: [file()] };
     const h0 = computeAnalysisContentHash(buildTenderAnalysisContent(tender));
     const hWithDocs = computeAnalysisContentHash(buildTenderAnalysisContent(tender, {
@@ -49,10 +44,24 @@ describe("buildTenderAnalysisContent — deterministic + canonical", () => {
     assert.notEqual(h0, hWithDocs);
   });
 
-  it("content hash is the 16-char truncated sha256 scheme", () => {
-    const h = computeAnalysisContentHash("abc");
-    assert.equal(h.length, 16);
-    assert.match(h, /^[0-9a-f]{16}$/);
+  it("keeps the persisted currentness binding tender-source-only", async () => {
+    let companyRead = false;
+    const tender = { title: "T", description: null, intakeSummary: null, files: [file()] };
+    const store = {
+      tender: { findFirst: async () => tender },
+      company: { findUnique: async () => { companyRead = true; return { documents: [] }; } },
+    };
+    const hash = await computePersistedTenderAnalysisHash(store, "tender-1", "user-1");
+    assert.equal(hash, computeAnalysisContentHash(buildTenderAnalysisContent(tender)));
+    assert.equal(companyRead, false, "Run Engine Vault verification must not stale tender analysis");
+  });
+
+  it("uses a collision-resistant full SHA-256 revision", () => {
+    const hash = computeAnalysisContentHash("abc");
+    assert.equal(hash.length, 64);
+    assert.match(hash, /^[0-9a-f]{64}$/);
+    assert.equal(hash, computeAnalysisContentHash("abc"));
+    assert.notEqual(hash, computeAnalysisContentHash("abcd"));
   });
 
   it("caps content at MAX_TOTAL_AI_CHARS", () => {
@@ -62,27 +71,26 @@ describe("buildTenderAnalysisContent — deterministic + canonical", () => {
   });
 });
 
-describe("both execution paths wire the shared builder (single source of truth)", () => {
-  it("the AI Analyze route uses buildTenderAnalysisContent + computeAnalysisContentHash", () => {
+describe("every analysis authority wires the shared builder", () => {
+  it("the AI Analyze route uses the canonical builder and hash", () => {
     const route = readFileSync("app/api/tenders/[id]/ai-analyze/route.ts", "utf8");
-    // Both paths build from the tender record's ACTIVE files + the company vault,
-    // matching the input set the snapshot/gate recompute the hash from.
     const builds = (route.match(/buildTenderAnalysisContent\(\s*\{ \.\.\.tenderRecord, files:[\s\S]*?company,\s*\)/g) ?? []).length;
-    assert.ok(builds >= 2, `both route paths must use the shared builder with ACTIVE files + company (found ${builds})`);
+    assert.ok(builds >= 2, `both route paths must use active files plus Company Vault content (found ${builds})`);
     assert.match(route, /computeAnalysisContentHash\(tenderContent\)/);
-    // The old inline builders/hashing must be gone.
     assert.doesNotMatch(route, /crypto\.createHash\("sha256"\)\.update\(tenderContent\)/);
   });
 
-  it("the durable job service uses the shared builder + hash", () => {
-    const svc = readFileSync("lib/ai-jobs/analysis-job-service.ts", "utf8");
-    // Builds from the tender's ACTIVE files + company vault, matching the input
-    // set the snapshot/gate recompute the hash from.
-    assert.match(svc, /buildTenderAnalysisContent\(\s*\{ \.\.\.tender, files:[\s\S]*?company,\s*\)/);
-    assert.match(svc, /computeAnalysisContentHash\(tenderText\)/);
-    // The old raw-text full-sha256 scheme must be gone.
-    assert.doesNotMatch(svc, /createHash\("sha256"\)\.update\(normalizedText\)/);
-    // The vault query feeding the hash must NOT be capped (must match snapshot/gate).
-    assert.doesNotMatch(svc, /originalFileName: true, extractedText: true \}, take:/);
+  it("the durable job service uses the canonical builder and hash", () => {
+    const service = readFileSync("lib/ai-jobs/analysis-job-service.ts", "utf8");
+    assert.match(service, /buildTenderAnalysisContent\(\s*\{ \.\.\.tender, files:[\s\S]*?company,\s*\)/);
+    assert.match(service, /computeAnalysisContentHash\(tenderText\)/);
+    assert.doesNotMatch(service, /createHash\("sha256"\)\.update\(normalizedText\)/);
+    assert.doesNotMatch(service, /originalFileName: true, extractedText: true \}, take:/);
+  });
+
+  it("release readiness recomputes the same canonical revision", () => {
+    const snapshot = readFileSync("lib/engine/tender-release-snapshot.ts", "utf8");
+    assert.match(snapshot, /buildTenderAnalysisContent/);
+    assert.match(snapshot, /computeAnalysisContentHash/);
   });
 });

@@ -9,7 +9,7 @@
 // We pin the policy by source-inspection rather than executing the
 // bootstrap (which requires a real Postgres instance):
 //   - ENABLE_RUNTIME_SCHEMA_BOOTSTRAP gates the entire bootstrap in production
-//   - admin seed is gated by resolveBootstrapAdminPolicy()
+//   - admin seed is gated by resolveRuntimeBootstrapAdminPolicy()
 //   - verifyConnectivity + verifySchemaPresent run when bootstrap is skipped
 
 import { describe, it } from "node:test";
@@ -40,7 +40,7 @@ describe("Gap 6 — lib/prisma.ts runtime schema bootstrap policy", () => {
   it("never seeds admin@hope.local without policy permission", async () => {
     const { readFile } = await import("node:fs/promises");
     const src = await readFile(new URL("../lib/prisma.ts", import.meta.url), "utf8");
-    assert.match(src, /resolveBootstrapAdminPolicy/);
+    assert.match(src, /resolveRuntimeBootstrapAdminPolicy/);
     // No literal Admin123! used as a real password — comments referencing
     // the historical default are fine, but the bcrypt.hash() call must not
     // receive that literal.
@@ -56,9 +56,23 @@ describe("Gap 6 — lib/prisma.ts runtime schema bootstrap policy", () => {
   it("development still runs the bootstrap (so npm run dev works first-time)", async () => {
     const { readFile } = await import("node:fs/promises");
     const src = await readFile(new URL("../lib/prisma.ts", import.meta.url), "utf8");
-    // The flag function returns true in non-production:
-    //   if (process.env.NODE_ENV !== "production") return true;
-    assert.match(src, /NODE_ENV\s*!==\s*"production".*return true/s);
+    // Asked of the function, not of its source text: the policy was narrowed
+    // so non-production bootstraps only a LOCAL database (see
+    // tests/runtime-bootstrap-never-touches-a-remote-database.test.ts), and a
+    // regex over the old one-liner could not tell that from a regression.
+    const { isRuntimeSchemaBootstrapEnabled } = await import("../lib/prisma");
+    const env = process.env as Record<string, string | undefined>;
+    const snap = { NODE_ENV: env.NODE_ENV, DATABASE_URL: env.DATABASE_URL, FLAG: env.ENABLE_RUNTIME_SCHEMA_BOOTSTRAP };
+    try {
+      env.NODE_ENV = "development";
+      delete env.ENABLE_RUNTIME_SCHEMA_BOOTSTRAP;
+      env.DATABASE_URL = "postgresql://dev:dev@127.0.0.1:5432/dev";
+      assert.equal(isRuntimeSchemaBootstrapEnabled(), true);
+    } finally {
+      for (const [k, v] of [["NODE_ENV", snap.NODE_ENV], ["DATABASE_URL", snap.DATABASE_URL], ["ENABLE_RUNTIME_SCHEMA_BOOTSTRAP", snap.FLAG]] as const) {
+        if (v === undefined) delete env[k]; else env[k] = v;
+      }
+    }
   });
 });
 

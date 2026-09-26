@@ -16,7 +16,7 @@
  *      per proposed expert):
  *        Education | Licence/Certification | Software Tools |
  *        Employment History | Key Projects | Core Competencies |
- *        Availability ("CONFIRMED AVAILABLE, Signed form in Appendix D")
+ *        (an availability line is printed only if a declaration is attached)
  *
  *   3. Project Management Organogram — PM at top, then 3 streams
  *      (Architecture / MEP / BOQ for hospitals; equivalents for
@@ -28,7 +28,7 @@
  *
  * THE FIX
  * Three deterministic builders. Vault-aware (real expert names + licences
- * + key projects when available; structured Bid-Team Action stubs when
+ * + key projects when available; a neutral "not recorded" note when
  * the vault is thin). Sector-aware organogram streams. Idempotent via
  * marker comments.
  *
@@ -38,6 +38,12 @@
  */
 
 import type { ExpertRecord, ProjectRecord } from "./benchmark-tables";
+import { factualCardOrEmpty } from "./vault-prose";
+import { truncateAtWordBoundary } from "./proposal-intelligence";
+import { titleStatesRole } from "./requirement-constraints";
+import { licencesNamedInCv, projectsNamedInCv, softwareNamedInCv } from "./cv-grounding";
+import { holdsExecutiveOffice } from "./signatory";
+import { formatPersonWithCredential, formatRegistration } from "./credential-format";
 
 const MARKER_LOADING = "<!-- personnel:per-01-loading -->";
 const MARKER_PROFILES = "<!-- personnel:per-02-profiles -->";
@@ -51,6 +57,11 @@ const HEADING_PATTERNS_LOADING: RegExp[] = [
 ];
 const HEADING_PATTERNS_PROFILES: RegExp[] = [
   /^##\s+PER\s*0?2\b/im,
+  // The per-expert bios already give each expert's role, registration, the
+  // projects and the tools the CV names; profile cards restating them were a
+  // second copy of the same facts (run 36074770709: A.5.1 and PER 02).
+  /^#{2,3}\s+(?:[A-Z]\.\d+(?:\.\d+)*\s+)?Principal\s+Qualifications\b/im,
+  /^#{2,3}\s+(?:[A-Z]\.\d+(?:\.\d+)*\s+)?(?:Detailed\s+)?(?:Expert\s+)?Bios\b/im,
   /^##\s+Expert\s+Profiles?/im,
   /^##\s+Per-Expert\s+Profile/im,
   /^##\s+Expert\s+CV\s+Cards/im,
@@ -290,28 +301,40 @@ function rolesForSector(sector: string, expertCount: number): { role: string; pi
   ].slice(0, Math.max(4, Math.min(5, expertCount + 2)));
 }
 
-// Pick most senior expert matching keywords; remove from pool.
+// Pick the most senior expert whose own TITLE states the role; remove from
+// pool. Nobody else: disciplines and profile text carry firm-wide tags
+// ("Architecture" on every CV), which is how an electrical engineer was named
+// "Lead Architect". A role no title states returns undefined, and the caller
+// leaves it out rather than naming somebody who does not hold it.
 function pickAndRemove(pool: ExpertRecord[], keywords: string[]): ExpertRecord | undefined {
   if (pool.length === 0) return undefined;
-  const scored = pool.map((e, i) => {
-    const blob = `${e.disciplines || ""} ${e.title || ""} ${e.profile || ""}`.toLowerCase();
-    const keywordHit = keywords.some((k) => blob.includes(k.toLowerCase())) ? 1 : 0;
-    const years = typeof e.yearsExperience === "number" ? e.yearsExperience : 0;
-    return { idx: i, score: keywordHit * 1000 + years };
-  });
-  scored.sort((a, b) => b.score - a.score);
-  if (scored[0]?.score === 0 && pool.length > keywords.length) return undefined;
-  const idx = scored[0]?.idx ?? 0;
+  // The earliest keyword a title states ranks first ("structural" before
+  // "civil" for a Structural Engineer role), then seniority.
+  const holders = pool
+    .map((e, i) => ({
+      idx: i,
+      rank: keywords.findIndex((k) => titleStatesRole(e.title, k)),
+      years: typeof e.yearsExperience === "number" ? e.yearsExperience : 0,
+    }))
+    .filter((c) => c.rank >= 0)
+    .sort((a, b) => (a.rank - b.rank) || (b.years - a.years));
+  if (holders.length === 0) return undefined;
+  const idx = holders[0].idx;
   const picked = pool[idx];
   pool.splice(idx, 1);
   return picked;
 }
 
+// The licence column states a licence: the stored one, else the registration
+// the person's CV states. It used to repeat the job title from the next column
+// when the stored field was empty, which it usually is.
+function expertLicences(e: ExpertRecord): string[] {
+  const stored = safeArr(e.certifications).map((c) => c.trim()).filter((c) => c.length > 2 && !/^[-—–]+$/.test(c));
+  return (stored.length > 0 ? stored : licencesNamedInCv(e.profile)).map(formatRegistration);
+}
+
 function expertLicenceLine(e: ExpertRecord): string {
-  const certs = safeArr(e.certifications);
-  if (certs.length > 0) return certs.slice(0, 2).join(" ; ");
-  if (e.title) return e.title;
-  return "Bid-Team Action: confirm licence";
+  return expertLicences(e).slice(0, 2).join(" ; ") || "Not stated in CV";
 }
 
 export function buildPersonnelLoadingTable(opts: {
@@ -323,17 +346,29 @@ export function buildPersonnelLoadingTable(opts: {
   const roles = rolesForSector(opts.primarySector, opts.experts.length);
   const pool = [...opts.experts];
 
-  // Normalise daysShare so total ~= totalDays
-  const shareSum = roles.reduce((acc, r) => acc + r.daysShare, 0) || 1;
-
-  const rows: LoadingRow[] = roles.map((r) => {
+  // A sector role is listed only when somebody's title holds it; every other
+  // proposed expert is listed under the role their own title states. The
+  // table used to print "Assignee confirmed at inception" rows for the roles
+  // nobody held while leaving proposed experts out of it altogether.
+  const assigned: Array<{ role: string; expert: ExpertRecord; share: number }> = [];
+  for (const r of roles) {
     const expert = pickAndRemove(pool, r.pickKeywords);
-    const expertName = expert?.fullName || "Bid-Team Action: confirm assignee";
-    const days = Math.max(2, Math.round((r.daysShare / shareSum) * totalDays));
+    if (expert) assigned.push({ role: r.role, expert, share: r.daysShare });
+  }
+  const shares = roles.map((r) => r.daysShare).sort((a, b) => a - b);
+  const typicalShare = shares.length > 0 ? shares[Math.floor(shares.length / 2)] : 1;
+  for (const expert of pool) {
+    assigned.push({ role: expert.title?.trim() || "Key Expert", expert, share: typicalShare });
+  }
+  if (assigned.length === 0) return "";
+  const shareSum = assigned.reduce((acc, a) => acc + a.share, 0) || 1;
+
+  const rows: LoadingRow[] = assigned.map((a) => {
+    const days = Math.max(2, Math.round((a.share / shareSum) * totalDays));
     return {
-      role: r.role,
-      expert: expertName,
-      licence: expert ? expertLicenceLine(expert) : "Bid-Team Action: confirm licence",
+      role: a.role,
+      expert: a.expert.fullName,
+      licence: expertLicenceLine(a.expert),
       days: `${days} days`,
     };
   });
@@ -359,67 +394,44 @@ export function buildPersonnelLoadingTable(opts: {
 
 // ─── PER 02 — Per-Expert Profile Cards ───────────────────────────────────
 
+// Projects and software this person's OWN CV names (cv-grounding.ts). These
+// used to be inferred from firm-wide sector and discipline tags, so every card
+// claimed the same hospitals and the same design software.
+// Names only. A contract value in this cell was blanked by the technical-price
+// separation pass, which printed the row label over an empty cell; the value
+// is stated, under its own label, on the project's portfolio card.
 function expertProjectsLine(e: ExpertRecord, projects: ProjectRecord[]): string {
-  // Match expert disciplines to projects with overlapping sectors
-  const expertSectors = safeArr(e.sectors).map((s) => s.toLowerCase());
-  const expertDisciplines = safeArr(e.disciplines).map((s) => s.toLowerCase());
-  const matches = projects.filter((p) => {
-    const pSector = (p.sector || "").toLowerCase();
-    const pAreas = safeArr(p.serviceAreas).map((s) => s.toLowerCase());
-    return expertSectors.some((s) => pSector.includes(s)) ||
-      expertDisciplines.some((d) => pAreas.some((a) => a.includes(d)));
-  }).slice(0, 5);
-  if (matches.length === 0) return "Bid-Team Action: confirm key project references";
-  return matches.map((p) => {
-    const v = p.contractValue ? `${p.currency || "ETB"} ${Math.round(p.contractValue).toLocaleString("en-US")}` : "";
-    return `${p.name}${v ? ` (${v})` : ""}`;
-  }).join(" ; ");
+  return projectsNamedInCv(e.profile, projects).slice(0, 5).map((p) => p.name ?? "").filter(Boolean).join(" ; ");
 }
 
-function expertEducationLine(e: ExpertRecord): string {
-  // Approximate from disciplines + years
-  const disciplines = safeArr(e.disciplines).join(", ");
-  const yearsContext = typeof e.yearsExperience === "number" && e.yearsExperience > 0
-    ? `${e.yearsExperience} years professional practice`
-    : "Bid-Team Action: confirm years of experience";
-  return disciplines ? `${disciplines}; ${yearsContext}` : yearsContext;
+function expertSoftwareLine(e: ExpertRecord): string {
+  return softwareNamedInCv(e.profile).slice(0, 6).join(", ");
 }
 
-function expertSoftwareLine(e: ExpertRecord, primarySector: string): string {
-  const blob = `${e.profile || ""} ${e.disciplines || ""} ${e.title || ""}`.toLowerCase();
-  const tools: string[] = [];
-  // Heuristic mapping by discipline
-  if (/architect|design|drafting/.test(blob)) tools.push("AutoCAD", "Revit", "SketchUp");
-  if (/structur/.test(blob)) tools.push("ETABS", "SAP2000", "AutoCAD Structural");
-  if (/water|hydraulic|sanitary/.test(blob)) tools.push("EPANET", "WaterCAD", "AutoCAD Civil 3D");
-  if (/road|highway|pavement/.test(blob)) tools.push("AutoCAD Civil 3D", "MX Road", "HEC-RAS");
-  if (/gis|urban|planner|spatial/.test(blob)) tools.push("ArcGIS", "QGIS", "AutoCAD Civil 3D");
-  if (/mep|mechanical|electrical/.test(blob)) tools.push("Revit MEP", "AutoCAD Electrical", "ETAP");
-  if (/quantity|qs|boq/.test(blob)) tools.push("CostX", "Microsoft Excel (advanced)", "AutoCAD");
-  if (/project|manage/.test(blob)) tools.push("MS Project", "Primavera P6", "Microsoft 365");
-  // Generic fallback
-  if (tools.length === 0) {
-    if (/water/.test(primarySector.toLowerCase())) tools.push("AutoCAD Civil 3D", "EPANET", "MS Office");
-    else if (/road/.test(primarySector.toLowerCase())) tools.push("AutoCAD Civil 3D", "MX Road", "MS Office");
-    else if (/health/.test(primarySector.toLowerCase())) tools.push("AutoCAD", "Revit", "MS Office");
-    else tools.push("AutoCAD", "Microsoft Office 365");
-  }
-  return tools.slice(0, 4).join(", ");
-}
-
-function buildOneExpertCard(e: ExpertRecord, idx: number, projects: ProjectRecord[], primarySector: string): string {
+function buildOneExpertCard(e: ExpertRecord, idx: number, projects: ProjectRecord[]): string {
   const lines: string[] = [];
   lines.push(`### ${idx}. ${escCell(e.fullName)}${e.title ? ` — ${escCell(e.title)}` : ""}`);
   lines.push("");
+  // Every row states only what the expert's own record holds, and a row with
+  // nothing behind it is left out. The card used to label the firm-wide
+  // discipline list "Education", print the job title as the "Licence", and
+  // close on "CONFIRMED AVAILABLE — signed availability declaration filed in
+  // Appendix C", a document no submission attached.
+  const certs = safeArr(e.certifications);
+  const years = typeof e.yearsExperience === "number" && e.yearsExperience > 0 ? `${e.yearsExperience} years` : "";
   const rows: { label: string; value: string }[] = [
-    { label: "Education and Years of Practice", value: expertEducationLine(e) },
-    { label: "Licence / Certification", value: expertLicenceLine(e) },
-    { label: "Software Tools (Indicative)", value: expertSoftwareLine(e, primarySector) },
-    { label: "Sectors of Practice", value: safeArr(e.sectors).join(", ") || "Bid-Team Action: confirm sectors" },
-    { label: "Key Project References", value: expertProjectsLine(e, projects) },
-    { label: "Core Competencies", value: safeArr(e.disciplines).join(", ") || (e.profile ? e.profile.replace(/\s+/g, " ").slice(0, 200) : "Bid-Team Action: confirm core competencies") },
-    { label: "Availability for This Assignment", value: "CONFIRMED AVAILABLE — signed availability declaration filed in Appendix C of this submission" },
-  ];
+    { label: "Current Role", value: e.title?.trim() ?? "" },
+    { label: "Years of Professional Practice", value: years },
+    { label: "Licence / Certification", value: (certs.length > 0 ? certs : licencesNamedInCv(e.profile)).slice(0, 3).map(formatRegistration).join("; ") },
+    { label: "Software Named in CV", value: expertSoftwareLine(e) },
+    { label: "Projects Named in CV", value: expertProjectsLine(e, projects) },
+    // No discipline row: the discipline list is firm-wide boilerplate on every
+    // CV (the title states the discipline), and the firm's own name puts
+    // "Urban Planning" into every CV's text, so it cannot be grounded per person.
+  ].filter((r) => r.value.trim().length > 0);
+  if (rows.length === 0 && e.profile) {
+    rows.push({ label: "Profile", value: truncateAtWordBoundary(factualCardOrEmpty(e.profile), 200) });
+  }
   lines.push("| Field | Detail |");
   lines.push("|-------|--------|");
   for (const r of rows) lines.push(`| ${r.label} | ${escCell(r.value)} |`);
@@ -432,25 +444,22 @@ export function buildPerExpertProfileCards(opts: {
   projects: ProjectRecord[];
   primarySector: string;
 }): string {
-  if (opts.experts.length === 0) {
-    return [
-      MARKER_PROFILES,
-      "## PER 02 — Expert Profile Cards",
-      "",
-      "_Bid-Team Action: select reviewed expert CVs from the company knowledge vault before submission._",
-      "",
-    ].join("\n");
-  }
+  // With no reviewed experts there are no cards to print. Emitting the heading
+  // anyway, over an instruction telling the bid desk to go and select CVs, put
+  // an empty section and an internal task into the client's proposal. The
+  // readiness gates already block a submission with no personnel, so the honest
+  // output here is nothing at all.
+  if (opts.experts.length === 0) return "";
 
   const cards = opts.experts.slice(0, 9).map((e, i) =>
-    buildOneExpertCard(e, i + 1, opts.projects, opts.primarySector),
+    buildOneExpertCard(e, i + 1, opts.projects),
   );
 
   return [
     MARKER_PROFILES,
     "## PER 02 — Expert Profile Cards",
     "",
-    `Per-expert profile cards for the ${Math.min(9, opts.experts.length)} key personnel proposed for this assignment. Each card carries education, licence/certification, software tools, sector experience, key project references, core competencies, and signed availability declaration filed in Appendix C.`,
+    `Profile cards for the ${Math.min(9, opts.experts.length)} key personnel proposed for this assignment, each drawn from the expert's own CV record: current role, years of practice, recorded licences, and the software and projects the CV itself names.`,
     "",
     ...cards,
   ].join("\n");
@@ -555,11 +564,18 @@ export function buildOrganogram(opts: {
   primarySector: string;
 }): string {
   const pool = [...opts.experts];
-  // Pick PM first
-  const pm = pickAndRemove(pool, ["principal", "director", "manager", "pm"]);
-  const pmLabel = pm
-    ? `${pm.fullName}${pm.title ? `, ${pm.title}` : ""}${expertLicenceLine(pm) !== "Bid-Team Action: confirm licence" ? ` (${expertLicenceLine(pm)})` : ""}`
-    : "Bid-Team Action: confirm Project Manager";
+  // The Project Manager is the expert whose own title says so. Run 36074770709
+  // named the firm's General Manager as Project Manager ("manager" matched
+  // first) while another proposed expert's title read "Project Manager". The
+  // executive, when a different person, is the Project Principal above.
+  const namedPm = pickAndRemove(pool, ["project manager"]);
+  const pm = namedPm ?? pickAndRemove(pool, ["principal", "director", "manager", "pm"]);
+  const principalIdx = namedPm ? pool.findIndex((e) => holdsExecutiveOffice(e.title ?? "")) : -1;
+  const principal = principalIdx >= 0 ? pool.splice(principalIdx, 1)[0] : undefined;
+  // A licence is shown only when there is one: the old fallback printed the
+  // title a second time ("Name, Senior Architect (Senior Architect)").
+  const licenceSuffix = (e: ExpertRecord) => expertLicences(e).slice(0, 1).join("");
+  const pmLabel = pm ? formatPersonWithCredential(pm.fullName, pm.title, licenceSuffix(pm) || null) : "";
 
   const streams = streamsForSector(opts.primarySector);
   const streamRows: string[] = [];
@@ -567,24 +583,30 @@ export function buildOrganogram(opts: {
     const members: string[] = [];
     for (let i = 0; i < stream.members; i += 1) {
       const ex = pickAndRemove(pool, stream.pickKeywords);
-      if (ex) {
-        const lic = expertLicenceLine(ex);
-        members.push(`${ex.fullName}${ex.title ? ` (${ex.title})` : ""}${lic !== "Bid-Team Action: confirm licence" ? ` — ${lic}` : ""}`);
-      } else {
-        members.push("Bid-Team Action: confirm assignee");
-      }
+      if (!ex) break;
+      const lic = licenceSuffix(ex);
+      members.push(`${ex.fullName}${ex.title ? ` (${ex.title})` : ""}${lic ? ` — ${lic}` : ""}`);
     }
-    streamRows.push(`| **${stream.name}** | ${members.join("<br/>")} |`);
+    // A stream nobody on the team holds is left out, not filled with
+    // "Assignee confirmed at inception" placeholders.
+    if (members.length > 0) streamRows.push(`| **${stream.name}** | ${members.join("<br/>")} |`);
+  }
+  // Proposed experts no stream claimed still appear in the structure.
+  if (pool.length > 0) {
+    const others = pool.map((ex) => `${ex.fullName}${ex.title ? ` (${ex.title})` : ""}`);
+    streamRows.push(`| **Specialist Support** | ${others.join("<br/>")} |`);
   }
 
   return [
     MARKER_ORGANOGRAM,
     "## Project Management Organogram",
     "",
-    "Reporting structure for this engagement. The Project Manager is single-point-of-accountability to the client and reports through the firm's Technical Director for QA escalation. Each stream below is led by a senior with directly comparable experience.",
+    // No "Technical Director" (nobody proposed holds the post) and no "led by a
+    // senior with directly comparable experience" (a claim no record makes).
+    `Reporting structure for this engagement. The Project Manager is the single point of accountability to the client${principal ? " and reports to the Project Principal" : ""}; each stream groups the team members whose own titles hold its disciplines.`,
     "",
-    `**Project Manager (single-point-of-accountability)**: ${pmLabel}`,
-    "",
+    ...(principal ? [`**Project Principal**: ${principal.fullName}${principal.title ? `, ${principal.title}` : ""}${licenceSuffix(principal) ? ` (${licenceSuffix(principal)})` : ""}`, ""] : []),
+    ...(pmLabel ? [`**Project Manager (single point of accountability)**: ${pmLabel}`, ""] : []),
     "| Stream | Members |",
     "|--------|---------|",
     ...streamRows,
@@ -615,13 +637,23 @@ export function injectPersonnelDeep(
   const hasProfiles = markdown.includes(MARKER_PROFILES) || HEADING_PATTERNS_PROFILES.some((p) => p.test(markdown));
   const hasOrganogram = markdown.includes(MARKER_ORGANOGRAM) || HEADING_PATTERNS_ORGANOGRAM.some((p) => p.test(markdown));
 
-  if (!hasLoading) {
-    blocks.push(buildPersonnelLoadingTable({ experts: opts.experts, primarySector: opts.primarySector, totalDays: opts.totalDays }));
-    injected.loading = true;
+  // Person-days are sized from the tender's stated duration. Without one the
+  // table invented them: "sized for the expected engagement window (90
+  // working days total)" in run 36074770709, for a tender that states no
+  // duration, beside role labels no title holds.
+  if (!hasLoading && opts.totalDays && opts.totalDays > 0) {
+    const loading = buildPersonnelLoadingTable({ experts: opts.experts, primarySector: opts.primarySector, totalDays: opts.totalDays });
+    if (loading) {
+      blocks.push(loading);
+      injected.loading = true;
+    }
   }
   if (!hasProfiles) {
-    blocks.push(buildPerExpertProfileCards({ experts: opts.experts, projects: opts.projects, primarySector: opts.primarySector }));
-    injected.profiles = true;
+    const profileCards = buildPerExpertProfileCards({ experts: opts.experts, projects: opts.projects, primarySector: opts.primarySector });
+    if (profileCards) {
+      blocks.push(profileCards);
+      injected.profiles = true;
+    }
   }
   if (!hasOrganogram) {
     blocks.push(buildOrganogram({ experts: opts.experts, primarySector: opts.primarySector }));

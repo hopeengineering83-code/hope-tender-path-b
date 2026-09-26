@@ -99,7 +99,7 @@ export type BuildPlanHashInput = {
   }>;
 };
 
-const UNIT = ""; // field separator unlikely to appear in tender text
+const UNIT = "\x01"; // field separator unlikely to appear in tender text
 
 function sha256(value: string): string {
   return crypto.createHash("sha256").update(value).digest("hex");

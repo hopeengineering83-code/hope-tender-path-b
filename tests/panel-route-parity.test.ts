@@ -103,9 +103,14 @@ describe("panel-route-parity — matching-quality with vault counts", () => {
       vaultReviewedProjects: 0,
     });
     // The warning must mention vault availability, not say "no reviewed
-    // vault experts are available" (the production bug).
-    const hasVaultMention = report.warnings.some((w) => /28\s+reviewed\s+vault\s+expert/i.test(w));
-    assert.ok(hasVaultMention, `Expected a warning mentioning '28 reviewed vault expert(s)', got: ${JSON.stringify(report.warnings)}`);
+    // vault experts are available" (the production bug). The count is now
+    // described as "verified/source-backed" rather than "reviewed", because
+    // machine SOURCE_VERIFIED evidence counts here too and calling it
+    // "reviewed" implied a human step that the contract does not require.
+    // What is pinned is that the real number reaches the owner, not which
+    // adjective precedes it.
+    const hasVaultMention = report.warnings.some((w) => /28\s+verified\/source-backed\s+vault\s+expert/i.test(w));
+    assert.ok(hasVaultMention, `Expected a warning mentioning '28 verified/source-backed Vault expert(s)', got: ${JSON.stringify(report.warnings)}`);
     const hasFalseUnavailable = report.warnings.some((w) => /no\s+reviewed\s+vault\s+experts?\s+are\s+available/i.test(w));
     assert.equal(hasFalseUnavailable, false, "Must NOT say 'no reviewed vault experts available' when vault count > 0");
   });

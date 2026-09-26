@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { emitTenderWorkflowSync } from "../lib/ui/tender-workflow-sync";
 
 type GenerateResponse = {
   success?: boolean;
@@ -12,15 +13,16 @@ type GenerateResponse = {
   warning?: string;
   created?: number;
   updated?: number;
-  files?: { created?: string[]; updated?: string[] };
+  files?: { created?: string[]; updated?: string[]; skipped?: string[] };
 };
 
 function nextActionLabel(action?: string) {
-  if (action === "RUN_ENGINE") return "Run Engine first, then retry.";
-  if (action === "REVIEW_MATCHES") return "Review/select expert and project evidence, then retry.";
+  if (action === "RUN_ENGINE") return "Matching has not produced evidence for this tender yet. It runs automatically; retry once it completes.";
+  if (action === "REVIEW_MATCHES") return "Open proposal evidence readiness to see why no expert or project evidence could be selected. Selection is automatic once the vault records verify against their documents.";
   if (action === "OPEN_EXTRACTION_QUALITY") return "Open Extraction Quality and fix weak files.";
   if (action === "OPEN_ANALYSIS_QUALITY") return "Review Analysis Quality, then retry.";
   if (action === "OPEN_MATCHING_QUALITY") return "Review Matching Quality, then retry.";
+  if (action === "REVIEW_SKIPPED_TARGETS") return "Each target below was skipped for the reason shown — retrying without changing them repeats this result.";
   return null;
 }
 
@@ -50,14 +52,28 @@ export function GenerateMissingPlanFilesButton({ tenderId, missingCount }: { ten
       const res = await fetch(`/api/tenders/${tenderId}/generate-missing-plan-files`, { method: "POST" });
       const data = await parseResponse(res);
       if (!res.ok || data.error) {
+        // A run that changed nothing arrives here with its per-target reasons.
+        // Listing them is the point: without them the user is told "0 created"
+        // and has nothing to act on except clicking again.
         const action = nextActionLabel(data.nextAction);
+        const skipped = data.files?.skipped ?? [];
         setOk(false);
-        setMessage([data.error || "Missing-file generation failed.", action, data.hint].filter(Boolean).join(" "));
+        setMessage([
+          data.error || "Missing-file generation failed.",
+          action,
+          data.hint,
+          skipped.length > 0 ? `Skipped: ${skipped.join("; ")}` : null,
+        ].filter(Boolean).join(" "));
         return;
       }
       const count = (data.created ?? 0) + (data.updated ?? 0);
       setOk(true);
       setMessage(`${count} missing planned file record${count === 1 ? "" : "s"} created/updated. ${data.warning ?? "Review replacement-control records before export."}`.trim());
+      // The Build Plan panel that hosts this button holds its own fetched
+      // counts; router.refresh() does not re-run that client fetch, so without
+      // this the panel would keep offering "Generate N missing" after N were
+      // generated.
+      emitTenderWorkflowSync({ tenderId, source: "missing-plan-files-generated" });
       startTransition(() => router.refresh());
     } catch (error) {
       setOk(false);

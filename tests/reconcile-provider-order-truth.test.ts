@@ -13,9 +13,13 @@ import { spawnSync } from "node:child_process";
 import { CANONICAL_AI_PROVIDER_ORDER } from "../lib/ai-provider-registry";
 
 const CANONICAL = [
-  "zai", "cerebras", "mistral", "groq", "openrouter",
-  "gemini", "openai", "together", "deepseek", "anthropic",
+  "gemini", "groq", "mistral", "zai", "cerebras",
+  "openrouter", "openai", "together", "deepseek", "anthropic",
 ];
+
+// The free chain the app may actually contact. The remainder of CANONICAL is
+// enumerated for health/diagnostics only.
+const AUTOMATIC_CHAIN = CANONICAL;
 
 describe("reconcile-gap-closure — provider-order truth", () => {
   const src = readFileSync("scripts/reconcile-gap-closure.mjs", "utf8");
@@ -24,13 +28,17 @@ describe("reconcile-gap-closure — provider-order truth", () => {
     assert.deepEqual([...CANONICAL_AI_PROVIDER_ORDER], CANONICAL);
   });
 
-  it("script pins the documented Z.ai-first order (stale Mistral-first chain must never return)", () => {
+  it("script pins the documented owner order", () => {
     const m = src.match(/REQUIRED_ORDER\s*=\s*\[([^\]]+)\]/);
     assert.ok(m, "script must declare REQUIRED_ORDER");
     const scriptOrder = Array.from(m![1].matchAll(/"([^"]+)"/g)).map((x) => x[1]);
     assert.deepEqual(scriptOrder, CANONICAL, "script REQUIRED_ORDER must equal the canonical order");
-    assert.ok(src.includes("Z.ai → Cerebras → Mistral"), "display labels must be Z.ai-first");
-    assert.ok(!/^const REQUIRED_CHAIN = \["mistral"/m.test(src), "stale Mistral-first REQUIRED_CHAIN must be gone");
+    assert.ok(src.includes("Gemini → Groq → Mistral → Z.ai"), "display labels must lead with the free chain");
+  });
+
+  it("script pins the full automatic chain, not a restricted subset", () => {
+    assert.match(src, /REQUIRED_AUTOMATIC_ORDER\s*=\s*REQUIRED_ORDER/);
+    assert.deepEqual(AUTOMATIC_CHAIN, CANONICAL);
   });
 
   it("script verifies the catalog itself, not a parallel hardcoded truth", () => {
@@ -63,11 +71,11 @@ describe("reconcile-gap-closure — provider-order truth", () => {
         mkdirSync(join(root, dirname(f)), { recursive: true });
         copyFileSync(f, join(root, f));
       }
-      // Mutate the catalog: swap zai and cerebras — the exact drift the
+      // Mutate the catalog: swap gemini and groq — the exact drift the
       // canonical order rule must catch.
       const catalogPath = join(root, "lib/ai-provider-catalog.cjs");
       const catalog = readFileSync(catalogPath, "utf8");
-      const mutated = catalog.replace('  "zai",\n  "cerebras",', '  "cerebras",\n  "zai",');
+      const mutated = catalog.replace('  "gemini",\n  "groq",', '  "groq",\n  "gemini",');
       assert.notEqual(mutated, catalog, "mutation must apply");
       writeFileSync(catalogPath, mutated);
 

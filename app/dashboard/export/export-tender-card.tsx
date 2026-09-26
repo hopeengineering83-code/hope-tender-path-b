@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { ArrowRightIcon, CheckIcon, CrossIcon, DownloadIcon } from "../../../components/icons";
 
 type CheckItem = { label: string; done: boolean; blocking?: boolean; warn?: boolean };
 type CriticalGap = { id: string; title: string };
@@ -11,7 +12,6 @@ type DocItem = { id: string; name: string; exactFileName: string | null; exactOr
 type Props = {
   tenderId: string;
   tenderTitle: string;
-  tenderStatus: string;
   isReady: boolean;
   isExported: boolean;
   generatedCount: number;
@@ -32,7 +32,7 @@ type Props = {
 };
 
 export function ExportTenderCard({
-  tenderId, tenderTitle, tenderStatus, isReady, isExported,
+  tenderId, tenderTitle, isReady, isExported,
   generatedCount, totalDocs, blockingGaps, warningGaps,
   checks, criticalGaps, highGaps, documents,
   canonicalBlockerCodes = [], canonicalNextAction,
@@ -41,13 +41,25 @@ export function ExportTenderCard({
 
   return (
     <div className="rounded-2xl border bg-white shadow-sm">
-      <div className="flex items-start justify-between gap-4 p-6">
-        <div>
-          <div className="flex items-center gap-3">
-            <h2 className="text-lg font-semibold text-slate-900">{tenderTitle}</h2>
-            {isExported && <span className="rounded-full bg-green-100 px-2.5 py-0.5 text-xs text-green-700">Exported</span>}
+      <div className="flex flex-wrap items-start justify-between gap-4 p-6">
+        <div className="min-w-0">
+          <div className="flex min-w-0 flex-wrap items-center gap-3">
+            <h2 className="min-w-0 break-words text-lg font-semibold text-slate-900">{tenderTitle}</h2>
+            {/* Exported is history, not a readiness verdict, and the two are
+                independent: a package downloaded earlier becomes not-ready
+                again the moment a document is regenerated or fails validation.
+                Captured on the Export Hub while proving the BLOCKED direction,
+                the green "Exported" pill sat beside the amber "Not ready" pill
+                on a package whose download answered 409 — two true facts
+                rendered as competing status pills, on the one surface this
+                release spent its effort making unambiguous.
+                The fact is kept, not removed: green only while the package IS
+                ready, otherwise a neutral "Exported earlier", so one verdict
+                leads and the history is still visible. */}
+            {isExported && isReady && <span className="rounded-full bg-green-100 px-2.5 py-0.5 text-xs text-green-700">Exported</span>}
+            {isExported && !isReady && <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs text-slate-600">Exported earlier</span>}
             {isReady && !isExported && <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs text-emerald-700">Ready</span>}
-            {!isReady && <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs text-amber-700">Not ready</span>}
+            {!isReady && <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs text-amber-800">Not ready</span>}
           </div>
           <p className="mt-1 text-sm text-slate-500">
             {generatedCount} / {totalDocs} docs generated
@@ -55,22 +67,42 @@ export function ExportTenderCard({
             {warningGaps > 0 && <span className="ml-2 text-amber-600">{warningGaps} warning{warningGaps !== 1 ? "s" : ""}</span>}
           </p>
         </div>
-        <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+        {/* w-full on mobile gives this row a definite width so flex-wrap can
+            actually constrain its children -- shrink-0 alone makes the
+            browser compute this container's intrinsic width as the sum of
+            all children's widths regardless of flex-wrap (wrapping only
+            affects layout once a definite width is imposed from outside),
+            so on narrow viewports the row silently overflowed instead of
+            wrapping. sm:w-auto sm:shrink-0 restores the original
+            don't-shrink-below-content behavior once there's room. */}
+        <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto sm:shrink-0">
           {isReady && canonicalBlockerCodes.length === 0 && (
             <a
               href={`/api/tenders/${tenderId}/download?type=zip`}
               target="_blank"
               className="rounded-lg bg-emerald-600 px-4 py-2 text-sm text-white hover:bg-emerald-700"
             >
-              ↓ Download ZIP
+              <DownloadIcon /> Download ZIP
             </a>
           )}
           {!isReady && canonicalBlockerCodes.length > 0 && (
             <span
-              className="rounded-lg bg-slate-100 px-4 py-2 text-sm text-slate-400 cursor-not-allowed"
-              title={canonicalNextAction ?? "Not ready"}
+              className="rounded-lg bg-slate-100 px-4 py-2 text-sm text-slate-500 cursor-not-allowed"
+              title={canonicalNextAction ?? "Resolve all critical gaps to unlock the ZIP download."}
             >
               ZIP locked
+            </span>
+          )}
+          {!isReady && canonicalBlockerCodes.length > 0 && (
+            <span className="text-xs text-slate-500">
+              {canonicalBlockerCodes.length} blocker{canonicalBlockerCodes.length !== 1 ? "s" : ""} —{" "}
+              <button
+                type="button"
+                onClick={() => setExpanded(true)}
+                className="font-medium text-slate-700 underline hover:text-slate-900"
+              >
+                view checklist to resolve
+              </button>
             </span>
           )}
           <Link href={`/dashboard/tenders/${tenderId}`}
@@ -99,12 +131,12 @@ export function ExportTenderCard({
           {!isReady && canonicalBlockerCodes.length > 0 && (
             <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3">
               <p className="text-sm font-semibold text-amber-800">Canonical export blockers</p>
-              <p className="mt-1 text-xs text-amber-700">
+              <p className="mt-1 text-xs text-amber-800">
                 Next action: {canonicalNextAction ?? "Resolve the blockers below."}
               </p>
               <ul className="mt-2 flex flex-wrap gap-2">
                 {canonicalBlockerCodes.map((code) => (
-                  <li key={code} className="rounded bg-amber-100 px-2 py-0.5 text-xs font-mono font-semibold text-amber-700">
+                  <li key={code} className="rounded bg-amber-100 px-2 py-0.5 text-xs font-mono font-semibold text-amber-800">
                     {code}
                   </li>
                 ))}
@@ -122,7 +154,7 @@ export function ExportTenderCard({
                   check.warn ? "bg-amber-400 text-white" :
                   "border-2 border-slate-200 text-slate-300"
                 }`}>
-                  {check.blocking ? "✕" : check.done ? "✓" : check.warn ? "!" : ""}
+                  {check.blocking ? <CrossIcon /> : check.done ? <CheckIcon /> : check.warn ? "!" : ""}
                 </span>
                 <span className={check.blocking ? "text-red-600 font-medium" : check.done ? "text-slate-700" : "text-slate-400"}>
                   {check.label}
@@ -143,7 +175,7 @@ export function ExportTenderCard({
                 ))}
               </ul>
               <Link href="/dashboard/compliance" className="mt-2 inline-block text-xs text-red-600 underline hover:no-underline">
-                Resolve in Compliance Dashboard →
+                Resolve in Compliance Dashboard <ArrowRightIcon />
               </Link>
             </div>
           )}
@@ -153,7 +185,7 @@ export function ExportTenderCard({
               <p className="text-sm font-medium text-amber-800 mb-2">High-priority warnings (non-blocking)</p>
               <ul className="space-y-1">
                 {highGaps.map((gap) => (
-                  <li key={gap.id} className="text-sm text-amber-700">{gap.title}</li>
+                  <li key={gap.id} className="text-sm text-amber-800">{gap.title}</li>
                 ))}
               </ul>
             </div>
@@ -178,7 +210,7 @@ export function ExportTenderCard({
                         isPending ? "bg-slate-200 text-slate-400" :
                         "border border-slate-200 text-slate-300"
                       }`}>
-                        {isGen ? "✓" : isFailed ? "✕" : isPending ? "⋯" : ""}
+                        {isGen ? <CheckIcon /> : isFailed ? <CrossIcon /> : isPending ? "..." : ""}
                       </span>
                       <span className={isGen ? "text-slate-700" : "text-slate-400"}>
                         {doc.exactOrder ? `${doc.exactOrder}. ` : ""}{doc.exactFileName || doc.name}
@@ -192,7 +224,7 @@ export function ExportTenderCard({
                           target="_blank"
                           className="ml-auto text-xs text-blue-500 hover:underline"
                         >
-                          ↓
+                          <DownloadIcon />
                         </a>
                       )}
                     </div>

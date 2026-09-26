@@ -1,4 +1,4 @@
-import { nonClientEntityLabelPattern, canonicalizeCountry, containsMetadataPlaceholder } from "./metadata-validators";
+import { nonClientEntityLabelPattern, canonicalizeCountry, containsMetadataPlaceholder, isValidReferenceNumber } from "./metadata-validators";
 
 // Deterministic, source-grounded extractors for tender-metadata scalar fields.
 export type ExtractedField<T> = {
@@ -87,13 +87,23 @@ export function cutAtNextFieldLabel(val: string): string {
     "recipient", "grantee", "consultant", "beneficiary", "employer",
     "name of procuring entity", "procuring entity",
     "owner", "representative", "officer", "title", "subject", "channel",
+    "legal client", "issuing entity", "tender type", "tender title", "tender status",
   ];
   // Convert intra-label spaces to \s+ so "Funded By" / "Implementing Partner"
   // match across arbitrary whitespace; escape hyphens for the character-class-free
   // alternation. Ordering is irrelevant to the cut position because every
   // alternative begins at the same leading-whitespace boundary.
   const alt = labels.map((l) => l.replace(/\s+/g, "\\s+").replace(/-/g, "\\-")).join("|");
-  const rx = new RegExp(`\\s+(?:${alt})\\s*[:\\-]`, "i");
+  // A label may be compound: "Procuring Entity / Client Name:", "Legal Client
+  // Name:", "Project Name:". Requiring the colon straight after the base word
+  // missed every one of them, so on text flattened without line breaks the
+  // value ran on through the next label — on 2026-09-23 the client name was
+  // read as "Pharo Ventures Procuring Entity / Client Name: Pharo Ventures
+  // Legal Client Name: ...", flagged as contaminated, and cleared, leaving the
+  // tender with no client at all. The optional "/ Other Label" and trailing
+  // name/details/number word are part of the label, never of the value.
+  const suffix = String.raw`(?:\s*\/\s*[a-z]+(?:\s+[a-z]+){0,2})?(?:\s+(?:name|names|details|no\.?|number|id))?`;
+  const rx = new RegExp(`\\s+(?:${alt})${suffix}\\s*[:\\-]`, "i");
   const m = rx.exec(val);
   return m ? val.slice(0, m.index).trim() : val.trim();
 }
@@ -119,6 +129,12 @@ export function extractReference(input: ExtractorInput): ExtractedFieldOrMissing
       if (!m) continue;
       const value = m[1].trim();
       if (LABEL_REJECT.test(value)) continue; // reject pure-label captures
+      // "Tender Reference: Not provided" captured "Not"; "RFP Reference: None"
+      // captured "None". The export gate refuses these as placeholders
+      // ("Critical metadata field reference has a placeholder value (\"Not\")"),
+      // so a tender that states it has no reference was left with a stored
+      // reference that blocked the Build Plan. The gate's own validator decides.
+      if (!isValidReferenceNumber(value)) continue;
       cands.push({ found: true, value, sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: p.confidence });
       break;
     }

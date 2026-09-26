@@ -1,3 +1,5 @@
+import { isFinalExportCandidateDocument } from "./engine/document-output-state";
+
 export type TenderReadinessInput = {
   analysisExtractionStatus?: string | null;
   analysisSource?: string | null;
@@ -11,7 +13,20 @@ export type TenderReadinessInput = {
   requirements?: Array<{ priority?: string | null; sourcePageNumber?: number | null; sourceExactQuote?: string | null; sectionReference?: string | null; sourceConfidence?: number | null; exactFileName?: string | null }>;
   exactFileNaming?: string | null;
   exactFileOrder?: string | null;
-  generatedDocuments?: Array<{ contentSummary?: string | null; generationStatus?: string | null }>;
+  /**
+   * Callers may pass the raw tender rows — the current/active subset is
+   * selected here with the canonical predicate, not by the caller.
+   */
+  generatedDocuments?: Array<{
+    contentSummary?: string | null;
+    generationStatus?: string | null;
+    validationStatus?: string | null;
+    reviewStatus?: string | null;
+    documentType?: string | null;
+    format?: string | null;
+    name?: string | null;
+    exactFileName?: string | null;
+  }>;
   complianceGaps?: Array<{ severity: string; isResolved: boolean }>;
 };
 
@@ -97,7 +112,14 @@ export function computeTenderReadinessState(input: TenderReadinessInput): Tender
   if (!submissionPlanBuilt) warnings.push("Submission plan is not built.");
 
   const currentAnalysisHash = deriveAnalysisHash({ extractionStatus, analysisSource, requirementCount: rawRequirementsCount, mandatoryCount: mandatoryRequirementsCount, sourceTracedCount: sourceTracedRequirementsCount });
-  const activeDocs = (input.generatedDocuments ?? []).filter((d) => !/SUPERSEDED|PLANNED/i.test(d.generationStatus ?? ""));
+  // Canonical current-document selection — the same one the export gate, the
+  // Final Package Manifest and the Document Validator use. This was a private
+  // regex testing generationStatus for SUPERSEDED|PLANNED only, so a QUEUED,
+  // STALE, GENERATING or FAILED row, a row whose validationStatus is SUPERSEDED,
+  // a NOT_EXPORTABLE / REPLACE_WITH_ORIGINAL row, a CONTROL-format row and an
+  // internal draft all counted as active here while every gate treated them as
+  // historical. Readiness must not count what the export gate will not ship.
+  const activeDocs = (input.generatedDocuments ?? []).filter((d) => isFinalExportCandidateDocument(d));
   const docsGeneratedFromCurrentAnalysis = activeDocs.length > 0 && activeDocs.every((d) => parseDocAnalysisHash(d.contentSummary) === currentAnalysisHash);
   if (activeDocs.length > 0 && !docsGeneratedFromCurrentAnalysis) warnings.push("Generated documents are stale or missing analysisHash.");
 

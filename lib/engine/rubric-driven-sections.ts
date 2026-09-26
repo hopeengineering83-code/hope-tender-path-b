@@ -272,7 +272,7 @@ function buildCriterionContent(
 
   if (parentSection === "SECTION_C") {
     if (/quality|qa|qms|risk/.test(c)) {
-      return `Quality management follows a three-gate review cycle: 30 % Conceptual Design, 60 % Design Development, and 100 % Pre-Issue. Each gate requires sign-off by the Project Principal and an independent Technical Director who was not involved in production. Non-conformances are logged, tracked to close-out, and reported in monthly progress reports. This QA regime has been applied across all comparable ${sector} assignments in our portfolio.`;
+      return `Quality management follows a three-gate review cycle: 30 % Conceptual Design, 60 % Design Development, and 100 % Pre-Issue. Each gate requires sign-off by the Project Principal and an independent Senior Reviewer who was not involved in production. Non-conformances are logged, tracked to close-out, and reported in monthly progress reports. This QA regime has been applied across all comparable ${sector} assignments in our portfolio.`;
     }
     if (/understanding|scope/.test(c)) {
       return `The scope of this assignment has been carefully reviewed against the Terms of Reference. Key scope elements — deliverable list, data requirements, stakeholder consultation obligations, and reporting schedule — have been mapped to the proposed work plan. Any ambiguities identified during the proposal stage have been flagged as assumptions in Section C and will be resolved at the inception meeting.`;

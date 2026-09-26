@@ -42,28 +42,33 @@ describe("F2 — runtime-readiness-facts forwards classification to buildTenderA
 // ─── F3: tender-release-snapshot allMandatoryGrounded vacuously true when no mandatory ──
 
 describe("F3 — allMandatoryGrounded vacuously true when mandatory.length === 0", () => {
-  it("uses `mandatory.length === 0 || groundedMandatory === mandatory.length`", () => {
+  it("uses `<count> === 0 || groundedMandatory === <count>`", () => {
     const src = read("lib/engine/tender-release-snapshot.ts");
-    assert.match(src, /allMandatoryGrounded: mandatory\.length === 0 \|\| groundedMandatory === mandatory\.length/);
-    // The old buggy expression must be gone.
+    // The mandatory population is now `mandatoryCount`, derived from the same
+    // `status.mandatory` predicate that feeds groundedMandatory/covered, so the
+    // numerator and denominator can no longer disagree. The vacuous-true
+    // guarantee this test guards is unchanged.
+    assert.match(src, /allMandatoryGrounded: mandatoryCount === 0 \|\| groundedMandatory === mandatoryCount/);
+    // The old buggy expression must stay gone, under either identifier.
     assert.doesNotMatch(src, /allMandatoryGrounded: groundedMandatory === mandatory\.length && mandatory\.length > 0/);
+    assert.doesNotMatch(src, /allMandatoryGrounded: groundedMandatory === mandatoryCount && mandatoryCount > 0/);
   });
 });
 
 // ─── F4: corrupted-metadata-banner role gate ─────────────────────────────────
 
-describe("F4 — corrupted-metadata-banner gates RepairTenderFactsButton on canMutate", () => {
-  it("accepts a canMutate prop", () => {
+describe("F4 — corrupted-metadata-banner (Gap 2: RepairTenderFactsButton removed)", () => {
+  it("accepts a canMutate prop (retained for backward compat)", () => {
     const src = read("components/corrupted-metadata-banner.tsx");
     assert.match(src, /canMutate = false }: \{ tender: TenderShape; canMutate\?: boolean \}/);
   });
 
-  it("gates RepairTenderFactsButton behind canMutate", () => {
+  it("does NOT render RepairTenderFactsButton (Gap 2: removed from normal path)", () => {
     const src = read("components/corrupted-metadata-banner.tsx");
-    assert.match(src, /\{canMutate && <RepairTenderFactsButton/);
+    assert.doesNotMatch(src, /\{canMutate && <RepairTenderFactsButton/);
   });
 
-  it("page.tsx passes canMutate to ClientEntityWarningBanner", () => {
+  it("page.tsx still passes canMutate to ClientEntityWarningBanner", () => {
     const src = read("app/dashboard/tenders/[id]/page.tsx");
     const bannerIdx = src.indexOf("<ClientEntityWarningBanner");
     assert.ok(bannerIdx > -1, "banner must be rendered");
@@ -97,50 +102,47 @@ describe("F5 — evaluator-objections-panel gates mutation buttons on canMutate"
   });
 });
 
-// ─── F6: submission-plan-reconciliation-panel role gate ──────────────────────
+// ─── F6: Build Plan panel role gate ──────────────────────────────────────────
+//
+// The three plan mutations moved out of the deleted
+// submission-plan-reconciliation-panel.tsx into the one surviving Build Plan
+// panel. That panel is a client component, so the role decision itself is
+// made on the server by the page and passed down as canMutate — the gate
+// still has to hold on every one of the three buttons.
 
-describe("F6 — submission-plan-reconciliation-panel gates mutation buttons on canMutate", () => {
-  it("uses getCurrentUser (not getSession) + canMutateTender", () => {
-    const src = read("components/submission-plan-reconciliation-panel.tsx");
-    assert.match(src, /import \{ getCurrentUser \} from "\.\.\/lib\/auth"/);
-    assert.match(src, /import \{ canMutateTender \} from "\.\.\/lib\/recovery-command-actions"/);
-    assert.match(src, /const user = await getCurrentUser\(\)/);
-    assert.match(src, /const canMutate = canMutateTender\(user\.role\)/);
-    assert.doesNotMatch(src, /import \{ getSession \} from "\.\.\/lib\/auth"/);
+describe("F6 — the Build Plan panel gates every mutation button on canMutate", () => {
+  it("resolves the role server-side with getCurrentUser + canMutateTender and passes it down", () => {
+    const page = read("app/dashboard/tenders/[id]/page.tsx");
+    assert.match(page, /import \{ getSession, getCurrentUser \} from "\.\.\/\.\.\/\.\.\/\.\.\/lib\/auth"/);
+    assert.match(page, /import \{ canMutateTender \} from "\.\.\/\.\.\/\.\.\/\.\.\/lib\/recovery-command-actions"/);
+    assert.match(page, /const currentUser = await getCurrentUser\(\)/);
+    assert.match(page, /const canMutate = canMutateTender\(currentUser\?\.role\)/);
+    assert.match(page, /<SubmissionPlanCompletenessPanel tenderId=\{tender\.id\} canMutate=\{canMutate\} \/>/);
   });
 
   it("gates BuildSubmissionPlanButton behind canMutate", () => {
-    const src = read("components/submission-plan-reconciliation-panel.tsx");
+    const src = read("components/submission-plan-completeness-panel.tsx");
     assert.match(src, /\{canMutate && <BuildSubmissionPlanButton/);
   });
 
-  it("gates GenerateMissingPlanFilesButton behind canMutate", () => {
-    const src = read("components/submission-plan-reconciliation-panel.tsx");
-    assert.match(src, /missing\.length > 0 && canMutate && <GenerateMissingPlanFilesButton/);
+  it("GenerateMissingPlanFilesButton removed — planned docs generated automatically", () => {
+    const src = read("components/submission-plan-completeness-panel.tsx");
+    assert.doesNotMatch(src, /<GenerateMissingPlanFilesButton/);
   });
 
   it("gates ReconcileStaleFilesButton behind canMutate", () => {
-    const src = read("components/submission-plan-reconciliation-panel.tsx");
-    assert.match(src, /\{canMutate && <ReconcileStaleFilesButton/);
+    const src = read("components/submission-plan-completeness-panel.tsx");
+    assert.match(src, /canMutate && data\.summary\.totalOutsidePlan > 0 && \(\s*<ReconcileStaleFilesButton/);
   });
 });
 
 // ─── F7: raw ℹ replaced with InfoIcon in tender-recovery-command-center ──────
-
-describe("F7 — tender-recovery-command-center replaces raw ℹ with InfoIcon", () => {
-  it("imports InfoIcon from icons", () => {
-    const src = read("components/tender-recovery-command-center.tsx");
-    assert.match(src, /import \{[^}]* InfoIcon[^}]*\} from "\.\/icons"/);
-  });
-
-  it("does NOT contain raw ℹ in advisory warnings JSX", () => {
-    const src = read("components/tender-recovery-command-center.tsx");
-    // Strip comments so the check only applies to real code.
-    const codeOnly = src.replace(/\/\/[^\n]*/g, "");
-    assert.doesNotMatch(codeOnly, />ℹ/);
-    assert.match(codeOnly, /<InfoIcon className="inline h-3 w-3" \/>/);
-  });
-});
+//
+// "F7 — tender-recovery-command-center replaces raw ℹ with InfoIcon" describe
+// block removed -- components/tender-recovery-command-center.tsx was deleted
+// as unrendered dead code (nothing imports or renders it), taking its InfoIcon
+// usage with it. No other component ever used a raw ℹ character, so there is
+// nothing to redirect this to.
 
 // ─── F8: raw ℹ replaced with InfoIcon in score-breakdown-panel ────────────────
 

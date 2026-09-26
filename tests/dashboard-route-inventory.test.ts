@@ -3,8 +3,11 @@ import test from "node:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-const layoutSource = readFileSync("app/dashboard/layout.tsx", "utf8");
-const advertisedRoutes = [...layoutSource.matchAll(/href:\s*["'](\/dashboard(?:\/[^"']*)?)["']/g)].map((match) => match[1]);
+// Navigation routes were centralized into lib/dashboard-navigation.ts by
+// PR #1219 (nav icon registry). The test previously read app/dashboard/layout.tsx
+// for href patterns — now reads from the canonical navigation module.
+const navSource = readFileSync("lib/dashboard-navigation.ts", "utf8");
+const advertisedRoutes = [...navSource.matchAll(/href:\s*["'](\/dashboard(?:\/[^"']*)?)["']/g)].map((match) => match[1]);
 
 function pageFileFor(route: string): string {
   const suffix = route === "/dashboard" ? "" : route.slice("/dashboard/".length);

@@ -13,10 +13,16 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const catalog = require("../lib/ai-provider-catalog.cjs");
 
-// The documented canonical order (CLAUDE.md — NEVER change):
-// Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic
-const REQUIRED_ORDER = ["zai", "cerebras", "mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
-const REQUIRED_LABELS = "Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic";
+// The documented canonical order:
+// Gemini → Groq → Mistral → Z.ai → Cerebras → OpenRouter → OpenAI → Together → DeepSeek → Anthropic
+//
+// All ten are the automatic chain. Access tier does not gate participation:
+// every configured provider is contacted in this order. REQUIRED_ORDER below is
+// deliberately hand-written — it is the PIN this audit checks the catalog
+// against, so deriving it from the catalog would make the check vacuous.
+const REQUIRED_ORDER = ["gemini", "groq", "mistral", "zai", "cerebras", "openrouter", "openai", "together", "deepseek", "anthropic"];
+const REQUIRED_LABELS = "Gemini → Groq → Mistral → Z.ai → Cerebras → OpenRouter → OpenAI → Together → DeepSeek → Anthropic";
+const REQUIRED_AUTOMATIC_ORDER = REQUIRED_ORDER;
 const failures = [];
 
 function read(path) {
@@ -50,8 +56,42 @@ requireRule(
   /export const CANONICAL_PROVIDER_CHAIN[^=]*=\s*CANONICAL_AI_PROVIDER_ORDER/.test(ai),
 );
 requireRule(
-  "lib/ai.ts providerChainForUseCase no longer returns the canonical order",
-  /providerChainForUseCase[\s\S]{0,200}?return CANONICAL_AI_PROVIDER_ORDER;/.test(ai),
+  "lib/ai.ts providerChainForUseCase no longer returns the active automatic order",
+  /providerChainForUseCase[\s\S]{0,600}?return getAutomaticProviderOrder\(\);/.test(ai),
+);
+
+// 2b. The owner-required automatic chain contains all configured providers.
+requireRule(
+  "Automatic provider order no longer includes every provider",
+  JSON.stringify(catalog.automaticProviderOrder()) === JSON.stringify(REQUIRED_AUTOMATIC_ORDER),
+);
+
+// 2c. The withdrawn cost policy must stay withdrawn.
+//
+// This used to compare against catalog.ZERO_PAID_AUTOMATIC_ORDER. That export
+// is gone, and checking a name that no longer exists is worse than not checking
+// at all — `undefined === undefined` would have passed silently had the
+// comparison been written the other way round. The rule is inverted instead:
+// the policy's own vocabulary must be absent from the catalog. A reintroduced
+// cost gate has to reintroduce one of these to work.
+for (const symbol of [
+  "ZERO_PAID_AUTOMATIC_ORDER",
+  "PAID_ACCESS_PROVIDERS",
+  "CONDITIONAL_FREE_PROVIDERS",
+  "isZeroPaidMode",
+]) {
+  requireRule(
+    `Withdrawn cost-policy export reappeared in the catalog: ${symbol}`,
+    !(symbol in catalog),
+  );
+}
+
+// The chain accessor must not consult the environment. A per-environment order
+// is how a filter returns without touching the canonical list.
+requireRule(
+  "automaticProviderOrder() must not vary by environment",
+  JSON.stringify(catalog.automaticProviderOrder({ AI_ZERO_PAID_MODE: "true" }))
+    === JSON.stringify(REQUIRED_AUTOMATIC_ORDER),
 );
 // No per-use-case literal chain may reappear (e.g. `extraction: ["mistral", ...]`).
 for (const useCase of ["default", "extraction", "proposal", "validation", "fast", "reasoning"]) {
@@ -63,10 +103,14 @@ for (const useCase of ["default", "extraction", "proposal", "validation", "fast"
 
 // 3. Surfaces must expose the derived display order, not a hardcoded one.
 requireRule(
-  "AI health route no longer exposes the derived canonical fallback chain",
-  health.includes("CANONICAL_AI_FALLBACK_CHAIN_DISPLAY"),
+  "AI health route no longer exposes a registry-derived fallback chain",
+  health.includes("CANONICAL_AI_FALLBACK_CHAIN_DISPLAY") || health.includes("automaticChainDisplay"),
 );
-requireRule("AI environment readiness order drifted", envReadiness.includes(REQUIRED_LABELS));
+requireRule(
+  "AI environment readiness no longer derives its display order from the canonical registry",
+  envReadiness.includes("CANONICAL_AI_PROVIDER_CHAIN_DISPLAY") &&
+    /export const CANONICAL_PROVIDER_DISPLAY\s*=\s*CANONICAL_AI_PROVIDER_CHAIN_DISPLAY/.test(envReadiness),
+);
 
 // 4. Prompt trust boundary.
 requireRule("AI prompt trust boundary import is missing", ai.includes('from "./ai-trust-boundary"'));
@@ -96,6 +140,6 @@ if (failures.length > 0) {
     ok: true,
     message: "Protected gap-closure invariants verified without modifying repository files.",
     providerOrder: REQUIRED_LABELS,
-    trackedP1: "Legacy monolithic proposal paths still require migration to the canonical executor; tracked separately and not hidden by this audit.",
+    trackedP1: "The single-call proposal path (PROPOSAL_GENERATION_MODE=single) remains as a non-default escape hatch. Its provider ROUTING is no longer legacy — it walks the canonical order through callProvider, as the default section-parallel path does — but it is still one large call rather than four bounded ones, so it stays unsuitable for short function timeouts. Tracked, not hidden.",
   }, null, 2));
 }

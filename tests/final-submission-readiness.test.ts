@@ -42,13 +42,13 @@ describe("final-submission-readiness — severityForReasons", () => {
 });
 
 describe("final-submission-readiness — nextActionForReason", () => {
-  it("guides users to attach original for tender-issued forms", () => {
-    assert.match(nextActionForReason("ORIGINAL_REQUIRED"), /Attach.*original/i);
-    assert.match(nextActionForReason("REPLACE_WITH_ORIGINAL"), /Attach.*original/i);
+  it("guides users to upload tender package for tender-issued forms", () => {
+    assert.match(nextActionForReason("ORIGINAL_REQUIRED"), /upload.*tender|tender.*Intake/i);
+    assert.match(nextActionForReason("REPLACE_WITH_ORIGINAL"), /upload.*tender|tender.*Intake/i);
   });
   it("guides users to generate when planned/control", () => {
-    assert.match(nextActionForReason("[CONTROL_RECORD_ONLY] x"), /Generate.*final file|attach.*original/i);
-    assert.match(nextActionForReason("PLANNED"), /Generate.*final file|attach.*original/i);
+    assert.match(nextActionForReason("[CONTROL_RECORD_ONLY] x"), /Generate.*final file/i);
+    assert.match(nextActionForReason("PLANNED"), /Generate.*final file/i);
   });
   it("guides users to fix missing content", () => {
     assert.match(nextActionForReason("fileContent is missing"), /Regenerate.*upload.*missing/i);
@@ -185,23 +185,53 @@ describe("final-submission-readiness — mandatory evidence coverage truth", () 
   });
 });
 
-describe("final-submission-readiness — CLIENT_NAME_MISSING blocker (source-level)", () => {
+describe("final-submission-readiness — an unstated client name does not block (owner policy)", () => {
   const source = readFileSync("lib/engine/final-submission-readiness.ts", "utf8");
 
-  it("source contains CLIENT_NAME_MISSING blocker code", () => {
-    assert.match(source, /CLIENT_NAME_MISSING/);
+  // Owner policy ABSENT_TENDER_FACT_IS_NOT_REQUIRED (2026-09-24): a tender
+  // that does not name its client is not blocked; the proposal is addressed
+  // without one. This used to push CLIENT_NAME_MISSING (HIGH). A client name
+  // that IS present but invalid is still blocked by export-readiness's
+  // CLIENT_NAME_REQUIRED.
+  it("source no longer pushes a CLIENT_NAME_MISSING blocker", () => {
+    assert.doesNotMatch(source, /category: "CLIENT_NAME_MISSING"/);
   });
 
-  it("source checks clientName for empty/whitespace condition", () => {
-    assert.match(source, /effectiveClientName/);
-    assert.match(source, /CLIENT_NAME_MISSING/);
+  it("export-readiness still blocks a present-but-invalid client name", () => {
+    const exportSrc = readFileSync("lib/engine/export-readiness.ts", "utf8");
+    assert.match(exportSrc, /"CLIENT_NAME_REQUIRED"/);
+    assert.match(exportSrc, /"CLIENT_NAME_NOT_STATED"/);
   });
 
-  it("CLIENT_NAME_MISSING uses HIGH severity matching the contamination blocker pattern", () => {
-    // The blocker must use "HIGH" severity (same as METADATA_CONTAMINATED)
-    const blockIndex = source.indexOf("CLIENT_NAME_MISSING");
-    const blockContext = source.slice(blockIndex, blockIndex + 200);
-    assert.ok(blockContext.includes("HIGH"), "CLIENT_NAME_MISSING blocker must use HIGH severity");
+  it("does not emit the synthetic __tender__ document blocker when NO_ACTIVE_GENERATED_DOCUMENTS already covers it", () => {
+    // Confirmed by a real cross-page comparison against a live seeded
+    // tender: app/dashboard/documents/page.tsx (which calls
+    // getFinalSubmissionReadiness via /export-readiness directly, not
+    // through the Tender Release State wrapper) showed 10 blockers, while
+    // the tender workspace/command-center/report (which go through
+    // lib/engine/tender-release-state.ts's reconcileBlockers) showed 9 for
+    // the exact same tender at the exact same moment. checkExportReadiness's
+    // synthetic __tender__ document failure and
+    // checkFullExportReadiness's own NO_ACTIVE_GENERATED_DOCUMENTS
+    // tenderLevelBlocker both fire from the identical docs.length === 0
+    // condition. Guarded here at the source so every direct consumer
+    // agrees, not just the wrapper.
+    assert.match(source, /hasNoActiveDocumentsTenderBlocker/);
+    assert.match(source, /failure\.documentId === "__tender__"/);
+  });
+
+  it("does not push SOURCE_TRACEABILITY_MISSING when checkFullExportReadiness's own SOURCE_REFERENCES_MISSING already covers it", () => {
+    // lib/engine/export-readiness.ts's ungroundedMandatory filter (seeded
+    // into tenderLevelBlockers above, producing SOURCE_REFERENCES_MISSING)
+    // uses the identical untraced-mandatory-requirement predicate as
+    // missingTraceability here (sourceConfidence <= 0, no
+    // sourceTenderFileId/sourcePageNumber/sourceExactQuote/sectionReference).
+    // SOURCE_REFERENCES_MISSING fires whenever any such requirement exists at
+    // all, so it always also fires once this function's own 10%-ratio
+    // SOURCE_TRACEABILITY_MISSING condition is met -- the same untraced-
+    // requirements fact would otherwise render as two separate blockers.
+    // Guarded here at the source so every consumer agrees.
+    assert.match(source, /!tenderLevelBlockers\.some\(\(b\) => b\.category === "SOURCE_REFERENCES_MISSING"\)/);
   });
 });
 

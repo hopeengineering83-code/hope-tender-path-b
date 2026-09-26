@@ -23,8 +23,12 @@ describe("Gap B: run-next never exposes raw internal errors", () => {
       "catch block must generate a correlationId",
     );
     assert.ok(
-      catchBlock.includes("console.error"),
-      "catch block must log full error server-side",
+      catchBlock.includes("logger.error"),
+      "catch block must log full error through the structured server logger",
+    );
+    assert.ok(
+      !catchBlock.includes("console.error("),
+      "catch block must not bypass the structured logger",
     );
   });
 });

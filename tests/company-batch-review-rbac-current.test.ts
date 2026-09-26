@@ -24,28 +24,37 @@ function assertBatchReviewContract(source: string, entity: "expert" | "project")
   assert.match(source, /deletedAt: null/);
   assert.match(source, /trustLevel: "REVIEWED"/);
   assert.match(source, /reviewedBy: actor\.id/);
-  assert.match(source, /reviewedAt: new Date\(\)/);
+  assert.match(source, /const reviewedAt = new Date\(\)/);
+  assert.match(source, /reviewedAt,/);
 
   assert.ok(
     source.includes(`rateLimitPersistent(\`${entity}s-batch-review:\${actor.id}\``),
     `${entity} batch route must use persistent actor-scoped throttling`,
   );
   assert.match(source, /extractRequestId\(req\)/);
-  assert.match(source, /void logAction\(/);
-  assert.match(source, /\.catch\(\(error\) =>/);
+  assert.match(source, /prisma\.\$transaction\(async \(tx\)/);
+  assert.match(source, /await tx\.auditLog\.create/);
+  assert.match(source, /sourceContentHash/);
+  assert.match(source, /sourceByteLength/);
+  assert.match(source, /sourceTextHash/);
+  // Defect 4: accepted is now updatedIds (array of {id, status} objects),
+  // not updatedIds.map(...). The status can be REVIEWED or SOURCE_VERIFIED
+  // (partial verification).
+  assert.match(source, /accepted: updatedIds/);
+  assert.match(source, /rejected,/);
 }
 
 describe("company batch review RBAC and explicit approval", () => {
   it("protects Expert batch approval", () => {
     assertBatchReviewContract(expertSource, "expert");
     assert.match(expertSource, /entityType: "Expert"/);
-    assert.match(expertSource, /expert batch-review audit persistence failed/);
+    assert.match(expertSource, /expert batch review failed/);
   });
 
   it("protects Project batch approval", () => {
     assertBatchReviewContract(projectSource, "project");
     assert.match(projectSource, /entityType: "Project"/);
-    assert.match(projectSource, /project batch-review audit persistence failed/);
+    assert.match(projectSource, /project batch review failed/);
   });
 
   it("keeps Vercel Git deployment enabled (repo policy)", () => {

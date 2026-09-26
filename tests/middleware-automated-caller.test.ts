@@ -24,8 +24,10 @@ describe("middleware — automated caller CSRF bypass", () => {
 
   it("skips the CSRF evaluateCsrf call when isAutomatedCaller returns true", () => {
     const src = read("middleware.ts");
-    // The CSRF block must be wrapped in `if (!isAutomatedCaller(req))`.
-    assert.match(src, /if\s*\(\s*!isAutomatedCaller\(req\)\s*\)\s*\{[\s\S]*?evaluateCsrf/);
+    // The CSRF block must be gated on `!isAutomatedCaller(req)`. Additional
+    // trusted-caller conjuncts (e.g. the internal rate-guard hop) may follow,
+    // but this one must remain the leading condition.
+    assert.match(src, /if\s*\(\s*!isAutomatedCaller\(req\)\s*(?:&&[^)]*)?\)\s*\{[\s\S]*?evaluateCsrf/);
   });
 
   it("still enforces CSRF for browser-style requests (no secret header)", () => {

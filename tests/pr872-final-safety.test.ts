@@ -84,7 +84,8 @@ describe("PR #872 final safety fixes", () => {
     it("finalizeJob catch block logs structured error", () => {
       const src = read("lib/ai-jobs/analysis-job-service.ts");
       assert.match(src, /catch\(\(updateErr\)/);
-      assert.match(src, /console\.error/);
+      assert.match(src, /logger\.error/);
+      assert.ok(!src.includes("console.error("), "finalizeJob must use the structured logger, not console.error");
       assert.match(src, /Failed to mark job/);
     });
   });
@@ -107,8 +108,12 @@ describe("PR #872 final safety fixes", () => {
       assert.equal(providers[providers.length - 1], "anthropic");
     });
 
-    it("recovery-command-center does NOT say 'generation unblocked'", () => {
-      assert.ok(!/generation unblocked/i.test(read("components/tender-recovery-command-center.tsx")));
+    it("generation-action-panel does NOT say 'generation unblocked'", () => {
+      // components/tender-recovery-command-center.tsx (this check's original
+      // subject) was deleted as unrendered dead code (nothing imports or
+      // renders it). components/generation-action-panel.tsx is the live,
+      // rendered panel that owns the Generate Docs gate today.
+      assert.ok(!/generation unblocked/i.test(read("components/generation-action-panel.tsx")));
     });
   });
 });

@@ -28,26 +28,31 @@ describe("final-submission-readiness — analysisExtractionStatus selected from 
   });
 });
 
-// ─── 2. generate-elite.ts — Submission Instructions Acknowledged fallback ─────
+// ─── 2. generate-elite.ts — Submission Instructions are not client content ──
+//
+// This block used to pin the opposite: that the fallback ALWAYS emitted
+// "## Submission Instructions Acknowledged" in Section A. The delivered
+// proposal then carried the bid desk's own rules to the client ("Technical
+// proposal ONLY — do not include any financial offer", "Submit to ALL email
+// recipients") and a "Bid-Team Action: verify file format" line. Those are
+// instructions to the firm; the Cover Letter states the technical-only
+// envelope. The owner's 2026-09-24 instruction separates internal material
+// from client content, so the heading is neither emitted nor allowed through.
 
-describe("generate-elite.ts — Submission Instructions Acknowledged always emitted", () => {
-  it("## Submission Instructions Acknowledged is unconditionally added (outside the if block)", () => {
+describe("generate-elite.ts — Submission Instructions are not client content", () => {
+  it("the fallback writer does not emit the section", () => {
     const src = readFileSync(resolve(process.cwd(), "lib/engine/generate-elite.ts"), "utf8");
-    // The heading must appear BEFORE the conditional check for submissionRules.length
-    // i.e., `lines.push("## Submission Instructions Acknowledged")` must appear in the code
-    // outside the `if (params.submissionRules.length > 0)` guard that previously wrapped it.
-    assert.ok(
-      src.includes('lines.push("## Submission Instructions Acknowledged")'),
-      "generate-elite.ts must always push the Submission Instructions Acknowledged heading",
-    );
+    assert.ok(!src.includes('lines.push("## Submission Instructions Acknowledged")'));
+    assert.ok(!src.includes("Bid-Team Action: verify file format"));
   });
 
-  it("fallback text added when submissionRules is empty", () => {
-    const src = readFileSync(resolve(process.cwd(), "lib/engine/generate-elite.ts"), "utf8");
-    assert.ok(
-      src.includes("This proposal has been prepared in accordance with the submission instructions"),
-      "generate-elite.ts must have a fallback line for Submission Instructions Acknowledged section when rules are empty",
-    );
+  it("the stripper removes it if a model writes it", async () => {
+    const { stripInternalReviewSections } = await import("../lib/engine/internal-review-stripper");
+    const md = "# Section A\n\n## A.4 Key Personnel\n- A. Person\n\n## Submission Instructions Acknowledged\n- Technical proposal ONLY — do not include any financial offer.\n\n# Section B\n";
+    const out = stripInternalReviewSections(md).markdown;
+    assert.doesNotMatch(out, /Submission Instructions Acknowledged|do not include any financial offer/);
+    assert.match(out, /A\. Person/);
+    assert.match(out, /# Section B/);
   });
 });
 

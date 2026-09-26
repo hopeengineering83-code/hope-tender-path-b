@@ -68,8 +68,25 @@ export type GroundingActiveFile = {
  * Normalize text for quote-containment comparison: lowercase + collapse
  * whitespace + trim. Matches the normalization the gate uses.
  */
-function normalizeForContainment(text: string): string {
-  return text.toLowerCase().replace(/\s+/g, " ").trim();
+/**
+ * The one containment normalization every grounding check must use.
+ *
+ * Extracted PDF text re-wraps lines and the model re-cases the first word of a
+ * quote it lifts, so a raw substring test rejects quotes that are genuinely in
+ * the document. Anything deciding whether a quote is grounded must compare
+ * through this, or two checks will disagree about the same requirement.
+ */
+export function normalizeForContainment(text: string): string {
+  return text
+    .toLowerCase()
+    // PDF extractors represent the same printed dash with several Unicode
+    // code points. Treat typography as typography, not a changed claim.
+    .replace(/[\u2010-\u2015\u2212]/g, "-")
+    // List glyphs may be emitted as private/font bullet characters between
+    // two otherwise verbatim clauses. They delimit text; they are not words.
+    .replace(/[•●▪◦\uf0b7]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /**

@@ -2,6 +2,7 @@ import { logger } from "./observability";
 import crypto from "crypto";
 import { prisma } from "./prisma";
 import { safeParseJsonObject } from "./safe-json";
+import { redactSecrets } from "./sanitize-error";
 import type { AIAnalysisResult, ChunkResult } from "./ai";
 
 export class AiAnalyzeCheckpointPersistenceError extends Error {
@@ -41,11 +42,8 @@ export type AiAnalyzeCheckpointProgress = {
 
 function cleanErrorMessage(errorMessage: string | null | undefined): string | null {
   if (!errorMessage) return null;
-  return errorMessage
-    .replace(/sk-[a-zA-Z0-9_-]{10,}/g, "[KEY_REDACTED]")
-    .replace(/AIza[a-zA-Z0-9_-]{30,}/g, "[KEY_REDACTED]")
-    .replace(/Bearer\s+[a-zA-Z0-9._-]{10,}/gi, "Bearer [REDACTED]")
-    .slice(0, 300);
+  // Delegate to canonical redactSecrets() so patterns cannot diverge.
+  return redactSecrets(errorMessage).slice(0, 300);
 }
 
 function parseChunkResult(resultJson: string | null | undefined): AIAnalysisResult | null {

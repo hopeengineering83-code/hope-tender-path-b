@@ -15,6 +15,10 @@
  */
 
 import type { ExpertRecord } from "./benchmark-tables";
+import { withoutPersonalCvFields, withoutCvDocumentFurniture, truncateAtWordBoundary } from "./proposal-intelligence";
+import { proseProfileOrEmpty } from "./vault-prose";
+import { licencesNamedInCv, projectsNamedInCv, softwareNamedInCv } from "./cv-grounding";
+import { formatRegistration } from "./credential-format";
 
 function safeArr(value: unknown): string[] {
   if (Array.isArray(value)) return value.map(String).filter(Boolean);
@@ -32,49 +36,81 @@ function safeArr(value: unknown): string[] {
   return trimmed.split(/[,;|\n]/).map((s) => s.trim()).filter(Boolean);
 }
 
+// The bio text reaches the client verbatim, so it is cut the same way every
+// other evidence line is: at a word boundary, with an ellipsis marking the cut.
+// A raw .slice() shipped "Name of Firm Hope Urban Planning Architectural and
+// Engineering Consultan" in the Principal Qualifications bios of a real
+// submitted proposal — the very defect truncateAtWordBoundary was written for,
+// on a producer that never adopted it.
 function clean(text: string | null | undefined, max = 320): string {
-  return (text ?? "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, max);
+  const collapsed = (text ?? "").replace(/\s+/g, " ").trim();
+  return truncateAtWordBoundary(collapsed, max);
 }
 
 export function buildPrincipalQualificationsSection(opts: {
   experts: ExpertRecord[];
   topN?: number;
+  projects?: Array<{ name?: string | null }>;
 }): string | null {
-  const top = opts.experts.slice(0, opts.topN ?? 5);
+  // Every proposed expert, not the first five: the tender scores the whole
+  // team, and three of eight people had no bio at all.
+  const top = opts.experts.slice(0, opts.topN ?? 12);
   if (top.length === 0) return null;
 
   const blocks: string[] = ["## A.4.1 Principal Qualifications — Detailed Bios"];
-  blocks.push("Detailed bios for the lead experts proposed for this assignment. Full curricula vitae, educational certificates, and professional license copies are attached as Appendix C.");
+  // Not "attached as Appendix C": the package carries no CV annex.
+  blocks.push("A short profile of each proposed expert, from their own CV. Full curricula vitae, educational certificates and professional licence copies can be provided on request.");
 
   for (const expert of top) {
     const position = expert.title?.trim() || "Specialist";
-    const disciplines = safeArr(expert.disciplines);
-    const sectors = safeArr(expert.sectors);
-    const certifications = safeArr(expert.certifications);
-    const years = expert.yearsExperience ? `${expert.yearsExperience} years experience` : null;
-    const profile = clean(expert.profile, 480);
+    // A stored profile that is the CV's letterhead rather than a biography is
+    // not printed. A delivered proposal opened this bio with "HOPE URBAN
+    // PLANNING ARCHITECTURAL AND ENGINEERING CONSULTANCY PLC ENG. AHMED KEBEDE
+    // TEKAW General Manager & Practicing Professional Engineer … Languages
+    // Amharic (Excellent), English…" — the firm's name twice, the person's name
+    // twice, and a cut mid-list.
+    const profile = clean(
+      proseProfileOrEmpty(withoutCvDocumentFurniture(withoutPersonalCvFields(expert.profile ?? ""))),
+      480,
+    );
 
     blocks.push(`### ${expert.fullName} — ${position}`);
-
-    const tableRows: string[] = ["| Field | Detail |", "|---|---|"];
-    tableRows.push(`| Position | ${position} |`);
-    if (years) tableRows.push(`| Experience | ${years} |`);
-    if (disciplines.length > 0) tableRows.push(`| Disciplines | ${disciplines.join(", ")} |`);
-    if (sectors.length > 0) tableRows.push(`| Sector Experience | ${sectors.join(", ")} |`);
-    if (certifications.length > 0) tableRows.push(`| Licenses & Certifications | ${certifications.join("; ")} |`);
-    if (expert.email) tableRows.push(`| Contact | ${expert.email}${expert.phone ? `, ${expert.phone}` : ""} |`);
-    blocks.push(tableRows.join("\n"));
-
-    if (profile) {
-      blocks.push(`**Profile.** ${profile}`);
-    } else {
-      blocks.push(`_Source-evidence action: complete the profile narrative for ${expert.fullName} in the company knowledge vault before final submission._`);
-    }
+    // One paragraph per person. The facts in table form are the PER 02
+    // profile cards; this section used to repeat them as a second table, plus
+    // "Disciplines" and "Sector Experience" rows filled from firm-wide tags
+    // (every CV of one firm carries "Architecture ... Healthcare, Commercial,
+    // Hospitality"), which told the evaluator an electrical engineer covered
+    // architecture and urban planning.
+    blocks.push(`**Profile.** ${profile || composedProfile(expert, position, opts.projects ?? [])}`);
     blocks.push("");
   }
 
   return blocks.join("\n\n");
+}
+
+/**
+ * A factual profile built from what the person's own record states: position,
+ * years, professional registration, and the software and projects their CV
+ * names. It stops when the record stops.
+ */
+function composedProfile(expert: ExpertRecord, position: string, projects: Array<{ name?: string | null }>): string {
+  const stored = safeArr(expert.certifications).filter((c) => c.trim().length > 2 && !/^[-—–]+$/.test(c.trim()));
+  const licences = (stored.length > 0 ? stored : licencesNamedInCv(expert.profile)).map(formatRegistration);
+  const software = softwareNamedInCv(expert.profile);
+  const named = projectsNamedInCv(expert.profile, projects).map((p) => p.name ?? "").filter(Boolean);
+  const sentences = [
+    expert.yearsExperience
+      ? `${expert.fullName} is proposed as ${position}, with ${expert.yearsExperience} years of professional practice.`
+      : `${expert.fullName} is proposed as ${position}.`,
+  ];
+  if (licences.length > 0) sentences.push(`${stored.length > 0 ? "Qualifications and registration on file" : "Professional registration"}: ${licences.slice(0, 2).join("; ")}.`);
+  if (named.length > 0) sentences.push(`Projects named in the CV include ${listPhrase(named.slice(0, 3))}.`);
+  if (software.length > 0) sentences.push(`Design tools listed in the CV: ${software.slice(0, 6).join(", ")}.`);
+  return sentences.join(" ");
+}
+
+function listPhrase(items: string[]): string {
+  const shown = items.slice(0, 6);
+  if (shown.length === 1) return shown[0];
+  return `${shown.slice(0, -1).join(", ")} and ${shown[shown.length - 1]}`;
 }

@@ -9,9 +9,9 @@
  *      source evidence → no draft block; final block only when audit
  *      insufficient on critical fields.
  *   3. NOT_STATED_IN_SOURCE — NOT_APPLICABLE/IGNORED_WITH_REASON → no
- *      draft block; final block only on critical fields.
- *   4. UNKNOWN — no value, no override → no draft block; final block
- *      only on critical fields.
+ *      block, draft or final (owner policy ABSENT_TENDER_FACT_IS_NOT_REQUIRED).
+ *   4. No value, no override → NOT_STATED_IN_SOURCE, no block, draft or
+ *      final (same owner policy).
  *   5. REJECTED_CANDIDATE — placeholder/garbage → no block (value discarded).
  *   6. isMeaningfulReason rejects boilerplate strings.
  *   7. isValidConfirmationBasis validates the basis enum.
@@ -262,7 +262,9 @@ describe("tender-fact-authority — classifyTenderFactAuthority", () => {
     assert.equal(result.blocksFinalExport, false); // operational field
   });
 
-  it("NOT_STATED_IN_SOURCE — IGNORED_WITH_REASON on critical field → blocks final only", () => {
+  // Owner policy ABSENT_TENDER_FACT_IS_NOT_REQUIRED (2026-09-24): a fact the
+  // tender does not state is not required — it never blocks draft or final.
+  it("NOT_STATED_IN_SOURCE — IGNORED_WITH_REASON on critical field → no block (owner policy)", () => {
     const result = classifyTenderFactAuthority(makeInput({
       field: "clientName",
       effectiveValue: null,
@@ -273,10 +275,10 @@ describe("tender-fact-authority — classifyTenderFactAuthority", () => {
     }));
     assert.equal(result.authority, "NOT_STATED_IN_SOURCE");
     assert.equal(result.blocksDraft, false); // never blocks draft
-    assert.equal(result.blocksFinalExport, true); // critical field
+    assert.equal(result.blocksFinalExport, false); // absent → not required
   });
 
-  it("UNKNOWN — no value, no override on critical field → blocks final only", () => {
+  it("no value, no override on critical field → NOT_STATED_IN_SOURCE, no block (owner policy)", () => {
     const result = classifyTenderFactAuthority(makeInput({
       field: "clientName",
       effectiveValue: null,
@@ -285,12 +287,13 @@ describe("tender-fact-authority — classifyTenderFactAuthority", () => {
       isSourceGrounded: false,
       policyCtx: POLICY_CTX_UNKNOWN,
     }));
-    assert.equal(result.authority, "UNKNOWN");
+    assert.equal(result.authority, "NOT_STATED_IN_SOURCE");
     assert.equal(result.blocksDraft, false); // never blocks draft
-    assert.equal(result.blocksFinalExport, true); // critical field
+    assert.equal(result.blocksFinalExport, false); // absent → not required
+    assert.equal(result.blockerReason, null);
   });
 
-  it("UNKNOWN — no value, no override on operational field → no block", () => {
+  it("no value, no override on operational field → NOT_STATED_IN_SOURCE, no block", () => {
     const result = classifyTenderFactAuthority(makeInput({
       field: "reference",
       effectiveValue: null,
@@ -299,7 +302,7 @@ describe("tender-fact-authority — classifyTenderFactAuthority", () => {
       isSourceGrounded: false,
       policyCtx: POLICY_CTX_UNKNOWN,
     }));
-    assert.equal(result.authority, "UNKNOWN");
+    assert.equal(result.authority, "NOT_STATED_IN_SOURCE");
     assert.equal(result.blocksDraft, false);
     assert.equal(result.blocksFinalExport, false); // operational field
   });
@@ -337,7 +340,8 @@ describe("tender-fact-authority — labels + impact descriptions", () => {
       rawValue: null,
       override: null,
     }));
-    assert.equal(authorityImpactDescription(unknownCritical), "Required before final submission");
+    // Owner policy: an absent critical fact is not required — warning only.
+    assert.equal(authorityImpactDescription(unknownCritical), "Warning only");
 
     const unknownOperational = classifyTenderFactAuthority(makeInput({
       field: "reference",
@@ -353,7 +357,7 @@ describe("tender-fact-authority — wired into metadata-override route", () => {
   it("route imports the authority model", () => {
     const src = readFileSync("app/api/tenders/[id]/metadata-override/route.ts", "utf8");
     assert.ok(src.includes("from \"../../../../../lib/engine/tender-fact-authority\""), "must import tender-fact-authority");
-    assert.ok(src.includes("classifyTenderFactAuthority"), "must import classifyTenderFactAuthority");
+    assert.ok(!src.includes("  classifyTenderFactAuthority,"), "must not retain an unused classifier import");
     assert.ok(src.includes("isMeaningfulReason"), "must import isMeaningfulReason");
     assert.ok(src.includes("isValidConfirmationBasis"), "must import isValidConfirmationBasis");
     assert.ok(src.includes("MIN_CRITICAL_REASON_LENGTH"), "must import MIN_CRITICAL_REASON_LENGTH");
@@ -400,8 +404,9 @@ describe("tender-fact-authority — wired into canonical resolver", () => {
 
   it("canonical resolver uses hasExportBlocker for final (not hasGenerationBlocker for draft)", () => {
     const src = readFileSync("lib/engine/canonical-field-state.ts", "utf8");
-    // The old valueDrivenUngroundedBlock must be disabled
-    assert.ok(src.includes("valueDrivenUngroundedBlock = false"), "must disable valueDrivenUngroundedBlock");
+    // The obsolete value-driven blocker must be absent; final authority is
+    // enforced by export eligibility and the audited override path.
+    assert.ok(!src.includes("valueDrivenUngroundedBlock"), "must remove the dead value-driven blocker marker");
     // The new draftHardBlockReasons must NOT include manual values
     assert.ok(src.includes("draftHardBlockReasons"), "must define draftHardBlockReasons");
     assert.ok(src.includes("isManualValuePresent"), "must compute isManualValuePresent");

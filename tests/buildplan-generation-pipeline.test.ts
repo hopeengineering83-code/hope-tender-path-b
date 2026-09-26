@@ -73,14 +73,16 @@ describe("Spec Test 2 — PLANNED docs become GENERATED only after content exist
   });
 
   it("generate-missing-plan-files/route.ts writes generationStatus: GENERATED with real content", () => {
-    const src = readAppFile("app/api/tenders/[id]/generate-missing-plan-files/route.ts");
+    const src = readAppFile("app/api/tenders/[id]/generate-missing-plan-files/route.ts")
+      + readLibFile("engine/missing-plan-file-generation.ts");
     assert.ok(src.includes('generationStatus: "GENERATED"'), "route must write generationStatus=GENERATED");
     assert.ok(src.includes("Packer.toBuffer"), "route must produce real DOCX bytes via Packer.toBuffer");
     assert.ok(src.includes("fileContent"), "route must write fileContent with real bytes");
   });
 
   it("generate-missing-plan-files/route.ts converts existing PLANNED rows to GENERATED with content", () => {
-    const src = readAppFile("app/api/tenders/[id]/generate-missing-plan-files/route.ts");
+    const src = readAppFile("app/api/tenders/[id]/generate-missing-plan-files/route.ts")
+      + readLibFile("engine/missing-plan-file-generation.ts");
     assert.ok(src.includes("convertedFromPlanned"), "route must have a convertedFromPlanned path");
     assert.ok(
       /convertedFromPlanned[\s\S]*?generationStatus:\s*"GENERATED"/.test(src),
@@ -247,7 +249,7 @@ describe("Spec Test 6 — Validation failure prevents approval", () => {
   });
 });
 
-// ─── 7. Approval failure prevents export-ready count ─────────────────────────
+// ─── 7. Explicit exclusions remain fail-closed without a routine approval gate ─
 
 describe("Spec Test 7 — Approval failure prevents export-ready count", () => {
   it("isFinalExportCandidateDocument excludes docs with NOT_EXPORTABLE review status", async () => {
@@ -264,18 +266,19 @@ describe("Spec Test 7 — Approval failure prevents export-ready count", () => {
     assert.equal(isFinalExportCandidateDocument(doc as any), false, "NOT_EXPORTABLE review must not be export candidate");
   });
 
-  it("deriveDocumentOutputState returns non-READY for PENDING review status", async () => {
+  it("deriveDocumentOutputState accepts validated bytes with PENDING human review", async () => {
     const { deriveDocumentOutputState } = await import("../lib/engine/document-output-state");
     const state = deriveDocumentOutputState({
       generationStatus: "GENERATED",
       validationStatus: "VALIDATED",
-      reviewStatus: "PENDING", // NOT READY_FOR_EXPORT
+      reviewStatus: "PENDING",
       format: "DOCX",
       documentType: "TECHNICAL_PROPOSAL",
       name: "Technical Proposal",
       exactFileName: "Technical-Proposal.docx",
+      fileContent: Buffer.from("PK\x03\x04validated-docx").toString("base64"),
     } as any);
-    assert.notEqual(state, "READY_FOR_EXPORT", "PENDING review must NOT derive READY_FOR_EXPORT state");
+    assert.equal(state, "READY_FOR_EXPORT", "machine validation must not require routine per-document approval");
   });
 
   it("isFinalExportCandidateDocument excludes SUPERSEDED docs", async () => {
@@ -441,15 +444,15 @@ describe("Spec Test 10 — No AI traces or internal IDs in generated documents",
     assert.ok(issues.some((i) => /AI/i.test(i)), "must surface AI trace issue");
   });
 
-  it("checkDocumentQualityGate is async and extracts DOCX visible text", () => {
+  it("checkDocumentQualityGate is async and opens generated narrative bytes through the canonical reader", () => {
     const src = readLibFile("engine/export-readiness.ts");
     assert.ok(
       /export async function checkDocumentQualityGate/.test(src),
       "checkDocumentQualityGate must be async",
     );
     assert.ok(
-      src.includes("extractDocxVisibleText"),
-      "checkDocumentQualityGate must call extractDocxVisibleText for base64 DOCX",
+      src.includes("generatedDocumentVisibleText"),
+      "checkDocumentQualityGate must call the canonical DOCX/PDF visible-text reader",
     );
   });
 });
@@ -498,12 +501,22 @@ describe("Spec Test 11 — Final export remains fail-closed", () => {
     assert.ok(src.includes("extraPlan.length > 0"), "must check extraPlan.length before pushing blocker");
   });
 
-  it("final-submission-readiness.ts extracts DOCX visible text for quality scoring", () => {
+  it("final-submission-readiness.ts opens DOCX/PDF visible text for quality scoring", () => {
+    // The extraction now lives in the canonical current-document-quality
+    // module so the readiness gate and the Document Validator panel cannot
+    // score the same document from different text. Assert the property
+    // (visible text is extracted before the assessor runs, on the path this
+    // file actually uses) rather than the old inline shape.
     const src = readLibFile("engine/final-submission-readiness.ts");
-    assert.ok(src.includes("extractDocxVisibleText"), "must import extractDocxVisibleText");
     assert.ok(
-      /extractDocxVisibleText[\s\S]*?assessGeneratedDocumentQuality/.test(src),
-      "must extract visible text before calling assessGeneratedDocumentQuality",
+      src.includes("assessCurrentDocumentQualityBatch"),
+      "readiness must score documents through the canonical quality helper",
+    );
+    const shared = readLibFile("engine/current-document-quality.ts");
+    assert.ok(shared.includes("generatedDocumentVisibleText"), "canonical helper must import generatedDocumentVisibleText");
+    assert.ok(
+      /generatedDocumentVisibleText[\s\S]*?assessGeneratedDocumentQuality/.test(shared),
+      "canonical helper must open DOCX/PDF visible text before calling assessGeneratedDocumentQuality",
     );
   });
 });

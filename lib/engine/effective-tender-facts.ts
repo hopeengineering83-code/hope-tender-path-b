@@ -256,6 +256,19 @@ export type EffectiveTenderFactEntry = {
   source: EffectiveTenderFactSource;
   sourcePage?: number | null;
   sourceQuote?: string | null;
+  /**
+   * The active source file the resolved value was read from.
+   *
+   * Populated for facts a later addendum can amend. Asking "which document
+   * extended this deadline?" is an ordinary audit question, and the answer was
+   * unavailable: the files are concatenated into one string before the reader
+   * runs, so the winning value arrived with no document attached to it. The
+   * quote survives that flattening, and the quote is enough to find the file
+   * again — so attribution is recovered here by locating the clause, rather
+   * than by threading file identity through the reader and giving the codebase
+   * a second place where source authority is decided.
+   */
+  sourceFileName?: string | null;
   blockerReason?: string | null;
 };
 
@@ -277,7 +290,7 @@ export type EffectiveTenderFactsResult = {
   submissionAddress: string | null;
   physicalSubmissionRequired: boolean;
   portalSubmissionRequired: boolean;
-  financialProposalRequired: boolean;
+  financialProposalRequired: boolean | null;
   financialProposalInstruction: string | null;
   evaluationMethodology: string | null;
   requiredDocuments: string[];
@@ -321,7 +334,9 @@ export async function getEffectiveTenderFacts(
       submissionEmailSubject: true, country: true, evaluationMethodology: true, description: true,
       intakeSummary: true, analysisSummary: true, category: true, metadataContaminated: true,
       analysisExtractionStatus: true, technicalWeight: true, financialWeight: true,
-      files: { where: { deletionStatus: "ACTIVE" }, select: { id: true, extractedText: true } },
+      // originalFileName is selected so an amended fact can name the document
+      // that amended it; without it the attribution below is always null.
+      files: { where: { deletionStatus: "ACTIVE" }, select: { id: true, extractedText: true, originalFileName: true } },
       metadataOverrides: { select: { field: true, fieldState: true, overrideValue: true } },
     },
   });
@@ -390,7 +405,7 @@ export async function getEffectiveTenderFacts(
   facts.push({ key: "serviceStreams", label: "Service Streams", value: serviceStreams.length > 0 ? serviceStreams : null, status: serviceStreams.length > 0 ? "resolved_from_source_text" : "missing", requiredFor: "optional", source: serviceStreams.length > 0 ? "parser" : "none" });
 
   // Project title (parser → scalar)
-  const projectTitle = resolveSimple({ key: "projectTitle", label: "Project Title", parserValue: intelligence?.projectTitle ?? null, scalarValue: tender.title, ledgerFacts: ledgerSnapshot?.facts, overrideValue: manualOverrideValue("title"), isClean: isCleanScalarValue, requiredFor: "draft_context", facts });
+  const projectTitle = resolveSimple({ key: "projectTitle", ledgerKeys: ["projectTitle", "title"], label: "Project Title", parserValue: intelligence?.projectTitle ?? null, scalarValue: tender.title, ledgerFacts: ledgerSnapshot?.facts, overrideValue: manualOverrideValue("title"), isClean: isCleanScalarValue, requiredFor: "draft_context", facts });
 
   // Client
   const clientOrProcuringEntity = resolveSimple({ key: "clientName", label: "Client / Procuring Entity", parserValue: intelligence?.clientOrProcuringEntity ?? null, scalarValue: tender.clientName || tender.procuringEntityName, ledgerFacts: ledgerSnapshot?.facts, overrideValue: manualOverrideValue("clientName"), isClean: (v) => isCleanScalarValue(v) && isValidClientName(v), requiredFor: "draft_context", facts });
@@ -404,7 +419,13 @@ export async function getEffectiveTenderFacts(
   // Deadline
   const parserDeadlineDisplay = intelligence?.submissionInstructions.deadlineDisplay ?? null;
   const parserDeadlineIso = intelligence?.submissionInstructions.deadlineIso ?? null;
-  const deadlineResult = resolveDeadline(parserDeadlineDisplay, parserDeadlineIso, tender.deadline, ledgerSnapshot?.facts, manualOverrideValue("deadline"), facts);
+  // Which active file states the deadline that won. When an addendum extended
+  // it, this names the addendum rather than the original notice.
+  const deadlineSourceFile = parserDeadlineDisplay
+    ? ((tender.files ?? []).find((f: any) => typeof f?.extractedText === "string" && f.extractedText.includes(parserDeadlineDisplay))
+        ?.originalFileName ?? null)
+    : null;
+  const deadlineResult = resolveDeadline(parserDeadlineDisplay, parserDeadlineIso, tender.deadline, ledgerSnapshot?.facts, manualOverrideValue("deadline"), facts, deadlineSourceFile);
 
   // Submission method
   const parserMethod = intelligence?.submissionInstructions.method && intelligence.submissionInstructions.method !== "Unknown" ? intelligence.submissionInstructions.method : null;
@@ -425,10 +446,16 @@ export async function getEffectiveTenderFacts(
   // Submission address
   const submissionAddress = resolveSimple({ key: "submissionAddress", label: "Submission Address", parserValue: intelligence?.submissionInstructions.physicalAddress ?? null, scalarValue: tender.submissionAddress, ledgerFacts: ledgerSnapshot?.facts, overrideValue: manualOverrideValue("submissionAddress"), isClean: isCleanScalarValue, requiredFor: submissionMethod === "Physical" || submissionMethod === "Hybrid" ? "final_submission" : "optional", facts });
 
-  // Financial proposal
-  const financialProposalRequired = intelligence ? intelligence.financialProposalRequired : true;
-  const financialProposalInstruction = !financialProposalRequired ? "Not required at this stage. Do not generate a financial proposal." : null;
-  facts.push({ key: "financialProposalRequired", label: "Financial Proposal Required", value: financialProposalRequired ? "Yes" : "No", status: intelligence ? "resolved_from_source_text" : "missing", requiredFor: "optional", source: intelligence ? "parser" : "none" });
+  // Financial proposal — per Pillar 6, default is UNKNOWN (null) instead of
+  // true. Only set to true/false when the source explicitly states it.
+  // The three-state source answer, not the collapsed boolean. `null` here means
+  // the source did not say — which the fact below now reports as "Unknown"
+  // instead of asserting a "Yes" no clause supports.
+  const financialProposalRequired: boolean | null = intelligence
+    ? intelligence.financialProposalRequiredState
+    : null;
+  const financialProposalInstruction = financialProposalRequired === false ? "Not required at this stage. Do not generate a financial proposal." : null;
+  facts.push({ key: "financialProposalRequired", label: "Financial Proposal Required", value: financialProposalRequired === null ? "Unknown" : financialProposalRequired ? "Yes" : "No", status: intelligence ? "resolved_from_source_text" : "missing", requiredFor: "optional", source: intelligence ? "parser" : "none" });
 
   // Evaluation methodology
   const evaluationMethodology = resolveSimple({ key: "evaluationMethodology", label: "Evaluation Methodology", parserValue: intelligence?.evaluationMethodology?.methodology ?? null, scalarValue: tender.evaluationMethodology, ledgerFacts: ledgerSnapshot?.facts, overrideValue: manualOverrideValue("evaluationMethodology"), isClean: isCleanScalarValue, requiredFor: "optional", facts });
@@ -461,11 +488,12 @@ export async function getEffectiveTenderFacts(
 
 function resolveSimple(args: {
   key: string; label: string; parserValue: string | null; scalarValue: string | null | undefined;
+  ledgerKeys?: string[];
   ledgerFacts: ReadonlyArray<any> | undefined; overrideValue?: string | null; isClean: (v: string | null | undefined) => boolean;
   requiredFor: EffectiveTenderFactRequiredFor; facts: EffectiveTenderFactEntry[];
 }): string | null {
-  const { key, label, parserValue, scalarValue, ledgerFacts, overrideValue, isClean, requiredFor, facts } = args;
-  const ledgerFact = ledgerFacts?.find((f) => f.semanticKey === key);
+  const { key, label, parserValue, scalarValue, ledgerKeys = [key], ledgerFacts, overrideValue, isClean, requiredFor, facts } = args;
+  const ledgerFact = ledgerFacts?.find((f) => ledgerKeys.includes(f.semanticKey));
   if (ledgerFact) {
     const ls = String(ledgerFact.authorityState).toUpperCase();
     if (ls === AUTHORITY_STATE.SOURCE_GROUNDED_CONFIRMED || ls === "HUMAN_CONFIRMED_OPERATIONAL") {
@@ -506,6 +534,7 @@ function resolveDeadline(
   ledgerFacts: ReadonlyArray<any> | undefined,
   overrideValue: string | null,
   facts: EffectiveTenderFactEntry[],
+  parserSourceFileName: string | null = null,
 ): { display: string | null; iso: string | null } {
   const key = "deadline"; const label = "Submission Deadline";
   const ledgerFact = ledgerFacts?.find((f) => f.semanticKey === key);
@@ -527,7 +556,14 @@ function resolveDeadline(
     return { display, iso };
   }
   if (parserDisplay) {
-    facts.push({ key, label, value: parserDisplay, status: "resolved_from_source_text", requiredFor: "final_submission", source: "parser" });
+    facts.push({
+      key, label, value: parserDisplay, status: "resolved_from_source_text",
+      requiredFor: "final_submission", source: "parser",
+      // The clause itself, and the document it was read from, so an amended
+      // deadline can be traced back to the addendum that amended it.
+      sourceQuote: parserDisplay,
+      sourceFileName: parserSourceFileName,
+    });
     return { display: parserDisplay, iso: parserIso };
   }
   if (isCleanDeadline(scalarDeadline)) {
@@ -641,7 +677,7 @@ function emptyResult(tenderId: string, warnings: string[]): EffectiveTenderFacts
     deadlineDisplay: null, deadlineIso: null, submissionMethod: "Unknown", submissionFormat: null,
     submissionEmails: [], submissionEmailSubject: null, submissionAddress: null,
     physicalSubmissionRequired: false, portalSubmissionRequired: false,
-    financialProposalRequired: true, financialProposalInstruction: null,
+    financialProposalRequired: null, financialProposalInstruction: null,
     evaluationMethodology: null, requiredDocuments: [], facts: [], warnings,
   };
 }

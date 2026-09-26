@@ -22,6 +22,9 @@
  * Section F heading.
  */
 
+import { recordedProjectServices } from "./project-fact-extractor";
+import { CLIENT_FACING_SECTION_F_HEADING, SECTION_F_HEADING_RX } from "./client-facing-section-titles";
+
 type EvaluationWeightLite = { criterion: string; weight: string; rawMatch: string };
 
 export type EvaluatorMirrorBuilderInput = {
@@ -34,6 +37,14 @@ export type EvaluatorMirrorBuilderInput = {
   // evaluationCriteria is empty (tender does not explicitly list criteria).
   // Prevents Section F from being silently absent on every such tender.
   requirements?: { title?: string | null; requirementType?: string | null; priority?: string | null }[];
+  /** The selected project references, strongest first. */
+  projects?: Array<{ name: string; country?: string | null; sector?: string | null; contractValue?: number | null; currency?: string | null; serviceAreas?: string | null; summary?: string | null }>;
+  /** The proposed experts, as their own records state them. */
+  experts?: Array<{ fullName: string; title?: string | null; certifications?: string | null; profile?: string | null }>;
+  /** How many scope items the tender lists (each answered in the delivery plan). */
+  scopeItemCount?: number;
+  /** The tender's submission instructions, as analysed. */
+  submission?: { fileNames?: string[]; method?: string | null };
 };
 
 function escCell(text: string | null | undefined): string {
@@ -47,7 +58,7 @@ function escCell(text: string | null | undefined): string {
  */
 export function hasEvaluatorMirrorHeading(markdown: string): boolean {
   const re = /(^|\n)\s*#{1,4}\s*(?:section\s*[F:.\-\s]*)?\s*(?:evaluation\s+criteria\s+response\s+mirror|evaluation\s+(?:criteria\s+)?response|evaluator(?:'s)?\s+mirror|evaluation\s+mirror)/i;
-  return re.test(markdown);
+  return re.test(markdown) || SECTION_F_HEADING_RX.test(markdown);
 }
 
 /**
@@ -58,6 +69,15 @@ export function hasEvaluatorMirrorHeading(markdown: string): boolean {
  */
 function inferAnswerSection(criterion: string): string {
   const c = criterion.toLowerCase();
+  // Each pointer names a heading exactly as the proposal prints it, so the
+  // structure seal (document-structure-seal.ts) can correct its number once
+  // the final order is known. The pointers below these four named headings
+  // the document no longer has ("A.4 Proposed Project Team + A.5
+  // Team-to-Project Mapping").
+  if (/portfolio/.test(c)) return "Section B.2 Project Portfolio";
+  if (/team|expert|personnel|cv|qualification|multidisciplinary|staff/.test(c)) return "Section A.5 Proposed Project Team and A.6 Team-to-Project Experience Mapping";
+  if (/experience|similar|reference|track.record/.test(c)) return "Section B.2 Project Portfolio and B.1 Client References";
+  if (/understanding|design|methodology|technical.approach|work.plan|scope/.test(c)) return "Section C.2 Understanding of the Assignment and C.4 Scope-by-Scope Delivery Plan";
   if (/team|expert|personnel|cv|qualification|multidisciplinary/.test(c)) return "Section A.4 Proposed Project Team + A.5 Team-to-Project Mapping";
   if (/experience|portfolio|similar|reference|track.record/.test(c)) return "Section B.1 Client References + B.2 Project Portfolio";
   if (/methodology|technical.approach|work.plan|understanding|scope/.test(c)) return "Section C.1 Understanding + C.2 Technical Methodology";
@@ -81,8 +101,86 @@ function inferAnswerSection(criterion: string): string {
  * project / expert names when available, falling back to a generic
  * sector reference.
  */
+function projectPhrase(p: NonNullable<EvaluatorMirrorBuilderInput["projects"]>[number]): string {
+  const value = p.contractValue && p.contractValue > 0 && p.currency
+    ? `construction value of works ${p.currency} ${Math.round(p.contractValue).toLocaleString("en-US")}`
+    : "";
+  const detail = [p.country?.trim(), value].filter(Boolean).join(", ");
+  return detail ? `${p.name} (${detail})` : p.name;
+}
+
+function registrationOf(e: NonNullable<EvaluatorMirrorBuilderInput["experts"]>[number]): string | null {
+  const raw = (e.certifications ?? "").trim();
+  let stored: string[] = [];
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      stored = (Array.isArray(parsed) ? parsed : [parsed]).map((v) => String(v ?? "").trim());
+    } catch {
+      stored = raw.split(/[;\n]/).map((v) => v.trim());
+    }
+  }
+  const first = stored.find((v) => v.length > 2 && !/^(?:[-—–]+|n\/?a|none|not\s+stated)$/i.test(v));
+  if (first) return first;
+  const inCv = (e.profile ?? "").match(/\(([A-Z]{2,6}\/\d{2,6})\)|\bReg(?:istration)?\.?\s*No\.?\s*:?\s*([A-Z]{2,6}\/\d{2,6})/);
+  return inCv ? (inCv[1] ?? inCv[2] ?? null) : null;
+}
+
+/**
+ * What in this proposal answers the criterion, stated from the records the
+ * proposal is built from: named projects, named experts, the scope items the
+ * delivery plan answers, the submission as instructed. A criterion the data
+ * cannot answer specifically keeps the featured-project fallback below.
+ */
+function specificEvidence(criterion: string, input: EvaluatorMirrorBuilderInput): string | null {
+  const c = criterion.toLowerCase();
+  const projects = (input.projects ?? []).filter((p) => p?.name?.trim());
+  const experts = (input.experts ?? []).filter((e) => e?.fullName?.trim());
+  // "Quality and relevance of portfolio" is a different question from
+  // "relevant experience": what the references show the firm doing, at what
+  // scale, not only which references they are. Two criteria answered with the
+  // same sentence would tell the evaluator the second was not read.
+  if (/portfolio|quality/.test(c) && projects.length > 0) {
+    const services = new Map<string, string>();
+    for (const p of projects) {
+      for (const item of recordedProjectServices(p)) {
+        const label = String(item ?? "").trim();
+        if (label.length > 2 && !services.has(label.toLowerCase())) services.set(label.toLowerCase(), label);
+      }
+    }
+    const areas = [...(projects.map((p) => (p.summary ?? "").match(/\(([\d,.]+)\s*m²\)|([\d,.]+)\s*m²/)).filter(Boolean) as RegExpMatchArray[])]
+      .map((m) => Number((m[1] ?? m[2]).replace(/,/g, "")))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    const scale = areas.length > 0 ? ` of ${Math.min(...areas).toLocaleString("en-US")}–${Math.max(...areas).toLocaleString("en-US")} m²` : "";
+    const named = [...services.values()].slice(0, 8).join(", ");
+    return `${projects.length} ${projects.length === 1 ? "project" : "projects"}${scale}${named ? `, across which the firm's recorded services include ${named}` : ""}; each is detailed on its own project card.`;
+  }
+  if (/experience|portfolio|similar|reference|track.record/.test(c) && projects.length > 0) {
+    const listed = projects.slice(0, 3).map(projectPhrase).join("; ");
+    return `${projects.length} comparable project reference${projects.length === 1 ? "" : "s"}: ${listed}.`;
+  }
+  if (/team|expert|personnel|cv|qualification|multidisciplinary|staff/.test(c) && experts.length > 0) {
+    const registered = experts.map((e) => ({ e, reg: registrationOf(e) })).filter((x) => x.reg);
+    const examples = registered.slice(0, 2).map((x) => `${x.e.fullName.trim()} (${x.reg})`).join(", ");
+    return `${experts.length} named experts from the firm's own CVs${registered.length > 0 ? `; ${registered.length} with a professional registration stated in the CV, e.g. ${examples}` : ""}.`;
+  }
+  if (/understanding|design|methodology|technical.approach|work.plan|scope/.test(c) && (input.scopeItemCount ?? 0) > 0) {
+    const n = input.scopeItemCount as number;
+    return `Each of the ${n} scope item${n === 1 ? "" : "s"} in the tender is answered in the tender's order, with a named lead, inputs, deliverables, a quality check and the client approval point.`;
+  }
+  if (/compliance|submission|format|document requirement/.test(c)) {
+    const files = (input.submission?.fileNames ?? []).filter(Boolean);
+    const method = input.submission?.method?.trim();
+    const how = [files.length > 0 ? `submitted as ${files.join(", ")}` : "", method ? `by ${method.toLowerCase()} as instructed` : ""].filter(Boolean).join(" ");
+    return `${how ? `${how.charAt(0).toUpperCase()}${how.slice(1)}; ` : ""}every requirement the tender states is mapped to its answer in the Compliance Matrix.`;
+  }
+  return null;
+}
+
 function inferEvidenceAnchor(criterion: string, input: EvaluatorMirrorBuilderInput): string {
   const c = criterion.toLowerCase();
+  const specific = specificEvidence(criterion, input);
+  if (specific) return specific;
   const project = input.topProjectName?.trim();
   const expert = input.topExpertName?.trim();
   if (/team|expert|personnel|cv/.test(c) && expert) return `Lead expert ${expert} on a comparable previous project (see Section A.5)`;
@@ -160,19 +258,26 @@ export function buildEvaluatorMirrorSection(input: EvaluatorMirrorBuilderInput):
     return `| ${escCell(criterion)} | ${escCell(weight)} | ${escCell(answerSection)} | ${escCell(evidence)} |`;
   });
 
-  const weightFootnote = input.evaluationWeights.length > 0
-    ? `_${input.evaluationWeights.length} numeric weight${input.evaluationWeights.length === 1 ? "" : "s"} detected in tender; populated where the criterion phrasing matched._`
-    : "_No numeric weights stated in this tender — weight column shows em-dash. Mirror table still scores against the criterion language itself._";
+  // The weight column is printed only when the tender states a weight; a
+  // column of em-dashes has nothing to say.
+  const hasWeights = input.evaluationWeights.length > 0;
+  const body = hasWeights
+    ? rows
+    : criteria.slice(0, 20).map((criterion) => `| ${escCell(criterion)} | ${escCell(inferAnswerSection(criterion))} | ${escCell(inferEvidenceAnchor(criterion, input))} |`);
 
   return [
-    "## SECTION F: EVALUATION CRITERIA RESPONSE MIRROR",
+    `# ${CLIENT_FACING_SECTION_F_HEADING.toUpperCase()}`,
     "",
-    "Every detected evaluation criterion is mirrored back to the evaluator using their own language, with the numeric weight (when stated in the tender) and a pointer to the proposal section that answers the criterion. Mirroring criterion language back at the evaluator using their exact wording is a high-leverage scoring tactic — evaluators score what they recognise.",
+    // No tactic commentary: this paragraph once told the client that quoting
+    // their own criteria back "is a high-leverage scoring tactic".
+    hasWeights
+      ? "Each evaluation criterion stated in the tender is listed below in the tender's own wording, with its weight, the section of this proposal that answers it and the evidence that section presents."
+      : "Each evaluation criterion stated in the tender is listed below in the tender's own wording, with the section of this proposal that answers it and the evidence that section presents. The tender states no weights.",
     "",
-    weightFootnote,
-    "",
-    "| Evaluation Criterion (echoed in tender language) | Weight | Where This Proposal Answers It | Strongest Evidence Anchor |",
-    "|---|---|---|---|",
-    ...rows,
+    hasWeights
+      ? "| Evaluation Criterion (in the tender's wording) | Weight | Where This Proposal Answers It | Evidence in This Proposal |"
+      : "| Evaluation Criterion (in the tender's wording) | Where This Proposal Answers It | Evidence in This Proposal |",
+    hasWeights ? "|---|---|---|---|" : "|---|---|---|",
+    ...body,
   ].join("\n");
 }

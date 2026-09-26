@@ -29,7 +29,7 @@ describe("analysis fallback diagnostics", () => {
   it("redacts API key-like secrets", () => {
     const result = buildAnalysisFallbackDiagnostics("bad key sk-thisShouldNeverAppear123456789");
     assert.equal(result.message.includes("thisShouldNeverAppear"), false);
-    assert.equal(result.message.includes("[REDACTED]"), true);
+    assert.equal(result.message.includes("REDACTED"), true);
   });
 
   it("formats a stable diagnostics line", () => {

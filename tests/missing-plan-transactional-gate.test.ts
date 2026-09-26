@@ -2,7 +2,12 @@ import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 
-const source = readFileSync("app/api/tenders/[id]/generate-missing-plan-files/route.ts", "utf8");
+// The implementation of this route now lives in
+// lib/engine/missing-plan-file-generation.ts so the auto-finalize worker can
+// run the same code with the same gates. Read both halves of the path — the
+// assertions here are about what the path does, not which file holds it.
+const source = readFileSync("app/api/tenders/[id]/generate-missing-plan-files/route.ts", "utf8")
+  + readFileSync("lib/engine/missing-plan-file-generation.ts", "utf8");
 
 describe("missing-plan transactional persistence safety", () => {
   it("rechecks readiness under the shared tender lock", () => {
@@ -24,7 +29,12 @@ describe("missing-plan transactional persistence safety", () => {
   it("revalidates the confirmed Build Plan before persistence", () => {
     assert.match(source, /expectedPlanFingerprint/);
     assert.match(source, /BUILD_PLAN_CHANGED_BEFORE_PERSISTENCE/);
-    assert.match(source, /getCurrentConfirmedBuildPlan\(prisma, id, actor\.id\)/);
+    // The implementation moved into lib/engine/missing-plan-file-generation.ts,
+    // where the tender and user arrive as parameters rather than being read off
+    // the request actor. The property — the confirmed plan is re-read inside the
+    // locked write and compared against the fingerprint captured before it — is
+    // unchanged.
+    assert.match(source, /getCurrentConfirmedBuildPlan\(prisma, tenderId, userId\)/);
   });
 
   it("keeps the whole batch atomic when readiness changes", () => {

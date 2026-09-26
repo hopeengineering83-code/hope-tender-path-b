@@ -14,21 +14,25 @@ import {
   getProviderBaseUrl,
   getProviderModel,
   openRouterModelValidity,
+  providerAutomaticEligibility,
+  getAutomaticProviderOrder,
   type AiProviderName,
 } from "./ai-provider-registry";
+import { redactSecrets } from "./sanitize-error";
+import {
+  classifyProviderError,
+  isBillingBlocked,
+  type AiProviderFailureCategory,
+} from "./ai-provider-classification";
 
 export type { AiProviderName } from "./ai-provider-registry";
+export type { AiProviderFailureCategory } from "./ai-provider-classification";
 
-export type AiProviderFailureCategory =
-  | "RATE_LIMIT"
-  | "AUTH"
-  | "BILLING"
-  | "TIMEOUT"
-  | "MODEL_UNAVAILABLE"
-  | "NETWORK"
-  | "MALFORMED_RESPONSE"
-  | "CONFIGURATION_INVALID"
-  | "UNKNOWN";
+// AiProviderFailureCategory is defined once, in lib/ai-provider-classification.ts,
+// and re-exported above. It used to be declared here AND matched by a regex
+// ladder in this file, which is how a Cerebras 402 came to be filed as a rate
+// limit: the ladder tested the word "quota" before it tested "payment required".
+// Classification now has exactly one implementation.
 
 export type AiProviderStatus =
   | "NOT_CONFIGURED"
@@ -37,14 +41,20 @@ export type AiProviderStatus =
   | "ANALYSIS_VERIFIED"
   | "GENERATION_VERIFIED"
   | "RATE_LIMITED"
-  | "UNAUTHORIZED"
+  // AUTH_FAILED, not UNAUTHORIZED: "unauthorized" is also what an ownership
+  // check says about a USER, and the two were being read as the same thing.
+  // This one always means the PROVIDER rejected our credential.
+  | "AUTH_FAILED"
   | "BILLING_BLOCKED"
   | "MODEL_UNAVAILABLE"
+  | "PROVIDER_OVERLOAD"
+  | "PROVIDER_ERROR"
   | "TIMEOUT"
   | "NETWORK_ERROR"
   | "MALFORMED_RESPONSE"
   | "COOLING_DOWN"
   | "CONFIGURATION_INVALID"
+  | "REQUEST_TOO_LARGE"
   | "UNKNOWN";
 
 // Canonical provider list, derived from the registry. The ONLY ordering source.
@@ -74,6 +84,18 @@ export type InternalState = {
   lastFailureMessage: string | null;
   consecutiveFailures: number;
   cooldownUntil: number | null;
+  /** Resolved model identifiers in force when the failure state was recorded. */
+  failureConfigFingerprint?: string | null;
+  latestAnalysisResult?: ProviderCapabilityResult | null;
+  latestGenerationResult?: ProviderCapabilityResult | null;
+};
+
+export type ProviderCapabilityResult = {
+  observedAt: number;
+  outcome: "SUCCEEDED" | "FAILED";
+  model: string;
+  category: AiProviderFailureCategory | null;
+  safeMessage: string | null;
 };
 
 const state = new Map<AiProviderName, InternalState>();
@@ -137,9 +159,14 @@ export function getTogetherBaseUrl(): string { return getProviderBaseUrl("togeth
 export function getOpenRouterApiKey(): string | undefined { return readProviderKey("openrouter"); }
 export function isOpenRouterConfigured(): boolean { return registryIsProviderConfigured("openrouter"); }
 /**
- * Returns the configured OpenRouter model ONLY when it is a valid explicit
- * `:free` model. Returns null when invalid (openrouter/auto or non-free), so
- * callers never send a request that could create paid usage.
+ * Returns the configured OpenRouter model, used exactly as configured, or null
+ * when none is set — in which case the caller skips OpenRouter and the
+ * canonical chain continues.
+ *
+ * This previously described a `:free`-only rule ("returns null when
+ * openrouter/auto or non-free"). openRouterModelValidity() has not done that
+ * since the cost-class policy was withdrawn; it accepts any configured model
+ * identifier without rewriting it. Paid models are allowed.
  */
 export function getOpenRouterModel(): string | null {
   const validity = openRouterModelValidity();
@@ -168,6 +195,15 @@ export const COOLDOWN_PER_CATEGORY_MS: Record<AiProviderFailureCategory, number>
   NETWORK: 30_000,
   MALFORMED_RESPONSE: 60_000,
   CONFIGURATION_INVALID: 10 * 60_000,
+  // Our request did not fit. Cooling the provider would turn an application
+  // budgeting defect into false provider-health evidence.
+  REQUEST_TOO_LARGE: 0,
+  // A provider-side outage usually clears on its own, so back off like a
+  // timeout rather than quarantining for minutes as a config fault would.
+  PROVIDER_ERROR: 30_000,
+  // Capacity, not our usage and not their bug — the shortest backoff of all,
+  // because the identical request typically succeeds moments later.
+  PROVIDER_OVERLOAD: 15_000,
   UNKNOWN: 60_000,
 };
 
@@ -184,39 +220,59 @@ function ensureState(provider: AiProviderName): InternalState {
       lastFailureMessage: null,
       consecutiveFailures: 0,
       cooldownUntil: null,
+      latestAnalysisResult: null,
+      latestGenerationResult: null,
     };
     state.set(provider, s);
   }
   return s;
 }
 
+/**
+ * Record the outcome of a real workload, separately for extraction and
+ * proposal generation. This is deliberately not the routing failure state:
+ * an extraction failure may impose a shared provider cooldown, but it must not
+ * overwrite the operator's answer to "what happened on the latest proposal?"
+ * (or vice versa).
+ */
+export function recordProviderCapabilityResult(
+  provider: AiProviderName,
+  capability: "analysis" | "generation",
+  result: Omit<ProviderCapabilityResult, "observedAt"> & { observedAt?: number },
+): void {
+  const s = ensureState(provider);
+  const value: ProviderCapabilityResult = {
+    ...result,
+    observedAt: result.observedAt ?? Date.now(),
+    safeMessage: result.safeMessage ? redactMessage(result.safeMessage) : null,
+  };
+  if (capability === "analysis") s.latestAnalysisResult = value;
+  else s.latestGenerationResult = value;
+}
+
+/**
+ * Redact a provider message before it is stored or surfaced.
+ *
+ * Delegates to the shared redactor in lib/sanitize-error.ts. This used to carry
+ * its own pattern list, which is how the two came to disagree: this one knew
+ * about Google's AQ-format keys and the shared one did not, so the same key was
+ * redacted on one code path and printed verbatim on another. The shared list is
+ * a strict superset of what was here.
+ */
 function redactMessage(message: string | null | undefined): string {
-  return (message ?? "")
-    .replace(/sk-ant-[A-Za-z0-9-_=]{8,}/g, "[REDACTED]")
-    .replace(/sk-or-[A-Za-z0-9-_=]{8,}/g, "[REDACTED]")
-    .replace(/sk-[A-Za-z0-9-_]{8,}/g, "[REDACTED]")
-    .replace(/gsk_[A-Za-z0-9-_]{8,}/g, "[REDACTED]")
-    .replace(/dsk[-_][A-Za-z0-9-_]{8,}/g, "[REDACTED]")
-    .replace(/AIza[A-Za-z0-9_-]{20,}/g, "[REDACTED]")
-    .replace(/\bAQ[A-Za-z0-9_-]{30,}\b/g, "[REDACTED]")
-    .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, "Bearer [REDACTED]")
-    .replace(/authorization:\s*[A-Za-z0-9._\-+/=]+/gi, "authorization: [REDACTED]")
+  return redactSecrets(message ?? "")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 300);
 }
 
+/**
+ * Classify a provider failure. Delegates to the single authority in
+ * lib/ai-provider-classification.ts — kept as an exported name here because
+ * many call sites already import it from this module.
+ */
 export function classifyAiError(error: unknown): AiProviderFailureCategory {
-  const raw = error instanceof Error ? error.message : String(error ?? "");
-  const lower = raw.toLowerCase();
-  if (/429|rate.?limit|quota|too\s+many\s+requests|resource\s+exhausted|tokens?\s+per\s+minute/.test(lower)) return "RATE_LIMIT";
-  if (/401|403|invalid\s+api\s+key|unauthor|forbidden|api\s+key/.test(lower)) return "AUTH";
-  if (/402|insufficient.?balance|payment\s+required|billing|account\s+balance/.test(lower)) return "BILLING";
-  if (/timed?\s*out|timeout|abort/.test(lower)) return "TIMEOUT";
-  if (/404|model\s+not|not\s+found|not\s+supported|model\s+unavailable|invalid_request|unknown\s+model|please\s+check\s+the\s+model|model\s+code/.test(lower)) return "MODEL_UNAVAILABLE";
-  if (/network|fetch\s+failed|econnreset|enotfound|getaddrinfo|socket\s+hang\s+up/.test(lower)) return "NETWORK";
-  if (/no\s+json|malformed\s+json|invalid\s+json|json\s+parse/.test(lower)) return "MALFORMED_RESPONSE";
-  return "UNKNOWN";
+  return classifyProviderError(error);
 }
 
 export function recordProviderAnalysisSuccess(provider: AiProviderName): void {
@@ -250,6 +306,184 @@ export function recordProviderPingSuccess(provider: AiProviderName): void {
   s.lastFailureMessage = null;
 }
 
+/**
+ * Record that a DIAGNOSTIC probe proved a capability — and nothing else.
+ *
+ * THE DEFECT THIS FIXES.
+ * ----------------------
+ * The three recorders above each bundle two unrelated things: the evidence
+ * that a capability works, and a reset of the operational failure state
+ * (`consecutiveFailures`, `cooldownUntil`, `lastFailureCategory`,
+ * `lastFailureMessage`). For a REAL workload call that bundling is right — a
+ * provider that just answered a real request is demonstrably not in the state
+ * its last failure described.
+ *
+ * For a probe it is not. `runCapabilityTest` called those same recorders
+ * directly, outside `runAsDiagnostic`, so a successful probe CLEARED a live
+ * real-work cooldown, zeroed the real failure count, and erased the recorded
+ * cause — changing what tender analysis and proposal generation would attempt
+ * next.
+ *
+ * That is the mirror image of the harm the diagnostic isolation was built to
+ * prevent. The comment there says it exactly: "asking 'is this working?' would
+ * make it stop working". The inverse is just as bad. A connectivity probe is a
+ * few hundred tokens; a tender extraction is several thousand. The small one
+ * succeeding against a provider that is rate-limiting the large one is not
+ * evidence the backoff should end, and clearing it sends real work straight
+ * back into the 429 the backoff existed to space out.
+ *
+ * The reporting need is real and is preserved: deriveProviderStatus() reads
+ * these three timestamps to report CONNECTIVITY_VERIFIED / ANALYSIS_VERIFIED /
+ * GENERATION_VERIFIED, and a probe is legitimate evidence for exactly that.
+ * So the timestamp is written and the failure state is left alone. Widening
+ * what the operator can SEE is not the same as widening what routing will DO.
+ */
+export function recordProviderProbeCapability(
+  provider: AiProviderName,
+  capability: "connectivity" | "analysis" | "generation",
+): void {
+  const s = ensureState(provider);
+  const now = Date.now();
+  if (capability === "connectivity") s.lastPingSucceededAt = now;
+  else if (capability === "analysis") s.lastAnalysisSucceededAt = now;
+  else s.lastGenerationSucceededAt = now;
+  // Deliberately NOT touched: lastSuccessAt, consecutiveFailures, cooldownUntil,
+  // lastFailureCategory, lastFailureMessage. A probe observes; it does not heal.
+}
+
+// ─── Billing refusal ─────────────────────────────────────────────────────────
+//
+// A provider that answers "this account cannot pay" is skipped for a while, not
+// removed. This used to be a permanent, process-wide lockout backed by its own
+// Map, cleared only by an operator and re-armed on every cold start from the
+// persisted BILLING category — so one 402 took a provider out of the chain for
+// good.
+//
+// That is a cost policy, and the owner's provider directive has none: all ten
+// providers stay in the chain, and a billing refusal is simply one more way an
+// attempt can fail. The chain must fall through to the next provider (it does,
+// immediately) and must be free to try this one again later.
+//
+// So BILLING is now an ordinary failure category with an ordinary cooldown —
+// the longest one, at ten minutes, because it is the least likely to clear
+// quickly. Two properties are preserved from the old design and both matter:
+// during the cooldown the provider is skipped WITHOUT spending an attempt, so a
+// refusing provider cannot stall a request; and it stays fully visible in
+// health and diagnostics as BILLING_BLOCKED rather than quietly vanishing.
+//
+// The predicate below is derived, not stored. There is no second source of
+// truth to persist, restore, or let drift out of step with the cooldown.
+
+/**
+ * True while the provider is cooling down FROM a payment/balance/quota-required
+ * refusal. Derived from the same cooldown every other failure category uses, so
+ * it expires on its own and the provider is retried.
+ */
+export function isBillingLockedOut(provider: AiProviderName): boolean {
+  const s = state.get(provider);
+  if (!s || s.lastFailureCategory !== "BILLING") return false;
+  return isProviderCooledDown(provider);
+}
+
+export function getBillingLockout(provider: AiProviderName): { at: string; message: string } | null {
+  const s = state.get(provider);
+  if (!s || s.lastFailureCategory !== "BILLING" || !s.lastFailureAt) return null;
+  if (!isProviderCooledDown(provider)) return null;
+  return { at: new Date(s.lastFailureAt).toISOString(), message: s.lastFailureMessage ?? "" };
+}
+
+/**
+ * Operator override: end the billing cooldown now, after fixing the account.
+ * Clears the cooldown itself — there is no separate lockout left to clear.
+ */
+export function clearBillingLockout(provider?: AiProviderName): void {
+  const clearOne = (name: AiProviderName) => {
+    const s = state.get(name);
+    if (!s || s.lastFailureCategory !== "BILLING") return;
+    s.cooldownUntil = null;
+    s.consecutiveFailures = 0;
+  };
+  if (provider) clearOne(provider);
+  else for (const name of ALL_PROVIDER_NAMES) clearOne(name);
+}
+
+/**
+ * The resolved model identifiers for a provider, as one comparable string.
+ *
+ * MODELS ONLY. Never the key, never a base URL, never a prompt — this value is
+ * persisted and surfaced in health output, so it must carry nothing secret. Two
+ * different keys with the same models produce the same fingerprint, which is
+ * correct for its purpose: it answers "is this the same request shape we failed
+ * on", not "is this the same account".
+ */
+export function providerConfigFingerprint(
+  provider: AiProviderName,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  return (["proposal", "extraction", "fast"] as const)
+    .map((useCase) => `${useCase}=${getProviderModel(provider, useCase, env) || "-"}`)
+    .join("|");
+}
+
+/**
+ * Does the recorded failure still describe the configuration we would send now?
+ *
+ * THE DEFECT THIS FIXES.
+ * ----------------------
+ * Failure state is keyed by provider alone. Mistral is configured with
+ * `mistral-large-latest` and answers "This model is not available in your
+ * subscription tier" (HTTP 403, AUTH). That records an AUTH failure, and with
+ * `consecutiveFailures` backoff the cooldown reaches 5 minutes x 16 = 80
+ * minutes. The cooldown and the failure count both persist to the database and
+ * are restored on every cold start.
+ *
+ * Now the operator does the obvious thing and switches the model to
+ * `mistral-small-latest`, which their tier does allow. The provider stays
+ * skipped for up to 80 more minutes, because the state that suppresses it was
+ * earned by a model no longer in use. Their fix appears not to work, and the
+ * natural next conclusion is that the provider needs paying for.
+ *
+ * A failure is evidence about a (provider, model) pair. "That model is not in
+ * your tier" says nothing about a different model on the same key. So when the
+ * resolved models change, failure state recorded under the previous models no
+ * longer suppresses the provider.
+ *
+ * WHAT THIS DELIBERATELY DOES NOT DO. It does not clear SUCCESS history — a
+ * provider that really did answer still did. And it is not a way to escape a
+ * genuine account-level condition: an account-scoped limit reasserts itself on
+ * the very next attempt, costing one attempt that the chain absorbs. Paying
+ * that once is the right trade against suppressing a provider that now works.
+ */
+function failureStateAppliesToCurrentConfig(
+  provider: AiProviderName,
+  s: InternalState,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  // No recorded fingerprint: either no failure, or a row written before this
+  // existed. Behave exactly as before rather than inventing a mismatch.
+  if (!s.failureConfigFingerprint) return true;
+  return s.failureConfigFingerprint === providerConfigFingerprint(provider, env);
+}
+
+/**
+ * Drop failure state that was earned under models no longer configured.
+ * Returns true when something was cleared, so callers can report it.
+ */
+export function clearFailureStateOrphanedByConfigChange(
+  provider: AiProviderName,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  const s = state.get(provider);
+  if (!s || failureStateAppliesToCurrentConfig(provider, s, env)) return false;
+  s.cooldownUntil = null;
+  s.consecutiveFailures = 0;
+  s.lastFailureAt = null;
+  s.lastFailureCategory = null;
+  s.lastFailureMessage = null;
+  s.failureConfigFingerprint = null;
+  return true;
+}
+
 export function recordProviderFailure(provider: AiProviderName, error: unknown): AiProviderFailureCategory {
   const s = ensureState(provider);
   const category = classifyAiError(error);
@@ -259,6 +493,7 @@ export function recordProviderFailure(provider: AiProviderName, error: unknown):
   s.lastFailureAt = now;
   s.lastFailureCategory = category;
   s.lastFailureMessage = message;
+  s.failureConfigFingerprint = providerConfigFingerprint(provider);
   s.consecutiveFailures++;
 
   const baseCooldown = COOLDOWN_PER_CATEGORY_MS[category];
@@ -266,6 +501,64 @@ export function recordProviderFailure(provider: AiProviderName, error: unknown):
   s.cooldownUntil = now + baseCooldown * backoffFactor;
 
   return category;
+}
+
+// ─── Diagnostic observations, kept off the workload path ─────────────────────
+//
+// Running "Test provider chain" used to write straight into the state above.
+// A diagnostic that found Groq rate-limited therefore imposed a real cooldown
+// on real analysis work — the act of asking "is this working?" made it stop
+// working, and an operator debugging a failure made the failure worse by
+// looking at it.
+//
+// Diagnostics now record here instead. The observations are reported to the
+// operator, and they never gate routing. The single deliberate exception is
+// BILLING: discovering that a provider wants money is exactly the thing that
+// must reach the workload path, because acting on it prevents a charge rather
+// than causing an outage.
+export type DiagnosticObservation = {
+  provider: AiProviderName;
+  observedAt: number;
+  capability: "connectivity" | "analysis" | "generation";
+  ok: boolean;
+  category: AiProviderFailureCategory | null;
+  safeMessage: string | null;
+  model: string | null;
+  latencyMs: number | null;
+};
+
+const diagnosticObservations = new Map<AiProviderName, DiagnosticObservation[]>();
+
+export function recordDiagnosticObservation(
+  observation: Omit<DiagnosticObservation, "observedAt"> & { observedAt?: number },
+): AiProviderFailureCategory | null {
+  const entry: DiagnosticObservation = {
+    ...observation,
+    safeMessage: observation.safeMessage ? redactMessage(observation.safeMessage) : null,
+    observedAt: observation.observedAt ?? Date.now(),
+  };
+  const list = diagnosticObservations.get(observation.provider) ?? [];
+  // Keep only the most recent observation per capability, so the report shows
+  // the current picture rather than an ever-growing log.
+  const kept = list.filter((o) => o.capability !== entry.capability);
+  kept.push(entry);
+  diagnosticObservations.set(observation.provider, kept);
+
+  // Nothing crosses over into workload routing. Billing used to be the one
+  // exception, on the grounds that a paying provider had to be locked out
+  // everywhere at once; with no cost policy left, that exception has no reason
+  // to exist, and removing it restores the property this store was built for —
+  // running a diagnostic never changes how real work is routed.
+  return entry.category;
+}
+
+export function getDiagnosticObservations(provider: AiProviderName): DiagnosticObservation[] {
+  return [...(diagnosticObservations.get(provider) ?? [])];
+}
+
+export function resetDiagnosticObservations(provider?: AiProviderName): void {
+  if (provider) diagnosticObservations.delete(provider);
+  else diagnosticObservations.clear();
 }
 
 export function getProviderStateSnapshot(provider: AiProviderName): InternalState | null {
@@ -294,6 +587,11 @@ export function isProviderCooledDown(provider: AiProviderName): boolean {
     s.cooldownUntil = null;
     return false;
   }
+  // A cooldown earned by models that are no longer configured is not evidence
+  // about the request we would send now. Clearing it here — rather than only in
+  // an explicit operator action — is what makes an operator's own model fix
+  // take effect on their next run instead of up to 160 minutes later.
+  if (clearFailureStateOrphanedByConfigChange(provider)) return false;
   return true;
 }
 
@@ -321,18 +619,23 @@ export function getAllProviderHealth(): AiProviderHealth[] {
 export function deriveProviderStatus(provider: AiProviderName): AiProviderStatus {
   const h = getProviderHealth(provider);
 
-  // No key at all → NOT_CONFIGURED. (OpenRouter with a key but an invalid model
-  // is reported as CONFIGURATION_INVALID below, not NOT_CONFIGURED.)
+  // No key at all → NOT_CONFIGURED. (A key with an invalid model is reported as
+  // CONFIGURATION_INVALID below, not NOT_CONFIGURED.)
   if (!readProviderKey(provider)) return "NOT_CONFIGURED";
+
+  // A real provider billing response outranks stale success or cooldown state.
+  if (isBillingLockedOut(provider)) return "BILLING_BLOCKED";
 
   const cooling = isProviderCooledDown(provider);
   if (cooling) {
     const category = h.lastFailureCategory;
     switch (category) {
       case "RATE_LIMIT": return "RATE_LIMITED";
-      case "AUTH": return "UNAUTHORIZED";
+      case "AUTH": return "AUTH_FAILED";
       case "BILLING": return "BILLING_BLOCKED";
       case "MODEL_UNAVAILABLE": return "MODEL_UNAVAILABLE";
+      case "PROVIDER_OVERLOAD": return "PROVIDER_OVERLOAD";
+      case "PROVIDER_ERROR": return "PROVIDER_ERROR";
       case "TIMEOUT": return "TIMEOUT";
       case "NETWORK": return "NETWORK_ERROR";
       case "MALFORMED_RESPONSE": return "MALFORMED_RESPONSE";
@@ -342,14 +645,15 @@ export function deriveProviderStatus(provider: AiProviderName): AiProviderStatus
     }
   }
 
-  // A genuine runtime success outranks a configuration warning.
+  // Runtime-verified states, strongest evidence first. Each of these is only
+  // set by a real call that really succeeded — never by a key being present.
   if (h.lastGenerationSucceededAt) return "GENERATION_VERIFIED";
   if (h.lastAnalysisSucceededAt) return "ANALYSIS_VERIFIED";
   if (h.lastPingSucceededAt) return "CONNECTIVITY_VERIFIED";
 
-  // OpenRouter with a key but a missing/invalid (non-:free) model is a
-  // configuration problem, surfaced distinctly so operators fix the model
-  // rather than see a misleading NOT_CONFIGURED. It never consumes an attempt.
+  // OpenRouter without a usable model is a configuration problem, surfaced
+  // distinctly so operators set the model rather than see a misleading
+  // NOT_CONFIGURED. It never consumes an attempt.
   if (provider === "openrouter") {
     const validity = openRouterModelValidity();
     if (!validity.valid) {
@@ -358,7 +662,44 @@ export function deriveProviderStatus(provider: AiProviderName): AiProviderStatus
   }
 
   if (!h.configured) return "NOT_CONFIGURED";
+  // A key exists and nothing has been proven about it yet. CONFIGURED is
+  // deliberately NOT one of the verified states: see isProviderRuntimeUsable().
   return "CONFIGURED";
+}
+
+/**
+ * The three statuses that mean a real request really succeeded.
+ *
+ * "Has an API key" is not one of them. Production readiness used to call AI
+ * healthy on key presence alone, which is how an environment with four
+ * configured providers and zero working ones reported green.
+ */
+export const RUNTIME_VERIFIED_STATUSES: readonly AiProviderStatus[] = [
+  "CONNECTIVITY_VERIFIED",
+  "ANALYSIS_VERIFIED",
+  "GENERATION_VERIFIED",
+];
+
+/**
+ * Whether this provider is usable for AI Analyze RIGHT NOW.
+ *
+ * Requires a verified ANALYSIS (or the stronger GENERATION) capability —
+ * connectivity alone is not enough. A provider can answer "OK" to a one-word
+ * ping and still be unable to return the structured JSON the analysis depends
+ * on, because the ping proves the key and the route, not the capability. That
+ * gap was the whole reason diagnostics and runtime disagreed.
+ */
+export function isProviderAnalysisUsable(provider: AiProviderName): boolean {
+  const status = deriveProviderStatus(provider);
+  return status === "ANALYSIS_VERIFIED" || status === "GENERATION_VERIFIED";
+}
+
+/** Providers with a verified analysis capability, in automatic-chain order. */
+export function analysisUsableProviders(): AiProviderName[] {
+  return getAutomaticProviderOrder().filter((provider) => {
+    if (!providerAutomaticEligibility(provider).eligible) return false;
+    return isProviderAnalysisUsable(provider);
+  });
 }
 
 export type ProviderRuntimeSnapshot = {
@@ -371,9 +712,16 @@ export type ProviderRuntimeSnapshot = {
   consecutiveFailures: number;
   coolingDown: boolean;
   rateLimited: boolean;
+  /** The provider returned a billing/payment refusal. */
+  billingBlocked: boolean;
+  /** A real call really succeeded — never true from key presence alone. */
   runtimeVerified: boolean;
+  /** A real ANALYSIS call really succeeded. What AI Analyze actually needs. */
+  analysisUsable: boolean;
   available: boolean;
   status: AiProviderStatus;
+  latestRealExtractionResult: ProviderCapabilityResult | null;
+  latestRealProposalResult: ProviderCapabilityResult | null;
 };
 
 export function getProviderRuntimeSnapshot(provider: AiProviderName): ProviderRuntimeSnapshot {
@@ -390,10 +738,27 @@ export function getProviderRuntimeSnapshot(provider: AiProviderName): ProviderRu
     consecutiveFailures: h.consecutiveFailures,
     coolingDown,
     rateLimited: coolingDown && h.lastFailureCategory === "RATE_LIMIT",
-    runtimeVerified: status === "GENERATION_VERIFIED" || status === "ANALYSIS_VERIFIED",
-    available: h.configured && !coolingDown,
+    billingBlocked: status === "BILLING_BLOCKED",
+    runtimeVerified: RUNTIME_VERIFIED_STATUSES.includes(status),
+    analysisUsable: status === "GENERATION_VERIFIED" || status === "ANALYSIS_VERIFIED",
+    // Availability now includes the money gate. A configured, non-cooling
+    // provider that requires payment is NOT available: it would answer only
+    // with a bill.
+    available: h.configured && !coolingDown && status !== "BILLING_BLOCKED",
     status,
+    latestRealExtractionResult: hStateResult(h.provider, "analysis"),
+    latestRealProposalResult: hStateResult(h.provider, "generation"),
   };
+}
+
+function hStateResult(
+  provider: AiProviderName,
+  capability: "analysis" | "generation",
+): ProviderCapabilityResult | null {
+  const value = capability === "analysis"
+    ? state.get(provider)?.latestAnalysisResult
+    : state.get(provider)?.latestGenerationResult;
+  return value ? { ...value } : null;
 }
 
 export type ProviderAttemptDiagnostic = {
@@ -402,6 +767,10 @@ export type ProviderAttemptDiagnostic = {
   coolingDown: boolean;
   lastErrorCategory: AiProviderFailureCategory | null;
   cooldownUntil: string | null;
+  extractionModel: string;
+  proposalModel: string;
+  latestRealExtractionResult: ProviderCapabilityResult | null;
+  latestRealProposalResult: ProviderCapabilityResult | null;
 };
 
 export function buildProviderDiagnosticsSnapshot(): {
@@ -418,6 +787,10 @@ export function buildProviderDiagnosticsSnapshot(): {
       coolingDown: isProviderCooledDown(provider),
       lastErrorCategory: h.lastFailureCategory,
       cooldownUntil: h.cooldownUntil,
+      extractionModel: getProviderModel(provider, "extraction"),
+      proposalModel: getProviderModel(provider, "proposal"),
+      latestRealExtractionResult: hStateResult(provider, "analysis"),
+      latestRealProposalResult: hStateResult(provider, "generation"),
     };
   });
   return {
@@ -428,7 +801,9 @@ export function buildProviderDiagnosticsSnapshot(): {
 }
 
 export function getMinCooldownExpiryMs(): number | null {
-  const configured = ALL_PROVIDER_NAMES.filter((p) => isProviderConfigured(p));
+  const configured = getAutomaticProviderOrder().filter(
+    (p) => providerAutomaticEligibility(p).eligible && !isBillingLockedOut(p),
+  );
   if (configured.length === 0) return null;
   const now = Date.now();
   let minMs = Infinity;
@@ -448,14 +823,22 @@ export function getMinCooldownExpiryMs(): number | null {
 export function resetProviderHealth(provider?: AiProviderName): void {
   if (provider) {
     state.delete(provider);
+    diagnosticObservations.delete(provider);
     return;
   }
   state.clear();
+  diagnosticObservations.clear();
 }
 
-/** Back-compat alias for the Mistral model getter. */
+/**
+ * Back-compat alias for the Mistral model getter.
+ *
+ * This used to read MISTRAL_PROPOSAL_MODEL and fall back to its own hardcoded
+ * default — a second answer to "which Mistral model?" that could differ from
+ * the registry's. It now delegates, so there is one answer.
+ */
 export function getMistralModel(): string {
-  return process.env.MISTRAL_PROPOSAL_MODEL || "mistral-small-latest";
+  return getMistralProposalModel();
 }
 
 /** Back-compat alias: returns the proposal model. */

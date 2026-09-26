@@ -60,9 +60,12 @@ describe("buildComplianceMatrixSection — source page citations", () => {
     // (i.e., embedded in the requirement cell, not as a new column)
     const rowLine = result!.split("\n").find((l) => l.includes("[p.8]"));
     assert.ok(rowLine, "a row containing [p.8] must exist");
-    // The row must still have 6 pipe delimiters (6 columns, not 7)
+    // The page reference does not add a column. The matrix has five columns
+    // since the "Package Reference" column (annex letters no package defined)
+    // was removed: 6 pipes including the leading one.
     const pipeCount = (rowLine!.match(/\|/g) ?? []).length;
-    assert.equal(pipeCount, 7, `row must have 7 pipes (6 columns + leading pipe), got ${pipeCount}: ${rowLine}`);
+    assert.equal(pipeCount, 6, `row must have 6 pipes (5 columns + leading pipe), got ${pipeCount}: ${rowLine}`);
+    assert.doesNotMatch(result!, /Package Reference|Annex [A-G] —/);
   });
 
   it("returns null when requirements array is empty", () => {

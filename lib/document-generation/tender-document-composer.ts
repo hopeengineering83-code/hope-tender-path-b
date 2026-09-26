@@ -102,10 +102,13 @@ function composeCoverPage(ctx: TenderDocumentGenerationContext): string {
   const lines: string[] = [
     `# ${ctx.projectTitle ?? "Tender Response"}`,
     "",
-    `**Client:** ${ctx.clientName ?? "— Client to be confirmed"}`,
+    // A detail the tender does not state is not required (owner policy
+    // ABSENT_TENDER_FACT_IS_NOT_REQUIRED): its line is omitted rather than
+    // printed as "to be confirmed" on a client-facing cover page.
+    ...(ctx.clientName ? [`**Client:** ${ctx.clientName}`] : []),
     `**Reference:** ${ctx.tenderId}`,
-    `**Submission Method:** ${ctx.submissionMethod ?? "— To be confirmed"}`,
-    `**Deadline:** ${ctx.deadline ? new Date(ctx.deadline).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }) : "— To be confirmed"}`,
+    ...(ctx.submissionMethod ? [`**Submission Method:** ${ctx.submissionMethod}`] : []),
+    ...(ctx.deadline ? [`**Deadline:** ${new Date(ctx.deadline).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}`] : []),
     "",
     `**Submitted by:** ${ctx.companyProfile.name}`,
   ];

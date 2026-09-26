@@ -5,8 +5,27 @@ import { ensureCompanyForUser } from "../../../../lib/company-workspace";
 import { rateLimit, MUTATION_RATE_LIMIT, API_RATE_LIMIT } from "../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../lib/request-id";
 import { companyRecordRuntimeError } from "../../../../lib/company-record-route-error";
+import { logAction } from "../../../../lib/audit";
+import { manualSupportRecordDraftFields } from "../../../../lib/vault-review-inbox";
 
 export const dynamic = "force-dynamic";
+
+const DEFAULT_PAGE_SIZE = 50;
+const MAX_PAGE_SIZE = 100;
+
+function parseBoundedInt(value: string | null, fallback: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.floor(parsed);
+}
+
+function parsePage(value: string | null): number {
+  return parseBoundedInt(value, 1);
+}
+
+function parseLimit(value: string | null): number {
+  return Math.min(parseBoundedInt(value, DEFAULT_PAGE_SIZE), MAX_PAGE_SIZE);
+}
 
 function str(value: unknown, max = 300): string {
   return String(value ?? "").replace(/\s+/g, " ").trim().slice(0, max);
@@ -23,13 +42,22 @@ export async function GET(req: Request) {
     if (!rl.allowed) return NextResponse.json({ error: "Too many requests", code: "RATE_LIMITED" }, { status: 429 });
 
     await prismaReady;
+    const url = new URL(req.url);
+    const page = parsePage(url.searchParams.get("page"));
+    const limit = parseLimit(url.searchParams.get("limit"));
     const company = await ensureCompanyForUser(prisma, actor.id);
-    const records = await prisma.companyComplianceRecord.findMany({
-      where: { companyId: company.id },
-      select: { id: true, complianceType: true, title: true, status: true, referenceNumber: true, expiryDate: true, createdAt: true },
-      orderBy: { createdAt: "desc" },
-    });
-    return NextResponse.json({ ok: true, records });
+    const where = { companyId: company.id };
+    const [records, total] = await prisma.$transaction([
+      prisma.companyComplianceRecord.findMany({
+      where,
+      select: { id: true, complianceType: true, title: true, status: true, referenceNumber: true, expiryDate: true, trustLevel: true, createdAt: true },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      skip: (page - 1) * limit,
+      take: limit,
+    }),
+      prisma.companyComplianceRecord.count({ where }),
+    ]);
+    return NextResponse.json({ ok: true, records, page, limit, total, hasMore: page * limit < total });
   } catch (error) {
     return companyRecordRuntimeError({
       route: "company compliance-records GET",
@@ -77,6 +105,14 @@ export async function POST(req: Request) {
       expiryDate = parsed;
     }
 
+    let sourceDocumentId: string | null = null;
+    if (typeof body.sourceDocumentId === "string" && body.sourceDocumentId.trim()) {
+      const docId = body.sourceDocumentId.trim();
+      const doc = await prisma.companyDocument.findFirst({ where: { id: docId, companyId: company.id }, select: { id: true } });
+      if (!doc) return NextResponse.json({ error: "sourceDocumentId does not reference a document in your Company Vault." }, { status: 400 });
+      sourceDocumentId = doc.id;
+    }
+
     const record = await prisma.companyComplianceRecord.create({
       data: {
         companyId: company.id,
@@ -86,7 +122,17 @@ export async function POST(req: Request) {
         evidenceSummary: body.evidenceSummary ? str(body.evidenceSummary, 1000) : null,
         referenceNumber: body.referenceNumber ? str(body.referenceNumber, 100) : null,
         expiryDate,
+        ...manualSupportRecordDraftFields("COMPLIANCE"),
+        sourceDocumentId,
       },
+    });
+    await logAction({
+      userId: actor.id,
+      action: "COMPLIANCE_RECORD_CREATE",
+      entityType: "CompanyComplianceRecord",
+      entityId: record.id,
+      description: `Compliance record "${record.title}" created`,
+      metadata: { companyId: company.id },
     });
     return NextResponse.json({ ok: true, record }, { status: 201 });
   } catch (error) {

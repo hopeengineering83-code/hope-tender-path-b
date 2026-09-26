@@ -26,7 +26,12 @@ export function computeProvenPageNumber(
 
   // 1. Form feeds (\f) are hard page boundaries.
   const formFeeds = (before.match(/\f/g) || []).length;
-  if (formFeeds > 0) {
+  // A document containing form feeds has a hard page map from its first
+  // character: text before the first delimiter is page 1. Requiring a form
+  // feed *before* the match made page 1 uniquely unprovable while pages 2+
+  // were accepted from the same extraction. The PATH tender exposed this on
+  // mandatory first-page evidence.
+  if (text.includes("\f")) {
     const page = formFeeds + 1;
     if (knownTotal !== null && (page < 1 || page > knownTotal)) return null;
     return page;
@@ -84,8 +89,9 @@ function buildNormalizedIndexMap(text: string): { normalized: string; map: numbe
   const map: number[] = [];
   let pendingSpace = false;
   for (let i = 0; i < lower.length; i++) {
-    const ch = lower[i];
-    if (/\s/.test(ch)) {
+    const raw = lower[i];
+    const ch = /[\u2010-\u2015\u2212]/.test(raw) ? "-" : raw;
+    if (/\s/.test(ch) || /[•●▪◦\uf0b7]/.test(ch)) {
       if (normalized.length > 0) pendingSpace = true;
       continue;
     }
@@ -126,7 +132,11 @@ export function locateQuoteProvenPage(
   totalPages: number | null | undefined,
 ): number | null {
   if (!originalText || !quote) return null;
-  const needle = quote.toLowerCase().replace(/\s+/g, " ").trim();
+  const needle = quote.toLowerCase()
+    .replace(/[\u2010-\u2015\u2212]/g, "-")
+    .replace(/[•●▪◦\uf0b7]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
   if (needle.length < MIN_QUOTE_CHARS) return null;
   const { normalized, map } = buildNormalizedIndexMap(originalText);
   let idx = normalized.indexOf(needle);

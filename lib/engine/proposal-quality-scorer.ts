@@ -38,6 +38,7 @@
  */
 
 import type { ProjectRecord } from "./benchmark-tables";
+import { SECTION_F_HEADING_RX, SECTION_G_HEADING_RX } from "./client-facing-section-titles";
 
 export type QualityScore = {
   total: number; // 0–100
@@ -561,8 +562,12 @@ export function scoreProposalQuality(opts: {
   // The mirror is what gets the proposal scored on the evaluator's rubric
   // line by line — its absence costs points across every criterion.
   let evaluatorMirrorCoverage = 0;
+  // Section F ships under its client-facing name ("Response to Evaluation
+  // Criteria"); SECTION_F_HEADING_RX recognises that and the older
+  // "Evaluation Criteria Response Mirror" wording, so renaming the heading
+  // does not silently zero this axis. Nothing about the thresholds changed.
   const mirrorHeadingRe = /(^|\n)\s*#{1,4}\s*(?:section\s*[F:.\-\s]*)?\s*(?:evaluation\s+criteria\s+response\s+mirror|evaluation\s+(?:criteria\s+)?response|evaluator(?:'s)?\s+mirror|evaluation\s+mirror)/i;
-  const hasMirrorHeading = mirrorHeadingRe.test(md);
+  const hasMirrorHeading = mirrorHeadingRe.test(md) || SECTION_F_HEADING_RX.test(md);
   const weightCellMatches = (md.match(/\b\d{1,2}\s*%(?:\s*\||\s*\n)/g) ?? []).length;
   // Only count section pointers that appear inside table cells (preceded and
   // followed by pipe characters) — prevents ordinary prose references like
@@ -583,17 +588,28 @@ export function scoreProposalQuality(opts: {
   // framing paragraph. Themes without discriminator-vs-criterion mapping
   // are just marketing fluff.
   let winThemesPresence = 0;
+  // As with Section F, the heading now ships under its client-facing name
+  // ("Why We Are Well Suited") and both spellings score identically.
   const themesHeadingRe = /(^|\n)\s*#{1,4}\s*(?:section\s*[G:.\-\s]*)?\s*(?:win\s+themes?|themes?\s+(?:and|&)\s+discriminators?)/i;
-  const hasThemesHeading = themesHeadingRe.test(md);
-  const discriminatorMentions = (md.match(/\bdiscriminator/gi) ?? []).length;
+  const hasThemesHeading = themesHeadingRe.test(md) || SECTION_G_HEADING_RX.test(md);
+  // This +2 used to be awarded only for the literal word "discriminator" in
+  // the prose. That is bid-desk vocabulary, and awarding points for it pushed
+  // every producer to print it in the client's copy — which is exactly the
+  // defect. What the axis is actually checking is that the section explains
+  // why this bidder is the right choice rather than just listing capabilities,
+  // so the equivalent client-facing phrasings now earn the same 2 points. No
+  // threshold, weight or axis total changed.
+  const valueFramingMentions = (
+    md.match(/\bdiscriminator|\bwhat\s+this\s+means\s+for\s+the\s+client\b|\bwhy\s+we\s+are\s+well\s+suited\b|\bsets\s+us\s+apart\b|\bwhat\s+sets\s+(?:us|this\s+(?:firm|team))\s+apart\b/gi) ?? []
+  ).length;
   const themeRowMatches = (md.match(/\|\s*[^|\n]{8,80}\s*\|\s*[^|\n]{12,160}\s*\|\s*[^|\n]{6,80}\s*\|/g) ?? []).length;
   if (hasThemesHeading) winThemesPresence += 5;
-  if (discriminatorMentions >= 1) winThemesPresence += 2;
+  if (valueFramingMentions >= 1) winThemesPresence += 2;
   if (themeRowMatches >= 2) winThemesPresence += 3;
   winThemesPresence = Math.min(10, winThemesPresence);
   if (winThemesPresence < 6) {
     weakAxes.push("winThemesPresence");
-    notes.push(`Win Themes & Discriminators (Section G) ${hasThemesHeading ? "present" : "MISSING"}; ${discriminatorMentions} discriminator mention(s).`);
+    notes.push(`Why We Are Well Suited (Section G) ${hasThemesHeading ? "present" : "MISSING"}; ${valueFramingMentions} client-value framing mention(s).`);
   }
 
   // 10. Self-score presence (0–10)
