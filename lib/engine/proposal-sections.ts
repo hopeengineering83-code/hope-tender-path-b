@@ -1081,6 +1081,41 @@ export function extractSectionCFromMarkdown(markdown: string): string | null {
 // self-score-builder, narrative-throughline-enforcer) downstream will
 // fill the section out with structured tables.
 
+/**
+ * Why a model-written section cannot be used as delivered, or null.
+ *
+ * A hosted run kept a cover-and-summary section that stopped mid-sentence
+ * ("... stresses \u201cRequire strong healthcare facility design
+ * experience\u201d, and mandates") and never reached its Executive Summary.
+ * The client-safety check passed it, the missing-section repair then appended
+ * a generic "Executive Summary" after the Declaration, and the package scored
+ * 100. A section that lacks the headings it exists to provide, or whose last
+ * prose line breaks off on a bare word, takes its deterministic text instead
+ * -- for the opening sections, the record-based Cover Letter and Executive
+ * Summary.
+ */
+const REQUIRED_SECTION_HEADINGS: Partial<Record<ProposalSectionId, Array<{ label: string; rx: RegExp }>>> = {
+  "cover-and-summary": [
+    { label: "Cover Letter", rx: /^#\s+Cover\s+Letter\b/im },
+    { label: "Executive Summary", rx: /^#\s+Executive\s+Summary\b/im },
+  ],
+};
+
+export function sectionOutputProblem(id: ProposalSectionId, markdown: string): string | null {
+  const text = String(markdown ?? "").trim();
+  if (!text) return "empty section";
+  for (const heading of REQUIRED_SECTION_HEADINGS[id] ?? []) {
+    if (!heading.rx.test(text)) return `missing its "${heading.label}" heading`;
+  }
+  const lastProse = text.split("\n").map((line) => line.trim()).filter((line) => line && !/^(?:#|\||[-*+]\s|\d+\.\s|>)/.test(line)).pop() ?? "";
+  // A sentence cut off on an ordinary lower-case word. Sign-offs, names,
+  // addresses, e-mail and web addresses do not end this way.
+  if (/\s[a-z]{2,}$/.test(lastProse) && !/[@/]|\.[a-z]{2,}$/.test(lastProse.split(/\s+/).pop() ?? "")) {
+    return `ends mid-sentence ("...${lastProse.slice(-60)}")`;
+  }
+  return null;
+}
+
 export function buildSectionFallback(spec: ProposalSectionSpec, writerInput: AIBidWriterInput): string {
   // The writer's input carries the model's contract block at the head of
   // three fields; this writer reads those fields as tender data.

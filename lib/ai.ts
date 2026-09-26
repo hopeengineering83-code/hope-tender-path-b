@@ -5445,6 +5445,7 @@ import {
   buildProposalSectionSpecs,
   buildSectionCDrillDownSpec,
   buildSectionFallback,
+  sectionOutputProblem,
   extractSectionCFromMarkdown,
   type ProposalSectionSpec,
   type ProposalSectionId,
@@ -6034,6 +6035,16 @@ export async function generateProposalSectionsParallel(input: AIBidWriterInput, 
     const credentials = scrubUngroundedCompanyCredentials(r.markdown, companyGroundingText(input));
     if (credentials.removed.length > 0) {
       logger.warn(`[ai] section "${r.id}": removed ${credentials.removed.length} sentence(s) stating a credential the company record does not hold — ${credentials.removed.join(" | ").slice(0, 300)}`);
+    }
+    const incomplete = sectionOutputProblem(filteredSpecs[i].id, credentials.markdown);
+    if (incomplete) {
+      logger.warn(`[ai] section "${r.id}" model output is incomplete (${incomplete}) — using its deterministic text.`);
+      return {
+        ...r,
+        source: "fallback" as const,
+        error: `model-written section is incomplete: ${incomplete}`,
+        markdown: buildSectionFallback(filteredSpecs[i], input),
+      };
     }
     const safe = clientSafeModelSection(credentials.markdown);
     if (!safe.ok) {
