@@ -331,7 +331,7 @@ function isHistoricalReferenceValueSentence(sentence: string): boolean {
   // by currentOfferPricing above before this point is reached.
   const namesClientOrganisation = CLIENT_ORGANISATION_RE.test(sentence);
 
-  return strongHistoricCue || datedReference || labelledHistoricValue || labelledDeliveredWorkValue || namesClientOrganisation;
+  return strongHistoricCue || datedReference || labelledHistoricValue || labelledDeliveredWorkValue || namesClientOrganisation || namesClosedPastPeriod(sentence);
 }
 
 /**
@@ -345,6 +345,28 @@ function isHistoricalReferenceValueSentence(sentence: string): boolean {
  * price. One definition, so the single-line exemption and the cell-per-line
  * continuation rule cannot drift apart.
  */
+/**
+ * A period that has already closed: "2015-2018", "2019 – 2021".
+ *
+ * A reference-project line prints its value beside its years
+ * ("Construction value of works ETB 550.1M | 2015-2018 | Services: ..."). A
+ * model-written table cell copied that record without the label, the PDF
+ * wrapped the cell, and the gate read "ETB 550.1M; 2015-2018; Services:" as
+ * this bid's price. An amount dated to a period that ended before this year
+ * is work already delivered -- no price for the present tender covers a
+ * finished period. It is consulted only after the current-offer veto, so
+ * "our fee ... 2015-2018" is still caught.
+ */
+export function namesClosedPastPeriod(text: string, now: Date = new Date()): boolean {
+  const thisYear = now.getUTCFullYear();
+  for (const m of text.matchAll(/\b((?:19|20)\d{2})\s*[-–—]\s*((?:19|20)\d{2})\b/g)) {
+    const start = Number(m[1]);
+    const end = Number(m[2]);
+    if (start <= end && end < thisYear) return true;
+  }
+  return false;
+}
+
 const DELIVERED_WORK_VALUE_LABEL = /\b(construction\s+value(?:\s+of\s+works)?|value\s+of\s+(?:the\s+)?works|aggregate\s+value\s+of\s+projects(?:\s+delivered)?)\b/i;
 
 /**
