@@ -140,6 +140,35 @@ function atPageTop(ctx: RenderContext): boolean {
   return ctx.y >= PAGE_HEIGHT - PAGE_MARGIN - 12;
 }
 
+/**
+ * A currency code and its amount are never split across lines ("USD" at the
+ * end of one line, "18,900,000" at the start of the next). Split, the amount
+ * reads as a bare figure, and the delivered PDF's own text layer — which the
+ * export quality gate reads — no longer carries the label that says the
+ * figure is a construction value rather than a price: a proposal whose
+ * references wrapped at that point failed the gate with PRICING_LEAKAGE,
+ * while the same text wrapped a word later passed.
+ */
+const CURRENCY_CODE = /^\(?(?:ETB|USD|EUR|GBP|KES|NGN|UGX|TZS|ZAR|Birr|US\$|\$|€|£)$/;
+/** How many following words must stay on the same line as words[i]: 0, 1 or 2. */
+function unbreakableRun(words: readonly string[], i: number): number {
+  // A currency code and its amount: "USD 18,900,000".
+  if (CURRENCY_CODE.test(words[i]) && /^[\d.,]/.test(words[i + 1] ?? "")) return 1;
+  // A registration and its number: "Reg. No. PEPCM/5718" (credential-format.ts).
+  if (/^Reg\.$/.test(words[i]) && words[i + 1] === "No." && /\d/.test(words[i + 2] ?? "")) return 2;
+  return 0;
+}
+
+export function bindCurrencyAmounts(words: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < words.length; i++) {
+    const run = unbreakableRun(words, i);
+    out.push(words.slice(i, i + run + 1).join(" "));
+    i += run;
+  }
+  return out;
+}
+
 function wrapText(text: string, fonts: PdfFontSet, style: PdfFontStyle, fontSize: number, maxWidth: number): string[] {
   // Split on any whitespace run, not on the space character alone.
   //
@@ -152,7 +181,7 @@ function wrapText(text: string, fonts: PdfFontSet, style: PdfFontStyle, fontSize
   //
   // Sanitised first so no control character can reach a font from here or
   // from any caller that measures with these lines.
-  const words = sanitizePdfText(text).split(/\s+/).filter(Boolean);
+  const words = bindCurrencyAmounts(sanitizePdfText(text).split(/\s+/).filter(Boolean));
   const lines: string[] = [];
   let current = "";
   for (const word of words) {
@@ -238,7 +267,22 @@ export function layoutWords(
       }
     }
   }
-  return words;
+  // A currency code stays on the line of its amount, and "Reg. No." on the
+  // line of its number (bindCurrencyAmounts).
+  const bound: LaidOutWord[] = [];
+  const texts = words.map((w) => w.text);
+  for (let i = 0; i < words.length; i++) {
+    const run = unbreakableRun(texts, i);
+    const group = words.slice(i, i + run + 1);
+    const joinable = run > 0 && group.slice(0, -1).every((w) => w.space) && group.every((w) => w.bold === group[0].bold && w.italic === group[0].italic);
+    if (joinable) {
+      bound.push({ ...group[group.length - 1], text: group.map((w) => w.text).join(" ") });
+      i += run;
+    } else {
+      bound.push(words[i]);
+    }
+  }
+  return bound;
 }
 
 function drawInlineParagraph(

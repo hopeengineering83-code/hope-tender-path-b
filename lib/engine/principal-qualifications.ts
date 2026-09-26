@@ -18,6 +18,7 @@ import type { ExpertRecord } from "./benchmark-tables";
 import { withoutPersonalCvFields, withoutCvDocumentFurniture, truncateAtWordBoundary } from "./proposal-intelligence";
 import { proseProfileOrEmpty } from "./vault-prose";
 import { licencesNamedInCv, projectsNamedInCv, softwareNamedInCv } from "./cv-grounding";
+import { formatRegistration } from "./credential-format";
 
 function safeArr(value: unknown): string[] {
   if (Array.isArray(value)) return value.map(String).filter(Boolean);
@@ -94,7 +95,7 @@ export function buildPrincipalQualificationsSection(opts: {
  */
 function composedProfile(expert: ExpertRecord, position: string, projects: Array<{ name?: string | null }>): string {
   const stored = safeArr(expert.certifications).filter((c) => c.trim().length > 2 && !/^[-—–]+$/.test(c.trim()));
-  const licences = stored.length > 0 ? stored : licencesNamedInCv(expert.profile);
+  const licences = (stored.length > 0 ? stored : licencesNamedInCv(expert.profile)).map(formatRegistration);
   const software = softwareNamedInCv(expert.profile);
   const named = projectsNamedInCv(expert.profile, projects).map((p) => p.name ?? "").filter(Boolean);
   const sentences = [

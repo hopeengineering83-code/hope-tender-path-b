@@ -31,6 +31,7 @@ import { licencesNamedInCv, projectsNamedInCv } from "./cv-grounding";
 import { holdsExecutiveOffice } from "./signatory";
 import { titleStatesRole } from "./requirement-constraints";
 import { possessive } from "./possessive";
+import { formatPersonWithCredential, formatRegistration } from "./credential-format";
 
 export interface ExecutiveSummaryInput {
   companyName: string;
@@ -73,13 +74,12 @@ function registration(e: ExpertRecord): string | null {
     const parsed = JSON.parse(String(e.certifications ?? "[]"));
     stored = (Array.isArray(parsed) ? parsed : []).map((v) => clean(String(v ?? ""))).filter((v) => v.length > 2);
   } catch { stored = []; }
-  return stored[0] ?? licencesNamedInCv(e.profile)[0] ?? null;
+  const raw = stored[0] ?? licencesNamedInCv(e.profile)[0] ?? null;
+  return raw ? formatRegistration(raw) : null;
 }
 
 function person(e: ExpertRecord, withRegistration = true): string {
-  const reg = withRegistration ? registration(e) : null;
-  const title = clean(e.title);
-  return `${clean(e.fullName)}${title ? `, ${title}` : ""}${reg ? ` (${reg.replace(/^Reg\. No\. /, "Reg. No. ")})` : ""}`;
+  return formatPersonWithCredential(e.fullName, e.title, withRegistration ? registration(e) : null);
 }
 
 function areaOf(project: ProjectRecord): string | null {
@@ -99,26 +99,47 @@ function needParagraph(input: ExecutiveSummaryInput): string {
   return `${input.clientName} has invited proposals for ${input.tenderTitle}${where}. The scope of services runs through ${items.length} items, from ${midSentence(items[0].title)} to ${midSentence(items[items.length - 1].title)}, and this proposal answers each of them in the tender's order.`;
 }
 
+interface ReferenceEvidence {
+  project: ProjectRecord;
+  services: string[];
+  items: ScopeItem[];
+}
+
+/** The references whose recorded services answer at least one scope item, strongest first. */
+function referenceEvidence(input: ExecutiveSummaryInput, items: ScopeItem[]): ReferenceEvidence[] {
+  return input.projects.slice(0, 3).map((project) => {
+    const matches = scopeItemsAnsweredByProject(recordedProjectServices(project), items);
+    return {
+      project,
+      services: [...new Set(matches.flatMap((m) => m.services))].slice(0, 5).map(lowerFirst),
+      items: matches.map((m) => items[m.index - 1]).filter(Boolean),
+    };
+  });
+}
+
+function coveredItems(evidence: ReferenceEvidence[]): ScopeItem[] {
+  const seen = new Set<string>();
+  const out: ScopeItem[] = [];
+  for (const e of evidence) for (const item of e.items) if (!seen.has(item.title)) { seen.add(item.title); out.push(item); }
+  return out;
+}
+
+// Each reference is named once with the services its record states; the
+// scope items those services answer are listed once, for all of them. The
+// paragraph used to repeat the same four scope-item titles after every
+// project, so the one fact an evaluator needs — how much of THIS scope the
+// firm has already done — was buried in the third repetition.
 function relevanceParagraph(input: ExecutiveSummaryInput, items: ScopeItem[]): string {
-  const projects = input.projects.slice(0, 3);
-  if (projects.length === 0) return "";
+  const evidence = referenceEvidence(input, items);
+  if (evidence.length === 0) return "";
   const sector = clean(input.primarySector).split(/\s*\/\s*/)[0].toLowerCase() || "comparable";
-  const sentences: string[] = [];
-  const covered = new Set<number>();
-  for (const project of projects) {
-    const services = recordedProjectServices(project);
-    const matches = scopeItemsAnsweredByProject(services, items);
-    matches.forEach((m) => covered.add(m.index));
-    if (matches.length > 0 && services.length > 0) {
-      const matched = [...new Set(matches.flatMap((m) => m.services))].slice(0, 5).map(lowerFirst);
-      sentences.push(`On ${clean(project.name)}${projectDetail(project)}, the firm's recorded services included ${list(matched)}, which correspond to ${matches.length === 1 ? "the tender's" : `${matches.length} of the tender's`} scope items on ${list(matches.map((m) => midSentence(m.title)))}.`);
-    } else {
-      sentences.push(`${clean(project.name)}${projectDetail(project)} is a further ${sector} reference.`);
-    }
-  }
-  const lead = `${possessive(input.companyName)} closest references are ${projects.length === 1 ? `one ${sector} project` : `${projects.length} ${sector} projects`}.`;
-  const coverage = projects.length > 1 && covered.size >= 2 && items.length > 0
-    ? ` Between them, these references cover ${covered.size} of the ${items.length} scope items with services the firm has already provided.`
+  const sentences = evidence.map(({ project, services }) => services.length > 0
+    ? `On ${clean(project.name)}${projectDetail(project)}, the firm's recorded services included ${list(services)}.`
+    : `${clean(project.name)}${projectDetail(project)} is a further ${sector} reference.`);
+  const covered = coveredItems(evidence);
+  const lead = `${possessive(input.companyName)} closest references are ${evidence.length === 1 ? `one ${sector} project` : `${evidence.length} ${sector} projects`}.`;
+  const coverage = covered.length >= 2 && items.length > 0
+    ? ` Between them, these services already cover ${covered.length} of the ${items.length} scope items: ${list(covered.map((i) => midSentence(i.title)))}.`
     : "";
   return `${lead} ${sentences.join(" ")}${coverage}`;
 }
@@ -192,6 +213,59 @@ function thesis(input: ExecutiveSummaryInput, items: ScopeItem[]): string {
     `For the parts of the scope where the most is at stake, the plan pairs a named lead with the firm's recorded experience of the same work:`,
     ...ranked.map((b) => b.text),
   ].join("\n\n");
+}
+
+/**
+ * The body of the covering letter, from the same records as the Executive
+ * Summary: what the firm understands the assignment to be, and the three
+ * points of evidence the proposal rests on. Concise by design — the letter
+ * introduces the proposal; the summary argues it.
+ *
+ * The letter this replaces said the firm "presents" two projects "as
+ * relevant reference experience" and that "the applicable delivery lessons
+ * inform the approach", then listed whatever differentiators the tender
+ * analysis produced ("World Bank ESF and British Council records inform the
+ * proposal's documentation ..."). Every sentence here is a record: a scope
+ * item, a project and its services, a named person and their registration,
+ * a quality document and its reference. A point with no record behind it is
+ * left out.
+ */
+export function composeCoverLetterBody(input: ExecutiveSummaryInput): string {
+  const items = input.scopePlan.map((p) => p.item);
+  const where = clean(input.location) ? ` in ${clean(input.location)}` : "";
+  const out: string[] = [
+    `${input.companyName} is pleased to submit this Technical Proposal for ${input.tenderTitle}${where}, in response to the invitation issued by ${input.clientName}.`,
+  ];
+  if (items.length >= 2) {
+    out.push(`We understand the assignment as ${items.length} linked services, from ${midSentence(items[0].title)} to ${midSentence(items[items.length - 1].title)}, each closing on ${possessive(input.clientName)} approval before the next proceeds. Our proposal answers each of them in the tender's own order.`);
+  }
+  const points: string[] = [];
+  const evidence = referenceEvidence(input, items).filter((e) => e.services.length > 0);
+  const covered = coveredItems(evidence);
+  if (evidence.length > 0) {
+    const names = evidence.slice(0, 2).map((e) => `${clean(e.project.name)}${projectDetail(e.project)}`);
+    points.push(`**Comparable experience.** ${list(names)}${covered.length > 0 && items.length > 0 ? `, whose recorded services cover ${covered.length} of the ${items.length} scope items` : ""}.`);
+  }
+  const team = input.experts.filter((e) => clean(e.fullName));
+  if (team.length > 0) {
+    const executives = team.filter((e) => holdsExecutiveOffice(e.title ?? ""));
+    const principal = executives.length === 1 ? executives[0] : team[0];
+    const registered = team.filter((e) => registration(e)).length;
+    points.push(`**A named, registered team.** ${team.length} experts led by ${person(principal)}${registered > 0 ? `; ${registered} of them hold a professional registration stated in their own CV` : ""}.`);
+  }
+  const quality = (input.qualityRecords ?? [])
+    .filter((r) => clean(r.title) && clean(r.referenceNumber))
+    .slice(0, 1)
+    .map((r) => `${clean(r.title)} (${clean(r.referenceNumber)})`);
+  if (items.length > 0) {
+    points.push(`**Controlled delivery.** Every scope item has a named lead, a quality check and ${possessive(input.clientName)} sign-off before the dependent item proceeds${quality.length > 0 ? `, under the firm's ${quality[0]}` : ""}.`);
+  }
+  if (points.length > 0) {
+    out.push("Our proposal rests on:");
+    out.push(points.map((p) => `- ${p}`).join("\n"));
+  }
+  out.push(`We would welcome the opportunity to discuss this proposal with ${input.clientName} and remain available for any clarification the Evaluation Committee requires.`);
+  return out.join("\n\n");
 }
 
 /**

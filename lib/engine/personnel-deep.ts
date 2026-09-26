@@ -43,6 +43,7 @@ import { truncateAtWordBoundary } from "./proposal-intelligence";
 import { titleStatesRole } from "./requirement-constraints";
 import { licencesNamedInCv, projectsNamedInCv, softwareNamedInCv } from "./cv-grounding";
 import { holdsExecutiveOffice } from "./signatory";
+import { formatPersonWithCredential, formatRegistration } from "./credential-format";
 
 const MARKER_LOADING = "<!-- personnel:per-01-loading -->";
 const MARKER_PROFILES = "<!-- personnel:per-02-profiles -->";
@@ -329,7 +330,7 @@ function pickAndRemove(pool: ExpertRecord[], keywords: string[]): ExpertRecord |
 // when the stored field was empty, which it usually is.
 function expertLicences(e: ExpertRecord): string[] {
   const stored = safeArr(e.certifications).map((c) => c.trim()).filter((c) => c.length > 2 && !/^[-—–]+$/.test(c));
-  return stored.length > 0 ? stored : licencesNamedInCv(e.profile);
+  return (stored.length > 0 ? stored : licencesNamedInCv(e.profile)).map(formatRegistration);
 }
 
 function expertLicenceLine(e: ExpertRecord): string {
@@ -421,7 +422,7 @@ function buildOneExpertCard(e: ExpertRecord, idx: number, projects: ProjectRecor
   const rows: { label: string; value: string }[] = [
     { label: "Current Role", value: e.title?.trim() ?? "" },
     { label: "Years of Professional Practice", value: years },
-    { label: "Licence / Certification", value: (certs.length > 0 ? certs : licencesNamedInCv(e.profile)).slice(0, 3).join(" ; ") },
+    { label: "Licence / Certification", value: (certs.length > 0 ? certs : licencesNamedInCv(e.profile)).slice(0, 3).map(formatRegistration).join("; ") },
     { label: "Software Named in CV", value: expertSoftwareLine(e) },
     { label: "Projects Named in CV", value: expertProjectsLine(e, projects) },
     // No discipline row: the discipline list is firm-wide boilerplate on every
@@ -574,9 +575,7 @@ export function buildOrganogram(opts: {
   // A licence is shown only when there is one: the old fallback printed the
   // title a second time ("Name, Senior Architect (Senior Architect)").
   const licenceSuffix = (e: ExpertRecord) => expertLicences(e).slice(0, 1).join("");
-  const pmLabel = pm
-    ? `${pm.fullName}${pm.title ? `, ${pm.title}` : ""}${licenceSuffix(pm) ? ` (${licenceSuffix(pm)})` : ""}`
-    : "";
+  const pmLabel = pm ? formatPersonWithCredential(pm.fullName, pm.title, licenceSuffix(pm) || null) : "";
 
   const streams = streamsForSector(opts.primarySector);
   const streamRows: string[] = [];

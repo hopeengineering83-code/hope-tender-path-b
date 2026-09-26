@@ -21,7 +21,7 @@ import { finalizeClientReadyProposalMarkdown } from "./proposal-benchmark-guard"
 import { appendEvaluatorResponseMatrix } from "./proposal-evaluator-matrix";
 import { resolveSignatory, signOffLines } from "./signatory";
 import { orderTeamForPresentation } from "./team-order";
-import { composeExecutiveSummary } from "./executive-summary-composer";
+import { composeCoverLetterBody, composeExecutiveSummary } from "./executive-summary-composer";
 import { corporateFactsFromProfile } from "./company-profile-facts";
 import { sourceGroundedEvaluationCriteria } from "./tender-evaluation-criteria";
 import { loadDurableCompanySupportRecords } from "../prisma-schema-compatibility";
@@ -622,6 +622,73 @@ function repairSectionC2SubSections(markdown: string, requirements: string, tend
 const EXECUTIVE_SUMMARY_DIFFERENTIATORS = 3;
 const COVER_LETTER_DIFFERENTIATORS = 2;
 
+type OpeningParams = {
+  companyName: string;
+  clientName: string;
+  tenderTitle: string;
+  primarySector: string;
+  location?: string | null;
+  scopePlan?: ScopePlanEntry[];
+  projects?: ProjectRecord[];
+  experts?: ExpertRecord[];
+  evaluationCriteria?: string[];
+  companyDescription?: string | null;
+  companyComplianceRecords?: Array<{ title: string; complianceType?: string | null; status?: string | null; referenceNumber?: string | null }>;
+};
+
+/** The records the Cover Letter and Executive Summary are composed from; null when the tender's scope could not be read. */
+function openingSummaryInput(params: OpeningParams): Parameters<typeof composeExecutiveSummary>[0] | null {
+  if (!params.scopePlan || params.scopePlan.length === 0) return null;
+  return {
+    companyName: params.companyName,
+    clientName: params.clientName,
+    tenderTitle: params.tenderTitle,
+    primarySector: params.primarySector,
+    location: params.location ?? null,
+    scopePlan: params.scopePlan,
+    projects: params.projects ?? [],
+    experts: params.experts ?? [],
+    evaluationCriteriaCount: (params.evaluationCriteria ?? []).length,
+    companyDescription: params.companyDescription ?? null,
+    qualityRecords: (params.companyComplianceRecords ?? []).filter((r) => isCurrentRecordStatus(r.status) && /quality/i.test(`${r.title} ${r.complianceType ?? ""}`)),
+  };
+}
+
+/**
+ * The Cover Letter and Executive Summary composed from the records, for the
+ * per-section writer to use when its own cover-and-summary call falls back.
+ *
+ * That call's deterministic text (proposal-sections.ts buildSectionFallback)
+ * works from the writer's flattened text fields and cannot see the scope
+ * plan, the ranked references or the ordered team, so a hosted proposal
+ * whose other sections were model-written opened with a two-sentence letter
+ * and a two-sentence summary ("The closest comparable project in ...
+ * record is ..."), while the whole-document fallback, built from the same
+ * records, opened with a full summary. Both paths now print the same text.
+ */
+export function recordBasedOpeningSections(params: OpeningParams & {
+  recipients: string;
+  subject: string;
+  technicalOnly: boolean;
+  salutation: string;
+  signOff: string[];
+}): string {
+  const input = openingSummaryInput(params);
+  if (!input) return "";
+  return [
+    "# Cover Letter",
+    `To: ${params.recipients}`,
+    `Subject: ${params.subject}`,
+    params.technicalOnly ? "Note: This is a TECHNICAL PROPOSAL ONLY. No financial offer or pricing is included, as required by the tender instructions." : "",
+    params.salutation,
+    composeCoverLetterBody(input),
+    params.signOff.join("\n"),
+    "",
+    "# Executive Summary",
+    composeExecutiveSummary(input),
+  ].filter((s) => s !== "").join("\n\n");
+}
+
 function fallbackProposalMarkdown(params: {
   tenderTitle: string;
   clientName: string;
@@ -702,6 +769,12 @@ function fallbackProposalMarkdown(params: {
   lines.push(`Subject: ${exactSubject}`);
   if (params.noFinancialProposal) lines.push("Note: This is a TECHNICAL PROPOSAL ONLY. No financial offer or pricing is included, as required by the tender instructions.");
   lines.push(params.clientContactName ? `Dear ${params.clientContactName},` : "Dear Evaluation Committee,");
+  const summaryInput = openingSummaryInput(params);
+  if (summaryInput) {
+    // Record-based letter (executive-summary-composer.ts): the same scope
+    // plan, references, team and quality records the Executive Summary uses.
+    lines.push(composeCoverLetterBody(summaryInput));
+  } else {
   // Project-anchored opener (replaces the prior generic "we are pleased to submit"
   // boilerplate). When reviewed projects exist, the opener names the top 1–2 with
   // ETB values and same-team continuity language, matching the benchmark pattern.
@@ -732,9 +805,10 @@ function fallbackProposalMarkdown(params: {
       .slice(EXECUTIVE_SUMMARY_DIFFERENTIATORS, EXECUTIVE_SUMMARY_DIFFERENTIATORS + COVER_LETTER_DIFFERENTIATORS)
       .map((d) => `- ${d}`));
   }
+  lines.push("We trust this proposal demonstrates our capacity, commitment, and technical depth.");
+  }
   // The signatory is taken from the firm's own records (lib/engine/signatory.ts).
   const signatory = resolveSignatory({ gmName: params.companyGM, gmLicense: params.companyGMLicense, experts: reviewedExperts });
-  lines.push("We trust this proposal demonstrates our capacity, commitment, and technical depth.");
   lines.push(signOffLines(params.companyName, signatory).join("\n"));
 
   // No markdown cover page here. The rendered document builds its own cover
@@ -763,21 +837,7 @@ function fallbackProposalMarkdown(params: {
   // (executive-summary-composer.ts): need, relevant evidence, team, approach,
   // standing, and why this firm. The older assembly below remains for a
   // tender whose scope items could not be read.
-  const composedSummary = params.scopePlan && params.scopePlan.length > 0
-    ? composeExecutiveSummary({
-      companyName: params.companyName,
-      clientName: params.clientName,
-      tenderTitle: params.tenderTitle,
-      primarySector: params.primarySector,
-      location: params.location ?? null,
-      scopePlan: params.scopePlan,
-      projects: reviewedProjects,
-      experts: reviewedExperts,
-      evaluationCriteriaCount: evalCriteria.length,
-      companyDescription: params.companyDescription ?? null,
-      qualityRecords: (params.companyComplianceRecords ?? []).filter((r) => isCurrentRecordStatus(r.status) && /quality/i.test(`${r.title} ${r.complianceType ?? ""}`)),
-    })
-    : "";
+  const composedSummary = summaryInput ? composeExecutiveSummary(summaryInput) : "";
   if (composedSummary) {
     lines.push(composedSummary);
   } else {
@@ -2134,6 +2194,28 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
         tenderTitle: cleanedTenderTitle,
         clientName: intelligence.clientName,
         clientContactName: intelligence.clientContactName,
+        recordBasedOpeners: recordBasedOpeningSections({
+          companyName: company.name,
+          clientName: intelligence.clientName,
+          tenderTitle: cleanedTenderTitle,
+          primarySector: intelligence.primarySector,
+          location: tenderFacts.locations[0] ?? null,
+          scopePlan: fallbackScopePlan,
+          projects: projects as ProjectRecord[],
+          experts: experts as ExpertRecord[],
+          evaluationCriteria: intelligence.evaluationCriteria,
+          companyDescription: company.description,
+          companyComplianceRecords: company.complianceRecords ?? [],
+          recipients: intelligence.exactEmails?.length
+            ? intelligence.exactEmails.join("; ")
+            : writerTender.clientContactName
+              ? `${writerTender.clientContactName}, ${intelligence.clientName}`
+              : intelligence.clientName,
+          subject: intelligence.exactSubjectLine ?? `Technical Proposal for ${cleanedTenderTitle}`,
+          technicalOnly: Boolean(intelligence.noFinancialProposal),
+          salutation: writerTender.clientContactName ? `Dear ${writerTender.clientContactName},` : "Dear Evaluation Committee,",
+          signOff: signOffLines(company.name, resolveSignatory({ gmName: company.gmName, gmLicense: company.gmLicense, experts: experts as ExpertRecord[] })),
+        }),
         tenderText: [BENCHMARK_CONTEXT_LINES.join("\n"), tenderText].join("\n\n"),
         analysisSummary: clean(tender.analysisSummary) || intelligence.tenderText.slice(0, 2000),
         evaluationMethodology: [

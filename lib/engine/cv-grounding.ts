@@ -100,7 +100,7 @@ export function licencesNamedInCv(cvText: string | null | undefined): string[] {
     if (REFERENCE_CONTEXT.test(before.slice(-20)) || !REGISTRATION_CONTEXT.test(before)) continue;
     seen.add(number);
     const title = before.match(REGISTERED_TITLE)?.[1]?.replace(/\s+/g, " ").trim();
-    found.push(title ? `${title} (${number})` : `Reg. No. ${number}`);
+    found.push(title ? `${title}, Reg. No. ${number}` : `Reg. No. ${number}`);
   }
   return found.slice(0, 3);
 }

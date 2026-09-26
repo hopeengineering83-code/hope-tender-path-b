@@ -1233,6 +1233,10 @@ function vaultList(values: string[] | null | undefined, label: string): string {
 }
 
 function buildCoverAndSummaryFallback(input: AIBidWriterInput): string {
+  // The record-based letter and summary, when the caller composed them from
+  // the scope plan, references and team (generate-elite.ts). What follows is
+  // the fallback for a caller that could not.
+  if (input.recordBasedOpeners?.trim()) return input.recordBasedOpeners.trim();
   // PR #259 — vault-aware Cover Letter and Executive Summary
   // fallback. Same pattern as PR #257's company-and-experience
   // treatment: pulls real data from input.companyVault (Company

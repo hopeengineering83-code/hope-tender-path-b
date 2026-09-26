@@ -9,6 +9,7 @@ import { withoutPersonalCvFields, withoutCvDocumentFurniture, truncateAtWordBoun
 import { resolveJurisdictionTokens } from "./jurisdiction-instruments";
 import { projectsNamedInCv, licencesNamedInCv } from "./cv-grounding";
 import { possessive } from "./possessive";
+import { formatRegistration } from "./credential-format";
 
 /**
  * Benchmark-quality tabular sections built deterministically from the
@@ -168,7 +169,7 @@ function parseYear(value: Date | string | null | undefined): number | null {
 // record holds none, the registrations the person's own CV states are used.
 function recordedLicences(expert: ExpertRecord): string[] {
   const stored = safeArr(expert.certifications).map((c) => c.trim()).filter((c) => c.length > 2 && !/^(?:[-—–]+|n\/?a|none|nil|not\s+(?:stated|available|applicable))$/i.test(c));
-  return stored.length > 0 ? stored : licencesNamedInCv(expert.profile);
+  return (stored.length > 0 ? stored : licencesNamedInCv(expert.profile)).map(formatRegistration);
 }
 
 /**

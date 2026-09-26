@@ -207,6 +207,17 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-26 UTC — Claude Code (record-based Cover Letter / Executive Summary on every path; clean credentials)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175 only. Started from `e1c79121`. Production untouched. Hourly passive PR check-ins stopped (none re-armed).
+- **Root cause 1 — thin hosted opening sections:** the full, record-based Cover Letter and Executive Summary existed only inside `fallbackProposalMarkdown` (whole-document fallback). When the hosted section-parallel writer fell back for just its `cover-and-summary` section, `buildSectionFallback` produced the text from the writer's flattened text fields — it could not see the scope plan, the ranked references or the ordered team — so the letter and summary were two sentences each.
+- **Fix 1:** one builder, `recordBasedOpeningSections` (generate-elite.ts), composes both sections from the scope plan, references, team and quality records; generate-elite passes it on the writer input (`AIBidWriterInput.recordBasedOpeners`) and the per-section fallback returns it; the whole-document fallback uses the same composers. New `composeCoverLetterBody` (executive-summary-composer.ts): assignment understanding from the tender's scope items, then three record-backed points (comparable experience with scope coverage, named registered team, controlled delivery under the firm's quality record), then a close. The Executive Summary's evidence paragraph now names each reference's services once and states the scope coverage once. Nothing is stated that a record does not hold.
+- **Root cause 2 — nested brackets:** stored certifications already bracket their number ("… (PEPCM/5718)") and builders bracketed the whole string again. **Fix 2:** `credential-format.ts` (`formatRegistration`, `formatPersonWithCredential`); every registration read (team table, bios, personnel profile, organogram, signatory, Executive Summary, CV reader) goes through it: "Practicing Professional Engineer (PE) in Construction Management, Reg. No. PEPCM/5718"; a credential that already has brackets is set off with a dash, never bracketed again.
+- **Found while verifying, fixed at source:** a reordered reference list moved a PDF table-cell line break to fall between "USD" and "18,900,000"; the PDF text the export gate reads then carried the amount without its "construction value of works" label and the package failed PRICING_LEAKAGE. The PDF renderer now never breaks between a currency code and its amount, or between "Reg. No." and its number (`bindCurrencyAmounts`). (The MEDIUM "references only 2/10 extracted requirements" warning is pre-existing and did not change.)
+- **Tests:** new `tests/credentials-print-without-nested-brackets.test.ts`, `tests/hosted-cover-and-summary-use-the-records.test.ts`; two expectations in `a-partial-fallback-proposal-carries-no-engine-text.test.ts` updated to the clean form.
+- **Gate on the committed tree:** `prisma validate` valid; `tsc` clean; `next lint` clean; `git diff --check` clean; `npm test` with `RUN_DB_INTEGRATION=true` **12595 / 12595 pass, 0 fail, 0 skipped**; `next build` exit 0. Local full pipeline twice: AUTO_FINALIZE ok, ZIP HTTP 200, 32 pages, geometry check clean.
+- **Merge status:** **DO NOT MERGE**.
+
 ### 2026-09-25 UTC — Claude Code (hosted acceptance of `a8137799`, and what it exposed)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175 only. Production untouched.

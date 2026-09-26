@@ -274,8 +274,8 @@ describe("a model-written section states only the credentials the record holds",
 describe("tables state what each person's own record holds", () => {
   it("reads a professional registration from the CV, and not a reference-letter number", async () => {
     const { licencesNamedInCv } = await import("../lib/engine/cv-grounding");
-    assert.deepEqual(licencesNamedInCv("Professional Reg. Practicing Professional Architect (PPA/1840) Valid until 2027"), ["Practicing Professional Architect (PPA/1840)"]);
-    assert.deepEqual(licencesNamedInCv("Professional Reg. • Practicing Professional Engineer (PE) in Construction Management • Reg No: PEPCM/5718"), ["Practicing Professional Engineer (PE) in Construction Management (PEPCM/5718)"]);
+    assert.deepEqual(licencesNamedInCv("Professional Reg. Practicing Professional Architect (PPA/1840) Valid until 2027"), ["Practicing Professional Architect, Reg. No. PPA/1840"]);
+    assert.deepEqual(licencesNamedInCv("Professional Reg. • Practicing Professional Engineer (PE) in Construction Management • Reg No: PEPCM/5718"), ["Practicing Professional Engineer (PE) in Construction Management, Reg. No. PEPCM/5718"]);
     assert.deepEqual(licencesNamedInCv("Supervision: 120K ETB/month Ref No: DRE/021/25, Date: 2025"), []);
     assert.deepEqual(licencesNamedInCv(""), []);
   });
@@ -289,7 +289,7 @@ describe("tables state what each person's own record holds", () => {
     const roles = new Map([["A. Plan", { leads: ["Conceptual Design"], supports: ["Renovation Planning"] }]]);
     const md = buildProposedTeamTable(experts, "hint", roles);
     assert.doesNotMatch(md, /Urban Planning|Hospitality|\| — \|/);
-    assert.match(md, /Practicing Professional Architect \(PPA\/1840\)/);
+    assert.match(md, /Practicing Professional Architect, Reg\. No\. PPA\/1840/);
     assert.match(md, /Leads: Conceptual Design\. Supports: Renovation Planning\./);
     assert.match(md, /E\. Volt — Senior Electrical Engineer \| Not stated in CV \| 11 years \| Senior Electrical Engineer \|/);
   });

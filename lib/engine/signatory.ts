@@ -17,6 +17,7 @@
 // signature image, stamp or contact detail is produced here.
 
 import { licencesNamedInCv } from "./cv-grounding";
+import { formatRegistration } from "./credential-format";
 
 export interface Signatory {
   name: string;
@@ -63,7 +64,7 @@ function storedCertifications(raw: string | null | undefined): string[] {
 function registrationOf(expert: SignatoryExpert): string | null {
   const stored = storedCertifications(expert.certifications);
   const named = stored.length > 0 ? stored : licencesNamedInCv(expert.profile ?? "");
-  return named[0] ?? null;
+  return named[0] ? formatRegistration(named[0]) : null;
 }
 
 /**

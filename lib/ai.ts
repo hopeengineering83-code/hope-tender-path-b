@@ -2578,6 +2578,14 @@ export type AIBidWriterInput = {
   projects: string;
   compliance: string;
   differentiators: string;
+  /**
+   * The Cover Letter and Executive Summary composed from the records
+   * (generate-elite.ts recordBasedOpeningSections). The cover-and-summary
+   * section's deterministic fallback uses it when present: that fallback only
+   * sees the flattened text fields above and produced a two-sentence letter
+   * and summary on hosted runs whose other sections were model-written.
+   */
+  recordBasedOpeners?: string;
   // PR #257 — structured company-vault fields used by the
   // deterministic section fallback (proposal-sections.ts
   // buildSectionFallback). When the AI returns a thin Section A or
