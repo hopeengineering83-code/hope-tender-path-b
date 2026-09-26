@@ -67,7 +67,14 @@ export function enforceCanonicalNames(
 
       // Build regex: optional title prefix + first name + optional middle
       // names/initials + last name. Word boundaries on both ends.
-      const titleOpt = "(?:Dr\\.?|Mr\\.?|Ms\\.?|Mrs\\.?|Eng\\.?|Prof\\.?|Ir\\.?|Er\\.?|Arch\\.?|Ato\\.?)?\\s*";
+      //
+      // The space after a title belongs to the title. It was "(?:Dr\.?|…)?\s*",
+      // and with no title the "\s*" still matched: after a word, "\b" holds
+      // at the word's end, so "led by Ahmed Kebede Tekaw" matched
+      // " Ahmed Kebede Tekaw", which is not the canonical form, and the
+      // replacement dropped the space. A hosted proposal printed "led
+      // byAhmed …", "andHabib Ahmed" throughout its opening sections.
+      const titleOpt = "(?:(?:Dr|Mr|Ms|Mrs|Eng|Prof|Ir|Er|Arch|Ato)\\.?\\s+)?";
       const middleOpt = "(?:[A-Z][a-zA-Z]*\\.?\\s+)*";
       const pattern = new RegExp(
         `\\b${titleOpt}${escapeRegex(firstName)}\\s+${middleOpt}${escapeRegex(lastName)}\\b`,
