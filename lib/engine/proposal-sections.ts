@@ -1107,7 +1107,12 @@ export function sectionOutputProblem(id: ProposalSectionId, markdown: string): s
   for (const heading of REQUIRED_SECTION_HEADINGS[id] ?? []) {
     if (!heading.rx.test(text)) return `missing its "${heading.label}" heading`;
   }
-  const lastProse = text.split("\n").map((line) => line.trim()).filter((line) => line && !/^(?:#|\||[-*+]\s|\d+\.\s|>)/.test(line)).pop() ?? "";
+  return markdownEndsMidSentence(text);
+}
+
+/** The cut-off ending of a markdown text's last prose line, or null. */
+export function markdownEndsMidSentence(markdown: string): string | null {
+  const lastProse = String(markdown ?? "").split("\n").map((line) => line.trim()).filter((line) => line && !/^(?:#|\||[-*+]\s|\d+\.\s|>)/.test(line)).pop() ?? "";
   // A sentence cut off on an ordinary lower-case word. Sign-offs, names,
   // addresses, e-mail and web addresses do not end this way.
   if (/\s[a-z]{2,}$/.test(lastProse) && !/[@/]|\.[a-z]{2,}$/.test(lastProse.split(/\s+/).pop() ?? "")) {

@@ -429,6 +429,9 @@ type LineToken =
   | { type: "blank" };
 
 function parseMarkdownLine(line: string): LineToken {
+  // A heading marker with no heading text is not content; it printed as a
+  // literal "##" below a model-written paragraph.
+  if (/^#{1,6}\s*$/.test(line)) return { type: "blank" };
   if (/^###\s+/.test(line)) return { type: "h3", text: line.replace(/^###\s+/, "") };
   if (/^##\s+/.test(line)) return { type: "h2", text: line.replace(/^##\s+/, "") };
   if (/^#\s+/.test(line)) return { type: "h1", text: line.replace(/^#\s+/, "") };

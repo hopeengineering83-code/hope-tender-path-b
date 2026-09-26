@@ -1,5 +1,7 @@
 import { generateWithFallback, isAIEnabled } from "../ai";
+import { logger } from "../observability";
 import { sanitizeClientFacingText } from "./client-text-sanitizer";
+import { markdownEndsMidSentence } from "./proposal-sections";
 
 export { sanitizeClientFacingText } from "./client-text-sanitizer";
 
@@ -83,6 +85,33 @@ function extractSection(markdown: string, headingPattern: RegExp): { text: strin
   return { text, start, end };
 }
 
+/**
+ * Why a polished opening section cannot replace the one it rewrites, or null.
+ *
+ * The polish is optional: it may only restate what the section already says.
+ * A hosted proposal delivered a Cover Letter that broke off mid-sentence
+ * ("... stresses healthcare design experience, and mandates"). A rewrite
+ * that ends mid-sentence, runs markedly shorter than its original, or drops
+ * or adds a number (a count, year, registration or telephone digit) is not a
+ * restatement, so the original stays.
+ */
+export function polishedOpeningProblem(original: string, polished: string): string | null {
+  const cut = markdownEndsMidSentence(polished);
+  if (cut) return cut;
+  if (polished.trim().length < original.trim().length * 0.8) return "markedly shorter than the text it rewrites";
+  const numbers = (text: string) => new Set((text.match(/\d[\d,./-]*\d|\d/g) ?? []).map((n) => n.replace(/,/g, "")));
+  const before = numbers(original);
+  const after = numbers(polished);
+  const dropped = [...before].filter((n) => !after.has(n));
+  if (dropped.length) return `drops ${dropped.slice(0, 3).join(", ")}`;
+  const added = [...after].filter((n) => !before.has(n));
+  if (added.length) return `adds ${added.slice(0, 3).join(", ")}`;
+  return null;
+}
+
+// A cut input can only come back as a cut rewrite.
+const OPENING_POLISH_INPUT_LIMIT = 5000;
+
 export async function humanizeOpeningSections(markdown: string): Promise<string> {
   if (!isAIEnabled()) return markdown;
 
@@ -92,11 +121,11 @@ export async function humanizeOpeningSections(markdown: string): Promise<string>
   if (!coverSection && !execSection) return markdown;
 
   const combined = [coverSection?.text, execSection?.text].filter(Boolean).join("\n\n");
-  if (combined.trim().length < 100) return markdown;
+  if (combined.trim().length < 100 || combined.length > OPENING_POLISH_INPUT_LIMIT) return markdown;
 
   const prompt = `Polish the Cover Letter and Executive Summary below. Keep every fact, project name, expert name, contract value, and client name exactly as-is. Remove AI traces and awkward phrasing. Vary sentence length. Return the same two headings with the polished text under each — nothing else.
 
-${combined.slice(0, 5000)}`;
+${combined}`;
 
   try {
     const polished = await generateWithFallback(prompt, { systemPrompt: OPENING_HUMANIZE_SYSTEM_PROMPT });
@@ -106,12 +135,19 @@ ${combined.slice(0, 5000)}`;
     const polishedCover = extractSection(polished, /^#\s+Cover\s+Letter/i);
     const polishedExec = extractSection(polished, /^#\s+Executive\s+Summary/i);
 
-    if (execSection && polishedExec) {
+    const keep = (label: string, original: { text: string } | null, rewrite: { text: string } | null) => {
+      if (!original || !rewrite) return false;
+      const problem = polishedOpeningProblem(original.text, rewrite.text);
+      if (problem) logger.warn(`[humanize] polished ${label} not used (${problem}) — keeping the original.`);
+      return !problem;
+    };
+
+    if (execSection && polishedExec && keep("Executive Summary", execSection, polishedExec)) {
       const before = result.slice(0, execSection.start);
       const after = result.slice(execSection.end);
       result = before + polishedExec.text + after;
     }
-    if (coverSection && polishedCover) {
+    if (coverSection && polishedCover && keep("Cover Letter", coverSection, polishedCover)) {
       const before = result.slice(0, coverSection.start);
       const after = result.slice(coverSection.end);
       result = before + polishedCover.text + after;

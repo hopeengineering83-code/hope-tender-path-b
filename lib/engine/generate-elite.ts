@@ -547,6 +547,8 @@ export function markdownToDocx(markdown: string): (Paragraph | Table | TableOfCo
       out.push(new Paragraph({ spacing: { before: 120, after: 120 }, border: { bottom: { color: "CCCCCC", style: BorderStyle.SINGLE, size: 6, space: 1 } }, children: [new TextRun("")] }));
       continue;
     }
+    // A heading marker with no heading text is not content (see proposal-pdf.ts).
+    if (/^#{1,6}$/.test(trimmed)) continue;
     const atxHeading = /^(#{1,6})\s+(.*)$/.exec(trimmed);
     if (atxHeading) {
       const level = atxHeading[1].length as HeadingLevel1To6;
