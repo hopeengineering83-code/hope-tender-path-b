@@ -1081,14 +1081,20 @@ jobs:
           PYEOF
           )
             if [ -z "$tid" ]; then
-              echo "::error::No tender_id was supplied and none could be discovered from /api/tenders. Upload a tender, or pass tender_id explicitly."
-              exit 1
+              # A freshly provisioned database has no tender yet, and the
+              # provider sweep below -- the check PREVIEW_RECOVERY_RUNBOOK
+              # section B needs after every redeploy -- does not need one.
+              # Skip only the tender-scoped steps instead of failing the job.
+              echo "::notice::No tender exists yet; tender-scoped steps are skipped. The vault, health and provider-chain checks still run."
+              echo "NO_TENDER=1" >> "$GITHUB_ENV"
+              exit 0
             fi
             echo "tender discovered: $tid"
             echo "TENDER_ID=$tid" >> "$GITHUB_ENV"
           fi
 
       - name: Name the blocker that is currently locking the ZIP
+        if: env.NO_TENDER != '1'
         run: |
           # The Export Hub shows a COLLAPSED category ("Canonical readiness: 1
           # blocker(s)" / AUTHORITY_OR_QUALITY_BLOCKERS). That category is a
@@ -1178,6 +1184,7 @@ jobs:
       # is exactly the wrong resolution to debug at. The AiJob row carries the
       # durable, server-redacted failure text; this prints it verbatim.
       - name: Read the durable AI_ANALYZE job failures verbatim
+        if: env.NO_TENDER != '1'
         run: |
           tid="${{ inputs.tender_id }}"
           if [ -z "$tid" ]; then
@@ -1240,6 +1247,7 @@ jobs:
       # two different claims and only one of them is visible in a workflow's
       # step list. This prints the authorship the product already records.
       - name: Read who actually authored this analysis and these documents
+        if: env.NO_TENDER != '1'
         run: |
           tid="${{ inputs.tender_id }}"
           if [ -z "$tid" ]; then
@@ -1342,6 +1350,7 @@ jobs:
         continue-on-error: true
 
       - name: Print WHY the quality gate refuses each document
+        if: env.NO_TENDER != '1'
         run: |
           # GENERATED_DOCUMENT_QUALITY_FAILED names no rule. The readiness
           # blocker's own text says "The Document Validator shows the score and

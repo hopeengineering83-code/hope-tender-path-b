@@ -50,6 +50,17 @@ Do not "fix" the P2022 by patching authentication to ignore `deletedAt`.
 2026-09-24 instance: fingerprint pooled `47cfc82f1ca9` / direct `7d7f78f1fc58`,
 provision run 36025943205, healthy at 16:17Z, ready run 36026336782.
 
+2026-09-26 instance: fingerprint pooled `1e8995727823` / direct `15fd4688c001`,
+health run 36251773371 (503, bootstrap schema: 54 tables, no
+`_prisma_migrations`, `User.deletedAt` missing, only 4 `Role` rows), provision
+run 36251902059 (53/53 migrations, zero drift), healthy at 15:30Z (run
+36252145412), ready run 36252281315.
+
+Step 7 of the sequence is section B below. On a new database there is no
+tender yet; `confirm=inspect` then skips only its tender-scoped steps and
+still runs the provider-chain sweep (before 2026-09-26 it failed at "Resolve
+the tender under test" and skipped the sweep).
+
 ## B. AI providers after a redeploy
 
 **Symptom.** The package passes every gate but the proposal is the

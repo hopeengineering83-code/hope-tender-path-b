@@ -207,6 +207,13 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-26 UTC (later) — Claude Code (sixth Preview database swap)
+
+- **Owner actions:** `PREVIEW_DATABASE_URL_MIGRATION` set to the unpooled Neon string, Vercel `DATABASE_URL` (Preview) set to the pooled string, Preview redeployed (`dpl_7aSXQCk4s5PadBGM7VMLjcsz9nFZ`, same head `ba1be6a4`).
+- **Followed `docs/PREVIEW_RECOVERY_RUNBOOK.md` section A:** health run 36251773371 → 503 `database-unreachable`, the recurring bootstrap schema (54 tables, no `_prisma_migrations`, `User.deletedAt` missing), business tables empty, 4 `Role` rows; pooled fp `1e8995727823` = the migration secret's database. Provision run 36251902059 with direct fp `15fd4688c001`: all gates passed, 53/53 migrations, roles restored, owner provisioned (ADMIN), zero drift. Health run 36252145412: `ok:true`, `healthy`, 8/8 tables, `schemaMatchesDeployedCode:true`. Ready run 36252281315: owner sign-in, every upload page/API 200, vault empty.
+- **Section B (providers):** `confirm=inspect` failed at "Resolve the tender under test" on the empty database and skipped the provider sweep. The inspection job now marks `NO_TENDER=1` and skips only its tender-scoped steps, so the sweep runs before the first upload. Runbook updated.
+- **Merge status:** **DO NOT MERGE**.
+
 ### 2026-09-26 UTC — Claude Code (record-based Cover Letter / Executive Summary on every path; clean credentials)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175 only. Started from `e1c79121`. Production untouched. Hourly passive PR check-ins stopped (none re-armed).
