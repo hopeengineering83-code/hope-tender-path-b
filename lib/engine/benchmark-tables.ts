@@ -229,6 +229,36 @@ export function buildProposedTeamTable(
 }
 
 /**
+ * The upstream team sections the record-built tables replace.
+ *
+ * The team table and the team-to-project mapping were added only when no
+ * upstream section already carried their headings. The section writer is
+ * asked to write both, and its tables state what no record holds: its
+ * deterministic fallback put "TBD" in every role cell (delivered as "to be
+ * confirmed by proposal team") and paired every expert with a "Lead / Senior
+ * Role" on whichever project came next, and a model-written table printed
+ * "license numbers to be confirmed". When the records yield the table, the
+ * upstream section (its heading and the body up to the next heading) is
+ * removed so the record-built one takes its place.
+ */
+const UPSTREAM_TEAM_HEADING = /^#{1,4}\s+(?:[A-Z]\.\d+(?:\.\d+)*\s+)?Proposed\s+(?:Project\s+)?Team\s*$/i;
+const UPSTREAM_MAPPING_HEADING = /^#{1,4}\s+(?:[A-Z]\.\d+(?:\.\d+)*\s+)?Team[-\s]to[-\s]Project\s+(?:Experience\s+)?Mapping\s*$/i;
+
+export function withoutUpstreamTeamTables(markdown: string, replace: { team: boolean; mapping: boolean }): string {
+  if (!replace.team && !replace.mapping) return markdown;
+  const out: string[] = [];
+  let skipping = false;
+  for (const line of markdown.split("\n")) {
+    if (/^#{1,6}\s/.test(line)) {
+      const heading = line.trim();
+      skipping = (replace.team && UPSTREAM_TEAM_HEADING.test(heading)) || (replace.mapping && UPSTREAM_MAPPING_HEADING.test(heading));
+    }
+    if (!skipping) out.push(line);
+  }
+  return out.join("\n");
+}
+
+/**
  * A.5 Team-to-Project Experience Mapping — table.
  * Demonstrates that each lead expert has performed the same role on a comparable previous project.
  */

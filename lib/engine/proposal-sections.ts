@@ -1400,149 +1400,22 @@ export function comparableProjectAnchor(projectsBlock: string): { phrase: string
   return { phrase: detail ? `${name} (${detail})` : name, services };
 }
 
-// ── Section A.4/A.5 helpers — build team and mapping tables from evidence ────
-
-function buildA4TeamTable(input: AIBidWriterInput): string {
-  const expertsText = (input.experts ?? "").trim();
-  if (!expertsText) return "Bid-Team Action: populate proposed team table from expert CVs before submission.";
-  // expertProofLine format: "Name — Title | Disciplines: X | Sectors: Y | Certifications: Z | ..."
-  const rows: string[] = [];
-  for (const line of expertsText.split("\n")) {
-    if (!line.trim()) continue;
-    const nameMatch = line.match(/^([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)(?:\s*[—\-|]|$)/);
-    if (!nameMatch) continue;
-    const name = nameMatch[1].trim();
-    const titleMatch = line.match(/—\s*([^|]+?)(?:\s*\||\s*$)/);
-    const title = titleMatch ? titleMatch[1].trim().slice(0, 60) : "";
-    const certMatch = line.match(/Certifications?[\/]?Licen[sc]es?\s*:\s*([^|]+)/i);
-    const certs = certMatch ? certMatch[1].trim().slice(0, 80) : "";
-    const yrsMatch = line.match(/(\d+)\+?\s*years?/i);
-    const yrs = yrsMatch ? `${yrsMatch[1]}+ yrs` : "";
-    rows.push(`| ${name} | ${title} | ${certs} | ${yrs} | TBD |`);
-    if (rows.length >= 8) break;
-  }
-  if (rows.length === 0) return "Bid-Team Action: confirm proposed team table from expert CVs before submission.";
-  return [
-    "| Expert Name | Position / Role | Qualifications & Licence | Experience | Role on This Assignment |",
-    "|---|---|---|---|---|",
-    ...rows,
-  ].join("\n");
-}
-
-function buildA5MappingTable(input: AIBidWriterInput): string {
-  const expertsText = (input.experts ?? "").trim();
-  const projectsText = (input.projects ?? "").trim();
-  if (!expertsText || !projectsText) return "Bid-Team Action: populate team-to-project mapping table before submission.";
-  const expertNames: string[] = [];
-  for (const line of expertsText.split("\n")) {
-    const m = line.match(/^([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)(?:\s*[—\-|]|$)/);
-    if (m) expertNames.push(m[1].trim());
-    if (expertNames.length >= 6) break;
-  }
-  const projectNames: string[] = [];
-  for (const line of projectsText.split("\n")) {
-    if (line.trim().length > 15) {
-      const nameMatch = line.match(/^([A-Z][A-Za-z\s,&.()–\-]{8,80}?)(?:\s*[—|–\-]\s|,\s|\s\()/);
-      if (nameMatch) projectNames.push(nameMatch[1].trim().slice(0, 60));
-    }
-    if (projectNames.length >= 4) break;
-  }
-  if (expertNames.length === 0 || projectNames.length === 0) return "Bid-Team Action: confirm team-to-project mapping before submission.";
-  const rows = expertNames.map((name, i) => {
-    const project = projectNames[i % projectNames.length];
-    return `| ${name} | ${project} | Lead / Senior Role | Comparable scope and sector |`;
-  });
-  return [
-    "| Expert | Comparable Previous Project | Role on That Project | Relevance to This Tender |",
-    "|---|---|---|---|",
-    ...rows,
-  ].join("\n");
-}
-
-// ── Section B helpers — build real project cards from evidence text ──────────
+// ── Section B — the introduction to the record-built reference tables ─────────
+//
+// The team table (A.4), the team-to-project mapping (A.5), the client
+// references and the project cards are built downstream from the expert and
+// project records (benchmark-tables.ts), and only when no upstream section
+// already carries those headings. This writer used to fill them itself by
+// parsing the writer's flattened text: every role was "TBD" (delivered as "to
+// be confirmed by proposal team"), every expert was said to have held a
+// "Lead / Senior Role" on whichever project came next in the list, and a
+// contract value lost its magnitude ("ETB 550" for ETB 550.1M). Its headings
+// also stopped the record-built tables from being added at all.
 
 function buildSectionBPortfolioOverview(input: AIBidWriterInput): string {
   const v = input.companyVault ?? {};
-  const companyName = v.name?.trim() || "the firm";
-  // Count evidence lines in the projects string as a rough portfolio size proxy
-  const projectLines = (input.projects ?? "").split("\n").filter((l) => l.trim().length > 20);
-  const count = projectLines.length > 0 ? `${projectLines.length}+` : "multiple";
-  return `${companyName} brings a portfolio of ${count} comparable project assignments relevant to this tender. Each featured project below demonstrates the firm's direct capacity for the scope items evaluated in this tender. See Sections B.2 and B.3 for the two most comparable assignments; the full portfolio is summarised in the downstream project table.`;
-}
-
-function buildSectionBFeaturedCards(input: AIBidWriterInput): string[] {
-  // Parse the projects evidence string to extract structured card data.
-  // The projects string is formatted by projectProofLine in proposal-intelligence.ts
-  // as multi-line blocks. We extract the first two blocks and format them as
-  // real Markdown tables rather than empty "see downstream" stubs.
-  const projectsText = (input.projects ?? "").trim();
-  if (!projectsText) {
-    return [
-      "## B.2 Featured Project 1",
-      "Bid-Team Action: populate with the most directly comparable project — client, location/scale, duration, contract value, testimony reference, services provided, and why it demonstrates capacity for this tender.",
-      "## B.3 Featured Project 2",
-      "Bid-Team Action: populate with the second most comparable project using the same format.",
-    ];
-  }
-
-  // Parse projectProofLine format: "Name — Client | Country | Sector | Currency Value. Summary."
-  // Each project is on one line. We take the first two non-empty, non-evidence-header lines.
-  const projectLines = projectsText
-    .split("\n")
-    .map((l) => l.trim())
-    .filter((l) => l.length > 20 && !/^(Wider company evidence|Company document|Legal evidence|Financial evidence|Compliance evidence)/i.test(l));
-
-  const parseProofLine = (line: string) => {
-    // Split on " — " to separate name from rest
-    const dashIdx = line.indexOf(" — ");
-    const name = dashIdx > 0 ? line.slice(0, dashIdx).trim() : line.slice(0, 80).trim();
-    const rest = dashIdx > 0 ? line.slice(dashIdx + 3) : "";
-    // rest is "Client | Country | Sector | ETB 5M. Summary text."
-    const pipeparts = rest.split("|").map((p) => p.trim());
-    const client = pipeparts[0] || null;
-    const country = pipeparts[1] || null;
-    const sector = pipeparts[2] || null;
-    // value is in pipeparts[3] which may be "ETB 5.0M. Summary text."
-    const valueSummary = pipeparts[3] || "";
-    const valueDotIdx = valueSummary.search(/\.\s+[A-Z]/);
-    const value = valueDotIdx > 0 ? valueSummary.slice(0, valueDotIdx).trim() : valueSummary.replace(/\..+$/, "").trim() || null;
-    const summary = valueDotIdx > 0 ? valueSummary.slice(valueDotIdx + 2).trim().slice(0, 300) : null;
-    return { name, client, country, sector, value, summary };
-  };
-
-  const makeCard = (line: string, num: number): string => {
-    const { name, client, country, sector, value, summary } = parseProofLine(line);
-    const cleanName = name.replace(/[*_]/g, "").slice(0, 100);
-    const rows: string[] = [
-      "| Field | Detail |",
-      "|---|---|",
-      `| Project name | **${cleanName}** |`,
-      `| Client | ${client ?? "Bid-Team Action: confirm client name"} |`,
-      `| Location/Country | ${country ?? "Bid-Team Action: confirm"} |`,
-      `| Sector | ${sector ?? "Bid-Team Action: confirm"} |`,
-      `| Contract value | ${value ?? "Bid-Team Action: confirm"} |`,
-      "| Duration | Bid-Team Action: confirm engagement timeline |",
-      "| Reference letter | Available on request |",
-    ];
-
-    const whyText = summary
-      ? `**Relevance to this tender:** ${summary} The proposed team delivered this assignment and will apply the same proven methodology.`
-      : `**Why this anchors this tender:** The ${cleanName} engagement demonstrates comparable scope, sector alignment, and delivery capacity. The proposed lead team includes the same professionals who delivered this assignment.`;
-
-    return [`## B.${num} Featured Project ${num - 1}`, rows.join("\n"), whyText].join("\n\n");
-  };
-
-  const card1 = projectLines.length >= 1 ? makeCard(projectLines[0], 2) : [
-    "## B.2 Featured Project 1",
-    "Bid-Team Action: populate with the most directly comparable project — client, location/scale, duration, contract value, testimony reference, services provided, and why it demonstrates capacity for this tender.",
-  ].join("\n\n");
-
-  const card2 = projectLines.length >= 2 ? makeCard(projectLines[1], 3) : [
-    "## B.3 Featured Project 2",
-    "Bid-Team Action: populate with the second most comparable project using the same format.",
-  ].join("\n\n");
-
-  return [card1, card2];
+  const companyName = v.name?.trim() || "The firm";
+  return `${companyName}'s references for this assignment are drawn from its own project records: the client references first, then each project with the client, location, sector, value and services its record states.`;
 }
 
 function buildCompanyAndExperienceFallback(input: AIBidWriterInput): string {
@@ -1627,15 +1500,12 @@ function buildCompanyAndExperienceFallback(input: AIBidWriterInput): string {
     a2Table,
     "## A.3 Core Service Lines",
     a3Body,
-    "## A.4 Proposed Project Team",
-    buildA4TeamTable(input),
-    "## A.5 Team-to-Project Experience Mapping",
-    buildA5MappingTable(input),
+    // A.4 Proposed Project Team and A.5 Team-to-Project Experience Mapping
+    // are the record-built tables (see buildSectionBPortfolioOverview).
     "",
     "# Section B: Relevant Experience",
     "## B.1 Portfolio Overview",
     buildSectionBPortfolioOverview(input),
-    ...buildSectionBFeaturedCards(input),
     // The portfolio and client-reference tables are added downstream under
     // their own headings. Holding "B.4 Additional Projects" / "B.5 Client
     // References" here with a "See deterministic ... table built downstream"

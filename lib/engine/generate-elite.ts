@@ -38,8 +38,10 @@ import {
   buildExecutiveSummaryOpener,
   buildSpecialistEngagementSection,
   formatSubmissionDeadline,
+  buildTeamToProjectMappingTable,
   buildValueFrameworkTable,
   makeHasHeadingChecker,
+  withoutUpstreamTeamTables,
   type ExpertRecord,
   type ProjectRecord,
 } from "./benchmark-tables";
@@ -2533,7 +2535,13 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
   // The writer's working appendix (contract, criterion graph, evidence scores)
   // is removed here, before any pass renumbers or restyles its headings; only
   // the client sections the matrix builds (Sections E and F) stay.
-  const matrixMarkdown = stripInternalReviewSections(appendEvaluatorResponseMatrix(stripSelfScoreSections(sourceMarkdown), evaluatorMatrixInput)).markdown;
+  // The team table and the team-to-project mapping are record-built whenever
+  // the records yield them (withoutUpstreamTeamTables).
+  const upstreamWithoutTeamTables = withoutUpstreamTeamTables(stripSelfScoreSections(sourceMarkdown), {
+    team: experts.length > 0,
+    mapping: buildTeamToProjectMappingTable(experts, projects) !== "",
+  });
+  const matrixMarkdown = stripInternalReviewSections(appendEvaluatorResponseMatrix(upstreamWithoutTeamTables, evaluatorMatrixInput)).markdown;
   const isHealthcare = /health|hospital|medical|clinic|radiology|laboratory|pharmacy|patient|specialty|OPD|in-patient|emergency/i.test(`${intelligence.primarySector}\n${intelligence.tenderText}`);
   const strengtheningMarkdown = buildClientProposalStrengtheningSections({ clientName: intelligence.clientName, tenderTitle: cleanedTenderTitle, companyName: company.name, projectLines, expertLines, companyEvidenceLines, projectEvidenceLines, isHealthcare, existingMarkdown: matrixMarkdown });
 
