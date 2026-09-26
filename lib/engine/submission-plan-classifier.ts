@@ -77,6 +77,20 @@ export function classifySubmissionPlanItem(input: ClassifierInput): ClassifierRe
   // form/template" before the rule checks ever ran. A file extension describes
   // a format, not a fact about who issues the document.
 
+  // A row whose EXACT FILE NAME positively names a non-financial bidder
+  // deliverable is that deliverable, whatever its description or
+  // restrictions say about the financial proposal or how to send it. A
+  // tender's single file requirement -- exactFileName "Technical
+  // Proposal.pdf", restrictions "PDF electronic submission only. Financial
+  // proposal is excluded." -- was read below as a no-financial rule, so the
+  // Build Plan confirmation dropped the one file the tender asked for and Run
+  // Engine failed BUILD_PLAN_AUTOMATION_BLOCKED. Names that are themselves
+  // financial or separation statements ("No Financial Proposal.docx",
+  // "Financial Proposal.pdf") are not covered and keep the checks below.
+  if (namesNonFinancialBidderDeliverable(input.exactFileName)) {
+    return result("REQUIRED_OUTPUT_FILE", "The tender names this bidder-produced file exactly.");
+  }
+
   // Negative financial instructions are RULES, never deliverables. This must
   // match natural-language variants such as "No Financial Proposal.docx" and
   // "Financial proposal: not required at this stage" before the later positive
@@ -163,13 +177,25 @@ export function classifySubmissionPlanItem(input: ClassifierInput): ClassifierRe
   }
 
   // Expert CV package and project references → REQUIRED_OUTPUT_FILE (bidder-produced)
-  if (/technical proposal|financial proposal|cover letter|executive summary|company profile|methodology|work plan|implementation plan|quality assurance plan|risk management plan|cv package|expert cv|curriculum vitae|personnel cv|key personnel cv|staff cv|project experience|project reference|similar projects|track record|bid bond|power of attorney|joint venture agreement|consortium agreement/.test(value)) {
+  if (BIDDER_OUTPUT_FILE.test(value)) {
     return result("REQUIRED_OUTPUT_FILE", "Bidder-produced output file required by the tender.");
   }
 
   if (isProbablyDeliverable(input)) return result("REQUIRED_OUTPUT_FILE", "Exact file name or requirement type indicates a deliverable.");
 
   return result("INTERNAL_COMPLIANCE_CONTROL", "No deliverable pattern matched; defaulting to internal compliance row to avoid inventing a file.");
+}
+
+/** Names that identify a bidder-produced deliverable on their own. */
+const BIDDER_OUTPUT_FILE = /technical proposal|financial proposal|cover letter|executive summary|company profile|methodology|work plan|implementation plan|quality assurance plan|risk management plan|cv package|expert cv|curriculum vitae|personnel cv|key personnel cv|staff cv|project experience|project reference|similar projects|track record|bid bond|power of attorney|joint venture agreement|consortium agreement/;
+
+/** An exact file name that is itself a non-financial bidder deliverable. */
+function namesNonFinancialBidderDeliverable(exactFileName: string | null | undefined): boolean {
+  const name = String(exactFileName ?? "").trim().toLowerCase();
+  if (!name) return false;
+  if (/financial|commercial|price|pricing|cost|fee|bid bond/.test(name)) return false;
+  if (statesFinancialSeparation(name)) return false;
+  return BIDDER_OUTPUT_FILE.test(name);
 }
 
 export function shouldRowBecomePlannedFile(input: ClassifierInput): boolean {

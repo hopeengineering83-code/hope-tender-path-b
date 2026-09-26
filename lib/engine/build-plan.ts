@@ -388,7 +388,11 @@ export async function assertTenderReadyToDraftBuildPlan(
     where: { id: tenderId, userId },
     include: {
       files: { where: { deletionStatus: "ACTIVE" }, select: { id: true, originalFileName: true, extractedText: true, deletionStatus: true, extractionScore: true, totalPages: true, extractedPages: true, ocrPages: true, failedPages: true } },
-      requirements: { select: { id: true, title: true, description: true, requirementType: true, priority: true, exactFileName: true, exactOrder: true, sourceTenderFileId: true, sourcePageNumber: true, sourceExactQuote: true } },
+      // Every field buildSubmissionPlan reads. The confirmation re-derivation
+      // (validateBuildPlanForConfirmation) loads full rows; a narrower load
+      // here let the draft and its verification plan different files from
+      // the same tender (restrictions feed file notes and format).
+      requirements: { select: { id: true, title: true, description: true, requirementType: true, priority: true, exactFileName: true, exactOrder: true, requiredQuantity: true, pageLimit: true, restrictions: true, sectionReference: true, sourceTenderFileId: true, sourcePageNumber: true, sourceExactQuote: true } },
       // Load metadata overrides so validateCriticalMetadataEvidenceForBuildPlan
       // can validate EFFECTIVE values (override ?? raw), mirroring the canonical hash.
       metadataOverrides: { select: { field: true, fieldState: true, overrideValue: true, reason: true, confirmationBasis: true, authorityClass: true, confirmedAt: true } },
