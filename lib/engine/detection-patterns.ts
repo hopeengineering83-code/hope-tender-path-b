@@ -531,6 +531,43 @@ export function hasUnprovenClaim(text: string): boolean {
  * relationship or attachment claim, keeping the rest of the section. A line
  * whose claim spans sentences is dropped whole.
  */
+/**
+ * A sentence about how the proposal should be written, not about the work.
+ *
+ * A model-written Understanding of the Assignment told the client "A winning
+ * proposal must demonstrate (i) ... (v) ..." and then "The narrative must
+ * echo the evaluator's language verbatim to prove alignment." That is the
+ * writer's brief, not proposal content.
+ */
+const WRITING_BRIEF_PATTERNS: RegExp[] = [
+  /\b(?:a|the|any)\s+(?:winning|strong|successful|competitive)\s+(?:proposal|bid|submission|response)\s+(?:must|should|needs?\s+to|has\s+to|will\s+need\s+to)\b/i,
+  /\b(?:the|this|our)\s+(?:narrative|proposal|response|section|text)\s+(?:must|should|needs?\s+to)\s+(?:echo|mirror|repeat|reuse)\b/i,
+  /\b(?:echo|mirror)(?:es|s)?\s+the\s+evaluator'?s?\s+(?:own\s+)?(?:language|wording|words|terms)\b/i,
+  /\bto\s+prove\s+alignment\b/i,
+];
+
+export function isWritingBrief(text: string): boolean {
+  return WRITING_BRIEF_PATTERNS.some((re) => re.test(text));
+}
+
+export function scrubWritingBriefSentences(markdown: string): string {
+  const out: string[] = [];
+  for (const line of markdown.split("\n")) {
+    if (!isWritingBrief(line)) {
+      out.push(line);
+      continue;
+    }
+    if (/^\s*(?:\||#)/.test(line)) continue;
+    const kept = line
+      .split(/(?<=[.!?])\s+/)
+      .filter((sentence) => !isWritingBrief(sentence))
+      .join(" ")
+      .trim();
+    if (kept) out.push(kept);
+  }
+  return out.join("\n");
+}
+
 export function scrubUnprovenClaimSentences(markdown: string): string {
   const out: string[] = [];
   for (const line of markdown.split("\n")) {

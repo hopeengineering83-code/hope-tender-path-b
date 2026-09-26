@@ -1537,10 +1537,19 @@ function buildAdditionalAndDeclarationFallback(input: AIBidWriterInput): string 
   ].join("\n");
 
   // ── D.1 Value-Added — real differentiators when available ───────────────
+  // The field carries the writer's rules ("MANDATORY BENCHMARK STRUCTURE:
+  // Cover Letter; Technical Proposal; ...") and company evidence lines ahead
+  // of and after the differentiators. Split on ";" as well, it delivered
+  // "Technical Proposal", "Table of Contents", "Executive Summary" and
+  // "Company Profile" as the firm's differentiators, and cut real ones in
+  // half. One differentiator is one line; rule and evidence lines are not
+  // differentiators.
   const differentiatorLines = (input.differentiators || "")
-    .split(/[;\n]/)
+    .split("\n")
     .map((d) => d.trim())
     .filter((d) => d.length > 10)
+    .filter((d) => !/^[A-Z][A-Z0-9 &/()-]{3,}:\s/.test(d))
+    .filter((d) => !/^(?:Wider company evidence|Company document|Legal evidence|Financial evidence|Compliance evidence)\b/i.test(d))
     .slice(0, 5);
   const d1Body = differentiatorLines.length > 0
     ? [

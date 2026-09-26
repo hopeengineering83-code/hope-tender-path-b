@@ -10,7 +10,7 @@ import { containsMetadataPlaceholder, containsMetadataScaffolding } from "./engi
 import { protectPrompt, protectPromptWithBoundary } from "./ai-trust-boundary";
 import { redactSecrets } from "./sanitize-error";
 import { GEMINI_TIMEOUT_MS, DEEPSEEK_DEFAULT_TIMEOUT_MS, MISTRAL_EXTRACTION_TIMEOUT_MS, OPENAI_COMPAT_DEFAULT_TIMEOUT_MS, O1_O3_TIMEOUT_MS, PROPOSAL_SECTION_TIMEOUT_MS, PROPOSAL_SECTION_TIMEOUT_CEILING_MS, PROPOSAL_SECTION_MS_PER_OUTPUT_TOKEN, PROPOSAL_SECTION_BASE_OVERHEAD_MS, PROPOSAL_SECTION_STITCH_RESERVE_MS, PROPOSAL_SECTION_POOL_RESERVE_MS, PROPOSAL_SECTION_MIN_WRITE_MS, COOLDOWN_WAIT_SETTLE_MS, PROPOSAL_AI_TIMEOUT_MS, REFINEMENT_CALL_TIMEOUT_MS } from "./timeout-config";
-import { AI_TRACE_PATTERNS, countOwnPriceMentions, hasUnprovenClaim, scrubOwnPriceSentences, scrubSourceDocumentMetadata, scrubUnprovenClaimSentences } from "./engine/detection-patterns";
+import { AI_TRACE_PATTERNS, countOwnPriceMentions, hasUnprovenClaim, scrubOwnPriceSentences, scrubSourceDocumentMetadata, scrubUnprovenClaimSentences, scrubWritingBriefSentences } from "./engine/detection-patterns";
 import { scrubUngroundedCompanyCredentials } from "./engine/company-credential-grounding";
 import { containsPricingLeakage } from "./engine/pricing-hygiene";
 import { CURRENCY_TOKEN_ALTERNATION } from "./engine/currency-reference";
@@ -822,8 +822,9 @@ export function clientSafeModelSection(markdown: string): { ok: boolean; markdow
   // The final gate's unproven-claim rule is applied the same way: the
   // sentence claiming "we have already delivered this assignment" or "the
   // same team" goes, the section stays (run 36047880422 lost the whole
-  // proposal to one such sentence).
-  const cleaned = scrubPricingLeakageSentences(scrubUnprovenClaimSentences(scrubOwnPriceSentences(scrubSourceDocumentMetadata(markdown))));
+  // proposal to one such sentence). A sentence of the writer's own brief
+  // ("a winning proposal must ...") goes the same way.
+  const cleaned = scrubWritingBriefSentences(scrubPricingLeakageSentences(scrubUnprovenClaimSentences(scrubOwnPriceSentences(scrubSourceDocumentMetadata(markdown)))));
   if (hasUnprovenClaim(cleaned)) return { ok: false, markdown: cleaned, reason: "unproven relationship or attachment claim" };
   const trace = AI_TRACE_PATTERNS.find((re) => re.test(cleaned));
   if (trace) return { ok: false, markdown: cleaned, reason: `AI trace ${trace.source.slice(0, 60)}` };

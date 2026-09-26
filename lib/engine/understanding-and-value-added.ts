@@ -302,15 +302,20 @@ export function buildInHouseCapabilitiesSection(opts: {
   const capabilities: string[] = [];
   const allText = opts.evidenceLines.join("\n").toLowerCase();
 
-  // Detect capability signals from evidence text
+  // Detect capability signals from evidence text. Each line states only what
+  // its signal shows. A firm whose records name a "Quality Management System
+  // manual" was delivered as holding an "ISO 9001:2015-aligned QMS"; "ems"
+  // matched inside "systems" and printed an "ISO 14001-aligned EMS"; any
+  // mention of "employees" made every proposed expert "permanent staff, not
+  // sub-consultants". No record held any of those.
   if (/drilling rig|drill.*depth|geotechnical.*lab/i.test(allText)) {
     capabilities.push("**In-house geotechnical capability** — drilling rigs and laboratory testing, eliminating sub-contractor coordination delays at site assessment stage.");
   }
-  if (/iso 9001|iso 45001|quality management system|qms/i.test(allText)) {
-    capabilities.push("**Quality Management System** — ISO 9001:2015-aligned QMS with documented design-review gates, document control, and audit trail.");
+  if (/iso 9001|quality management system|\bqms\b/i.test(allText)) {
+    capabilities.push("**Quality Management System** — the firm's own quality management system, applied to the review and document control of this assignment's deliverables.");
   }
-  if (/environmental.*management|ems|iso 14001/i.test(allText)) {
-    capabilities.push("**Environmental Management System** — ISO 14001-aligned EMS or equivalent, supporting donor-grade environmental compliance.");
+  if (/environmental management system|\bems\b|iso 14001/i.test(allText)) {
+    capabilities.push("**Environmental Management System** — the firm's own environmental management system, applied to the environmental aspects of this assignment.");
   }
   if (/fidic|world bank|undp|usaid|british council/i.test(allText)) {
     capabilities.push("**International institutional delivery track record** — projects delivered to FIDIC and donor-standard documentation rules.");
@@ -318,8 +323,8 @@ export function buildInHouseCapabilitiesSection(opts: {
   if (/proprietary|in-house.*platform|custom.*platform|project management.*platform/i.test(allText)) {
     capabilities.push("**Proprietary project management platform** — drawing register, approval workflow tracking, and progress reporting in client-compatible formats.");
   }
-  if (/permanent.*staff|employees|in-house.*team/i.test(allText)) {
-    capabilities.push("**Permanent in-house team** — proposed experts are permanent staff, not sub-consultants — ensuring continuity from feasibility to handover.");
+  if (/permanent\s+(?:staff|employees)/i.test(allText)) {
+    capabilities.push("**Permanent in-house team** — the firm's records describe its staff as permanent, supporting continuity from feasibility to handover.");
   }
   // Service-line capabilities
   if (opts.serviceLines.length > 0) {
