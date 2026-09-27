@@ -455,12 +455,19 @@ function countSections(text: string): number {
   return count;
 }
 
+// A table's status vocabulary is a cell value, not a heading. Read out of a
+// DOCX, a compliance matrix puts each status cell on its own line, and three
+// rows rated "PARTIALLY MET" failed a real package as a heading repeated three
+// times (2026-09-27, score 63).
+const TABLE_STATUS_VALUE = /^(?:FULLY|PARTIALLY|NOT)\s+MET$/;
+
 function duplicatedSectionHeadings(text: string): string[] {
   // A document with the same heading repeated ≥3 times has likely been
   // regenerated without dedupe; very likely poor quality.
   const headings = text
     .split(/\r?\n/)
     .map((line) => line.trim())
+    .filter((line) => !TABLE_STATUS_VALUE.test(line))
     .filter((line) => /^#{1,6}\s+\S/.test(line) || /^(?:[0-9]+\.)\s+\S/.test(line) || (/^[A-Z][A-Z0-9 \-,'/&]{3,}$/.test(line) && line.split(/\s+/).length >= 2));
   const counts = new Map<string, number>();
   for (const h of headings) counts.set(h, (counts.get(h) ?? 0) + 1);

@@ -475,7 +475,7 @@ function restatesEstablishedPastAmount(fragment: string, established: Set<string
   return !/\b(our\s+(?:fee|price|rate|quotation|financial|commercial)|bid\s+price|proposal\s+price|total\s+price|unit\s+price|consultancy\s+fee|professional\s+fee|daily\s+rate|monthly\s+rate|hourly\s+rate|lump\s+sum|price\s+schedule|fee\s+schedule|quoted\s+(?:amount|price)|amount\s+payable)\b/i.test(fragment);
 }
 
-function isHistoricalReferenceValueContinuation(sentence: string, priorContext: string): boolean {
+function isHistoricalReferenceValueContinuation(sentence: string, priorContext: string, labelCell = ""): boolean {
   const hasCurrencyValue = CURRENCY_AMOUNT.test(sentence);
   if (!hasCurrencyValue) return false;
   // A labelled value ("Contract value: ETB …"), or a table cell that holds the
@@ -485,6 +485,35 @@ function isHistoricalReferenceValueContinuation(sentence: string, priorContext: 
   // wording of its own and only its neighbours can say what it is.
   const labelled = /^\s*(?:project|contract)\s+value\b/i.test(sentence);
   if (!labelled && !isValueOnlyFragment(sentence)) return false;
+
+  // ITS OWN ROW'S LABEL DECIDES. When the cell immediately before a bare
+  // amount is nothing but a delivered-work label ("Construction Value of
+  // Works"), that is the row the amount belongs to, and the amount is the
+  // delivered asset's value however the neighbouring rows are worded. A
+  // project card whose "Relevance to This Assignment" row sat just above
+  // "Construction Value of Works | ETB 550.1M" had its value read as this bid's
+  // price -- the row above says "this assignment", and the window-wide veto
+  // below cannot tell a neighbour's wording from the value's own label
+  // (2026-09-27, Technical Proposal.docx refused at 63). The label cell itself
+  // must be a bare label: one naming the current engagement or a price still
+  // falls through to the veto.
+  const ownLabel = labelCell.trim();
+  // A price stated for the current engagement nearby is a live offer, and a
+  // live offer never borrows the label ("Our fee for this proposal" /
+  // "Construction Value of Works" / "ETB …"). Describing relevance to the
+  // current assignment -- the card's own wording -- is not a price.
+  const livePriceNearby = /\b(?:our\s+(?:fee|price|rate|quotation|offer)|(?:fee|price|rate|cost|quotation|amount|budget)\b[^.\n]{0,40}\bth(?:is|e\s+present)\s+(?:proposal|bid|assignment|tender))\b/i.test(priorContext);
+  if (
+    !livePriceNearby
+    && isValueOnlyFragment(sentence)
+    && ownLabel.length <= 60
+    && DELIVERED_WORK_VALUE_LABEL.test(ownLabel)
+    && !CURRENCY_AMOUNT.test(ownLabel)
+    && !namesCurrentEngagementAsItsOwn(ownLabel)
+    && !/\b(fee|price|rate|cost\s+of\s+(?:our|the\s+proposed)|payable|quotation|budget)\b/i.test(ownLabel)
+  ) {
+    return true;
+  }
 
   const currentOfferContext = namesCurrentEngagementAsItsOwn(priorContext)
     || /\b(our\s+(?:fee|price|rate|quotation|financial|commercial)|current\s+(?:proposal|bid|assignment|tender))\b/i.test(priorContext);
@@ -700,7 +729,7 @@ export function pricingLeakageFinding(text: string, doc?: Pick<ExportReadyDocume
       const priorContext = textSentences
         .slice(Math.max(0, index - REFERENCE_CONTEXT_FRAGMENTS), index)
         .join(" ");
-      return !isHistoricalReferenceValueContinuation(s, priorContext);
+      return !isHistoricalReferenceValueContinuation(s, priorContext, index > 0 ? textSentences[index - 1] : "");
     })
     .join("\n");
   if (!scanText) return null;
