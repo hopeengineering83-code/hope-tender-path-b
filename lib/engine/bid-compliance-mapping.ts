@@ -45,10 +45,10 @@ const LOCATION_BY_TYPE: Readonly<Record<string, string>> = {
   ELIGIBILITY: "Declaration",
   COMPANY_PROFILE: "Section A.1 Company Background and A.2 Corporate Information",
   DECLARATION: "Declaration",
-  FORMAT: "Compliance Matrix annex (cross-referenced to proposal sections)",
-  SUBMISSION_RULE: "Compliance Matrix annex (cross-referenced to proposal sections)",
-  ANNEX: "Compliance Matrix annex (cross-referenced to proposal sections)",
-  FORM: "Compliance Matrix annex (cross-referenced to proposal sections)",
+  FORMAT: "Acknowledged in this Compliance Matrix",
+  SUBMISSION_RULE: "Acknowledged in this Compliance Matrix",
+  ANNEX: "Acknowledged in this Compliance Matrix",
+  FORM: "Acknowledged in this Compliance Matrix",
 };
 
 function inferProposalLocation(req: TenderRequirementLite): string {
@@ -97,7 +97,7 @@ function inferProposalLocation(req: TenderRequirementLite): string {
     return "Sections C.2 Methodology and C.5 Risk Register; Compliance Matrix in proposal annex";
   }
   // Default
-  return "Compliance Matrix annex (cross-referenced to proposal sections)";
+  return "Acknowledged in this Compliance Matrix";
 }
 
 export function buildBidComplianceMapping(opts: { requirements: TenderRequirementLite[] }): string | null {

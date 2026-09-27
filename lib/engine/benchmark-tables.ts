@@ -799,32 +799,57 @@ export function makeHasHeadingChecker(markdown: string): (heading: string) => bo
 // project metadata where available; falls back to a source-evidence-action note.
 
 export function buildClientReferencesTable(projects: ProjectRecord[]): string {
-  if (projects.length === 0) {
-    return [
-      "## B.1 Client References",
-      "Bid-Team Action: populate this table with reviewed client reference letters from the knowledge vault. Each entry must include: project name, named client contact with title, reference number, and confirmed contract value.",
-      "| Project / Client | Reference Contact & Title | Contact Details & Reference | Contract Value |",
-      "|---|---|---|---|",
-      "| Bid-Team Action: confirm | Confirm contact name + title | Confirm email/phone + ref no. | Confirm ETB/USD |",
-    ].join("\n\n");
-  }
+  // No references on record means no table. This used to print a table of
+  // "Bid-Team Action: confirm" cells into the client document.
+  if (projects.length === 0) return "";
 
-  const rows = projects.slice(0, 5).map((project) => {
-    const projectLine = `${project.name}${project.clientName ? ` — ${project.clientName}` : ""}`;
-    const referenceContact = project.clientName ? `${project.clientName} representative` : "Client representative";
-    const contactDetail = [project.country, project.clientName].filter(Boolean).join(", ") || "Contact details on file";
-    const value = fmtMoney(project.contractValue, project.currency);
-    return `| ${escCell(projectLine)} | ${escCell(referenceContact)} | ${escCell(contactDetail)} | ${escCell(value)} |`;
+  // Every cell is what the firm's own records state. The table used to print
+  // "<client> representative" as a reference contact nobody named, repeat the
+  // country and client as "contact details", and put the stored project value
+  // under "Contract Value" — a figure that on these records is the
+  // construction cost of the asset (the portfolio cards print it as such, for
+  // the reason given there). Unlabelled beside a client the gate did not
+  // recognise, that figure also read as this bid's price and was blanked to
+  // "—" (2026-09-27, accept run 36339908536).
+  const listed = projects.slice(0, 5);
+  const rows = listed.map((project) => {
+    const facts = extractProjectFacts(project.summary ?? "", project.name);
+    const client = project.clientName || facts.clientName || "—";
+    const location = [facts.location, project.country].filter(Boolean).join(", ") || "—";
+    const testimony = extractTestimonyFields(project.evidences ?? []);
+    const letter = [
+      testimony.referenceNumber ? `Ref. ${testimony.referenceNumber}` : "",
+      testimony.date ?? "",
+      testimony.author ?? "",
+      testimony.contact ?? "",
+    ].filter(Boolean).join(", ") || "Available on request";
+    return `| ${escCell(project.name)} | ${escCell(client)} | ${escCell(location)} | ${escCell(letter)} | ${escCell(referenceValue(project))} |`;
   });
 
   return [
     "## B.1 Client References",
-    `${projects.length === 1 ? "One client reference" : `${Math.min(projects.length, 5)} client references`} provided with named contacts and reference details. Original testimony letters, signed contracts and completion evidence can be provided on request.`,
+    `${listed.length === 1 ? "One client reference" : `${listed.length} client references`} from the firm's project records. Original testimony letters, signed contracts and completion evidence can be provided on request.`,
     "",
-    "| Project / Client | Reference Contact & Title | Contact Details & Reference | Contract Value |",
-    "|---|---|---|---|",
+    "| Project | Client | Location | Reference Letter | Value of Works |",
+    "|---|---|---|---|---|",
     ...rows,
   ].join("\n");
+}
+
+/**
+ * A reference project's value under the role its record gives it, as the
+ * portfolio card presents it: the construction value of the works when the
+ * record states one, never a consultancy fee (a past fee is still this firm's
+ * pricing), and the stored value only when its role is not stated otherwise.
+ */
+function referenceValue(project: ProjectRecord): string {
+  const amounts = extractProjectAmounts(project.summary ?? "");
+  const construction = amounts.find((a) => a.role === "CONSTRUCTION" && !a.perMonth);
+  if (construction) return `Construction value of works ${fmtMoney(construction.value, construction.currency ?? project.currency)}`;
+  if (!hasContractValue(project.contractValue)) return "—";
+  const fee = amounts.find((a) => a.role === "CONSULTANCY_FEE" && !a.perMonth);
+  if (fee && Math.abs(fee.value - (project.contractValue as number)) < 0.01) return "—";
+  return `Project value ${fmtMoney(project.contractValue, project.currency)}`;
 }
 
 // ─── D.1 Value Framework table (sector-aware) ────────────────────────────────

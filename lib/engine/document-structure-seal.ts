@@ -82,6 +82,8 @@ export interface StructureSealResult {
   sectionCHeadings: string[];
   /** Cross-references repointed at the number their named section really has. */
   resolvedCrossReferences: number;
+  /** Table-cell references to a title no heading carries, pointed at their section. */
+  redirectedCrossReferences: number;
   /** Sub-sections whose heading a downstream pass deleted, and the seal put back. */
   restored: string[];
 }
@@ -209,10 +211,15 @@ export function sealDocumentStructure(
   let childStart: number | null = null;
   const titleToNumber = new Map<string, string>();
 
+  const sectionTitles = new Map<string, string>();
   lines = lines.map((line) => {
     const top = line.match(TOP_LEVEL_SECTION_RX);
     if (ANY_TOP_LEVEL_RX.test(line)) {
       letter = top ? top[1].toUpperCase() : null;
+      if (letter) {
+        const named = line.match(/^#\s+Section\s+[A-Z]\s*[:.\-–—]\s*(.+?)\s*$/i)?.[1];
+        if (named) sectionTitles.set(letter, named === named.toUpperCase() ? named.toLowerCase().replace(/\b[a-z]/g, (c) => c.toUpperCase()) : named);
+      }
       parentSeq = 0;
       parentStart = null;
       parentNumber = null;
@@ -312,12 +319,79 @@ export function sealDocumentStructure(
       },
     );
 
+  // ── 4. A table cell never points at a heading the document does not have ──
+  //
+  // The compliance matrix and the evaluation-criteria table name their
+  // destinations from fixed maps and model output written before the final
+  // headings exist. On 2026-09-27 they sent the evaluator to "Section A.1
+  // Company Background" (the heading was "Company Overview"), "C.6 Work Plan
+  // and Schedule" and "Appendix E", none of which the proposal contained. A
+  // reference whose title is no heading of its section is pointed at the
+  // section itself. Only table cells, and only a title that ends at the cell
+  // or at "and"/"+", are touched, so prose that merely begins with a section
+  // number is never rewritten; a section the seal did not see is left alone.
+  const sectionHasHeadings = (refLetter: string) =>
+    [...titleToNumber.values()].some((number) => number.startsWith(`${refLetter.toUpperCase()}.`));
+  // No heading of the section is that title or opens with it. A short title
+  // that opens several headings is ambiguous, not missing, and stays as written.
+  const unknownTitle = (refLetter: string, refTitle: string) => {
+    if (!sectionHasHeadings(refLetter)) return false;
+    const wanted = normalizeTitle(refTitle);
+    return ![...titleToNumber.entries()].some(([title, number]) =>
+      number.startsWith(`${refLetter.toUpperCase()}.`) && (title === wanted || title.startsWith(`${wanted} `)));
+  };
+  const sectionLabel = (refLetter: string) => {
+    const title = sectionTitles.get(refLetter.toUpperCase());
+    return title ? `Section ${refLetter.toUpperCase()}: ${title}` : `Section ${refLetter.toUpperCase()}`;
+  };
+  let redirectedCrossReferences = 0;
+  // An appendix is real only when the document lists it (the Appendix
+  // Register some paths print). A cell naming one that is not listed says
+  // where the document actually is: with the firm, on request.
+  const bodyText = sealed.split("\n").filter((line) => !/^\s*\|/.test(line)).join("\n");
+  const appendixListed = (refLetter: string) =>
+    new RegExp(`^\\s*(?:#{1,6}\\s+|[-*]\\s+)?Appendix\\s+${refLetter}\\b`, "im").test(bodyText);
+  const cellSafe = sealed
+    .split("\n")
+    .map((line) => {
+      if (!/^\s*\|/.test(line)) return line;
+      const redirected = line
+        .replace(
+          /\bSection\s+([A-Z])\.\d+(?:\.\d+)?\s+([A-Z][^,.;:|+\n]{3,60}?)(?=\s+(?:and|\+)\s+(?:Section\s+)?[A-Z]\.\d|\s*\|)/g,
+          (whole, refLetter: string, refTitle: string) => {
+            if (!unknownTitle(refLetter, refTitle)) return whole;
+            redirectedCrossReferences += 1;
+            return sectionLabel(refLetter);
+          },
+        )
+        .replace(
+          /(\s(?:and|\+)\s+)(?:Section\s+)?([A-Z])\.\d+(?:\.\d+)?\s+([A-Z][^,.;:|+\n]{3,60}?)(?=\s+(?:and|\+)\s+(?:Section\s+)?[A-Z]\.\d|\s*\|)/g,
+          (whole, lead: string, refLetter: string, refTitle: string) => {
+            if (!unknownTitle(refLetter, refTitle)) return whole;
+            redirectedCrossReferences += 1;
+            return `${lead}${sectionLabel(refLetter)}`;
+          },
+        );
+      const withAppendices = redirected.replace(
+        /\bAppendix\s+([A-Z])\b[^|+\n]*?(?=\s*(?:\||\+))/g,
+        (whole, refLetter: string) => {
+          if (appendixListed(refLetter)) return whole;
+          redirectedCrossReferences += 1;
+          return "supporting documents available on request";
+        },
+      );
+      // "Section A: Company Profile and Section A: Company Profile" says it once.
+      return withAppendices.replace(/(Section [A-Z](?:: [^|+]*?)?)\s+(?:and|\+)\s+\1(?=\s*(?:\||\s(?:and|\+)\s))/g, "$1");
+    })
+    .join("\n");
+
   return {
-    markdown: sealed,
+    markdown: cellSafe,
     droppedEmpty,
     renumbered,
     sectionCHeadings: sectionCHeadingsOf(sealed),
     resolvedCrossReferences,
+    redirectedCrossReferences,
     restored,
   };
 }

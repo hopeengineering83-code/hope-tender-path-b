@@ -6,7 +6,7 @@ import { AlignmentType, BorderStyle, Document, Footer, Header, HeadingLevel, Ima
 import { prisma } from "../prisma";
 import { getStorageAdapter } from "../storage";
 import { generateBenchmarkProposalWithAI, generateProposalSectionsParallel, getLastProposalProvider, isAIEnabled, refineProposalWithAI, scrubPricingLeakageSentences, withProposalWrapperBudget } from "../ai";
-import { resolveProposalExecutionBudget, type ProposalExecutionContext, type ProposalExecutionBudget } from "../ai-runtime-capability";
+import { resolveProposalExecutionBudget, writerBudgetWithin, type ProposalExecutionContext, type ProposalExecutionBudget } from "../ai-runtime-capability";
 import { detectAnalysisSource } from "./analysis-source";
 import { isDeepReasoningEnabled, isToolUseGenerationEnabled, shouldUseDeepReasoning } from "./feature-flags";
 import { extractDeepTenderComprehension, formatComprehensionForPrompt, type DeepTenderComprehension } from "./evaluation-criteria-extractor";
@@ -1355,7 +1355,11 @@ export function buildProfessionalDocument(params: {
   });
 }
 
-export async function generateTenderDocuments(tenderId: string, userId: string, options?: { execution?: ProposalExecutionContext }): Promise<void> {
+export async function generateTenderDocuments(tenderId: string, userId: string, options?: {
+  execution?: ProposalExecutionContext;
+  /** Epoch ms at which the invocation running this call is killed (see writerBudgetWithin). */
+  deadlineAt?: number;
+}): Promise<void> {
   const tender = await prisma.tender.findFirst({
     where: { id: tenderId, userId },
     include: {
@@ -2386,10 +2390,16 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
 
       // Preserve SectionProvenance and block persistence if any section
       // used deterministic fallback.
+      // Measured now, at the model call: preparation above has already used
+      // part of the invocation.
+      const writerBudgetMs = writerBudgetWithin(proposalBudget, options?.deadlineAt);
+      if (writerBudgetMs < proposalBudget.budgetMs) {
+        logger.warn(`[generate-elite] writer budget clamped to ${Math.round(writerBudgetMs / 1000)}s by the invocation deadline (context budget ${Math.round(proposalBudget.budgetMs / 1000)}s)`);
+      }
       if (useParallel) {
         const sectionResult = await withProposalAiTimeout(
-          withProposalWrapperBudget(proposalBudget.budgetMs, () => generateProposalSectionsParallel(aiInput)),
-          proposalBudget.budgetMs,
+          withProposalWrapperBudget(writerBudgetMs, () => generateProposalSectionsParallel(aiInput)),
+          writerBudgetMs,
           proposalBudget,
         );
         if (sectionResult.anyFallback) {
@@ -2456,8 +2466,8 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
         sourceMarkdown = sectionResult.markdown;
       } else {
         sourceMarkdown = await withProposalAiTimeout(
-          withProposalWrapperBudget(proposalBudget.budgetMs, () => generateBenchmarkProposalWithAI(aiInput)),
-          proposalBudget.budgetMs,
+          withProposalWrapperBudget(writerBudgetMs, () => generateBenchmarkProposalWithAI(aiInput)),
+          writerBudgetMs,
           proposalBudget,
         );
       }
@@ -2469,7 +2479,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
       // risk hitting the Vercel timeout wall.
       if (!useParallel && (!sourceMarkdown || sourceMarkdown.trim().length < 500)) {
         logger.warn(`[generate-elite] AI returned near-empty output (${sourceMarkdown?.trim().length ?? 0} chars) — retrying once.`);
-        const retryTimeout = Math.min(proposalBudget.budgetMs, 40_000);
+        const retryTimeout = Math.min(writerBudgetWithin(proposalBudget, options?.deadlineAt), 40_000);
         sourceMarkdown = await withProposalAiTimeout(
           withProposalWrapperBudget(retryTimeout, () => generateBenchmarkProposalWithAI(aiInput)),
           retryTimeout,

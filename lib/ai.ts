@@ -4985,9 +4985,9 @@ For any tender involving site selection, premises identification, beneficiary se
 
 **B.1 Client References — TABLE (place BEFORE B.2 Project Portfolio):**
 \`\`\`
-| Project / Client | Reference Contact & Title | Contact Details & Reference | Contract Value |
-|---|---|---|---|
-| [EXAMPLE PROJECT] — [client] | [reference contact and title] | [location, reference number and date] | [contract value] |
+| Project | Client | Location | Reference Letter | Value of Works |
+|---|---|---|---|---|
+| [EXAMPLE PROJECT] | [client] | [location] | [reference number, date and signatory as the record states them, else "Available on request"] | [value under the role the record gives it, e.g. "Construction value of works …"] |
 \`\`\`
 
 **A.6 Specialist Engagement Plan — only emit when the tender requires a discipline NOT covered by the proposed core team (e.g., biomedical engineer, telecoms specialist, QHSE auditor):**

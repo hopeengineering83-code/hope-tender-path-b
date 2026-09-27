@@ -81,7 +81,9 @@ test("an untyped requirement still falls back to keywords, most specific first",
   assert.match(untyped, /Quality Review/);
 });
 
-test("a requirement nothing matches lands in the annex, not in an arbitrary section", () => {
+test("a requirement nothing matches is acknowledged in the matrix, not sent to an arbitrary section", () => {
   const row = locationFor({ title: "Bidder shall attend the site visit on the stated date" });
-  assert.match(row, /Compliance Matrix annex/);
+  assert.match(row, /Acknowledged in this Compliance Matrix/);
+  // The proposal has no annex; the column used to promise one (2026-09-27).
+  assert.doesNotMatch(row, /annex/i);
 });

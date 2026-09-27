@@ -435,7 +435,10 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
       // app/api/ai-jobs/run-next (maxDuration 300), not the 60s synchronous
       // generate route, so the writer gets the worker's budget. Declaring it
       // here is what stops a 60s-route figure starving a 300s worker.
-      await generateTenderDocuments(ctx.tenderId, ctx.userId, { execution: "durable-worker" });
+      // The invocation's real end, not a fresh 300s: run-next may have run
+      // ENGINE_RUN in this same invocation first (see writerBudgetWithin).
+      const platformDeadlineAt = typeof ctx.input?.platformDeadlineAt === "number" ? ctx.input.platformDeadlineAt : undefined;
+      await generateTenderDocuments(ctx.tenderId, ctx.userId, { execution: "durable-worker", deadlineAt: platformDeadlineAt });
     } finally {
       clearInterval(heartbeat);
     }

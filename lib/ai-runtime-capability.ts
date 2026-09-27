@@ -175,3 +175,20 @@ export function resolveProposalExecutionBudget(context: ProposalExecutionContext
     budgetMs: profile.effectiveProposalBudgetMs,
   };
 }
+
+/**
+ * The writer's budget when the invocation it runs in has a hard end.
+ *
+ * run-next carries a continuation into the SAME 300s invocation: Run Engine's
+ * ENGINE_RUN succeeds, then PROPOSAL_GENERATION starts with whatever time is
+ * left. The writer still took the full budget of a fresh worker (220s plus an
+ * 80s post-work reserve), so a slow-provider run that began late was killed by
+ * the platform mid-generation; its heartbeats stopped and stuck-job recovery
+ * failed it 180s later (2026-09-27, accept run 36335401709). Clamped here, the
+ * same run ends the model phase early and keeps its reserve for the work after
+ * it. With no deadline the budget is unchanged.
+ */
+export function writerBudgetWithin(budget: ProposalExecutionBudget, deadlineAt?: number, now: number = Date.now()): number {
+  if (typeof deadlineAt !== "number" || !Number.isFinite(deadlineAt)) return budget.budgetMs;
+  return Math.max(5_000, Math.min(budget.budgetMs, deadlineAt - now - budget.reserveSeconds * 1_000));
+}

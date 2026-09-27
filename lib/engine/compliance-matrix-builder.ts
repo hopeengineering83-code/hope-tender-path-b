@@ -31,6 +31,7 @@
  * decide whether to append.
  */
 
+import { isStrongSupportLevel, normalizeSupportLevel } from "./requirement-evidence-profile";
 import { clientSafeComplianceEvidence } from "./automatic-requirement-coverage";
 type RequirementLite = {
   id?: string | null;
@@ -108,7 +109,7 @@ function inferProposalLocation(req: RequirementLite): string {
   if (/safeguard|esmp|environmental|social/.test(text))
     return "Section C.2 Methodology + C.5 Risk Register";
   if (/photo|drawing|floor plan/.test(text))
-    return "Appendix D Project Photos and Drawings";
+    return "Section B.2 Project Portfolio";
   // No annex: the proposal has none, and the column promised one to every
   // requirement the keyword map could not place (2026-09-27).
   return "Sections A–D";
@@ -122,6 +123,12 @@ function inferProposalLocation(req: RequirementLite): string {
  */
 function statusFromSupportLevel(supportLevel?: string | null): "FULLY MET" | "PARTIALLY MET" | "NOT MET" {
   const v = (supportLevel ?? "").toUpperCase().trim();
+  // One definition of "met": the engine's. SUBSTANTIAL is strong support
+  // everywhere else (export readiness, the readiness model's FULLY_MET), and
+  // printing it here as PARTIALLY MET told the evaluator that 5 of the 7
+  // requirements the app itself rated met were only partly answered
+  // (2026-09-27, accept run 36339908536).
+  if (isStrongSupportLevel(normalizeSupportLevel(v))) return "FULLY MET";
   if (v.includes("FULL") || v.includes("STRONG") || v === "YES" || v === "MET") return "FULLY MET";
   if (v.includes("NONE") || v.includes("MISSING") || v.includes("GAP") || v.includes("WEAK") || v.includes("NO ") || v === "NO" || v === "NOT") return "NOT MET";
   // Default to PARTIALLY MET for PARTIAL / unspecified — the intake's default
@@ -182,6 +189,7 @@ export function buildComplianceMatrixSection(input: ComplianceMatrixBuilderInput
   let mandatoryFullyMet = 0;
   let mandatoryPartiallyMet = 0;
   let mandatoryNotMet = 0;
+  let rowsWithoutMitigation = 0;
 
   sorted.forEach((req, idx) => {
     const baseReqText = (req.title || (req.description ?? "").slice(0, 220)).trim();
@@ -230,9 +238,10 @@ export function buildComplianceMatrixSection(input: ComplianceMatrixBuilderInput
           ? `${evidenceCell}. Mitigation: ${mitigation}`
           : `Mitigation: ${mitigation}`;
       }
-      if (!evidenceCell) {
-        evidenceCell = "Bid-Team Action: confirm evidence and attach supporting document before submission.";
-      }
+      // Counted so the introduction only promises a mitigation every such row
+      // carries. The "Bid-Team Action: confirm evidence" text that stood here
+      // was deleted with its whole row by the final bid-team sweep.
+      if (!mitigation) rowsWithoutMitigation += 1;
     }
     if (!evidenceCell) evidenceCell = "Cross-referenced in proposal narrative";
 
@@ -252,14 +261,15 @@ export function buildComplianceMatrixSection(input: ComplianceMatrixBuilderInput
   if (rows.length === 0) return null;
 
   const totalMandatory = mandatoryFullyMet + mandatoryPartiallyMet + mandatoryNotMet;
+  const mitigationNote = rowsWithoutMitigation === 0 ? " (mitigation stated in the row)" : "";
   const summaryLine = totalMandatory > 0
-    ? `**Mandatory requirements**: ${totalMandatory} total — ${mandatoryFullyMet} fully met${mandatoryPartiallyMet > 0 ? `, ${mandatoryPartiallyMet} partially met (mitigation stated in the row)` : ""}${mandatoryNotMet > 0 ? `, ${mandatoryNotMet} not met (mitigation stated in the row)` : ""}.`
+    ? `**Mandatory requirements**: ${totalMandatory} total — ${mandatoryFullyMet} fully met${mandatoryPartiallyMet > 0 ? `, ${mandatoryPartiallyMet} partially met${mitigationNote}` : ""}${mandatoryNotMet > 0 ? `, ${mandatoryNotMet} not met${mitigationNote}` : ""}.`
     : `**${rows.length} requirements** mapped to proposal sections with evidence anchors and compliance status.`;
 
   return [
     "# SECTION E: COMPLIANCE MATRIX",
     "",
-    "Every mandatory and scored requirement detected during tender analysis is mapped below to the proposal section that addresses it, the supporting evidence anchor, and a compliance status. NOT MET and PARTIALLY MET rows include a mitigation plan in the evidence column.",
+    `Every mandatory and scored requirement detected during tender analysis is mapped below to the proposal section that addresses it, the supporting evidence anchor, and a compliance status.${rowsWithoutMitigation === 0 ? " NOT MET and PARTIALLY MET rows include a mitigation plan in the evidence column." : ""}`,
     "",
     summaryLine,
     "",
@@ -267,6 +277,6 @@ export function buildComplianceMatrixSection(input: ComplianceMatrixBuilderInput
     "|---|---|---|---|---|",
     ...rows,
     "",
-    "_Compliance Status: FULLY MET = evidence directly satisfies the requirement; PARTIALLY MET = partially satisfies, mitigation provided; NOT MET = cannot meet as stated, credible mitigation proposed._",
+    "_Compliance Status: FULLY MET = the evidence satisfies the requirement; PARTIALLY MET = the evidence satisfies it in part; NOT MET = cannot be met as stated._",
   ].join("\n");
 }

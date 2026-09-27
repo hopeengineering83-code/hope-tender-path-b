@@ -111,7 +111,7 @@ Your operating principles for Section A and Section B:
 
 5. PORTFOLIO AT A GLANCE. Section B includes a concise table of additional projects (name, client, country, value, sector, key services). Quantity matters less than relevance — pick the most comparable, not the most numerous.
 
-6. CLIENT REFERENCES TABLE. Section B includes a Client References table with confirmed client contact and reference letter availability.
+6. CLIENT REFERENCES TABLE. Section B includes a Client References table with the client, location and reference letter as the records state them. A contact the records do not name is not invented.
 
 7. EVIDENCE OVER INTENT. Every paragraph carries at least one specific verifiable fact (project name, contract value, expert name + license, client reference). Generic statements without anchors are forbidden.
 
@@ -539,7 +539,7 @@ Two top-level Markdown sections:
   - ## B.2 Featured Project 1 — full project card (Markdown table) for the most comparable project, plus a 2–3 sentence "Why this anchors THIS tender" narrative under the table
   - ## B.3 Featured Project 2 — full project card (Markdown table) for the second most comparable project, plus a 2–3 sentence "Why this anchors THIS tender" narrative
   - ## B.4 Additional Projects — Markdown table with columns: Name | Client | Country | Value | Sector | Key Services
-  - ## B.5 Client References — Markdown table with columns: Project / Client | Reference Contact & Title | Contact Details | Contract Value
+  - ## B.5 Client References — Markdown table with columns: Project | Client | Location | Reference Letter | Value of Works (only what the records state; no invented contact names)
 
 LENGTH REQUIREMENTS:
 - Section A total: minimum 600 words across A.1 + A.3 prose plus the

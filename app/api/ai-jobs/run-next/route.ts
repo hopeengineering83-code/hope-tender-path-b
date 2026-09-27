@@ -186,7 +186,9 @@ export async function POST(req: Request) {
         jobId: claimed.id,
         userId: claimed.userId,
         tenderId: claimed.tenderId,
-        input: { ...claimed.input, retryCount: claimed.retries, deadlineMs: handlerBudgetMs, absoluteDeadline },
+        // platformDeadlineAt is when the platform ends this invocation
+        // (maxDuration), later than the claim loop's own absoluteDeadline.
+        input: { ...claimed.input, retryCount: claimed.retries, deadlineMs: handlerBudgetMs, absoluteDeadline, platformDeadlineAt: startTime + maxDuration * 1000 },
       });
       if (isTerminalHandlerResult(result)) {
         if (
