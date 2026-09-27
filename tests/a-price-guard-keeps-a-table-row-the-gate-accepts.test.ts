@@ -46,9 +46,20 @@ describe("the price guard keeps a table row the export gate accepts", () => {
     assert.equal(dataRows(enforceTechnicalPriceSeparation(table, technicalOnly)).length, 1);
   });
 
+  it("keeps a reference row the gate refuses, with only its amount blanked", () => {
+    // The accept run after the first fix: B.1 kept 1 of its 3 references,
+    // because the rows the gate reads as a price were dropped whole.
+    const refused = buildClientReferencesTable([
+      { id: "p2", name: "G+6 General Hospital – Dr Abdul Seid", clientName: "Gimba City, South Wollo Zone, Amhara Region", country: "Ethiopia", contractValue: 550_074_678, currency: "ETB", sector: "Healthcare", serviceAreas: [], summary: "" },
+    ] as never[]);
+    const rows = dataRows(enforceTechnicalPriceSeparation(refused, technicalOnly));
+    assert.equal(rows.length, 1);
+    assert.match(rows[0], /G\+6 General Hospital/);
+  });
+
   it("still removes a row offering this bid's price", () => {
     const table = "| Item | Value |\n|---|---|\n| Our fee for this assignment | USD 250,000 |";
-    assert.equal(dataRows(enforceTechnicalPriceSeparation(table, technicalOnly)).length, 0);
+    assert.doesNotMatch(enforceTechnicalPriceSeparation(table, technicalOnly), /250,000/);
     assert.doesNotMatch(enforceTechnicalPriceSeparation("| 1 | Our fee is USD 20,000 |", technicalOnly), /20,000/);
   });
 

@@ -88,8 +88,17 @@ export function enforceTechnicalPriceSeparation(markdown: string, input: Evaluat
       // team-mapping and client-reference tables, all looked like a price:
       // on 2026-09-27 A.4 and B.1 reached the client as headers with no rows,
       // and the QA checklist skipped row 4, in a document the gate scored 100.
-      if (/^\s*\|/.test(line)) return !containsPricingLeakage(tableRowAsRead(line), TECHNICAL_ENVELOPE);
+      if (/^\s*\|/.test(line)) return true;
       return !containsCommercialAmount(line);
+    })
+    // A row the gate would refuse keeps its other cells: only a cell holding
+    // an amount is blanked, and the row goes only if it still reads as a
+    // price. Dropping the whole row left B.1 with one of its three references.
+    .flatMap((line) => {
+      if (!/^\s*\|/.test(line) || !containsPricingLeakage(tableRowAsRead(line), TECHNICAL_ENVELOPE)) return [line];
+      const cells = line.split("|");
+      const blanked = cells.map((cell, index) => (index > 0 && index < cells.length - 1 && containsCommercialAmount(cell) ? " — " : cell)).join("|");
+      return containsPricingLeakage(tableRowAsRead(blanked), TECHNICAL_ENVELOPE) ? [] : [blanked];
     })
     .join("\n")
     .trim();
