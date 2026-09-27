@@ -23,6 +23,7 @@
  */
 
 import { recordedProjectServices } from "./project-fact-extractor";
+import { licencesNamedInCv } from "./cv-grounding";
 import { CLIENT_FACING_SECTION_F_HEADING, SECTION_F_HEADING_RX } from "./client-facing-section-titles";
 
 type EvaluationWeightLite = { criterion: string; weight: string; rawMatch: string };
@@ -122,8 +123,11 @@ function registrationOf(e: NonNullable<EvaluatorMirrorBuilderInput["experts"]>[n
   }
   const first = stored.find((v) => v.length > 2 && !/^(?:[-—–]+|n\/?a|none|not\s+stated)$/i.test(v));
   if (first) return first;
-  const inCv = (e.profile ?? "").match(/\(([A-Z]{2,6}\/\d{2,6})\)|\bReg(?:istration)?\.?\s*No\.?\s*:?\s*([A-Z]{2,6}\/\d{2,6})/);
-  return inCv ? (inCv[1] ?? inCv[2] ?? null) : null;
+  // The CV is read by the same authority the Executive Summary, cover letter
+  // and team table use. A narrower pattern of its own counted 3 registered
+  // experts here while the rest of the proposal counted 4 (2026-09-27).
+  const inCv = licencesNamedInCv(e.profile)[0];
+  return inCv ? (inCv.match(/Reg\. No\. (\S+)$/)?.[1] ?? inCv) : null;
 }
 
 /**

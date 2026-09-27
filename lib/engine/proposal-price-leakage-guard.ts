@@ -1,6 +1,9 @@
 import type { EvaluatorMatrixInput } from "./proposal-evaluator-matrix";
 import { buildTenderFormStrategy } from "./tender-form-strategy";
 import { statesFinancialSeparation } from "./financial-separation-rule";
+import { containsPricingLeakage } from "./pricing-hygiene";
+
+const TECHNICAL_ENVELOPE = { name: "Technical Proposal", exactFileName: "Technical Proposal.docx", documentType: "TECHNICAL_PROPOSAL", format: "DOCX" } as const;
 
 function clean(value?: string | null): string {
   return (value ?? "").replace(/[\u0000-\u001F\u007F]/g, " ").replace(/\s+/g, " ").trim();
@@ -42,6 +45,10 @@ function containsCommercialAmount(line: string): boolean {
   return currencyAmount || pricedTermWithNumber || numberWithPricedTerm;
 }
 
+function tableRowAsRead(row: string): string {
+  return row.split("|").map((cell) => cell.trim()).filter(Boolean).join(", ");
+}
+
 function containsCommercialCommitment(line: string): boolean {
   const value = clean(line);
   if (!value || isAllowedControlLine(value)) return false;
@@ -73,7 +80,17 @@ export function enforceTechnicalPriceSeparation(markdown: string, input: Evaluat
 
   return markdown
     .split("\n")
-    .filter((line) => !containsCommercialAmount(line) && !containsCommercialCommitment(line))
+    .filter((line) => {
+      if (containsCommercialCommitment(line)) return false;
+      // A table row is judged the way the export gate reads it, cell by cell
+      // in its row. Read as one line, the row number beside "BOQ" in a QA
+      // checklist, and a past project's labelled construction value in the
+      // team-mapping and client-reference tables, all looked like a price:
+      // on 2026-09-27 A.4 and B.1 reached the client as headers with no rows,
+      // and the QA checklist skipped row 4, in a document the gate scored 100.
+      if (/^\s*\|/.test(line)) return !containsPricingLeakage(tableRowAsRead(line), TECHNICAL_ENVELOPE);
+      return !containsCommercialAmount(line);
+    })
     .join("\n")
     .trim();
 }

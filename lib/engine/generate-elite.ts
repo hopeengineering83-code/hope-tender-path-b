@@ -3854,7 +3854,10 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
   // the exact markdown that will be rendered; this removes leakage rather
   // than weakening the validator that detects it.
   noteSectionCLoss("the quality-repair addenda", workingMarkdown);
-  workingMarkdown = enforceTechnicalPriceSeparation(workingMarkdown, evaluatorMatrixInput);
+  // The vocabulary rewrites run first: a line they neutralise ("BOQ" becomes
+  // "quantity schedules") is kept rather than deleted. Run after the guard,
+  // they arrived too late for the QA checklist's "Documentation QA" row, whose
+  // row number beside "BOQ" read as a price, so the client saw rows 1-3 and 5-7.
   workingMarkdown = workingMarkdown
     .replace(/\b(?:preliminary\s+)?cost\s+estimate(?:s)?\b/gi, "design quantity and resource schedule")
     .replace(/\b(?:bill of quantities|boq)\b/gi, "quantity schedules")
@@ -3880,6 +3883,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
     .replace(/\bprice\s+schedule\b/gi, "resource schedule")
     .replace(/\btax\s+rate\b/gi, "regulatory requirement")
     .replace(VAT_RATE_MENTION, "tax compliance");
+  workingMarkdown = enforceTechnicalPriceSeparation(workingMarkdown, evaluatorMatrixInput);
 
   workingMarkdown = workingMarkdown
     .replace(/\b(?:the\s+)?same\s+project\s+team\b[^.!?]*(?:[.!?]|$)/gi, "")

@@ -83,6 +83,8 @@ function inferProposalLocation(req: RequirementLite): string {
   const text = `${req.title ?? ""} ${req.description ?? ""}`.toLowerCase();
   const type = (req.requirementType ?? "").toUpperCase();
 
+  if (/^\s*(?:a\s+)?cover(?:ing)?\s+letter\b/.test(text))
+    return "Cover Letter";
   if (type === "EXPERT" || /expert|cv|curriculum vitae|key personnel|team composition|qualifications/.test(text))
     return "Section A.4 Proposed Project Team";
   if (type === "PROJECT_EXPERIENCE" || /project.*experience|similar.*project|portfolio|reference|testimony/.test(text))
@@ -107,7 +109,9 @@ function inferProposalLocation(req: RequirementLite): string {
     return "Section C.2 Methodology + C.5 Risk Register";
   if (/photo|drawing|floor plan/.test(text))
     return "Appendix D Project Photos and Drawings";
-  return "Section A–D (cross-referenced in proposal annex)";
+  // No annex: the proposal has none, and the column promised one to every
+  // requirement the keyword map could not place (2026-09-27).
+  return "Sections A–D";
 }
 
 /**

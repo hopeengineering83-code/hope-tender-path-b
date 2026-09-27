@@ -470,7 +470,7 @@ function buildRACITable(experts: ExpertRecord[]): string {
     "| Client coordination and reporting | R | C | I | I | A |",
     "| Risk register maintenance | A | R | C | C | I |",
     "| Stakeholder consultation | A | R | C | I | C |",
-    "| Final issuance and handover | A | R | C | R | A |",
+    "| Final issuance and handover | A | R | C | R | C |",
   ];
   return [
     `<!-- methodology-table:raci -->`,
