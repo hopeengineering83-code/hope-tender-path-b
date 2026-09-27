@@ -115,3 +115,21 @@ AI Analyze and Run Engine stay manual owner gates (CLAUDE.md). When the owner
 explicitly asks Claude to run them, use `confirm=accept` with `tender_id`: it
 signs in as the owner and runs AI Analyze → Run Engine → ZIP → byte
 inspection. Follow it with `confirm=inspect` for authorship.
+
+## D. "Run Engine" greyed out under "AI Analyze is not in a release-ready state (current: RUNNING)"
+
+**Diagnose first, from the server, not the screenshot:** Vercel runtime logs for
+`/api/ai-jobs` (look for `[finalizeJob] job=… status=SUCCESS`), then
+`confirm=inspect` and read `ENGINE READINESS`. If it says
+`analysisCurrent: true`, `canRunEngine: true`, the server is ready and the page
+is showing a stale answer.
+
+2026-09-27 instance: the owner opened the tender while their AI Analyze was
+running (job `348a8cd6`, 11:04→11:05:04 SUCCESS). The Run Engine panel read
+readiness once on mount and never re-asked, so the button stayed grey until a
+reload. Fixed: the panel now re-checks every 3 s while the analysis is QUEUED
+or RUNNING (`components/matching-selected-evidence-panel.tsx`, test
+`tests/an-analysis-in-flight-does-not-lock-run-engine.test.ts`). On older
+deployments the workaround is a page reload. The earlier cousin (2026-09-23,
+"Engine readiness could not be verified … Failed to fetch") is fixed the same
+way for a failed check.

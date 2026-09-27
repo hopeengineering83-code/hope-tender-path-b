@@ -246,6 +246,23 @@ export function MatchingSelectedEvidencePanel({
     return () => window.clearInterval(timer);
   }, [loadReadiness, readiness?.engineRunning]);
 
+  // An AI Analyze still in flight must not lock Run Engine for the life of the
+  // page either. Readiness was read once on mount; a page opened while the
+  // owner's AI Analyze was running (2026-09-27, "AI Analyze is not in a
+  // release-ready state (current: RUNNING)") kept that answer after the job
+  // succeeded a minute later, and Run Engine stayed grey until a full reload.
+  // While the analysis is QUEUED or RUNNING, ask again on the fast cadence;
+  // it stops by itself once the analysis settles.
+  const analysisInFlight = Boolean(readiness && !readiness.analysisCurrent
+    && /\(current: (?:QUEUED|RUNNING)\)/.test(readiness.analysisBlocker ?? ""));
+  useEffect(() => {
+    if (!analysisInFlight || deletedRef.current) return;
+    const timer = window.setInterval(() => {
+      if (!document.hidden) void loadReadiness();
+    }, POLL_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [loadReadiness, analysisInFlight]);
+
   // A failed readiness check must not lock Run Engine for the life of the page.
   //
   // The check ran once on mount and again only while an Engine job was in
