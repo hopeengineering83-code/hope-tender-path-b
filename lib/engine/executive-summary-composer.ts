@@ -280,8 +280,11 @@ export function composeExecutiveSummary(input: ExecutiveSummaryInput): string {
     teamParagraph(input),
     approachParagraph(input),
     standingParagraph(input),
+    // Section F lists the tender's required contents as well as its scored
+    // criteria, so a count of criteria alone ("5 evaluation criteria" above an
+    // eight-row table) contradicted the table the sentence points to.
     input.evaluationCriteriaCount > 0
-      ? `Section F sets each of the tender's ${input.evaluationCriteriaCount} evaluation criteria beside the section and the evidence that answer it.`
+      ? "Section F sets each of the tender's evaluation criteria and required contents beside the section and the evidence that answer it."
       : "",
   ].filter(Boolean);
   const whyUs = thesis(input, items);

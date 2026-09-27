@@ -54,6 +54,11 @@ export const METADATA_PLACEHOLDER_PATTERNS: RegExp[] = [
 /** Placeholder markers with no innocent reading — match anywhere in prose. */
 export const ALWAYS_PLACEHOLDER_PATTERNS: RegExp[] = [
   /\bbid[\s-]?team\s+to\s+confirm\b/i,
+  // What a "TBD" becomes after the finishing passes: normalizeWeakText writes
+  // "to be confirmed by bid team" and cleanClientLanguage turns "bid team" into
+  // "proposal team". A hosted package printed it as the role of all eight
+  // experts and passed this gate, which knew only the first wording.
+  /\bto\s+be\s+confirmed\s+by\s+(?:the\s+)?(?:proposal|bid)[\s-]?team\b/i,
   /\b(?:tbd|tbc|tba)\b/i,
   /\bplaceholder\b/i,
   /\b(?:insert|add|fill)\b.{0,40}\b(?:here|later|manually)\b/i,

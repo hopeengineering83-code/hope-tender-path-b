@@ -284,7 +284,11 @@ export function buildTeamToProjectMappingTable(experts: ExpertRecord[], projects
     // "Ref: …/1591/18 Date: 19/01/2018 E.C. Author: Tariku Abebaw (Building
     // Officer, Gimba…" reached a client-facing cell. That is provenance the app
     // keeps to prove the record, not a technical contribution.
-    const contribution = truncateAtWordBoundary(withoutSourceProvenance(matchedProject.summary), 200) ||
+    // A summary copied from a numbered list keeps its item number ("14 G+6
+    // General Hospital – …"); the number is the source list's, not the project's.
+    const summary = withoutSourceProvenance(matchedProject.summary).replace(/^\s*\d{1,3}[.)]?\s+(?=\S)/, (lead, offset, whole: string) =>
+      whole.slice(lead.length).startsWith(matchedProject.name.trim().slice(0, 12)) ? "" : lead);
+    const contribution = truncateAtWordBoundary(summary, 200) ||
       `${safeArr(expert.disciplines).join(", ") || "Discipline-led"} contribution covering ${safeArr(matchedProject.serviceAreas).join(", ") || matchedProject.sector || "scope-relevant works"}.`;
 
     return [`| ${escCell(`${expert.fullName}, ${expert.title || "Specialist"}`)} | ${escCell(previousRole)} | ${escCell(projectLabel)} | ${escCell(contribution)} |`];

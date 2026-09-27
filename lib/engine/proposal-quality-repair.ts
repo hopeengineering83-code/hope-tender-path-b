@@ -24,7 +24,16 @@ function hasHeading(markdown: string, pattern: RegExp): boolean {
   return pattern.test(markdown);
 }
 
-function statusForRequirement(requirement: string, support: string): "FULLY MET" | "PARTIALLY MET" | "NOT MET" {
+// A requirement for attached documents (annexes, copies of certificates, CVs
+// as supporting documents) is answered by the attachments, not by the
+// proposal's text. The package carries no annex -- the proposal offers the
+// documents on request -- so such a row is at most partly met. A hosted
+// matrix rated "Annexes / Supporting Documents" FULLY MET beside evidence
+// reading "partially evidenced from proposal narrative".
+const ATTACHMENT_REQUIREMENT = /\b(?:annex(?:es|ure)?|appendi(?:x|ces)|attach(?:ed|ment)s?|supporting\s+documents?|copies\s+of)\b/i;
+
+export function statusForRequirement(requirement: string, support: string): "FULLY MET" | "PARTIALLY MET" | "NOT MET" {
+  if (support === "DIRECT" && ATTACHMENT_REQUIREMENT.test(requirement)) return "PARTIALLY MET";
   if (support === "DIRECT") return "FULLY MET";
   if (support === "PARTIAL") return "PARTIALLY MET";
   if (/mandatory|shall|must|required|eligib/i.test(requirement)) return "NOT MET";

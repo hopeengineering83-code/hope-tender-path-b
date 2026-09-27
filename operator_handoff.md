@@ -207,6 +207,13 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-27 UTC — Claude Code (Run Engine greyed out after AI Analyze; remaining package items)
+
+- **Symptom (owner screenshot):** Run Engine disabled under "AI Analyze is not in a release-ready state (current: RUNNING)." **Diagnosed from the server:** Vercel logs show the owner's AI Analyze job `348a8cd6` dispatched 11:04:04 and `[finalizeJob] … status=SUCCESS` at 11:05:04; `confirm=inspect` run 36315212558 then read `ENGINE READINESS: analysisCurrent: true, canRunEngine: true`, next action `RUN_ENGINE`. The server was ready; the page was stale. **Root cause:** the Run Engine panel read `/engine-readiness` once on mount and re-asked only while an Engine job ran or after a failed check, so a page opened during the analysis kept "RUNNING" until a reload. **Fix (`a6bc66ef`):** re-check every 3 s while the analysis is QUEUED/RUNNING (hidden tab skipped; stops when it settles; still fail-closed). Runbook section D added. Test: `tests/an-analysis-in-flight-does-not-lock-run-engine.test.ts`.
+- **Remaining items from 2026-09-26, fixed:** (1) the final gate now refuses "to be confirmed by (the) proposal/bid team" (what a TBD becomes after `normalizeWeakText` + `cleanClientLanguage`); (2) A.3's contribution cell drops a source list number that precedes the project name ("14 G+6 …"); (3) Section E never rates an attachment requirement (annexes, supporting documents, copies of …) FULLY MET — the package carries no annex; (4) the Executive Summary no longer says "Section F sets each of the tender's N evaluation criteria" above a Section F that also lists required contents. Tests: `a-rewritten-tbd-is-still-a-placeholder`, `a-source-list-number-is-not-part-of-the-contribution`, `the-compliance-matrix-does-not-overstate` (each fails on the old code). Gate: `tsc`/`lint`/`diff --check` clean; `npm test` with `RUN_DB_INTEGRATION=true` **12643 / 12643 pass, 0 skipped**; `next build` exit 0.
+- **Still open:** model-written Section C can state unverified specifics (no source check for methodology prose); Section E "Where addressed" names destinations that are not the document's headings; Section B has no H1 on the model path.
+- **Merge status:** **DO NOT MERGE**.
+
 ### 2026-09-26 UTC (later) — Claude Code (sixth Preview database swap)
 
 - **Owner actions:** `PREVIEW_DATABASE_URL_MIGRATION` set to the unpooled Neon string, Vercel `DATABASE_URL` (Preview) set to the pooled string, Preview redeployed (`dpl_7aSXQCk4s5PadBGM7VMLjcsz9nFZ`, same head `ba1be6a4`).
