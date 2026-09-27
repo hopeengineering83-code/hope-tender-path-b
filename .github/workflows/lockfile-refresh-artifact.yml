@@ -1461,6 +1461,42 @@ jobs:
           PYEOF
         continue-on-error: true
 
+      - name: Print every currency amount in the refused document, with its lines
+        if: env.NO_TENDER != '1'
+        run: |
+          # PRICING_LEAKAGE names only the amount ("ETB 550.1M"), and a refused
+          # DOCX never reaches the PDF step that prints fragments. Read-only: GET
+          # the current final-export candidate and print each amount with the
+          # line before and after it, which is what the rule judged.
+          curl -sS --connect-timeout 15 --max-time 60 -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/admin/generated-proposals/audit?tenderId=$TENDER_ID&includeReady=true" -o /tmp/audit-amounts.json || true
+          doc=$(python3 -c "import json;d=json.load(open('/tmp/audit-amounts.json'));r=[x for x in d.get('documents',[]) if x.get('finalExportCandidate')];print(r[0]['documentId'] if r else '')" 2>/dev/null || true)
+          if [ -z "$doc" ]; then echo "CURRENCY AMOUNTS: no final-export candidate"; exit 0; fi
+          curl -sS --connect-timeout 15 --max-time 90 -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/tenders/$TENDER_ID/download?docId=$doc" -o /tmp/doc-amounts.bin || true
+          python3 - <<'PYEOF'
+          import io, re, zipfile
+          raw = open('/tmp/doc-amounts.bin', 'rb').read()
+          try:
+              xml = zipfile.ZipFile(io.BytesIO(raw)).read('word/document.xml').decode('utf-8')
+          except Exception as error:
+              print(f"CURRENCY AMOUNTS: document not readable as DOCX ({error}); first bytes: {raw[:200]!r}")
+              raise SystemExit(0)
+          # One line per paragraph -- the same shape the gate reads.
+          lines = []
+          for para in re.findall(r'<w:p[ >].*?</w:p>', xml, re.S):
+              line = ''.join(re.findall(r'<w:t(?: [^>]*)?>([^<]*)</w:t>', para)).strip()
+              if line:
+                  lines.append(line)
+          print(f"CURRENCY AMOUNTS ({len(lines)} paragraphs)")
+          rx = re.compile(r'\b(?:ETB|USD|EUR|GBP|Birr)\s?[\d.,]+\s?[MBK]?\b', re.I)
+          for i, line in enumerate(lines):
+              if rx.search(line):
+                  print('---')
+                  for j in range(max(0, i - 2), min(len(lines), i + 3)):
+                      print(('>> ' if j == i else '   ') + lines[j][:300])
+          PYEOF
+
       - name: Run the live provider chain test and print WHY each one failed
         run: |
           # Same call the "Test provider chain" button makes -- the only surface
