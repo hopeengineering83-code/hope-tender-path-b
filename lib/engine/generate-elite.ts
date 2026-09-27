@@ -2717,26 +2717,28 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
   // builder is idempotent — its has*Heading guard returns null when the
   // upstream output already produced an equivalent heading.
   const upstreamMarkdownForBackstops = `${matrixMarkdown}\n${strengtheningMarkdown}\n${benchmarkTables}\n${round2Sections.join("\n")}`;
+  const complianceMatrixInput = {
+    requirements: tender.requirements,
+    matrixRows: tender.complianceMatrix,
+    gaps: tender.complianceGaps,
+  };
+  const evaluatorMirrorInput = {
+    evaluationCriteria: intelligence.evaluationCriteria,
+    evaluationWeights: intelligence.evaluationWeights,
+    topProjectName: (projects as ProjectRecord[])[0]?.name ?? null,
+    topExpertName: (experts as ExpertRecord[])[0]?.fullName ?? null,
+    primarySector: intelligence.primarySector,
+    requirements: tender.requirements,
+    projects: projects as ProjectRecord[],
+    experts: experts as ExpertRecord[],
+    scopeItemCount: extractScopeItems(tenderText).length,
+    submission: { fileNames: safeParseArr(tender.exactFileNaming), method: writerTender.submissionMethod },
+  };
   const deterministicComplianceMatrix = !hasComplianceMatrixHeading(upstreamMarkdownForBackstops)
-    ? buildComplianceMatrixSection({
-        requirements: tender.requirements,
-        matrixRows: tender.complianceMatrix,
-        gaps: tender.complianceGaps,
-      })
+    ? buildComplianceMatrixSection(complianceMatrixInput)
     : null;
   const deterministicEvaluatorMirror = !hasEvaluatorMirrorHeading(upstreamMarkdownForBackstops)
-    ? buildEvaluatorMirrorSection({
-        evaluationCriteria: intelligence.evaluationCriteria,
-        evaluationWeights: intelligence.evaluationWeights,
-        topProjectName: (projects as ProjectRecord[])[0]?.name ?? null,
-        topExpertName: (experts as ExpertRecord[])[0]?.fullName ?? null,
-        primarySector: intelligence.primarySector,
-        requirements: tender.requirements,
-        projects: projects as ProjectRecord[],
-        experts: experts as ExpertRecord[],
-        scopeItemCount: extractScopeItems(tenderText).length,
-        submission: { fileNames: safeParseArr(tender.exactFileNaming), method: writerTender.submissionMethod },
-      })
+    ? buildEvaluatorMirrorSection(evaluatorMirrorInput)
     : null;
   // No deterministic Section G. Its rows restated the differentiators the
   // cover letter, Executive Summary and Section D already carry, and each row
@@ -3817,6 +3819,27 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
       logger.info(`[generate-elite] Post-refinement placeholder stripper: removed ${reStripPlaceholders.removedLines} line(s), ${reStripPlaceholders.removedParagraphs} paragraph(s); blanked ${reStripPlaceholders.blankedCells} table cell(s).`);
     }
     workingMarkdown = reStripPlaceholders.markdown;
+  }
+
+  // A Section E or F lost on the way here (a model-written one dropped by a
+  // later pass) is restored from the canonical builders — the engine's own
+  // support levels, the tender's evaluation criteria, destinations the
+  // structure seal can resolve — before the repair addenda's last-resort
+  // versions are considered. On 2026-09-27 (accept run 36345246843) the
+  // model-path proposal shipped the addenda's matrix instead: destinations
+  // named after the writer's internal plan ("Relevant Experience and Project
+  // References", "Commercial / Financial Proposal Controls"), a Cover Letter
+  // "evidenced" by a hospital project card, and requirements listed as
+  // evaluation criteria.
+  // Heading-only, as the addenda test it: a hollow "Compliance Matrix"
+  // heading must not end up with a second matrix beside it.
+  if (!/(^|\n)\s*#{1,4}\s*(?:section\s*[E:.\-\s]*)?\s*compliance\s+matrix/i.test(workingMarkdown)) {
+    const restoredMatrix = buildComplianceMatrixSection(complianceMatrixInput);
+    if (restoredMatrix) workingMarkdown = `${workingMarkdown.trim()}\n\n${restoredMatrix}`;
+  }
+  if (!hasEvaluatorMirrorHeading(workingMarkdown)) {
+    const restoredMirror = buildEvaluatorMirrorSection(evaluatorMirrorInput);
+    if (restoredMirror) workingMarkdown = `${workingMarkdown.trim()}\n\n${restoredMirror}`;
   }
 
   // Apply deterministic quality repair addenda (compliance matrix, evaluator mirror,

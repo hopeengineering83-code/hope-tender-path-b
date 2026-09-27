@@ -21,6 +21,7 @@ import { pricingLeakageFinding } from "../lib/engine/pricing-hygiene";
 import { sealDocumentStructure } from "../lib/engine/document-structure-seal";
 import { buildComplianceMatrixSection } from "../lib/engine/compliance-matrix-builder";
 import { resolveProposalExecutionBudget, writerBudgetWithin } from "../lib/ai-runtime-capability";
+import { statusForRequirement } from "../lib/engine/proposal-quality-repair";
 
 const technical = { name: "Technical Proposal", exactFileName: "Technical Proposal.docx", documentType: "TECHNICAL_PROPOSAL", format: "DOCX" } as never;
 const asRead = (row: string) => row.split("|").map((c) => c.trim()).filter(Boolean).join(", ");
@@ -83,5 +84,22 @@ describe("the four remaining package gaps", () => {
     const handler = readFileSync("lib/ai-job-handlers-legacy.ts", "utf8");
     assert.match(handler, /generateTenderDocuments\(ctx\.tenderId, ctx\.userId, \{ execution: "durable-worker", deadlineAt: platformDeadlineAt \}\)/);
     assert.match(readFileSync("app/api/ai-jobs/run-next/route.ts", "utf8"), /platformDeadlineAt: startTime \+ maxDuration \* 1000/);
+  });
+
+  it("a lost Section E or F is restored from the canonical builders, not the last-resort addenda", () => {
+    // Accept run 36345246843 (model path) shipped the addenda's matrix:
+    // destinations named after the writer's internal plan, a cover letter
+    // "evidenced" by a project card, requirements listed as criteria.
+    const source = readFileSync("lib/engine/generate-elite.ts", "utf8");
+    const restore = source.indexOf("buildComplianceMatrixSection(complianceMatrixInput);\n    if (restoredMatrix)");
+    const mirror = source.indexOf("buildEvaluatorMirrorSection(evaluatorMirrorInput);\n    if (restoredMirror)");
+    const addenda = source.indexOf("applyProposalQualityRepairAddenda(workingMarkdown, evaluatorMatrixInput)");
+    assert.ok(restore > 0 && mirror > 0 && addenda > 0);
+    assert.ok(restore < addenda && mirror < addenda, "canonical E/F are restored before the addenda run");
+  });
+
+  it("an attachment rule reads what the requirement is, not a word in its description", () => {
+    assert.equal(statusForRequirement("Technical Proposal PDF Submission — Submit one PDF containing the technical proposal and annexes.", "DIRECT"), "FULLY MET");
+    assert.equal(statusForRequirement("Annexes / Supporting Documents — copies of CVs and certificates.", "DIRECT"), "PARTIALLY MET");
   });
 });

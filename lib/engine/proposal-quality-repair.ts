@@ -33,7 +33,12 @@ function hasHeading(markdown: string, pattern: RegExp): boolean {
 const ATTACHMENT_REQUIREMENT = /\b(?:annex(?:es|ure)?|appendi(?:x|ces)|attach(?:ed|ment)s?|supporting\s+documents?|copies\s+of)\b/i;
 
 export function statusForRequirement(requirement: string, support: string): "FULLY MET" | "PARTIALLY MET" | "NOT MET" {
-  if (support === "DIRECT" && ATTACHMENT_REQUIREMENT.test(requirement)) return "PARTIALLY MET";
+  // Judged on what the requirement IS — its title, before " — description".
+  // "Technical Proposal PDF Submission — … containing the technical proposal
+  // and annexes" asks for a PDF, not for annexes, and was rated PARTIALLY MET
+  // beside evidence reading "fully evidenced" (accept run 36345246843).
+  const subject = requirement.split(/\s+[—–]\s+/)[0] ?? requirement;
+  if (support === "DIRECT" && ATTACHMENT_REQUIREMENT.test(subject)) return "PARTIALLY MET";
   if (support === "DIRECT") return "FULLY MET";
   if (support === "PARTIAL") return "PARTIALLY MET";
   if (/mandatory|shall|must|required|eligib/i.test(requirement)) return "NOT MET";
