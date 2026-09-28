@@ -452,12 +452,29 @@ jobs:
           started = os.environ['RUN_STARTED_AT']
           payload = json.load(open('/tmp/jobs-final.json', encoding='utf-8'))
           jobs = payload.get('jobs') or payload.get('data') or (payload if isinstance(payload, list) else [])
+          # errorMessage is the sanitised public text; a bare failure code
+          # reads there only as "did not satisfy a required precondition".
+          # The job's recorded steps name the gate that refused it.
+          import subprocess
+          def print_job_steps(job_id):
+              try:
+                  detail = json.loads(subprocess.run(
+                      ['curl', '-sS', '--connect-timeout', '15', '--max-time', '45',
+                       '-H', f"Cookie: hope_session={os.environ['SESSION_COOKIE']}",
+                       f"{os.environ['BASE_URL']}/api/ai-jobs/{job_id}"],
+                      capture_output=True, text=True, check=True).stdout).get('job') or {}
+              except Exception as exc:
+                  print(f"  steps of {job_id}: NOT READ ({exc})")
+                  return
+              for step in detail.get('steps') or []:
+                  print(f"  step {step.get('stepIndex')} {step.get('stepName')} {step.get('status')}: {step.get('message')}")
           failed = []
           for job in jobs:
               created = str(job.get('createdAt') or '')
               status = str(job.get('status') or '')
               if created >= started and status in ('FAILED', 'CANCELED'):
                   failed.append(f"{job.get('jobType')} {status} id={job.get('id')} created={created} error={job.get('errorMessage')}")
+                  print_job_steps(job.get('id'))
           for line in failed:
               print(line)
           if failed:
@@ -1255,7 +1272,7 @@ jobs:
             -H "Cookie: hope_session=$SESSION_COOKIE" \
             "$BASE_URL/api/ai-jobs?tenderId=$tid&take=25" > /tmp/ai-jobs.json || true
           python3 - <<'PYEOF' | tee /tmp/ai-analyze-failures.txt
-          import json
+          import json, os, subprocess
           try:
               jobs = json.load(open('/tmp/ai-jobs.json', encoding='utf-8')).get('jobs', [])
           except Exception as exc:
@@ -1270,6 +1287,19 @@ jobs:
                   print("    errorMessage (verbatim, server-redacted):")
                   for line in str(msg).splitlines() or [""]:
                       print(f"      {line}")
+              if j.get('status') in ('FAILED', 'CANCELED'):
+                  # The recorded steps name the gate behind a sanitised
+                  # "did not satisfy a required precondition".
+                  try:
+                      detail = json.loads(subprocess.run(
+                          ['curl', '-sS', '--connect-timeout', '15', '--max-time', '45',
+                           '-H', f"Cookie: hope_session={os.environ['SESSION_COOKIE']}",
+                           f"{os.environ['BASE_URL']}/api/ai-jobs/{j.get('id')}"],
+                          capture_output=True, text=True, check=True).stdout).get('job') or {}
+                      for step in detail.get('steps') or []:
+                          print(f"    step {step.get('stepIndex')} {step.get('stepName')} {step.get('status')}: {step.get('message')}")
+                  except Exception as exc:
+                      print(f"    steps: NOT READ ({exc})")
           PYEOF
 
       # WHY THIS EXISTS: a green acceptance run proves the pipeline completed,
