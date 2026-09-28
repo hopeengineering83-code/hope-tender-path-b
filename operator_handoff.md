@@ -207,6 +207,12 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-28 UTC — Claude Code (seventh Preview database swap; first run on a new tender)
+
+- **Database swap** handled per `docs/PREVIEW_RECOVERY_RUNBOOK.md` §A (pooled `87d2cb4dbb00` / direct `98cc7113c6b7`, provision run 36424118789, ready run 36424405702). The owner re-uploaded the vault and a new tender, `af05ad56-d282-45d9-a297-86a2311d105c`.
+- **Providers** (inspect run 36448773118): Groq and Z.ai are eligible for analysis, and Groq is verified for generation. The owner-actionable failures: Cerebras, OpenRouter, OpenAI, DeepSeek and Anthropic have no credit; Together returns 401 (invalid key). Gemini 503 is transient. Mistral and Z.ai generation hit 429 rate limits.
+- **Accept run 36449367347** (owner-authorized AI Analyze → Run Engine): READY, 0 blockers, `Technical Proposal.pdf score=100 PASSED`, 32 pages. One defect was found by reading the delivered text: Section E sent "Technical Proposal Submission" to "Section B.2 Project Portfolio", because its description mentions project experience. **Fix (`ea3f177e`):** `inferProposalLocation` now places a requirement by its title first, sends submission/format rules to the Cover Letter, and reads the description only when the title places nothing. Test: `tests/one-count-one-accountable-no-phantom-annex.test.ts` (fails without the fix). Gates: 12663/12663 with DB, tsc, lint, build.
+
 ### 2026-09-27 19:00 UTC — Claude Code (the four remaining package gaps)
 
 - **B.1 Client References** printed "<client> representative" as a reference contact nobody named, repeated country and client as "contact details", claimed "named contacts", and put the stored project value under "Contract Value" — a figure that on these records is the construction cost of the asset, and which the price gate refused when the client name was not on its organisation list ("Dessie City Admin", "Gimba City, …"), so it printed "—". **Fix:** the table is now Project | Client | Location | Reference Letter | Value of Works, every cell from the records (reference number/date/author/contact from the project's testimony evidence, else "Available on request"), the value labelled by its role as the portfolio cards do ("Construction value of works …", never a consultancy fee). No projects → no table (it used to print "Bid-Team Action" cells). Writer prompts updated to the same columns.
