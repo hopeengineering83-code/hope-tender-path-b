@@ -95,9 +95,22 @@ function inferProposalLocation(req: RequirementLite): string {
   // A keyword in the description decides only when the title matches nothing.
   return locationFromText(title, type)
     ?? locationFromText(`${title} ${(req.description ?? "").toLowerCase()}`, type)
+    // The requirement's type, when no keyword placed it: a METHODOLOGY
+    // requirement worded "Outline the approach to infection prevention and
+    // patient flow" is answered in Section C, not "Sections A–D" (2026-09-28).
+    ?? locationFromType(type)
     // No annex: the proposal has none, and the column promised one to every
     // requirement the keyword map could not place (2026-09-27).
     ?? "Sections A–D";
+}
+
+function locationFromType(type: string): string | null {
+  if (type === "METHODOLOGY" || type === "TECHNICAL") return "Section C.2 Technical Methodology";
+  if (type === "SCHEDULE") return "Section C.6 Work Plan and Schedule";
+  if (type === "COMPANY_PROFILE" || type === "ELIGIBILITY") return "Section A.1 Company Background";
+  if (type === "FORMAT" || type === "SUBMISSION_RULE") return "Cover Letter";
+  if (type === "DECLARATION") return "Declaration";
+  return null;
 }
 
 function locationFromText(text: string, type: string): string | null {
@@ -118,7 +131,7 @@ function locationFromText(text: string, type: string): string | null {
     return "Section C.6 Work Plan and Schedule";
   if (/value.*added|innovation|additional.*service/.test(text))
     return "Section D.2 Value-Added Services";
-  if (/registration|license|tin|vat|business.*reg|company.*profile/.test(text))
+  if (/registration|licen[cs]e|certificat|\btin\b|\bvat\b|business.*reg|company.*profile/.test(text))
     return "Section A.1 Company Background";
   if (/financial.*statement|audited.*account|turnover/.test(text))
     return "Appendix E (Audited Financial Statements)";
@@ -227,6 +240,19 @@ export function buildComplianceMatrixSection(input: ComplianceMatrixBuilderInput
       status = "PARTIALLY MET";
     } else {
       status = "NOT MET";
+    }
+    // A row whose evidence is the proposal's own narrative was rated before the
+    // proposal existed (the engine marks it "pending until generated"). Section
+    // E is read inside that proposal, where the response now stands at a named
+    // section, and the final readiness links the validated proposal to it at
+    // FULL. Printing PARTIALLY MET beside "Cover Letter" in the proposal's own
+    // matrix contradicted both (2026-09-28, accept run 36456526332). Only rows
+    // answered by the proposal alone, at a concrete destination, with no gap.
+    const answeredByThisProposal = matchingRows.length > 0
+      && matchingRows.every((r) => String(r.evidenceType ?? "").toUpperCase() === "PROPOSAL_RESPONSE");
+    if (status === "PARTIALLY MET" && answeredByThisProposal && proposalLocation !== "Sections A–D"
+      && ((reqId && gapsByReqId.get(reqId)) || []).length === 0) {
+      status = "FULLY MET";
     }
 
     // Evidence cell — concatenate up to 2 evidence sources.

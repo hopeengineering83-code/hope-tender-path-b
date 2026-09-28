@@ -84,3 +84,43 @@ describe("one registration count, one Accountable, no phantom annex", () => {
   });
 });
 
+
+describe("a requirement no keyword places is placed by its type", () => {
+  it("sends a methodology requirement to Section C and a certification to Section A", () => {
+    const md = buildComplianceMatrixSection({
+      requirements: [
+        { id: "r1", title: "Traffic Management Planning", description: "Outline how traffic is kept moving during construction.", requirementType: "METHODOLOGY", priority: "SCORED" },
+        { id: "r2", title: "Additional Information / Certifications", description: "Any certifications relevant to the works.", requirementType: "ANNEX", priority: "INFORMATIONAL" },
+      ],
+      matrixRows: [],
+      gaps: [],
+    }) ?? "";
+    assert.match(md, /\| Traffic Management Planning \| Section C\.2 Technical Methodology \|/);
+    assert.match(md, /\| Additional Information \/ Certifications \| Section A\.1 Company Background \|/);
+    assert.doesNotMatch(md, /Sections A–D/);
+  });
+});
+
+describe("a requirement answered by the proposal itself", () => {
+  it("is FULLY MET at a named section, and stays PARTIALLY MET when it rests on other evidence", () => {
+    const md = buildComplianceMatrixSection({
+      requirements: [
+        { id: "r1", title: "Cover Letter", description: "Include a cover letter.", requirementType: "METHODOLOGY", priority: "SCORED" },
+        { id: "r2", title: "Traffic Management Planning", description: "Outline how traffic keeps moving.", requirementType: "METHODOLOGY", priority: "SCORED" },
+        { id: "r3", title: "Similar Bridge Projects", description: "Three bridges in ten years.", requirementType: "PROJECT_EXPERIENCE", priority: "SCORED" },
+        { id: "r4", title: "Something Unplaceable", description: "Misc.", requirementType: "ANNEX", priority: "SCORED" },
+      ],
+      matrixRows: [
+        { requirementId: "r1", evidenceType: "PROPOSAL_RESPONSE", supportLevel: "PARTIAL" },
+        { requirementId: "r2", evidenceType: "PROPOSAL_RESPONSE", supportLevel: "PARTIAL" },
+        { requirementId: "r3", evidenceType: "PROJECT", supportLevel: "PARTIAL" },
+        { requirementId: "r4", evidenceType: "PROPOSAL_RESPONSE", supportLevel: "PARTIAL" },
+      ] as never,
+      gaps: [],
+    }) ?? "";
+    assert.match(md, /\| Cover Letter \| Cover Letter \|[^\n]*\| FULLY MET \|/);
+    assert.match(md, /\| Traffic Management Planning \| Section C\.2 Technical Methodology \|[^\n]*\| FULLY MET \|/);
+    assert.match(md, /\| Similar Bridge Projects \|[^\n]*\| PARTIALLY MET \|/);
+    assert.match(md, /\| Something Unplaceable \| Sections A–D \|[^\n]*\| PARTIALLY MET \|/);
+  });
+});

@@ -910,6 +910,7 @@ function desiredRowsForContext(context: LoadedCoverageContext): {
   let groundedRequirements = 0;
 
   for (const requirement of context.requirements) {
+    const blocking = ["MANDATORY", "CRITICAL"].includes(String(requirement.priority ?? "").toUpperCase());
     const grounded = isGroundedEvidenceInActiveFiles(
       requirement.sourcePageNumber,
       requirement.sourceExactQuote,
@@ -917,10 +918,10 @@ function desiredRowsForContext(context: LoadedCoverageContext): {
       context.activeFiles,
     );
     if (!grounded) {
-      remainingUngrounded.push({ id: requirement.id, title: requirement.title });
+      if (blocking) remainingUngrounded.push({ id: requirement.id, title: requirement.title });
       continue;
     }
-    groundedRequirements += 1;
+    if (blocking) groundedRequirements += 1;
 
     // A package RULE is verified by observing the package, never by scoring a
     // record's name against the rule's name. Text similarity between "Submission
@@ -932,6 +933,9 @@ function desiredRowsForContext(context: LoadedCoverageContext): {
     if (conformance.applicable) {
       if (conformance.status === "SATISFIED") {
         rows.push(packageConformanceRow(context, requirement, conformance));
+      } else if (!blocking) {
+        // A non-mandatory package rule is reported by the canonical readiness
+        // model, never as a coverage blocker.
       } else if (conformance.status === "VIOLATED") {
         // Fail-closed: no evidence row is written, so the requirement stays
         // unmet and release stays blocked — but the blocker names the actual
@@ -945,7 +949,7 @@ function desiredRowsForContext(context: LoadedCoverageContext): {
 
     const selected = selectAutomaticEvidenceForRequirement(requirement, context.candidates);
     if (selected.length === 0) {
-      remainingWithoutEligibleEvidence.push({ id: requirement.id, title: requirement.title });
+      if (blocking) remainingWithoutEligibleEvidence.push({ id: requirement.id, title: requirement.title });
       continue;
     }
 
@@ -1025,8 +1029,13 @@ async function loadCoverageContext(db: any, tenderId: string, userId: string): P
     select: {
       id: true,
       userId: true,
+      // Every requirement. Loading only mandatory ones left a scored
+      // requirement ("Cover Letter", "Technical Approach and Methodology") on
+      // its engine-time PARTIAL after the validated proposal that answers it
+      // existed, and the proposal's own Section E printed PARTIALLY MET beside
+      // it (2026-09-28, accept run 36456526332). Only mandatory/critical ones
+      // are reported as gaps or block anything (see desiredRowsForContext).
       requirements: {
-        where: { priority: { in: ["MANDATORY", "CRITICAL"] } },
         orderBy: { createdAt: "asc" },
         select: {
           id: true,
