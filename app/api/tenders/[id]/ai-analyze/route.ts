@@ -1,4 +1,5 @@
 import { logger } from "../../../../../lib/observability";
+import { sourceGroundedExactFileName } from "../../../../../lib/engine/source-grounded-file-name";
 import { NextResponse } from "next/server";
 import crypto from "crypto";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
@@ -889,7 +890,7 @@ async function handleStreamingAnalyze(
                     data: {
                       tenderId: id, title: req.title, description: req.description,
                       requirementType: req.requirementType, priority: req.priority,
-                      exactFileName: req.exactFileName ?? null, requiredQuantity: req.requiredQuantity ?? null,
+                      exactFileName: sourceGroundedExactFileName(req.exactFileName, tenderRecord.files.filter((f) => (f.deletionStatus ?? "ACTIVE") === "ACTIVE").map((f) => f.extractedText)), requiredQuantity: req.requiredQuantity ?? null,
                       pageLimit: req.pageLimit ?? null, restrictions: req.restrictions ?? null,
                       sectionReference: req.sectionReference ?? null,
                       sourceSectionHeading: req.sourceSectionHeading || req.sectionReference || null,
@@ -1856,7 +1857,7 @@ async function unreachableLegacySynchronousPath(
                   description: req.description,
                   requirementType: req.requirementType,
                   priority: req.priority,
-                  exactFileName: req.exactFileName ?? null,
+                  exactFileName: sourceGroundedExactFileName(req.exactFileName, tenderRecord.files.filter((f) => (f.deletionStatus ?? "ACTIVE") === "ACTIVE").map((f) => f.extractedText)),
                   requiredQuantity: req.requiredQuantity ?? null,
                   pageLimit: req.pageLimit ?? null,
                   restrictions: req.restrictions ?? null,

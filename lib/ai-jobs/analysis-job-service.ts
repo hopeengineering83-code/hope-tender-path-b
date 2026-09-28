@@ -1,4 +1,5 @@
 import { toSafeAiFailureCategory } from "../engine/analysis/safe-diagnostics";
+import { sourceGroundedExactFileName } from "../engine/source-grounded-file-name";
 import { decideManualRearm, isAnyProviderEligible, isProviderConfigFailureCategory, reclassifyHistoricalTenderFailure } from "../ai-analyze/retry-service";
 import { logger } from "../observability";
 import { computeAdvisoryLockKey } from "../engine/advisory-lock-key";
@@ -1061,7 +1062,9 @@ function mapToDraft(
         priority: req.priority,
         requiredQuantity: req.requiredQuantity,
         pageLimit: req.pageLimit,
-        exactFileName: req.exactFileName,
+        // Only a file name the tender states; the model has returned stored
+        // Company Vault names here (source-grounded-file-name.ts).
+        exactFileName: sourceGroundedExactFileName(req.exactFileName, fileTextById?.values() ?? []),
         restrictions: req.restrictions,
         sectionReference: req.sectionReference,
         sourceTenderFileId,
