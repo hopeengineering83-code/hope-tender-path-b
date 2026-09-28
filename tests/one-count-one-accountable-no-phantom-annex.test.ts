@@ -67,4 +67,20 @@ describe("one registration count, one Accountable, no phantom annex", () => {
     assert.doesNotMatch(md, /annex/i);
     assert.match(md, /\| Cover Letter[^|]*\| Cover Letter \|/);
   });
+
+  it("places a requirement by its title before its description", () => {
+    // 2026-09-28: "Technical Proposal Submission", whose description mentions
+    // project experience, was sent to the Project Portfolio.
+    const md = buildComplianceMatrixSection({
+      requirements: [
+        { id: "r1", title: "Technical Proposal Submission", description: "Submit one PDF presenting the firm's project experience and methodology.", priority: "MANDATORY" },
+        { id: "r2", title: "Relevant Project Experience", description: "Demonstrate similar projects with client references.", priority: "SCORED" },
+      ],
+      matrixRows: [],
+      gaps: [],
+    }) ?? "";
+    assert.match(md, /\| Technical Proposal Submission \| Cover Letter \|/);
+    assert.match(md, /\| Relevant Project Experience \| Section B\.2 Project Portfolio \|/);
+  });
 });
+

@@ -81,8 +81,26 @@ function priorityRank(p?: string | null): number {
 }
 
 function inferProposalLocation(req: RequirementLite): string {
-  const text = `${req.title ?? ""} ${req.description ?? ""}`.toLowerCase();
   const type = (req.requirementType ?? "").toUpperCase();
+  const title = (req.title ?? "").toLowerCase();
+  // A requirement about HOW the proposal is submitted is answered by the
+  // submission itself, which the Cover Letter states. Read from the
+  // description first, "Technical Proposal Submission — … demonstrating
+  // project experience …" was sent to the Project Portfolio (2026-09-28).
+  if (/\b(?:submission|submit(?:ted)?|file\s+name|pdf|format|envelope|deadline)\b/.test(title)
+    && !/\b(?:experience|portfolio|reference|expert|cv|team)\b/.test(title)) {
+    return "Cover Letter";
+  }
+  // The title says what the requirement IS; the description only elaborates.
+  // A keyword in the description decides only when the title matches nothing.
+  return locationFromText(title, type)
+    ?? locationFromText(`${title} ${(req.description ?? "").toLowerCase()}`, type)
+    // No annex: the proposal has none, and the column promised one to every
+    // requirement the keyword map could not place (2026-09-27).
+    ?? "Sections A–D";
+}
+
+function locationFromText(text: string, type: string): string | null {
 
   if (/^\s*(?:a\s+)?cover(?:ing)?\s+letter\b/.test(text))
     return "Cover Letter";
@@ -110,9 +128,7 @@ function inferProposalLocation(req: RequirementLite): string {
     return "Section C.2 Methodology + C.5 Risk Register";
   if (/photo|drawing|floor plan/.test(text))
     return "Section B.2 Project Portfolio";
-  // No annex: the proposal has none, and the column promised one to every
-  // requirement the keyword map could not place (2026-09-27).
-  return "Sections A–D";
+  return null;
 }
 
 /**
