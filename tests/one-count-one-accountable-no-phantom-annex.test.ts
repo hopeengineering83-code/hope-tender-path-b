@@ -124,3 +124,20 @@ describe("a requirement answered by the proposal itself", () => {
     assert.match(md, /\| Something Unplaceable \| Sections A–D \|[^\n]*\| PARTIALLY MET \|/);
   });
 });
+
+describe("Section E is the app's own table on every path", () => {
+  it("strips an earlier Compliance Matrix so the canonical one is the only one", async () => {
+    const { stripComplianceMatrixSections } = await import("../lib/engine/compliance-matrix-builder");
+    const md = [
+      "# Section D: Value Added", "text",
+      "# Section E: Compliance Matrix", "| Tender requirement | Compliance status | Where addressed |", "| Cover Letter | PARTIALLY MET | Technical Methodology and Work Plan |",
+      "## E.1 Notes", "more",
+      "# Section F: Evaluation Criteria Response", "kept",
+    ].join("\n");
+    const out = stripComplianceMatrixSections(md);
+    assert.doesNotMatch(out, /Compliance Matrix|Technical Methodology and Work Plan|E\.1 Notes/);
+    assert.match(out, /# Section D: Value Added\ntext\n# Section F: Evaluation Criteria Response\nkept/);
+    const source = (await import("node:fs")).readFileSync("lib/engine/generate-elite.ts", "utf8");
+    assert.match(source, /const matrixMarkdown = stripComplianceMatrixSections\(/);
+  });
+});

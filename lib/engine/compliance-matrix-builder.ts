@@ -145,6 +145,40 @@ function locationFromText(text: string, type: string): string | null {
 }
 
 /**
+ * Removes every Compliance Matrix section (heading through the next heading of
+ * the same or higher level). Section E is a table of the app's own data —
+ * requirements, their support levels, where each is answered — so the
+ * canonical builder writes it on every path, as buildSelfScoreSection does for
+ * Section H. On the model path the evaluator appendix planted the last-resort
+ * repair matrix first, and the canonical builder saw the heading and stood
+ * down: accept run 36462108495 shipped "Cover Letter — PARTIALLY MET —
+ * Technical Methodology and Work Plan — evidence: Tax Clearance", and
+ * "partially evidenced" beside FULLY MET.
+ */
+export function stripComplianceMatrixSections(markdown: string): string {
+  const headingRe = /^\s*(#{1,4})\s*(?:section\s*[E:.\-\s]*)?\s*compliance\s+matrix\b/i;
+  const lines = markdown.split("\n");
+  const out: string[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const match = lines[i].match(headingRe);
+    if (match) {
+      const level = match[1].length;
+      i += 1;
+      while (i < lines.length) {
+        const next = lines[i].match(/^\s*(#+)\s/);
+        if (next && next[1].length <= level) break;
+        i += 1;
+      }
+      continue;
+    }
+    out.push(lines[i]);
+    i += 1;
+  }
+  return out.join("\n");
+}
+
+/**
  * Map ComplianceMatrix.supportLevel to user-facing FULLY/PARTIALLY/NOT MET.
  * supportLevel values produced by the intake stage are typically:
  *   FULL, PARTIAL, NONE, or arbitrary descriptive strings.

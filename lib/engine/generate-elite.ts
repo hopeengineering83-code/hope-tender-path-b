@@ -56,7 +56,7 @@ import { buildWorkPlanTable } from "./work-plan-timeline";
 import { tenderTotalDays } from "./canonical-work-plan";
 import { reconcilePortfolioReadingGuide, repairPortfolioCards } from "./portfolio-card-repair";
 import { applyClientRegister } from "./client-register";
-import { buildComplianceMatrixSection, hasComplianceMatrixHeading } from "./compliance-matrix-builder";
+import { buildComplianceMatrixSection, hasComplianceMatrixHeading, stripComplianceMatrixSections } from "./compliance-matrix-builder";
 import { buildEvaluatorMirrorSection, hasEvaluatorMirrorHeading } from "./evaluator-mirror-builder";
 import { hasWinThemesHeading } from "./win-themes-builder";
 import { buildSelfScoreSection, hasSelfScoreHeading, stripSelfScoreSections } from "./self-score-builder";
@@ -2551,7 +2551,8 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
     team: experts.length > 0,
     mapping: buildTeamToProjectMappingTable(experts, projects) !== "",
   });
-  const matrixMarkdown = stripInternalReviewSections(appendEvaluatorResponseMatrix(upstreamWithoutTeamTables, evaluatorMatrixInput)).markdown;
+  // Section E is always the canonical builder's (stripComplianceMatrixSections).
+  const matrixMarkdown = stripComplianceMatrixSections(stripInternalReviewSections(appendEvaluatorResponseMatrix(upstreamWithoutTeamTables, evaluatorMatrixInput)).markdown);
   const isHealthcare = /health|hospital|medical|clinic|radiology|laboratory|pharmacy|patient|specialty|OPD|in-patient|emergency/i.test(`${intelligence.primarySector}\n${intelligence.tenderText}`);
   const strengtheningMarkdown = buildClientProposalStrengtheningSections({ clientName: intelligence.clientName, tenderTitle: cleanedTenderTitle, companyName: company.name, projectLines, expertLines, companyEvidenceLines, projectEvidenceLines, isHealthcare, existingMarkdown: matrixMarkdown });
 
