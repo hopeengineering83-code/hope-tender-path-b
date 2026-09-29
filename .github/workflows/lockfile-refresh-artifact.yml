@@ -777,6 +777,9 @@ jobs:
           echo "ZIP HTTP:$status SIZE:$size"
           if [ "$status" != "200" ] || [ "$size" -le 0 ]; then
             echo "::error::Final ZIP download failed (HTTP $status, $size bytes)."
+            # A refusal is the app's own sanitised JSON error: print it, or
+            # the run names a status code and not the gate that refused.
+            if [ "$size" -le 4000 ]; then head -c 4000 /tmp/preview-final.zip; echo; fi
             exit 1
           fi
           unzip -t /tmp/preview-final.zip
