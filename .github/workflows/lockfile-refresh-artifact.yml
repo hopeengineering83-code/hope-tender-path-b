@@ -884,7 +884,19 @@ jobs:
           mkdir -p /tmp/pdf-pages /tmp/zip-extract
           python3 -m zipfile -e /tmp/preview-final.zip /tmp/zip-extract/
           ls -la /tmp/zip-extract/
-          node scripts/tmp-render-pdf-pages.mjs "/tmp/zip-extract/Technical Proposal.pdf" /tmp/pdf-pages 2>&1 | tee /tmp/pdf-page-report.txt
+          # The page checks read the proposal PDF the ZIP delivers. A tender
+          # that states no PDF format gets the proposal as .docx (2026-09-29,
+          # a new tender); the checks then read the application's own PDF
+          # rendering of that same document (GET /download?type=pdf, fetched
+          # in the pre-gate step) and say so, rather than failing on a path.
+          pdf=$(find /tmp/zip-extract -maxdepth 2 -iname '*proposal*.pdf' | head -1)
+          if [ -z "$pdf" ] && [ -s /tmp/delivered-technical-proposal.pdf ]; then
+            echo "ZIP delivers no proposal PDF ($(ls /tmp/zip-extract | tr '\n' ' ')); inspecting the app's PDF rendering of the same document."
+            pdf=/tmp/delivered-technical-proposal.pdf
+          fi
+          if [ -z "$pdf" ]; then echo "::error::No proposal PDF to inspect."; exit 1; fi
+          echo "$pdf" > /tmp/proposal-pdf-path.txt
+          node scripts/tmp-render-pdf-pages.mjs "$pdf" /tmp/pdf-pages 2>&1 | tee /tmp/pdf-page-report.txt
 
       - name: Audit the delivered PDF for embedded brand-asset bytes
         run: |
@@ -892,7 +904,7 @@ jobs:
           # the client. This reads the PDF's own object graph, because text
           # extraction cannot see an image and has already produced three false
           # findings in this workstream.
-          node scripts/tmp-inspect-pdf-typography-and-assets.mjs "/tmp/zip-extract/Technical Proposal.pdf" 2>&1 | tee /tmp/pdf-asset-audit.txt
+          node scripts/tmp-inspect-pdf-typography-and-assets.mjs "$(cat /tmp/proposal-pdf-path.txt)" 2>&1 | tee /tmp/pdf-asset-audit.txt
 
           # DID THE PORTFOLIO NUMBERS REACH THE CLIENT?
           #
@@ -917,7 +929,7 @@ jobs:
           # from here on was skipped — so the report that names the offending
           # sentence was unreachable in exactly the case it exists for. A
           # diagnostic behind the gate it explains is no diagnostic.
-          node scripts/tmp-dump-pdf-text.mjs "/tmp/zip-extract/Technical Proposal.pdf" > /tmp/pdf-text.txt 2>/dev/null || true
+          node scripts/tmp-dump-pdf-text.mjs "$(cat /tmp/proposal-pdf-path.txt)" > /tmp/pdf-text.txt 2>/dev/null || true
 
           # The audit above says whether the bytes ARRIVED. This says what the
           # store holds, so a zero above can be attributed rather than guessed:
@@ -966,7 +978,7 @@ jobs:
           # The 17-dimension assessment and the factual/compliance review have
           # to be made against what the client actually reads, so the extracted
           # text is emitted here in full rather than summarised.
-          node scripts/tmp-dump-pdf-text.mjs "/tmp/zip-extract/Technical Proposal.pdf" > /tmp/final-pdf-text.txt
+          node scripts/tmp-dump-pdf-text.mjs "$(cat /tmp/proposal-pdf-path.txt)" > /tmp/final-pdf-text.txt
           echo "=== FINAL PDF TEXT ($(wc -c < /tmp/final-pdf-text.txt) chars) ==="
           cat /tmp/final-pdf-text.txt
           echo "=== END FINAL PDF TEXT ==="
