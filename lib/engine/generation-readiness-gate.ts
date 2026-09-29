@@ -1,5 +1,6 @@
 // Central authoritative generation/export readiness gate.
 import { logger } from "../observability";
+import { normalizeForContainment } from "./evidence-grounding";
 import { getCanonicalTenderWorkflowDecision } from "./canonical-workflow-decision";
 //
 // THE single fail-closed authorization source for every path that can create a
@@ -385,8 +386,9 @@ export function evaluateGenerationReadiness(
     // QUOTE CONTAINMENT: the normalized quote MUST actually appear in the
     // extracted text of the referenced ACTIVE TenderFile. Without this, a
     // foreign/guessed/unsupported quote could pass the structural check.
-    const fileText = (r.sourceFileExtractedText ?? "").toLowerCase().replace(/\s+/g, " ").trim();
-    const normalizedQuote = quote.toLowerCase().replace(/\s+/g, " ").trim();
+    const fileText = normalizeForContainment(r.sourceFileExtractedText ?? "");
+    // One containment rule with the grounding check (dash variants, list glyphs).
+    const normalizedQuote = normalizeForContainment(quote);
     if (quote.length >= MIN_MEANINGFUL_QUOTE_CHARS && (fileText.length === 0 || !fileText.includes(normalizedQuote))) {
       return fail("REQUIREMENT_QUOTE_NOT_IN_FILE", "At least one mandatory requirement has a source quote that is not contained in the extracted text of the referenced active TenderFile. Foreign, guessed, or unsupported evidence is blocked. Re-run AI Analyze to ground requirements.");
     }

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { normalizeForContainment } from "./evidence-grounding";
 import type { PrismaClient } from "@prisma/client";
 import { buildSubmissionPlan, plannedSubmissionTargetFiles, type SubmissionPlanFile } from "./submission-plan";
 import { isEmailSubmissionMethod, isPhysicalSubmissionMethod, isPortalSubmissionMethod } from "./submission-method-policy";
@@ -276,8 +277,9 @@ export function validateCriticalMetadataEvidenceForBuildPlan(
       }
       // QUOTE CONTAINMENT: normalized quote must be in the file's extracted text
       const file = activeFileMap.get(sourceFileId!);
-      const fileText = String(file?.extractedText ?? "").toLowerCase().replace(/\s+/g, " ").trim();
-      const normalizedQuote = quote.toLowerCase().replace(/\s+/g, " ").trim();
+      const fileText = normalizeForContainment(String(file?.extractedText ?? ""));
+      // One containment rule with the grounding check (dash variants, list glyphs).
+    const normalizedQuote = normalizeForContainment(quote);
       if (fileText.length === 0 || !fileText.includes(normalizedQuote)) {
         blockers.push(`Critical metadata field ${label} source quote is not contained in the referenced active TenderFile extracted text.`);
       }
@@ -471,8 +473,9 @@ export async function assertTenderReadyToDraftBuildPlan(
       return { ok: false, code: "REQUIREMENT_SOURCE_UNGROUNDED", message: `Mandatory requirement ${req.id} has no meaningful source quote.`, status: 422 };
     }
     const file = activeFileMap.get(req.sourceTenderFileId)!;
-    const fileText = String(file.extractedText ?? "").toLowerCase().replace(/\s+/g, " ").trim();
-    const normalizedQuote = quote.toLowerCase().replace(/\s+/g, " ").trim();
+    const fileText = normalizeForContainment(String(file.extractedText ?? ""));
+    // One containment rule with the grounding check (dash variants, list glyphs).
+    const normalizedQuote = normalizeForContainment(quote);
     if (!fileText.includes(normalizedQuote)) {
       return { ok: false, code: "REQUIREMENT_QUOTE_NOT_IN_FILE", message: `Mandatory requirement ${req.id} source quote is not contained in the referenced active TenderFile extracted text.`, status: 422 };
     }
