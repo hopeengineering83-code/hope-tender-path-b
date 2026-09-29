@@ -1,4 +1,5 @@
 import { toSafeAiFailureCategory } from "../engine/analysis/safe-diagnostics";
+import { groundRequirementInActiveFiles } from "../engine/repair-source-grounding";
 import { sourceGroundedExactFileName } from "../engine/source-grounded-file-name";
 import { decideManualRearm, isAnyProviderEligible, isProviderConfigFailureCategory, reclassifyHistoricalTenderFailure } from "../ai-analyze/retry-service";
 import { logger } from "../observability";
@@ -1223,6 +1224,35 @@ export async function finalizeJob(jobId: string, userId: string) {
     merged.requirements = merged.requirements.map((req) =>
         bindRequirementEvidenceToActiveFile(req, activeFilesForGrounding),
     );
+
+    const lacksGrounding = (r: any): boolean => {
+        const fileId = typeof r.sourceTenderFileId === "string" ? r.sourceTenderFileId.trim() : "";
+        const fileToken = typeof r.sourceFileToken === "string" ? r.sourceFileToken.trim() : "";
+        const hasId = (fileId.length > 0 && activeFileIdSet.has(fileId)) || (fileToken.length > 0 && activeFileIdSet.has(fileToken));
+        const hasPage = typeof r.sourcePage === "number" && r.sourcePage > 0;
+        const hasQuote = typeof r.sourceQuote === "string" && r.sourceQuote.trim().length > 0;
+        return !hasId || !hasPage || !hasQuote;
+    };
+    // A mandatory requirement the model stated without a usable citation (a
+    // paraphrased quote, a missing page) is searched for in the tender text
+    // with the same matcher Run Engine's grounding repair uses, BEFORE the gate
+    // refuses the whole analysis. Only a passage verbatim in an active file is
+    // accepted. 2026-09-29, Preview: a new tender's analysis succeeded and was
+    // then refused for 6 uncited mandatory requirements, so Run Engine — whose
+    // repair would have grounded them — could never start.
+    merged.requirements = merged.requirements.map((req: any) => {
+        if (!/mandatory|critical/i.test(req.priority ?? "") || !lacksGrounding(req)) return req;
+        const repair = groundRequirementInActiveFiles(req, activeFilesForGrounding);
+        if (!repair) return req;
+        return {
+            ...req,
+            sourceTenderFileId: repair.fileId,
+            sourcePage: repair.page,
+            sourceQuote: repair.quote.slice(0, 500),
+            sourceSectionHeading: req.sourceSectionHeading || repair.heading || undefined,
+            sourceExtractionMethod: "automatic_repair",
+        };
+    });
 
     const mandatoryReqs = merged.requirements.filter((r: any) => /mandatory|critical/i.test(r.priority ?? ""));
     const invalidMandatory = mandatoryReqs.filter((r: any) => {

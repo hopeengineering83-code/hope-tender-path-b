@@ -106,16 +106,35 @@ export function findBestSourceGroundingQuote(
     || bestScore < MIN_AUTOMATIC_GROUNDING_CONFIDENCE
   ) return null;
 
-  const quote = sourceText
-    .slice(bestOffset, Math.min(bestOffset + windowSize, sourceText.length))
-    .trim();
-  if (quote.length < 20) return null;
+  // Anchor the quote on the passage, not on the window. A scan window can
+  // begin on the previous page, and the stored page is derived from where the
+  // quote starts, so a requirement stated on page 2 was recorded as page 1.
+  // Start at the first matched term, backed up to its sentence start but
+  // never across a page break (form feed).
+  const windowLower = lower.slice(bestOffset, Math.min(bestOffset + windowSize, lower.length));
+  const firstHitInWindow = Math.min(
+    ...keyPhrases.map((phrase) => windowLower.indexOf(phrase)).filter((index) => index >= 0),
+  );
+  let anchored = bestOffset;
+  if (Number.isFinite(firstHitInWindow) && firstHitInWindow > 0) {
+    const firstHit = bestOffset + firstHitInWindow;
+    const lead = sourceText.slice(bestOffset, firstHit);
+    const boundary = Math.max(lead.lastIndexOf("\f"), lead.lastIndexOf("\n"), lead.lastIndexOf(". "));
+    anchored = boundary >= 0 ? bestOffset + boundary + 1 : bestOffset;
+  }
 
-  const normalizedQuote = quote.toLocaleLowerCase("en-US");
-  const quoteHits = keyPhrases.filter((phrase) => normalizedQuote.includes(phrase)).length;
-  if (quoteHits < minimumHits) return null;
+  const quoteAt = (start: number) => {
+    const raw = sourceText.slice(start, Math.min(start + windowSize, sourceText.length));
+    const leading = raw.length - raw.trimStart().length;
+    const text = raw.trim();
+    const hits = keyPhrases.filter((phrase) => text.toLocaleLowerCase("en-US").includes(phrase)).length;
+    return { text, start: start + leading, hits };
+  };
+  let chosen = quoteAt(anchored);
+  if (chosen.text.length < 20 || chosen.hits < minimumHits) chosen = quoteAt(bestOffset);
+  if (chosen.text.length < 20 || chosen.hits < minimumHits) return null;
 
-  return { quote, confidence: bestScore, offset: bestOffset };
+  return { quote: chosen.text, confidence: bestScore, offset: chosen.start };
 }
 
 function escapeRegExp(value: string): string {
@@ -224,6 +243,29 @@ function bestRepairForRequirement(
     if (!best || candidate.confidence > best.confidence) best = candidate;
   }
   return best;
+}
+
+/**
+ * The same source search the repair uses, for a requirement that has not been
+ * stored yet (AI Analyze's promotion gate). Returns a quote that is verbatim
+ * in an active tender file, with its page, or null — never a guessed source.
+ */
+export function groundRequirementInActiveFiles(
+  requirement: { title: string; description?: string | null; sourceTenderFileId?: string | null; sourceQuote?: string | null },
+  files: Array<{ id: string; extractedText: string | null; totalPages: number | null }>,
+): { fileId: string; quote: string; confidence: number; page: number; heading: string | null } | null {
+  return bestRepairForRequirement(
+    {
+      id: "",
+      title: requirement.title,
+      description: requirement.description ?? "",
+      sourceTenderFileId: requirement.sourceTenderFileId ?? null,
+      sourcePageNumber: null,
+      sourceExactQuote: requirement.sourceQuote ?? null,
+      sourceConfidence: 0,
+    },
+    files.map((file) => ({ ...file, fileName: "" })),
+  );
 }
 
 /**
