@@ -4240,7 +4240,24 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
           }
         }
       }
-      return names.find((name) => isMainProposalSlotName(name)) ?? null;
+      const stated = names.find((name) => isMainProposalSlotName(name));
+      if (stated) return stated;
+      // A tender that names no files still gets a main-proposal file in the
+      // confirmed Build Plan (submission-plan.ts folds the unnamed proposal
+      // sections into it). Writing anywhere else puts the proposal outside
+      // the plan, where auto-finalize retires it.
+      const plan = await prisma.buildPlan.findUnique({
+        where: { tenderId },
+        select: { status: true, itemsJson: true },
+      });
+      if (plan?.status !== "CONFIRMED" || !plan.itemsJson) return null;
+      const items = JSON.parse(plan.itemsJson) as unknown;
+      if (!Array.isArray(items)) return null;
+      for (const item of items) {
+        const name = item && typeof item === "object" ? (item as { exactFileName?: unknown }).exactFileName : null;
+        if (typeof name === "string" && isMainProposalSlotName(name)) return name.trim();
+      }
+      return null;
     } catch {
       return null;
     }

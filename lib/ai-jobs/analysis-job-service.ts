@@ -1345,7 +1345,7 @@ export async function finalizeJob(jobId: string, userId: string) {
                 contactDetailsSourceJson: true,
                 files: {
                     where: { deletionStatus: "ACTIVE" },
-                    select: { id: true, extractedText: true, deletionStatus: true, totalPages: true },
+                    select: { id: true, fileName: true, originalFileName: true, extractedText: true, deletionStatus: true, totalPages: true },
                 },
             },
         });
@@ -1416,6 +1416,7 @@ export async function finalizeJob(jobId: string, userId: string) {
             notes: existingTender?.notes,
             ...sourceFileIds,
             existingContactDetailsSourceJson: existingTender?.contactDetailsSourceJson ?? null,
+            sourceFiles: existingTender?.files ?? [],
         });
 
         tenderUpdate = {

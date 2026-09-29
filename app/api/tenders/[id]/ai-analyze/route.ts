@@ -862,6 +862,7 @@ async function handleStreamingAnalyze(
                 notes: tenderRecord.notes,
                 ...sourceFileIds,
                 existingContactDetailsSourceJson: (tenderRecord as any).contactDetailsSourceJson ?? null,
+                sourceFiles: tenderRecord.files.filter((f) => f.deletionStatus === "ACTIVE"),
               });
 
               // Atomic TOCTOU guard: re-verify inside the transaction that no newer
@@ -1830,6 +1831,7 @@ async function unreachableLegacySynchronousPath(
             notes: tenderRecord.notes,
             ...sourceFileIdsNonStream,
             existingContactDetailsSourceJson: (tenderRecord as any).contactDetailsSourceJson ?? null,
+            sourceFiles: tenderRecord.files.filter((f) => f.deletionStatus === "ACTIVE"),
           });
 
           // Atomic TOCTOU guard: same pattern as streaming path.

@@ -245,6 +245,9 @@ function addFile(files: Map<string, SubmissionPlanFile>, file: SubmissionPlanFil
   });
 }
 
+/** Bidder-written narrative that is a section of the technical proposal. */
+const PROPOSAL_SECTION = /technical proposal|cover letter|executive summary|company profile|firm profile|qualification|capabilit|methodology|approach|work\s*plan|implementation plan|quality assurance|risk management|project team|team composition|key personnel|personnel|staffing|\bcvs?\b|curriculum vitae|expert|experience|portfolio|track record|project reference|similar projects|understanding|scope of (?:work|services)/;
+
 function buildFileFromRequirement(requirement: TenderRequirementLike, index: number): SubmissionPlanFile | null {
   const type = requirement.requirementType.toUpperCase();
   if (!requirement.exactFileName && !DOCUMENT_REQUIREMENT_TYPES.has(type)) return null;
@@ -447,6 +450,62 @@ export function buildSubmissionPlan(tender: TenderLike): SubmissionPlan {
     }
     addFile(files, file);
   });
+
+  // ── Unnamed proposal sections are sections of ONE proposal ──────────────
+  //
+  // 2026-09-29, Preview, a new tender that names no files: AI Analyze returned
+  // "Company Profile and Qualifications", "Technical Approach and
+  // Methodology", "Project Team Qualifications" and "Portfolio and
+  // Experience" as MANDATORY rows. The planner made the first two separate
+  // required .docx files. Proposal Generation then wrote the complete
+  // Technical Proposal (cover letter, Sections A–H, compliance matrix mapping
+  // each of those rows to a section), and auto-finalize retired it as "outside
+  // the confirmed plan", leaving the package as two short planned-file drafts.
+  //
+  // When the tender states no file names and no single-file rule, a
+  // bidder-written narrative item the row does not name as a file is a
+  // section of the one technical proposal, not a file beside it. Tender
+  // forms, original evidence, financial items and legal instruments (bid
+  // bond, power of attorney, JV/consortium agreement) are untouched, and a
+  // tender that names its files keeps them exactly as named.
+  if (declaredBaseNames.length === 0 && !statedSingleSubmissionFile(requirements)) {
+    const requirementById = new Map(requirements.map((requirement) => [requirement.id, requirement]));
+    const sections = Array.from(files.entries()).filter(([, file]) => {
+      if (file.envelope === "FINANCIAL" || file.templateRequired) return false;
+      if (file.sourceRequirementIds.length === 0) return false;
+      const rows = file.sourceRequirementIds.map((id) => requirementById.get(id));
+      if (rows.some((row) => !row || (row.exactFileName ?? "").trim())) return false;
+      const label = `${file.exactFileName} ${rows.map((row) => `${row!.title} ${row!.description ?? ""}`).join(" ")}`.toLowerCase();
+      if (/financial|commercial|price|pricing|bid bond|bid security|power of attorney|joint venture agreement|consortium agreement/.test(label)) return false;
+      return classifySubmissionPlanItem({ title: file.exactFileName, requirementType: file.documentType }).category === "REQUIRED_OUTPUT_FILE"
+        && PROPOSAL_SECTION.test(file.exactFileName.toLowerCase());
+    });
+    if (sections.length > 0) {
+      const sectionRows = sections.flatMap(([, file]) => file.sourceRequirementIds.map((id) => requirementById.get(id)!));
+      const isEoi = /expression\s+of\s+interest|\beoi\b/i.test(`${tender.title ?? ""} ${tender.tenderCategory ?? ""}`);
+      const baseName = isEoi ? "Expression of Interest" : "Technical Proposal";
+      const format = inferFormat(baseName, sectionRows.map((row) => `${row.description ?? ""} ${row.restrictions ?? ""}`).join(" "));
+      for (const [key] of sections) files.delete(key);
+      addFile(files, {
+        canonicalId: `proposal-${slug(baseName)}`,
+        exactFileName: fileNameWithExtension(baseName, format),
+        documentType: isEoi ? "EXPRESSION_OF_INTEREST" : "TECHNICAL_PROPOSAL",
+        required: true,
+        exactOrder: Math.min(...sections.map(([, file]) => file.exactOrder)),
+        format,
+        envelope: "TECHNICAL",
+        sourceRequirementIds: Array.from(new Set(sections.flatMap(([, file]) => file.sourceRequirementIds))),
+        pageLimit: tender.pageLimit ?? null,
+        templateRequired: false,
+        templateSourceFileId: null,
+        brandingAllowed: restrictionAllows(restrictions, "letterhead"),
+        signatureAllowed: restrictionAllows(restrictions, "signature"),
+        stampAllowed: restrictionAllows(restrictions, "stamp"),
+        grouping: null,
+        notes: "The tender names no separate files; these sections are parts of the one technical proposal.",
+      });
+    }
+  }
 
   buildFilesFromExactNames(tender, files.size + 1).forEach((file) => {
     const base = normalize(file.exactFileName.replace(/\.[a-z0-9]+$/i, ""));

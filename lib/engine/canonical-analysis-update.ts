@@ -28,8 +28,13 @@ import {
   isValidReferenceNumber,
 } from "./metadata-validators";
 import { detectMetadataContamination } from "./tender-metadata-completeness";
+import { sourceGroundedTenderFileNames, type UploadedSourceFile } from "./source-grounded-file-name";
 
 export type CanonicalAnalysisExisting = {
+  // The tender's active uploaded files (names + extracted text). When given,
+  // exactFileNaming / exactFileOrder keep only names the tender states, and
+  // never an upload's own name (sourceGroundedTenderFileNames).
+  sourceFiles?: readonly UploadedSourceFile[];
   // Existing canonical values that gate whether the AI value is allowed to
   // overwrite them (mirrors the route's conditional spreads exactly).
   clientName?: string | null;
@@ -203,6 +208,9 @@ export function buildCanonicalAnalysisTenderUpdate(
     detectMetadataContamination(aiResult.submissionAddress).contaminated ||
     detectMetadataContamination(aiResult.clientContactName).contaminated;
 
+  const stated = (names: string[] | null | undefined): string[] =>
+    existing.sourceFiles ? sourceGroundedTenderFileNames(names ?? [], existing.sourceFiles) : (names ?? []);
+
   const data: Record<string, unknown> = {
     analysisSummary: aiResult.summary,
     ...(aiResult.tenderTitle && !containsMetadataPlaceholder(aiResult.tenderTitle) ? { title: aiResult.tenderTitle } : {}),
@@ -222,8 +230,8 @@ export function buildCanonicalAnalysisTenderUpdate(
     ...(aiResult.deadlineSourceQuote !== undefined ? { deadlineSourceQuote: aiResult.deadlineSourceQuote } : {}),
     ...(existing.deadlineSourceFileId !== undefined ? { deadlineSourceFileId: existing.deadlineSourceFileId } : {}),
     evaluationMethodology: canonicalEvaluationMethodology(aiResult),
-    exactFileNaming: JSON.stringify(aiResult.exactFileNaming),
-    exactFileOrder: JSON.stringify(aiResult.exactFileOrder),
+    exactFileNaming: JSON.stringify(stated(aiResult.exactFileNaming)),
+    exactFileOrder: JSON.stringify(stated(aiResult.exactFileOrder)),
     ...(aiResult.tenderCategory ? { category: aiResult.tenderCategory } : {}),
     notes: buildAnalysisNotes(existing.notes),
     status: "AI_ANALYZED",

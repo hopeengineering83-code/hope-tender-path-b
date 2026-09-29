@@ -67,6 +67,11 @@ describe("a single-file submission is one planned file", () => {
         req("r3", "Company Profile", "Provide a company profile.", "ELIGIBILITY"),
       ],
     } as any);
-    assert.equal(plan.files.length, 2);
+    // No single-file rule fired (that path names its file from the tender).
+    // The two unnamed sections are one technical proposal regardless
+    // (tests/unnamed-proposal-sections-are-one-proposal.test.ts).
+    assert.equal(plan.files.some((file) => file.canonicalId.startsWith("single-")), false);
+    assert.deepEqual(plan.files.map((file) => file.exactFileName), ["Technical Proposal.docx"]);
+    assert.deepEqual([...plan.files[0].sourceRequirementIds].sort(), ["r2", "r3"]);
   });
 });

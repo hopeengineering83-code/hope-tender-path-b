@@ -41,8 +41,13 @@ describe("a section of the named file is not a second file", () => {
     assert.deepEqual(plannedSubmissionTargetFiles(p).map((f) => f.exactFileName), ["Technical Proposal.pdf", "Cover Letter.docx"]);
   });
 
-  it("keeps separate files when the tender declares no file to fold into", () => {
+  // With no declared file, an unnamed proposal section is still a section of
+  // the one technical proposal (tests/unnamed-proposal-sections-are-one-
+  // proposal.test.ts). This used to pin "Cover Letter.docx" as its own file;
+  // on 2026-09-29 that shape made the planner retire the complete generated
+  // proposal. What stays true: no file named after the section.
+  it("with no declared file, the section lands in the one Technical Proposal", () => {
     const p = plan([row("c", "Cover Letter", "COMPANY_PROFILE", "MANDATORY", CONTAINER)], []);
-    assert.deepEqual(plannedSubmissionTargetFiles(p).map((f) => f.exactFileName), ["Cover Letter.docx"]);
+    assert.deepEqual(plannedSubmissionTargetFiles(p).map((f) => f.exactFileName), ["Technical Proposal.docx"]);
   });
 });
