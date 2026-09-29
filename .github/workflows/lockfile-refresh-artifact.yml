@@ -775,6 +775,21 @@ jobs:
           status=$(cat /tmp/zip-status.txt)
           size=$(wc -c < /tmp/preview-final.zip)
           echo "ZIP HTTP:$status SIZE:$size"
+          # A tender that requires separate sealed technical and financial
+          # envelopes refuses one mixed ZIP (SEPARATE_ENVELOPE_REQUIRED) and
+          # names the per-envelope download. The app writes the technical
+          # envelope; the financial one is the owner's priced offer. Follow
+          # the app's own instruction, exactly as the UI does.
+          if [ "$status" = "409" ] && grep -q '"code":"SEPARATE_ENVELOPE_REQUIRED"' /tmp/preview-final.zip; then
+            echo "tender requires separate envelopes; downloading the technical envelope"
+            curl -sS --connect-timeout 15 --max-time 120 -o /tmp/preview-final.zip \
+              -w "%{http_code}" \
+              -H "Cookie: hope_session=$SESSION_COOKIE" \
+              "$BASE_URL/api/tenders/$TENDER_ID/download?type=zip&envelope=technical" > /tmp/zip-status.txt
+            status=$(cat /tmp/zip-status.txt)
+            size=$(wc -c < /tmp/preview-final.zip)
+            echo "TECHNICAL ENVELOPE ZIP HTTP:$status SIZE:$size"
+          fi
           if [ "$status" != "200" ] || [ "$size" -le 0 ]; then
             echo "::error::Final ZIP download failed (HTTP $status, $size bytes)."
             # A refusal is the app's own sanitised JSON error: print it, or
