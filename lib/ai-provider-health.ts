@@ -820,6 +820,32 @@ export function getMinCooldownExpiryMs(): number | null {
   return isFinite(minMs) ? minMs : null;
 }
 
+/**
+ * Milliseconds until the next usable provider (eligible, not billing-locked)
+ * that is cooling down becomes available again; null when none is cooling.
+ *
+ * getMinCooldownExpiryMs answers "is anything available now?" and returns 0
+ * as soon as one provider is not cooling — including a provider that is never
+ * cooling because every request is refused by its budget. A caller deciding
+ * how long to wait for the chain to recover needs the next recovery instead.
+ */
+const NOT_CURED_BY_WAITING: ReadonlySet<AiProviderFailureCategory> = new Set(["AUTH", "BILLING", "CONFIGURATION_INVALID", "MODEL_UNAVAILABLE"] as AiProviderFailureCategory[]);
+
+export function getNextCooldownRecoveryMs(): number | null {
+  const now = Date.now();
+  let minMs = Infinity;
+  for (const provider of getAutomaticProviderOrder()) {
+    if (!providerAutomaticEligibility(provider).eligible || isBillingLockedOut(provider)) continue;
+    const s = state.get(provider);
+    // A rejected key or a bad model is not cured by time; only transient
+    // cooldowns (rate limit, overload, timeout, network, outage) are waited on.
+    if (s?.lastFailureCategory && NOT_CURED_BY_WAITING.has(s.lastFailureCategory)) continue;
+    const until = s?.cooldownUntil;
+    if (until && until > now) minMs = Math.min(minMs, until - now);
+  }
+  return isFinite(minMs) ? minMs : null;
+}
+
 export function resetProviderHealth(provider?: AiProviderName): void {
   if (provider) {
     state.delete(provider);

@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { logger } from "./observability";
 import { isAIConfigured } from "./env-check";
 const { GoogleGenerativeAI } = require("@google/generative-ai") as typeof import("@google/generative-ai");
-import { getMinCooldownExpiryMs, recordProviderSuccess as recordProviderSuccessRaw, recordProviderFailure as recordProviderFailureRaw, recordProviderAnalysisSuccess as recordProviderAnalysisSuccessRaw, recordProviderCapabilityResult, classifyAiError, isProviderCooledDown, isBillingLockedOut, getProviderRuntimeSnapshot, getProviderStateSnapshot, getDeepSeekApiKey, isDeepSeekConfigured, getDeepSeekModel, getMistralApiKey, isMistralConfigured, getMistralProposalModel, getMistralAnalysisModel, getMistralFastModel, getMistralBaseUrl, getGroqApiKey, isGroqConfigured, getGroqBaseUrl, getTogetherApiKey, isTogetherConfigured, getTogetherProposalModel, getTogetherAnalysisModel, getTogetherFastModel, getTogetherBaseUrl, getOpenRouterApiKey, isOpenRouterConfigured, getOpenRouterModel, getOpenRouterBaseUrl, getOpenRouterSiteUrl, getOpenRouterAppName, getZaiApiKey, getZaiBaseUrl, getCerebrasApiKey, getCerebrasBaseUrl, getAnthropicApiKey, type AiProviderName } from "./ai-provider-health";
+import { getMinCooldownExpiryMs, getNextCooldownRecoveryMs, recordProviderSuccess as recordProviderSuccessRaw, recordProviderFailure as recordProviderFailureRaw, recordProviderAnalysisSuccess as recordProviderAnalysisSuccessRaw, recordProviderCapabilityResult, classifyAiError, isProviderCooledDown, isBillingLockedOut, getProviderRuntimeSnapshot, getProviderStateSnapshot, getDeepSeekApiKey, isDeepSeekConfigured, getDeepSeekModel, getMistralApiKey, isMistralConfigured, getMistralProposalModel, getMistralAnalysisModel, getMistralFastModel, getMistralBaseUrl, getGroqApiKey, isGroqConfigured, getGroqBaseUrl, getTogetherApiKey, isTogetherConfigured, getTogetherProposalModel, getTogetherAnalysisModel, getTogetherFastModel, getTogetherBaseUrl, getOpenRouterApiKey, isOpenRouterConfigured, getOpenRouterModel, getOpenRouterBaseUrl, getOpenRouterSiteUrl, getOpenRouterAppName, getZaiApiKey, getZaiBaseUrl, getCerebrasApiKey, getCerebrasBaseUrl, getAnthropicApiKey, type AiProviderName } from "./ai-provider-health";
 import { CANONICAL_AI_PROVIDER_ORDER, getAutomaticProviderOrder, automaticallyEligibleProviders, readProviderKey, getProviderModel, getProviderOutputCap, getProviderTimeoutMs, getProviderWorkerTimeoutMs, isProviderConfigured as registryIsProviderConfigured, providerAutomaticEligibility, automaticChainDisplay, type AiUseCase } from "./ai-provider-registry";
 import { preflightProvider } from "./ai-preflight";
 import { resolveCurrencyToken } from "./engine/currency-reference";
@@ -3504,6 +3504,44 @@ export function isProviderExhaustedError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err ?? "");
   return PROVIDER_EXHAUSTED_PATTERN.test(msg);
 }
+/**
+ * How many times one chunk may wait out provider cooldowns before it fails.
+ *
+ * 2026-09-29, Preview, a new tender's AI Analyze (job 6dbcee14): Gemini 503
+ * "high demand" (15s cooldown), Mistral 429 (60s), Z.ai cooling from an
+ * earlier timeout (30s), Groq refused by budget, the rest out of credit. The
+ * chunk retried once after 1.5s — still inside every cooldown — and the job
+ * failed at 170s of a longer budget. Nothing retried it: the automatic retry
+ * sweep rides a scheduled drain that GitHub fires every few hours, not every
+ * five minutes. Proposal sections already wait out cooldowns
+ * (MAX_SECTION_COOLDOWN_WAITS); the analysis chunk now does the same, bounded
+ * by the shared deadline so it can never outlive the worker.
+ */
+export const MAX_CHUNK_COOLDOWN_WAITS = 3;
+const MAX_CHUNK_COOLDOWN_WAIT_MS = 65_000;
+/** A wait is only worth taking when a real attempt still fits after it. */
+const MIN_CHUNK_ATTEMPT_WINDOW_MS = 40_000;
+const NON_RECOVERABLE_CHUNK_ERROR = /malformed|empty\s+response|no json/i;
+const COOLDOWN_CHUNK_ERROR = /cooldown|cooling down|high demand|overload|\b503\b|temporarily unavailable|service unavailable/i;
+
+export function isRecoverableByWaiting(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err ?? "");
+  if (NON_RECOVERABLE_CHUNK_ERROR.test(msg)) return false;
+  return isTransientChunkError(err) || isProviderExhaustedError(err) || COOLDOWN_CHUNK_ERROR.test(msg);
+}
+
+/** How long to wait before the next round, or null when waiting cannot help or does not fit. */
+export function chunkCooldownWaitMs(input: { cooldownMs: number | null; now: number; deadlineAt?: number }): number | null {
+  // null: every usable provider is billing-locked or ineligible — no wait cures that.
+  if (input.cooldownMs === null) return null;
+  const waitMs = Math.min(MAX_CHUNK_COOLDOWN_WAIT_MS, Math.max(CHUNK_RETRY_BACKOFF_MS, input.cooldownMs));
+  if (typeof input.deadlineAt === "number"
+    && input.now + waitMs + MIN_CHUNK_ATTEMPT_WINDOW_MS + ERROR_HANDLING_RESERVE_MS >= input.deadlineAt) {
+    return null;
+  }
+  return waitMs;
+}
+
 export async function analyzeOneChunkWithRetry(
   content: string,
   index: number,
@@ -3518,26 +3556,33 @@ export async function analyzeOneChunkWithRetry(
   if (typeof deadlineAt === "number" && Date.now() + ERROR_HANDLING_RESERVE_MS >= deadlineAt) {
     throw new Error("AI_ANALYSIS_DEADLINE_REACHED_BEFORE_CHUNK_ATTEMPT");
   }
-  try {
-    return await analyzeOneChunk(content, index, total, onProviderUsed, onProviderAttempt, deadlineAt, providerSkipReasons);
-  } catch (err) {
-    if (!isTransientChunkError(err)) throw err;
-    const msg = err instanceof Error ? err.message : String(err);
-    // Don't retry if all providers are exhausted/cooled down — waiting 1.5s won't help
-    if (isProviderExhaustedError(err) || /malformed|empty\s+response|no json/i.test(msg)) {
-      logger.warn(`[ai] chunk ${index + 1}/${total} will not immediately replay the provider chain — not retrying. Error: ${msg.slice(0, 200)}`);
-      throw err;
+  for (let round = 0; ; round += 1) {
+    try {
+      return await analyzeOneChunk(content, index, total, onProviderUsed, onProviderAttempt, deadlineAt, providerSkipReasons);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!isRecoverableByWaiting(err) || round >= MAX_CHUNK_COOLDOWN_WAITS) throw err;
+      // Without a deadline nothing bounds a wait: keep the old single short retry.
+      if (typeof deadlineAt !== "number") {
+        if (round > 0) throw err;
+        await new Promise((r) => setTimeout(r, CHUNK_RETRY_BACKOFF_MS));
+        continue;
+      }
+      // isProviderExhaustedError and a cooldown both mean the chain is busy,
+      // not broken: wait for the earliest provider to come back, not 1.5s.
+      const nextRecovery = getNextCooldownRecoveryMs();
+      const cooldownMs = nextRecovery !== null
+        ? nextRecovery
+        // Nothing is cooling: a plain retry after a short backoff, once.
+        : round === 0 && getMinCooldownExpiryMs() !== null ? CHUNK_RETRY_BACKOFF_MS : null;
+      const waitMs = chunkCooldownWaitMs({ cooldownMs, now: Date.now(), deadlineAt });
+      if (waitMs === null) {
+        logger.warn(`[ai] chunk ${index + 1}/${total} failed and no provider recovers within the shared deadline — not retrying. Error: ${msg.slice(0, 200)}`);
+        throw err;
+      }
+      logger.warn(`[ai] chunk ${index + 1}/${total} failed transiently (round ${round + 1}/${MAX_CHUNK_COOLDOWN_WAITS}) — waiting ${Math.round(waitMs / 1000)}s for a provider to recover. Error: ${msg.slice(0, 200)}`);
+      await new Promise((r) => setTimeout(r, waitMs));
     }
-    // Don't burn the retry backoff + a fresh attempt if the shared deadline
-    // leaves no room to finish it — surface the original error so the caller can
-    // persist progress and fall back cleanly instead of being hard-killed.
-    if (typeof deadlineAt === "number" && Date.now() + CHUNK_RETRY_BACKOFF_MS + ERROR_HANDLING_RESERVE_MS >= deadlineAt) {
-      logger.warn(`[ai] chunk ${index + 1}/${total} transient error but shared deadline reached — not retrying. Error: ${msg.slice(0, 200)}`);
-      throw err;
-    }
-    logger.warn(`[ai] chunk ${index + 1}/${total} hit transient error — retrying once after ${CHUNK_RETRY_BACKOFF_MS}ms. Error: ${msg.slice(0, 200)}`);
-    await new Promise((r) => setTimeout(r, CHUNK_RETRY_BACKOFF_MS));
-    return await analyzeOneChunk(content, index, total, onProviderUsed, onProviderAttempt, deadlineAt, providerSkipReasons);
   }
 }
 
