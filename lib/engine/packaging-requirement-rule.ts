@@ -144,6 +144,19 @@ const PACKAGING_PHRASES: RegExp[] = [
   /\b(?:a3|a4|letter|legal)[\s-]+(?:size|paper|format|sheets?)\b/,
   /\b(?:printed|produced|submitted|prepared)\s+on\s+(?:a3|a4|letter|legal)\b/,
   /\bpaper\s+size\b/,
+  // EXECUTION. "The proposal must contain the signature of the authorized
+  // person and the seal of the company" (2026-09-29, Preview, a new tender)
+  // matched nothing here, fell through to GENERAL, and `Expert CVS.pdf.txt`
+  // became its evidence at PARTIAL - blocking export on a rule no vault record
+  // can prove. Signing and sealing the submission is done to the produced
+  // artifact by the authorised signatory; classifyPackageRule lands it in
+  // NOT_MACHINE_DECIDABLE. A signed FORM, declaration or undertaking is still
+  // caught by SUBSTANTIVE_EVIDENCE_SIGNALS first and keeps its evidence.
+  /\bsignature\s+of\s+(?:the\s+)?(?:authori[sz]ed|legal|duly)\b/,
+  /\bsigned\s+(?:and\s+(?:stamped|sealed)\s+)?by\s+(?:the\s+|an?\s+)?(?:authori[sz]ed|legal|duly)\b/,
+  /\bsigned\s+and\s+(?:stamped|sealed)\b/,
+  /\b(?:seal|stamp)\s+of\s+the\s+(?:company|firm|bidder|consultant|tenderer)\b/,
+  /\b(?:company|firm|official|bidder s)\s+(?:seal|stamp)\b/,
   // File-size limits
   /\b(?:file\s+size|maximum\s+size)\b/,
   /\bnot\s+exceed(?:ing)?\s+\d+\s*(?:mb|kb|gb)\b/,
