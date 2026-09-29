@@ -339,6 +339,30 @@ else:
         if _hits:
             _flagged += 1
     print(f"  => {_flagged} requirement(s) carry placeholder wording that would be copied into a shipped document")
+    # Which requirement names which file: a Build Plan item comes from a
+    # requirement's exactFileName (or its title when it has none).
+    for _r in _rows:
+        print(f"  REQ {str(_r.get('id'))[:8]} type={_r.get('requirementType')} priority={_r.get('priority')} "
+              f"exactFileName={_r.get('exactFileName')!r} order={_r.get('exactOrder')} title={str(_r.get('title'))[:80]!r}")
+
+print("\n--- CONFIRMED BUILD PLAN ITEMS (where each planned file came from) ---")
+_bp = get(f"/api/tenders/{TENDER}/build-plan")
+_bp_items = None
+if isinstance(_bp, dict):
+    for _k in ("items", "plan", "buildPlan"):
+        _v = _bp.get(_k)
+        if isinstance(_v, list):
+            _bp_items = _v
+            break
+        if isinstance(_v, dict) and isinstance(_v.get("items"), list):
+            _bp_items = _v["items"]
+            break
+if not _bp_items:
+    print(f"  !! could not read build plan items; keys={list(_bp)[:12] if isinstance(_bp, dict) else type(_bp)}")
+else:
+    for _i in _bp_items:
+        print(f"  {_i.get('exactOrder')}. {_i.get('exactFileName')!r} canonicalId={_i.get('canonicalId')!r} "
+              f"type={_i.get('documentType')} required={_i.get('required')} reqs={[str(x)[:8] for x in (_i.get('sourceRequirementIds') or [])]}")
 
 # ── 2. Every generated document's quality verdict, with the gate's own
 #       (now phrase-naming) message.

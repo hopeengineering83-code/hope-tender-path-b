@@ -442,7 +442,7 @@ async function methodologyNarrativeContent(
   children.push(
     heading("Deliverables and Acceptance"),
     para(
-      "Deliverables are controlled through a deliverable register that records the required output, source requirement, responsible preparer, reviewer, planned issue point, current revision, and acceptance status. A deliverable is considered complete only when its required content is present, its internal review is closed, its interfaces are coordinated, and its format is consistent with the tender instruction. Draft, review, and final states are kept distinct so that an intermediate document cannot be mistaken for an approved submission."
+      "Deliverables are controlled through a deliverable register that records the required output, source requirement, responsible preparer, reviewer, planned issue point, current revision, and acceptance status. A deliverable is considered complete only when its required content is present, its quality review is closed, its interfaces are coordinated, and its format is consistent with the tender instruction. Draft, review, and final states are kept distinct so that an intermediate document cannot be mistaken for an approved submission."
     ),
     para(
       "Where several outputs form one package, package-level consistency is checked in addition to document-level quality. Titles, terminology, project identifiers, client identifiers, dates, quantities, and references are reconciled across the package. If the tender calls for a prescribed original or form, the prescribed original remains authoritative and is not replaced by a generated approximation."
