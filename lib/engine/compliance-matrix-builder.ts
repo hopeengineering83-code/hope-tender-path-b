@@ -217,6 +217,13 @@ export function hasComplianceMatrixHeading(markdown: string): boolean {
  * Build the deterministic Section E Compliance Matrix as a Markdown
  * fragment. Returns null when there are no requirements to map.
  */
+const DECLARATION_TITLE = /\b(?:declarations?|undertakings?|disclosures?|affidavits?|attestations?)\b/i;
+
+function isBidderDeclaration(req: RequirementLite): boolean {
+  if (String(req.requirementType ?? "").toUpperCase() === "DECLARATION") return true;
+  return DECLARATION_TITLE.test(String(req.title ?? ""));
+}
+
 export function buildComplianceMatrixSection(input: ComplianceMatrixBuilderInput): string | null {
   const rawReqs = input.requirements.filter((r) => (r.title ?? "").trim().length > 0 || (r.description ?? "").trim().length > 0);
   // Deduplicate by normalized title to prevent duplicate rows when the same
@@ -301,6 +308,15 @@ export function buildComplianceMatrixSection(input: ComplianceMatrixBuilderInput
       if (piece) evidenceParts.push(piece);
     }
     let evidenceCell = evidenceParts.join("; ");
+    // A bidder declaration is met by the firm's own signed statement, not by a
+    // vault document. 2026-09-30, a telecom-tower EOI: "Litigation History
+    // Disclosure" printed an audit firm's name as its evidence at FULLY MET.
+    // The package cannot complete without the signed original (the declaration
+    // row waits as REPLACE_WITH_ORIGINAL), so the matrix names that document
+    // as its evidence. The status is left as the engine rated it.
+    if (isBidderDeclaration(req)) {
+      evidenceCell = "The company's signed declaration, submitted as a separate document in this package";
+    }
     // If NOT MET / PARTIALLY MET, append mitigation from gaps.
     if (status !== "FULLY MET") {
       const matchingGaps = (reqId && gapsByReqId.get(reqId)) || [];

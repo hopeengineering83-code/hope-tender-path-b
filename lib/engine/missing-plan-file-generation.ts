@@ -163,6 +163,30 @@ function needsOriginalReplacement(fileName: string, documentType: string) {
   return /\bform\b|template|annex\s*[a-z0-9]+\s*\(?official\)?|audited|financial\s+statement|tax\s+clearance|business\s+licen|trade\s+licen|registration\s+cert|tin\s+cert|vat\s+cert/i.test(label);
 }
 
+const SUPPORT_CONTROL_STUB = /^Generated support-control record for tender-required file /;
+
+/**
+ * An app-written support-control stub, never reviewed by the owner, for a file
+ * that must be the firm's own original. Owner uploads and reviewed rows never
+ * match: their summaries differ or reviewedBy is set.
+ */
+function isStaleSupportStubForOriginal(row: {
+  name?: string | null;
+  exactFileName?: string | null;
+  documentType?: string | null;
+  generationStatus?: string | null;
+  reviewStatus?: string | null;
+  reviewedBy?: string | null;
+  contentSummary?: string | null;
+}) {
+  if (row.generationStatus !== "GENERATED") return false;
+  if (row.reviewedBy) return false;
+  if (row.reviewStatus === "REPLACE_WITH_ORIGINAL" || row.reviewStatus === "SUPERSEDED") return false;
+  if (!SUPPORT_CONTROL_STUB.test(String(row.contentSummary ?? ""))) return false;
+  const fileName = String(row.exactFileName ?? row.name ?? "");
+  return needsOriginalReplacement(fileName, documentTypeFor(fileName, String(row.documentType ?? "")));
+}
+
 function isNarrativeDraft(fileName: string, documentType: string) {
   const label = `${fileName} ${documentType}`.toLowerCase();
   if (needsOriginalReplacement(fileName, documentType)) return false;
@@ -658,7 +682,7 @@ export async function generateMissingPlanFiles(args: {
       requirements: true,
       generatedDocuments: {
         where: { generationStatus: { not: "SUPERSEDED" } },
-        select: { id: true, name: true, exactFileName: true, documentType: true, format: true, exactOrder: true, generationStatus: true },
+        select: { id: true, name: true, exactFileName: true, documentType: true, format: true, exactOrder: true, generationStatus: true, reviewStatus: true, reviewedBy: true, contentSummary: true },
       },
     },
   });
@@ -769,7 +793,21 @@ export async function generateMissingPlanFiles(args: {
     };
   }
 
-  const missing = findMissingGeneratedDocuments({ files: confirmedPlan.items }, tender.generatedDocuments);
+  // A support-control stub the app wrote for a file that must be the firm's
+  // own signed original (a declaration, a tender form) is not a document. Rows
+  // written before needsOriginalReplacement covered declarations stayed
+  // GENERATED and ZIP-eligible, so the fix never reached a tender that had
+  // already been through generation. Treat such a stub as missing; the write
+  // below resets it in place to PLANNED / REPLACE_WITH_ORIGINAL.
+  const staleOriginalStubIds = new Set(
+    tender.generatedDocuments
+      .filter((row) => isStaleSupportStubForOriginal(row))
+      .map((row) => row.id),
+  );
+  const missing = findMissingGeneratedDocuments(
+    { files: confirmedPlan.items },
+    tender.generatedDocuments.filter((row) => !staleOriginalStubIds.has(row.id)),
+  );
   const plannedRows = await prisma.generatedDocument.findMany({
     where: { tenderId, generationStatus: "PLANNED" },
     select: { id: true, name: true, exactFileName: true, documentType: true, format: true, exactOrder: true },
@@ -901,7 +939,12 @@ export async function generateMissingPlanFiles(args: {
             // blocking the ZIP through the very run that shipped the repaired
             // generator. See ./generated-artifact-staleness for the contract.
             let regenerateExisting = false;
-            if (existing && existing.generationStatus !== "PLANNED") {
+            if (existing && staleOriginalStubIds.has(existing.id)) {
+              regenerateExisting = true;
+              logger.info(
+                `[missing-plan-file-generation] ${document.fileName}: support-control stub reset to await the signed original`,
+              );
+            } else if (existing && existing.generationStatus !== "PLANNED") {
               const decision = decideExistingArtifactRegeneration({
                 generationStatus: existing.generationStatus,
                 reviewStatus: existing.reviewStatus,
@@ -1143,6 +1186,7 @@ export async function generateMissingPlanFiles(args: {
 export const __testing__ = {
   documentTypeFor,
   needsOriginalReplacement,
+  isStaleSupportStubForOriginal,
   isNarrativeDraft,
   narrativeDraftContent,
   isMethodologyNarrative,
