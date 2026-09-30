@@ -29,6 +29,7 @@
 // Adding a sector means adding one branch here, and every representation
 // follows.
 
+import { isTelecomTowerSector, TELECOM_TOWER_PHASES } from "./telecom-tower-sector";
 import { resolveJurisdictionTokens } from "./jurisdiction-instruments";
 
 interface PhasingRow {
@@ -40,6 +41,8 @@ interface PhasingRow {
 
 function sectorPhasingRows(sector: string): PhasingRow[] {
   const s = sector.toLowerCase();
+
+  if (isTelecomTowerSector(sector)) return TELECOM_TOWER_PHASES.map((row) => ({ ...row }));
 
   if (/health|hospital|medical|clinic/.test(s)) {
     return [

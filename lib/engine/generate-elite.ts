@@ -390,6 +390,10 @@ function shortText(text?: string | null, max = 700): string {
 
 function cleanClientLanguage(text: string): string {
   return polishBenchmarkOutput(text
+    // A table cell holding a placeholder is blanked, not its whole row:
+    // deleting the row left "A.2 Corporate Information" as a header with no
+    // data when one of its seven cells was unconfirmed (2026-09-30).
+    .replace(/\|[^|\n]*\bBid-Team Action:[^|\n]*(?=\|)/gi, "| — ")
     .replace(/^[^\n]*\bBid-Team Action:[^\n]*/gmi, "")
     .replace(/^[^\n]*\bBid-team confirmation:[^\n]*/gmi, "")
     .replace(/bid-team confirmation item(s)?/gi, "source-evidence confirmation item$1")
@@ -1613,6 +1617,70 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
   let cleanedTenderTitle = intelligence.assignmentName;
   const tenderText = [cleanedTenderTitle, writerTender.reference, intelligence.clientName, tender.description, tender.intakeSummary, tender.analysisSummary, tender.evaluationMethodology, ...tender.files.map((f) => `${f.originalFileName}\n${f.extractedText ?? ""}`)].filter(Boolean).join("\n\n");
 
+  // Recognises a file name that is genuinely the main proposal slot.
+  // "expression of interest" / "EOI" is included because on an EOI tender that
+  // file IS the main narrative — there is no "technical proposal" at that
+  // stage — so without it an entire tender category had no recognised slot.
+  const isMainProposalSlotName = (name: string | null | undefined) =>
+    typeof name === "string" && /\b(technical[-\s_]*proposal|technical[-\s_]*bid|main[-\s_]*proposal|proposal[-\s_]*document|consultancy[-\s_]*proposal|expression[-\s_]*of[-\s_]*interest|eoi)\b/i.test(name);
+
+  // The confirmed submission plan owns the file names the client receives.
+  // When it names a main-proposal file, the proposal must be written to THAT
+  // name. This step previously only looked for an EXISTING GeneratedDocument
+  // row to reuse; on a normal run no row exists for a plan file yet, so it
+  // created a fresh "Technical-Proposal.docx" — a name outside the confirmed
+  // plan, which supersede-outside-plan then discarded, while the plan's own
+  // file was filled with the short "generated support control" stub. The
+  // exported package shipped placeholders and the real proposal was thrown
+  // away.
+  const planProposalFileName = await (async (): Promise<string | null> => {
+    try {
+      const planned = await prisma.tender.findFirst({
+        where: { id: tenderId },
+        select: { exactFileNaming: true, exactFileOrder: true },
+      });
+      const names: string[] = [];
+      for (const raw of [planned?.exactFileNaming, planned?.exactFileOrder]) {
+        if (typeof raw !== "string" || !raw) continue;
+        const parsed = JSON.parse(raw) as unknown;
+        if (!Array.isArray(parsed)) continue;
+        for (const entry of parsed) {
+          if (typeof entry === "string" && entry.trim()) names.push(entry.trim());
+          else if (entry && typeof entry === "object" && typeof (entry as { name?: unknown }).name === "string") {
+            names.push(((entry as { name: string }).name).trim());
+          }
+        }
+      }
+      const stated = names.find((name) => isMainProposalSlotName(name));
+      if (stated) return stated;
+      // A tender that names no files still gets a main-proposal file in the
+      // confirmed Build Plan (submission-plan.ts folds the unnamed proposal
+      // sections into it). Writing anywhere else puts the proposal outside
+      // the plan, where auto-finalize retires it.
+      const plan = await prisma.buildPlan.findUnique({
+        where: { tenderId },
+        select: { status: true, itemsJson: true },
+      });
+      if (plan?.status !== "CONFIRMED" || !plan.itemsJson) return null;
+      const items = JSON.parse(plan.itemsJson) as unknown;
+      if (!Array.isArray(items)) return null;
+      for (const item of items) {
+        const name = item && typeof item === "object" ? (item as { exactFileName?: unknown }).exactFileName : null;
+        if (typeof name === "string" && isMainProposalSlotName(name)) return name.trim();
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  })();
+
+  // What the main document calls itself. On an EOI the narrative is an
+  // Expression of Interest; the cover letter, summary and declaration said
+  // "this Technical Proposal" (2026-09-30, a telecom-tower EOI).
+  const submissionDocumentLabel = /\b(expression[-\s_]*of[-\s_]*interest|eoi)\b/i.test(planProposalFileName ?? "")
+    ? "Expression of Interest"
+    : "Technical Proposal";
+
   // ─── Service-stream classification (for HAEC methodology injection) ────────
   // Classify the tender to detect service streams (architecture / supervision
   // / geotechnical / interior design / urban planning / structural / MEP /
@@ -2211,6 +2279,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
 
       const aiInputBase = {
         tenderTitle: cleanedTenderTitle,
+        submissionDocumentLabel,
         clientName: intelligence.clientName,
         clientContactName: intelligence.clientContactName,
         recordBasedOpeners: recordBasedOpeningSections({
@@ -2230,7 +2299,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
             : writerTender.clientContactName
               ? `${writerTender.clientContactName}, ${intelligence.clientName}`
               : intelligence.clientName,
-          subject: intelligence.exactSubjectLine ?? `Technical Proposal for ${cleanedTenderTitle}`,
+          subject: intelligence.exactSubjectLine ?? `${submissionDocumentLabel} for ${cleanedTenderTitle}`,
           technicalOnly: Boolean(intelligence.noFinancialProposal),
           salutation: writerTender.clientContactName ? `Dear ${writerTender.clientContactName},` : "Dear Evaluation Committee,",
           signOff: signOffLines(company.name, resolveSignatory({ gmName: company.gmName, gmLicense: company.gmLicense, experts: experts as ExpertRecord[] })),
@@ -4217,62 +4286,6 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
   // Technical-Proposal.docx record and let the misclassified planned
   // slot remain as a support doc (filled later by
   // fillPlannedSupportDocuments).
-  // Recognises a file name that is genuinely the main proposal slot.
-  // "expression of interest" / "EOI" is included because on an EOI tender that
-  // file IS the main narrative — there is no "technical proposal" at that
-  // stage — so without it an entire tender category had no recognised slot.
-  const isMainProposalSlotName = (name: string | null | undefined) =>
-    typeof name === "string" && /\b(technical[-\s_]*proposal|technical[-\s_]*bid|main[-\s_]*proposal|proposal[-\s_]*document|consultancy[-\s_]*proposal|expression[-\s_]*of[-\s_]*interest|eoi)\b/i.test(name);
-
-  // The confirmed submission plan owns the file names the client receives.
-  // When it names a main-proposal file, the proposal must be written to THAT
-  // name. This step previously only looked for an EXISTING GeneratedDocument
-  // row to reuse; on a normal run no row exists for a plan file yet, so it
-  // created a fresh "Technical-Proposal.docx" — a name outside the confirmed
-  // plan, which supersede-outside-plan then discarded, while the plan's own
-  // file was filled with the short "generated support control" stub. The
-  // exported package shipped placeholders and the real proposal was thrown
-  // away.
-  const planProposalFileName = await (async (): Promise<string | null> => {
-    try {
-      const planned = await prisma.tender.findFirst({
-        where: { id: tenderId },
-        select: { exactFileNaming: true, exactFileOrder: true },
-      });
-      const names: string[] = [];
-      for (const raw of [planned?.exactFileNaming, planned?.exactFileOrder]) {
-        if (typeof raw !== "string" || !raw) continue;
-        const parsed = JSON.parse(raw) as unknown;
-        if (!Array.isArray(parsed)) continue;
-        for (const entry of parsed) {
-          if (typeof entry === "string" && entry.trim()) names.push(entry.trim());
-          else if (entry && typeof entry === "object" && typeof (entry as { name?: unknown }).name === "string") {
-            names.push(((entry as { name: string }).name).trim());
-          }
-        }
-      }
-      const stated = names.find((name) => isMainProposalSlotName(name));
-      if (stated) return stated;
-      // A tender that names no files still gets a main-proposal file in the
-      // confirmed Build Plan (submission-plan.ts folds the unnamed proposal
-      // sections into it). Writing anywhere else puts the proposal outside
-      // the plan, where auto-finalize retires it.
-      const plan = await prisma.buildPlan.findUnique({
-        where: { tenderId },
-        select: { status: true, itemsJson: true },
-      });
-      if (plan?.status !== "CONFIRMED" || !plan.itemsJson) return null;
-      const items = JSON.parse(plan.itemsJson) as unknown;
-      if (!Array.isArray(items)) return null;
-      for (const item of items) {
-        const name = item && typeof item === "object" ? (item as { exactFileName?: unknown }).exactFileName : null;
-        if (typeof name === "string" && isMainProposalSlotName(name)) return name.trim();
-      }
-      return null;
-    } catch {
-      return null;
-    }
-  })();
 
   // On an EOI the main narrative is an Expression of Interest, not a full
   // technical proposal: the quality validator blocks

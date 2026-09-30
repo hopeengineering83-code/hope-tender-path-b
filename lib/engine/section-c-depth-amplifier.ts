@@ -44,6 +44,7 @@
  * the evidence-marker injector (PR #248) and the scorer/refinement step.
  */
 
+import { isTelecomTowerSector, TELECOM_TOWER_METHODOLOGY } from "./telecom-tower-sector";
 import { recordedProjectServices } from "./project-fact-extractor";
 import type { ProjectRecord } from "./benchmark-tables";
 import { inlineEvidenceValue } from "./proposal-intelligence";
@@ -179,6 +180,12 @@ function sectorMethodologyParagraph(sector: string, subSection: string, sourceTe
 
 function sectorMethodologyParagraphRaw(sector: string, subSection: string): string {
   const s = sector.toLowerCase();
+  if (isTelecomTowerSector(sector)) {
+    if (/understanding|C\.1/i.test(subSection)) return TELECOM_TOWER_METHODOLOGY.understanding;
+    if (/methodology|C\.2/i.test(subSection)) return TELECOM_TOWER_METHODOLOGY.methodology;
+    if (/work plan|C\.3/i.test(subSection)) return TELECOM_TOWER_METHODOLOGY.workplan;
+    if (/quality|QA|C\.4/i.test(subSection)) return TELECOM_TOWER_METHODOLOGY.quality;
+  }
   if (/health|hospital|medical|clinic/.test(s)) {
     if (/understanding|C\.1/i.test(subSection)) return "The clinical brief drives every downstream decision: zone segregation between Emergency, Outpatient, In-patient, Imaging, Pharmacy, and Laboratory; Infection Prevention and Control (IPC) compliant flow patterns; medical-gas distribution coordinated with structural and MEP grids; radiation-shielding loads accounted for at structural sizing.";
     if (/methodology|C\.2/i.test(subSection)) return "Methodology works from a functional programme of the clinical brief: clinical-zone capacity sizing, IPC-compliant patient/staff/supply flow, biomedical equipment integration (data cabling for imaging and, where the confirmed equipment brief requires it, radiation shielding), and ventilation and filtration matched to the clinical risk of each area.";

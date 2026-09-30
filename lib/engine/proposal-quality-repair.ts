@@ -1,4 +1,5 @@
 import { filterCleanLines } from "./pattern-filter";
+import { inferProposalLocation } from "./compliance-matrix-builder";
 import { CLIENT_FACING_SECTION_F_HEADING, SECTION_F_HEADING_RX } from "./client-facing-section-titles";
 import { truncateDisplayLine, withoutProvenanceTags } from "./proposal-labels";
 import type { EvaluatorMatrixInput } from "./proposal-evaluator-matrix";
@@ -83,7 +84,13 @@ function sectionF(input: EvaluatorMatrixInput): string {
       ? "Mandatory / pass-fail"
       : "Scored criterion (no weight stated in tender)";
     // "TRB-1" was an internal trace label with no meaning to the reader.
-    rows.push(`| ${withoutProvenanceTags(clean(item.requirement))} | ${priority} | Section ${item.responseSection} | ${item.evidenceSupport} |`);
+    // Located by the same rule as Section E. responseSection() named
+    // sections no proposal has ("Section Compliance Forms and Eligibility
+    // Documents", "Section Submission Control"; 2026-09-30).
+    const requirementText = withoutProvenanceTags(clean(item.requirement));
+    const [title, ...rest] = requirementText.split(/\s+[—–]\s+/);
+    const location = inferProposalLocation({ title, description: rest.join(" — ") });
+    rows.push(`| ${requirementText} | ${priority} | ${location} | ${item.evidenceSupport} |`);
   }
   return [
     `## ${CLIENT_FACING_SECTION_F_HEADING}`,

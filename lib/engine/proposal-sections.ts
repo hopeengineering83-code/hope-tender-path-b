@@ -39,6 +39,7 @@
 // proposal-intelligence outputs. AI calls there would be wasted budget
 // because the source data is already structured.
 
+import { describesTelecomTowerWork, TELECOM_TOWER_SCOPE_ITEMS } from "./telecom-tower-sector";
 import { resolveSignatory, signatoryExpertsFromProofLines, signOffLines } from "./signatory";
 import type { AIBidWriterInput } from "../ai";
 import {
@@ -58,7 +59,12 @@ import { BENCHMARK_CONTEXT_LINES } from "./proposal-intelligence";
 const WRITER_DIRECTIVE_LINES = new Set(BENCHMARK_CONTEXT_LINES.map((line) => line.trim()));
 
 /** Requirement rows about submitting, credentials or price: answered outside Section C. */
-const NOT_A_WORK_PHASE = /\b(?:site visit|pre-?bid|submi(?:t|ssion)|signature|signed|seal|stamp|validity|valid for|deadline|envelope|financial proposal|price|payment|tax|tin|vat|licen[cs]e|registration|legal documentation|company profile|corporate qualifications?|qualifications? of key|team qualifications|curriculum|cvs?|resumes?|portfolio|years in business|examples of related work|relevant experience|references?)\b/i;
+//
+// 2026-09-30, a telecom-tower EOI: "Declaration of Non-Debarment and
+// Eligibility", "Litigation History Disclosure", "Audited Financial Statements"
+// and "Exclusion of Pricing Information" became methodology subsections and
+// Work Plan stages ("Exclusion of Pricing Information Report").
+const NOT_A_WORK_PHASE = /\b(?:declarations?|disclosures?|litigation|debar(?:ment|red)?|eligib(?:le|ility)|non-?performing|audited|financial\s+(?:statements?|reports?|standing|capacity)|pricing|prices|conflict\s+of\s+interest|undertakings?|affidavits?|bid\s+security|guarantees?|insurance|incorporation|(?<!user\s)experience|site visit|pre-?bid|submi(?:t|ssion)|signature|signed|seal|stamp|validity|valid for|deadline|envelope|financial proposal|price|payment|tax|tin|vat|licen[cs]e|registration|legal documentation|company profile|corporate qualifications?|qualifications? of key|team qualifications|curriculum|cvs?|resumes?|portfolio|years in business|examples of related work|relevant experience|references?)\b/i;
 
 /** "Title — long description" -> "Title", never cut mid-word. */
 function workPhaseTitle(line: string): string {
@@ -1191,6 +1197,7 @@ export function buildSectionFallback(spec: ProposalSectionSpec, writerInput: AIB
         mining: ["Geological Survey and Resource Estimation (JORC)", "Geotechnical and Slope Stability Assessment", "Mine Planning and Ore Body Characterisation", "Tailings Management and Environmental Compliance", "Blast Design and Ground Vibration Management", "Water Management and Dewatering Design", "ESIA and Social Management Plan", "Rehabilitation and Mine Closure Planning"],
         building: ["Architectural Brief and Space Programme Review", "Structural Engineering and Foundation Design", "MEP Design — Mechanical, Electrical, Plumbing", "Fire Safety and Life Safety Systems Design", "BIM Coordination and Clash Detection", "BOQ and Cost Planning", "Regulatory Approval and Building Permit Support", "Construction Supervision and QA"],
         oil_gas: ["Process Flow and P&ID Development", "HAZOP and Safety Case Analysis", "Pipeline Integrity and Corrosion Management", "HSE Plan and Emergency Response Framework", "Wellhead and Production Facility Engineering", "Environmental Baseline and ESMP", "Detailed Engineering Drawings and Specifications", "Commissioning and Pre-Startup Safety Review"],
+        telecom_tower: TELECOM_TOWER_SCOPE_ITEMS,
         port: ["Traffic Volume and Vessel Call Analysis", "Port Master Plan and Terminal Layout Design", "Berth, Quay and Fender System Engineering", "Dredging and Coastal Impact Assessment", "Container Handling Equipment Specification", "Maritime Safety and Navigation Study", "Environmental and ESMP Compliance", "Operational Procedures and Port Regulations"],
       };
       // Detect sector from tender text for sector-specific fallback scope items
@@ -1201,7 +1208,9 @@ export function buildSectionFallback(spec: ProposalSectionSpec, writerInput: AIB
         .join(" ")
         .toLowerCase();
       const detectedFallbackSector = (() => {
-        if (/health|hospital|clinic|medical|patient|ward|pharmacy|radiology/.test(haystack)) return "healthcare";
+        if (describesTelecomTowerWork(haystack)) return "telecom_tower";
+        // Bounded: bare "ward" matched "arbitral award" and "towards".
+        if (/\b(?:health(?:\s*care)?|hospitals?|clinics?|medical|patients?|wards?|pharmacy|radiology)\b/.test(haystack)) return "healthcare";
         if (/water|borehole|hydraulic|sanitar|epanet|watercad|chlorin/.test(haystack)) return "water";
         if (/\broad\b|highway|pavement|bridge|culvert|cbr|aashto|bitumen/.test(haystack)) return "road";
         if (/esia|esmp|environmental assessment|safeguard|mitigation hierarchy/.test(haystack)) return "environmental";
@@ -1355,7 +1364,8 @@ function buildCoverAndSummaryFallback(input: AIBidWriterInput): string {
   // Cover-letter subject line — uses tender reference if present,
   // matching Claude's pattern: "[RFQ# 2026-024 Hope Urban
   // Planning Architectural and Engineering Consultancy PLC]"
-  const subjectLine = `Technical Proposal — ${tenderTitle}`;
+  const documentLabel = input.submissionDocumentLabel?.trim() || "Technical Proposal";
+  const subjectLine = `${documentLabel} — ${tenderTitle}`;
 
   // Cover-letter opening paragraph — names a comparable project
   // when one is available in input.projects. Falls back to a
@@ -1369,13 +1379,15 @@ function buildCoverAndSummaryFallback(input: AIBidWriterInput): string {
   const openingParagraph = anchor
     // No "the same team that delivered X is proposed": no record proves who
     // worked on a past project, and the final gate refuses the claim.
-    ? `${companyName} submits this Technical Proposal for ${tenderTitle}. The firm's comparable experience includes ${anchor.phrase}.`
-    : `${companyName} submits this Technical Proposal for ${tenderTitle}. The firm's comparable assignments are presented in Section B.`;
+    ? `${companyName} submits this ${documentLabel} for ${tenderTitle}. The firm's comparable experience includes ${anchor.phrase}.`
+    : `${companyName} submits this ${documentLabel} for ${tenderTitle}.${projectsBlock ? " The firm's comparable assignments are presented in Section B." : ""}`;
 
   // Executive Summary lead: the record, not a verdict about it.
   const execSummaryLead = anchor
     ? `The closest comparable project in ${possessive(companyName)} record is ${anchor.phrase}${anchor.services ? `, where the firm's services included ${anchor.services}` : ""}.`
-    : `${companyName} submits this Technical Proposal for ${tenderTitle}. The firm's comparable assignments are detailed in Section B, and the proposed team and methodology answer ${possessive(clientName)} evaluation criteria.`;
+    : projectsBlock
+      ? `${companyName} submits this ${documentLabel} for ${tenderTitle}. The firm's comparable assignments are detailed in Section B, and the proposed team and methodology answer ${possessive(clientName)} evaluation criteria.`
+      : `${companyName} submits this ${documentLabel} for ${tenderTitle}. The proposed team and methodology answer ${possessive(clientName)} evaluation criteria.`;
 
   return [
     "# Cover Letter",
@@ -1386,7 +1398,9 @@ function buildCoverAndSummaryFallback(input: AIBidWriterInput): string {
     "",
     openingParagraph,
     "",
-    "The proposed team and each expert's comparable roles are set out in Section A, and Section B presents the project references.",
+    projectsBlock
+      ? "The proposed team and each expert's comparable roles are set out in Section A, and Section B presents the project references."
+      : "The proposed team and each expert's comparable roles are set out in Section A.",
     "",
     // Not "We confirm enclosed appendices": a one-file package encloses none.
     "The proposal follows the structure the tender requests, and the Compliance Matrix maps each tender requirement to the section that answers it.",
@@ -1402,7 +1416,7 @@ function buildCoverAndSummaryFallback(input: AIBidWriterInput): string {
     "# Executive Summary",
     execSummaryLead,
     "",
-    "The proposal answers each evaluation criterion the tender states: Section A presents the firm and the proposed team; Section B the project references; Section C the technical approach and methodology; Section D supporting capabilities and certifications.",
+    `The proposal answers each evaluation criterion the tender states: Section A presents the firm and the proposed team; ${projectsBlock ? "Section B the project references; " : ""}Section C the technical approach and methodology; Section D supporting capabilities and certifications.`,
   ].filter((s) => s !== "").join("\n\n");
 }
 
@@ -1569,7 +1583,7 @@ function buildAdditionalAndDeclarationFallback(input: AIBidWriterInput): string 
     `Company: ${v.legalName ?? companyName}`,
   ].join("\n");
   const declarationBody = [
-    `We, ${v.legalName ?? companyName}${v.registrationNumber ? ` (Reg. No. ${v.registrationNumber})` : ""}, hereby declare that this Technical Proposal has been prepared specifically in response to ${tenderTitle} issued by ${input.clientName || "the Client"}.`,
+    `We, ${v.legalName ?? companyName}${v.registrationNumber ? ` (Reg. No. ${v.registrationNumber})` : ""}, hereby declare that this ${input.submissionDocumentLabel?.trim() || "Technical Proposal"} has been prepared specifically in response to ${tenderTitle} issued by ${input.clientName || "the Client"}.`,
     "",
     "The information in this proposal is drawn from the firm's records, which are available for verification on request.",
     "",

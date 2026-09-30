@@ -1,4 +1,5 @@
 import { logger } from "../observability";
+import { describesTelecomTowerWork, TELECOM_TOWER_SECTOR } from "./telecom-tower-sector";
 import { extractProjectFacts, extractProjectAmounts, extractServicesProvided } from "./project-fact-extractor";
 import { tidyTruncation, factualCardOrEmpty } from "./vault-prose";
 import { detectFinancialProposalRequiredFromText, buildTenderDocumentTypeAdvisory, type TenderDocumentTypeAdvisory } from "../document-generation/generation-integration";
@@ -759,6 +760,9 @@ export function detectThemes(tenderText: string): ProposalTheme[] {
 }
 
 export function inferSector(tenderText: string): string {
+  // First: a tower tender mentions health and safety, structures and
+  // telecoms, and every later pattern would claim it for the wrong work.
+  if (describesTelecomTowerWork(tenderText)) return TELECOM_TOWER_SECTOR;
   if (/health|hospital|medical|clinic|specialty.*cent/i.test(tenderText)) return "Healthcare / Medical Facility Design";
   // ─── Agriculture BEFORE water ──────────────────────────────────────
   // "irrigation scheme" + "crop production" = agriculture; the water

@@ -92,6 +92,9 @@ export function stripPlaceholders(markdown: string): StripResult {
     return "| — |";
   });
 
+  // 3b. A table left with a header and no rows says nothing; drop it.
+  result = dropEmptyTables(result);
+
   // 4. Collapse 3+ blank lines to 2 so removed sections don't leave
   // visible holes in the document.
   result = result.replace(/\n{3,}/g, "\n\n");
@@ -103,4 +106,24 @@ export function stripPlaceholders(markdown: string): StripResult {
     .join("\n");
 
   return { markdown: result, removedLines, blankedCells, removedParagraphs };
+}
+
+/**
+ * Remove markdown tables that have a header and separator but no data rows.
+ * 2026-09-30, a delivered EOI: "A.2 Corporate Information" printed a column
+ * header over nothing.
+ */
+export function dropEmptyTables(markdown: string): string {
+  const lines = markdown.split("\n");
+  const out: string[] = [];
+  const isRow = (line: string | undefined) => typeof line === "string" && /^\s*\|.*\|\s*$/.test(line);
+  const isSeparator = (line: string | undefined) => typeof line === "string" && /^\s*\|(?:\s*:?-{3,}:?\s*\|)+\s*$/.test(line);
+  for (let i = 0; i < lines.length; i++) {
+    if (isRow(lines[i]) && !isRow(lines[i - 1]) && isSeparator(lines[i + 1]) && !isRow(lines[i + 2])) {
+      i += 1;
+      continue;
+    }
+    out.push(lines[i]!);
+  }
+  return out.join("\n");
 }

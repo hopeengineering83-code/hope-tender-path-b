@@ -20,6 +20,7 @@
 // `metadataContaminated` flag. That keeps it trivially unit-testable without a
 // database.
 
+import { stripTrailingClauseWords } from "./proposal-labels";
 import type { AIAnalysisResult } from "../ai";
 import {
   containsMetadataPlaceholder,
@@ -96,6 +97,18 @@ function canonicalEvaluationMethodology(aiResult: AIAnalysisResult): string | nu
 // The single note line every AI promotion appends, after stripping any prior
 // analysis-source / fallback-diagnostics lines.
 const AI_ANALYSIS_NOTE = "Analysis source: AI (re-run via AI Analyze button).";
+
+/**
+ * An intake-captured client name that is the analysed procuring entity plus
+ * the verb of its source sentence ("Sample Networks PLC is" beside "Sample
+ * Networks PLC"). Replacing it is a correction, not an override: any other
+ * stored name, including one the owner typed, is kept.
+ */
+function isClauseCaptureOf(stored: string, analysed: string): boolean {
+  const a = analysed.trim();
+  const s = stored.trim();
+  return s !== a && s.startsWith(a) && stripTrailingClauseWords(s) === a;
+}
 
 export function buildAnalysisNotes(existingNotes: string | null | undefined): string | null {
   const lines = (existingNotes ?? "").split("\n");
@@ -237,7 +250,7 @@ export function buildCanonicalAnalysisTenderUpdate(
     status: "AI_ANALYZED",
     stage: "ANALYSIS",
     ...(aiResult.procuringEntityName != null && !containsMetadataPlaceholder(aiResult.procuringEntityName)
-      ? { procuringEntityName: aiResult.procuringEntityName, ...(!existing.clientName ? { clientName: aiResult.procuringEntityName } : {}) }
+      ? { procuringEntityName: aiResult.procuringEntityName, ...(!existing.clientName || isClauseCaptureOf(existing.clientName, aiResult.procuringEntityName) ? { clientName: aiResult.procuringEntityName } : {}) }
       : {}),
     ...(aiResult.legalClientName != null && !containsMetadataPlaceholder(aiResult.legalClientName) ? { legalClientName: aiResult.legalClientName } : {}),
     ...(aiResult.donorAgency != null && !containsMetadataPlaceholder(aiResult.donorAgency) ? { donorAgency: aiResult.donorAgency } : {}),

@@ -2568,6 +2568,8 @@ export type AIExtractedProject = {
 
 export type AIBidWriterInput = {
   tenderTitle: string;
+  /** What the main document calls itself: "Technical Proposal" or "Expression of Interest". */
+  submissionDocumentLabel?: string;
   clientName: string;
   tenderText: string;
   analysisSummary: string;

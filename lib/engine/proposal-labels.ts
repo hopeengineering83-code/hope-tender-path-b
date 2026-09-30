@@ -70,6 +70,18 @@ export function extractLikelyClientName(...values: Array<string | null | undefin
   return null;
 }
 
+// The verb of the sentence an entity name was lifted from. 2026-09-30, a
+// telecom-tower EOI: intake stored "Safaricom Telecommunications Ethiopia PLC
+// is" from "… PLC is seeking expressions of interest", and every paragraph of
+// the proposal addressed "Safaricom Telecommunications Ethiopia PLC is'". An
+// organisation's name does not end in a lowercase clause word, so a trailing
+// run of them after a capitalised word is the sentence, not the name.
+const TRAILING_CLAUSE_WORDS = /(\b[A-Z0-9][^\s]*)(?:\s+(?:is|are|was|were|has|have|had|hereby|herein|now|invites?|intends?|seeks?|seeking|wishes|wants|requests?|requires?|announces?|would|will|shall|plans?|through|with|which|who|that))+$/;
+
+export function stripTrailingClauseWords(value: string): string {
+  return value.replace(TRAILING_CLAUSE_WORDS, "$1");
+}
+
 export function cleanClientName(value?: string | null, fallback?: string | null): string {
   const normalized = normalizeLabel(value);
   const fallbackName = normalizeLabel(fallback);
@@ -82,6 +94,8 @@ export function cleanClientName(value?: string | null, fallback?: string | null)
     .replace(/\s*\([^)]{0,80}$/g, "")
     .replace(/[.,;:\-–—\s]+$/g, "")
     .trim();
+  const unclaused = stripTrailingClauseWords(cleaned);
+  if (unclaused !== cleaned) return cleanClientName(unclaused);
 
   if (!cleaned || cleaned.length > 90 || isSuspiciousLabel(cleaned)) {
     return extractLikelyClientName(candidate) ?? "Client";
@@ -301,7 +315,9 @@ export function safeFileBaseName(value?: string | null, fallback = "submission-p
  * partially, and the requirement's own words are untouched.
  */
 const ANY_QUOTE_TAG = /\s*\(quote:\s*"[^"]*"?\)?/gi;
-const ANY_SECTION_TAG = /\s*\(§[^)]*\)?/g;
+// One level of nested parentheses: "(§ 3. Basic Respondents (Bidders)
+// Requirements)" left " Requirements)" on every Section F row (2026-09-30).
+const ANY_SECTION_TAG = /\s*\(§(?:[^()]|\([^()]*\))*\)?/g;
 const ANY_PAGE_TAG = /\s*\[p\.\s*\d+\]/gi;
 
 export function withoutProvenanceTags(value: string): string {

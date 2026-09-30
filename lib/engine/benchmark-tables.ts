@@ -328,12 +328,11 @@ export function buildTeamToProjectMappingTable(experts: ExpertRecord[], projects
  * file dumped them as a single garbled line).
  */
 export function buildProjectPortfolioCards(projects: ProjectRecord[], tenderTitle: string, primarySector: string, scopeItems: ScopeItem[] = []): string {
-  if (projects.length === 0) {
-    return [
-      "## B.2 Project Portfolio",
-      "Bid-Team Action: Add project references to the knowledge vault and re-generate this proposal to populate Section B with detailed project cards. Each card requires: project name, client, location and scale, contract value, duration, testimony reference, services provided, and a relevance statement.",
-    ].join("\n\n");
-  }
+  // No reviewed project fits: no section. The placeholder that stood here was
+  // stripped before delivery, and the client received a "B.2 Project
+  // Portfolio" heading over nothing (2026-09-30, a telecom-tower EOI whose
+  // building projects were all, correctly, excluded).
+  if (projects.length === 0) return "";
 
   const cards: string[] = ["## B.2 Project Portfolio"];
   cards.push(

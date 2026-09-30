@@ -31,6 +31,8 @@ function safeArr(value: unknown): string[] {
   return trimmed.split(/[,;|]/).map((s) => s.trim()).filter(Boolean);
 }
 
+const REASON_COUNT_WORDS: Record<number, string> = { 3: "Three", 4: "Four", 5: "Five" };
+
 export function buildWhyUsSummary(opts: {
   companyName: string;
   clientName: string;
@@ -57,10 +59,14 @@ export function buildWhyUsSummary(opts: {
   // 2. Lead expert with credentials
   const lead = opts.experts.find((e) => /lead|principal|director|manager/i.test(e.title || "")) || opts.experts[0];
   if (lead) {
+    // Only a recorded certification qualifies the title. The discipline
+    // fallback printed "(Project Manager / Senior Civil Engineer,
+    // Architecture)" -- the first discipline in the CV, not a credential --
+    // and without years the sentence read "(…) and leads the proposed team".
     const certs = safeArr(lead.certifications);
-    const credentials = certs.length > 0 ? certs[0] : (safeArr(lead.disciplines)[0] || lead.title || "Specialist");
+    const qualifier = [lead.title || "Senior Lead", certs[0]].filter(Boolean).join(", ");
     bullets.push(
-      `**Named team lead.** ${lead.fullName} (${lead.title || "Senior Lead"}, ${credentials})${lead.yearsExperience ? ` brings ${lead.yearsExperience} years` : ""} and leads the proposed team for this engagement.`,
+      `**Named team lead.** ${lead.fullName} (${qualifier}) ${lead.yearsExperience ? `brings ${lead.yearsExperience} years of experience and ` : ""}leads the proposed team for this engagement.`,
     );
   }
 
@@ -105,7 +111,9 @@ export function buildWhyUsSummary(opts: {
 
   return [
     `## Why ${opts.companyName} for ${opts.clientName}`,
-    "Five reasons grounded in reviewed evidence:",
+    // The count is the list's own length: "Five reasons" above four items
+    // shipped in a delivered EOI.
+    `${REASON_COUNT_WORDS[bullets.length] ?? String(bullets.length)} reasons grounded in reviewed evidence:`,
     "",
     ...bullets.map((b, i) => `${i + 1}. ${b}`),
   ].join("\n");

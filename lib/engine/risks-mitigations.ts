@@ -12,6 +12,7 @@
  * contain a "Risk Register" or "Risks and Mitigations" heading.
  */
 
+import { isTelecomTowerSector, TELECOM_TOWER_RISKS } from "./telecom-tower-sector";
 import { resolveJurisdictionTokens } from "./jurisdiction-instruments";
 import { possessive } from "./possessive";
 
@@ -23,6 +24,7 @@ function escCell(text: string): string {
 
 function risksForSector(primarySector: string): SectorRisk[] {
   const sector = primarySector.toLowerCase();
+  if (isTelecomTowerSector(primarySector)) return TELECOM_TOWER_RISKS;
   if (/health|hospital|medical|clinic/.test(sector)) return [
     // No donor framework ("World Bank ESF") for a tender that names none, and
     // no "internal review" wording: a later pass cut both mitigations at it.

@@ -112,10 +112,18 @@ const BRAND_PATTERNS: RegExp[] = [
   /\b[A-Z][A-Z0-9]{2,}\s+(?:Ethiopia|Foundation|International|Holdings?|Group|Ltd|PLC|Inc\.?|Limited|Corporation|Bank|Energy|Industries)\b/g,
 ];
 
+// A place is named. A bare kind of place ("Tower", "Building", "Region") is
+// not a location: a telecom-tower EOI printed "Site / Location: Tower" in its
+// Tender Specifics table (2026-09-30). The kind words therefore need a name in
+// front, and a name that is itself an industry word ("Telecommunications
+// Tower", "Office Building") is not one.
 const LOCATION_HINTS = [
-  /\b(?:Kirkos|Bole|Yeka|Lideta|Addis\s+Abeba|Addis\s+Ababa|Adama|Mekelle|Bahir\s+Dar|Hawassa|Dire\s+Dawa|Kebele|Sub\s*City|Sub-City|Woreda|District|Zone|Region|Province)\b/g,
-  /\b(?:Eagle\s+Plaza|Plaza|Tower|Centre|Building|Avenue|Road|Street)\b/g,
+  /\b(?:Kirkos|Bole|Yeka|Lideta|Addis\s+Abeba|Addis\s+Ababa|Adama|Mekelle|Bahir\s+Dar|Hawassa|Dire\s+Dawa)\b/g,
+  /\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\s+(?:Kebele|Sub\s*City|Sub-City|Woreda|District|Zone|Region|Province)\b/g,
+  /\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\s+(?:Plaza|Tower|Centre|Building|Avenue|Road|Street)\b/g,
 ];
+
+const NOT_A_PLACE_NAME = /^(?:the|this|that|a|an|each|every|any|all|new|existing|main|head|office|control|telecom|telecommunications?|communications?|mobile|radio|cell|lattice|water|steel|concrete|previous|tender|project|site|access|service|services|regional|district|national|federal|and|or|of|for|in|at|to|by|with|from)\b/i;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
 
@@ -259,7 +267,7 @@ export function extractTenderFacts(
   for (const re of LOCATION_HINTS) {
     re.lastIndex = 0;
     for (const m of tenderText.matchAll(re)) {
-      if (m[0]) locations.push(m[0]);
+      if (m[0] && !NOT_A_PLACE_NAME.test(m[0])) locations.push(m[0]);
     }
   }
   const dedupedLocations = uniq(locations).slice(0, 4);

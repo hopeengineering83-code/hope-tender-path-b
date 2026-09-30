@@ -50,6 +50,7 @@
  * runs. Wired in generate-elite.ts.
  */
 
+import { isTelecomTowerSector, TELECOM_TOWER_QA, TELECOM_TOWER_RISKS } from "./telecom-tower-sector";
 import type { ExpertRecord, ProjectRecord } from "./benchmark-tables";
 import { canonicalWorkPlan } from "./canonical-work-plan";
 import { resolveJurisdictionTokens } from "./jurisdiction-instruments";
@@ -168,6 +169,12 @@ function sectorRiskRows(sector: string): RiskRow[] {
     { category: "Compliance", risk: "Regulatory or licensing change during engagement", likelihood: "Low", impact: "Medium", mitigation: "Compliance scan at inception and 60% review; named regulatory liaison; designs reference current statutes by clause", owner: "Compliance Lead" },
   ];
 
+  if (isTelecomTowerSector(sector)) {
+    return [
+      ...generic.filter((row) => row.category !== "Quality"),
+      ...TELECOM_TOWER_RISKS.map((row) => ({ category: "Tower", ...row, owner: "Senior Structural Engineer" })),
+    ];
+  }
   if (/health|hospital|medical/.test(s)) {
     return [
       ...generic,
@@ -328,6 +335,7 @@ function sectorQARows(sector: string): QAItpRow[] {
     { checkpoint: "Documentation QA", criterion: "Drawings, specs, BOQ cross-reference correctly; revision control intact", method: "Cross-document audit with revision register", frequency: "Each issuance", responsible: "Document Controller", type: "Review" },
     { checkpoint: "Client Comment Resolution", criterion: "All client comments addressed in writing", method: "Comment-resolution register with response per comment", frequency: "After each review cycle", responsible: "Project Principal", type: "Review" },
   ];
+  if (isTelecomTowerSector(sector)) return TELECOM_TOWER_QA;
   if (/health|hospital|medical/.test(s)) {
     return [
       ...generic,

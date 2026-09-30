@@ -80,7 +80,7 @@ function priorityRank(p?: string | null): number {
   return 4;
 }
 
-function inferProposalLocation(req: RequirementLite): string {
+export function inferProposalLocation(req: RequirementLite): string {
   const type = (req.requirementType ?? "").toUpperCase();
   const title = (req.title ?? "").toLowerCase();
   // A requirement about HOW the proposal is submitted is answered by the
@@ -123,7 +123,12 @@ function locationFromText(text: string, type: string): string | null {
     return "Section B.2 Project Portfolio";
   if (/methodology|technical approach|work plan|scope.*understanding/.test(text))
     return "Section C.2 Technical Methodology";
-  if (/quality|qa|qc|review|audit|iso/.test(text))
+  // Before the quality pattern, whose bare "audit" claimed "Audited Financial
+  // Statements" for Quality Assurance; and no "Appendix E", which no proposal
+  // contains. The statements are listed with the firm's records in Section D.
+  if (/financial.*statement|audited.*(?:account|financial|report)|turnover/.test(text))
+    return "Section D Professional Certifications and Affiliations";
+  if (/quality|\bqa\b|\bqc\b|review|\baudit\b|\biso\b/.test(text))
     return "Section C.3 Quality Assurance";
   if (/risk|mitigation|contingency/.test(text))
     return "Section C.5 Risk Register";
@@ -133,8 +138,6 @@ function locationFromText(text: string, type: string): string | null {
     return "Section D.2 Value-Added Services";
   if (/registration|licen[cs]e|certificat|\btin\b|\bvat\b|business.*reg|company.*profile/.test(text))
     return "Section A.1 Company Background";
-  if (/financial.*statement|audited.*account|turnover/.test(text))
-    return "Appendix E (Audited Financial Statements)";
   if (/declaration|eligibility|conflict.*interest/.test(text))
     return "Declaration";
   if (/safeguard|esmp|environmental|social/.test(text))
