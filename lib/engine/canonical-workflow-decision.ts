@@ -698,7 +698,7 @@ export async function getCanonicalTenderWorkflowDecision(
   // The NOT clause keeps it from double counting a requirement that is already
   // covered by real evidence, so the sum with evidence.covered can never exceed
   // the mandatory total.
-  const mandatoryAwaitingPlannedOutputCount = await prisma.tenderRequirement.count({
+  const mandatoryAwaitingPlannedArtifactCount = await prisma.tenderRequirement.count({
     where: {
       tenderId,
       priority: { in: ["MANDATORY", "CRITICAL"] },
@@ -706,6 +706,35 @@ export async function getCanonicalTenderWorkflowDecision(
       NOT: { complianceMatrixRows: { some: { supportLevel: { in: ["FULL", "SUBSTANTIAL"] } } } },
     },
   }).catch(() => 0);
+  // The same deadlock, for a rule the PACKAGE decides. "No prices should be
+  // provided with this EOI" (2026-09-30, Preview, a 4-page EOI) is a
+  // FINANCIAL_SEPARATION rule: package conformance judges it SATISFIED or
+  // VIOLATED once a package exists, and reports PENDING_PACKAGE until then.
+  // No vault record proves it, and before generation no package exists, so
+  // the generation gate stopped at 8/9 on a rule only generation can settle.
+  // Here, and only here, a mandatory rule in a machine-decidable package
+  // family with no FULL/SUBSTANTIAL evidence counts as awaiting output; after
+  // generation the export gate's package conformance decides it, and a
+  // VIOLATED verdict still blocks.
+  const mandatoryAwaitingPackageVerdictCount = await (async () => {
+    const rows = await prisma.tenderRequirement.findMany({
+      where: {
+        tenderId,
+        priority: { in: ["MANDATORY", "CRITICAL"] },
+        NOT: { complianceMatrixRows: { some: { OR: [
+          { supportLevel: { in: ["FULL", "SUBSTANTIAL"] } },
+          { evidenceSource: "AUTO_PLANNED_ARTIFACT" },
+        ] } } },
+      },
+      select: { id: true, title: true, description: true, requirementType: true, restrictions: true },
+    }).catch(() => [] as Array<{ id: string; title: string; description: string | null; requirementType: string; restrictions: string | null }>);
+    const { classifyPackageRule } = await import("./package-conformance");
+    return rows.filter((row) => {
+      const family = classifyPackageRule(row);
+      return family !== null && family !== "NOT_MACHINE_DECIDABLE";
+    }).length;
+  })().catch(() => 0);
+  const mandatoryAwaitingPlannedOutputCount = mandatoryAwaitingPlannedArtifactCount + mandatoryAwaitingPackageVerdictCount;
   const requirementsTrusted =
     snapshot.requirements.total > 0 &&
     snapshot.requirements.allMandatoryGrounded;

@@ -245,6 +245,16 @@ function addFile(files: Map<string, SubmissionPlanFile>, file: SubmissionPlanFil
   });
 }
 
+/**
+ * Positions the proposal first when no tender order places it: the tender
+ * declared no order here (the caller only folds when it names no files), so
+ * the remaining files keep their relative order one step later.
+ */
+function shiftForLeadingProposal(files: Map<string, SubmissionPlanFile>): number {
+  for (const [key, file] of Array.from(files.entries())) files.set(key, { ...file, exactOrder: file.exactOrder + 1 });
+  return 1;
+}
+
 /** Bidder-written narrative that is a section of the technical proposal. */
 const PROPOSAL_SECTION = /technical proposal|cover letter|executive summary|company profile|firm profile|qualification|capabilit|methodology|approach|work\s*plan|implementation plan|quality assurance|risk management|project team|team composition|key personnel|personnel|staffing|\bcvs?\b|curriculum vitae|expert|experience|portfolio|track record|project reference|similar projects|understanding|scope of (?:work|services)/;
 
@@ -480,21 +490,48 @@ export function buildSubmissionPlan(tender: TenderLike): SubmissionPlan {
       return classifySubmissionPlanItem({ title: file.exactFileName, requirementType: file.documentType }).category === "REQUIRED_OUTPUT_FILE"
         && PROPOSAL_SECTION.test(file.exactFileName.toLowerCase());
     });
-    if (sections.length > 0) {
-      const sectionRows = sections.flatMap(([, file]) => file.sourceRequirementIds.map((id) => requirementById.get(id)!));
-      const isEoi = /expression\s+of\s+interest|\beoi\b/i.test(`${tender.title ?? ""} ${tender.tenderCategory ?? ""}`);
+    // A narrative row the planner did not make a file at all still needs the
+    // proposal that answers it. 2026-09-30, Preview, a 4-page EOI: "Company
+    // Profile and Tax Registration Documents" (a 25-page profile plus
+    // certificates) was classified as original evidence and "Previous
+    // Telecommunications Tower Experience" is SCORED, so the plan held three
+    // declarations and no EOI response; the profile and experience the tender
+    // scores had nowhere to go. The certificates in such a row remain vault
+    // evidence; the narrative is answered in the one proposal file.
+    const plannedIds = new Set(Array.from(files.values()).flatMap((file) => file.sourceRequirementIds));
+    const hasMainProposal = Array.from(files.values()).some((file) =>
+      /^(?:TECHNICAL_PROPOSAL|EXPRESSION_OF_INTEREST)$/.test(file.documentType)
+      || /\b(?:technical proposal|expression of interest)\b/i.test(file.exactFileName));
+    const narrativeRows = requirements.filter((requirement) => {
+      if (plannedIds.has(requirement.id) || (requirement.exactFileName ?? "").trim()) return false;
+      if (!/^(?:MANDATORY|CRITICAL|SCORED)$/i.test(requirement.priority ?? "")) return false;
+      const title = (requirement.title ?? "").toLowerCase();
+      if (/financial|commercial|price|pricing|bid bond|bid security|power of attorney|joint venture agreement|consortium agreement/.test(title)) return false;
+      return PROPOSAL_SECTION.test(title);
+    });
+    if (sections.length > 0 || (!hasMainProposal && narrativeRows.length > 0)) {
+      const sectionRows = [
+        ...sections.flatMap(([, file]) => file.sourceRequirementIds.map((id) => requirementById.get(id)!)),
+        ...narrativeRows,
+      ];
+      const eoiText = [tender.title, tender.tenderCategory, ...requirements.map((row) => `${row.title} ${row.description ?? ""}`)].join(" ");
+      const isEoi = /expressions?\s+of\s+interest|\beoi\b/i.test(eoiText);
       const baseName = isEoi ? "Expression of Interest" : "Technical Proposal";
       const format = inferFormat(baseName, sectionRows.map((row) => `${row.description ?? ""} ${row.restrictions ?? ""}`).join(" "));
       for (const [key] of sections) files.delete(key);
+      const orders = [
+        ...sections.map(([, file]) => file.exactOrder),
+        ...narrativeRows.map((row) => row.exactOrder ?? Number.POSITIVE_INFINITY),
+      ].filter((order) => Number.isFinite(order));
       addFile(files, {
         canonicalId: `proposal-${slug(baseName)}`,
         exactFileName: fileNameWithExtension(baseName, format),
         documentType: isEoi ? "EXPRESSION_OF_INTEREST" : "TECHNICAL_PROPOSAL",
         required: true,
-        exactOrder: Math.min(...sections.map(([, file]) => file.exactOrder)),
+        exactOrder: orders.length > 0 ? Math.min(...orders) : shiftForLeadingProposal(files),
         format,
         envelope: "TECHNICAL",
-        sourceRequirementIds: Array.from(new Set(sections.flatMap(([, file]) => file.sourceRequirementIds))),
+        sourceRequirementIds: Array.from(new Set(sectionRows.map((row) => row.id))),
         pageLimit: tender.pageLimit ?? null,
         templateRequired: false,
         templateSourceFileId: null,
