@@ -45,3 +45,19 @@ dbDescribe("an unevidenced SCORED experience criterion does not block the Engine
     assert.equal(result.blockers.some((b) => /PROJECT/.test(b)), true, result.blockers.join(", "));
   });
 });
+
+// The generator carries the same rule (its zero-evidence guard ran after Run
+// Engine passed and threw ZERO_REVIEWED_PROJECT_EVIDENCE on the same tender).
+// One rule in two places: both read only MANDATORY/CRITICAL rows.
+import { describe as plainDescribe } from "node:test";
+import { readFileSync } from "node:fs";
+plainDescribe("the generator's zero-evidence guard reads only mandatory rows", () => {
+  it("derives the required experts and projects from MANDATORY/CRITICAL rows", () => {
+    const source = readFileSync("lib/engine/generate-elite.ts", "utf8");
+    const start = source.indexOf("const mandatoryEvidenceRows");
+    const guard = source.slice(start, source.indexOf("ZERO_REVIEWED_PROJECT_EVIDENCE:", start));
+    assert.match(guard, /MANDATORY\|CRITICAL/);
+    assert.match(guard, /exactSelectionLimit\(mandatoryEvidenceRows, "PROJECT_EXPERIENCE"\)/);
+    assert.doesNotMatch(guard, /tender\.requirements\.some/);
+  });
+});

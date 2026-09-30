@@ -1505,13 +1505,23 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
   // where the vault has SOME evidence but not the TYPE the tender requires.
   // This mirrors the NO_REVIEWED_EXPERT_EVIDENCE / NO_REVIEWED_PROJECT_EVIDENCE
   // pattern in lib/ai-job-handlers.ts for the background PROPOSAL_GENERATION path.
-  const expertRequired = exactSelectionLimit(tender.requirements, "EXPERT");
-  const projectRequired = exactSelectionLimit(tender.requirements, "PROJECT_EXPERIENCE");
-  const tenderNeedsExperts = expertRequired > 0 || tender.requirements.some((r) => {
+  //
+  // Only a MANDATORY/CRITICAL row makes missing evidence a hard stop, the same
+  // rule as engine-postconditions.ts. 2026-09-30, Preview, a telecom-tower
+  // EOI: "Previous Telecommunications Tower Experience" was SCORED, every
+  // building project was correctly hard-excluded, and generation threw
+  // ZERO_REVIEWED_PROJECT_EVIDENCE after Run Engine had passed. A scored
+  // criterion without evidence is a compliance gap in the matrix, not a
+  // reason to withhold the whole bid; nothing is claimed for it.
+  const mandatoryEvidenceRows = tender.requirements.filter((r) =>
+    /^(?:MANDATORY|CRITICAL)$/i.test(String((r as { priority?: string }).priority ?? "")));
+  const expertRequired = exactSelectionLimit(mandatoryEvidenceRows, "EXPERT");
+  const projectRequired = exactSelectionLimit(mandatoryEvidenceRows, "PROJECT_EXPERIENCE");
+  const tenderNeedsExperts = expertRequired > 0 || mandatoryEvidenceRows.some((r) => {
     const type = (r as { requirementType?: string }).requirementType;
     return type === "EXPERT" || type === "EXPERT_CV";
   });
-  const tenderNeedsProjects = projectRequired > 0 || tender.requirements.some((r) => {
+  const tenderNeedsProjects = projectRequired > 0 || mandatoryEvidenceRows.some((r) => {
     const type = (r as { requirementType?: string }).requirementType;
     return type === "PROJECT_EXPERIENCE" || type === "PROJECT";
   });
