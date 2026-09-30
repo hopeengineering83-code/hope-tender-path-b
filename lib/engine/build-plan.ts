@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { provenPageOfQuote } from "./page-provenance";
 import { normalizeForContainment } from "./evidence-grounding";
 import type { PrismaClient } from "@prisma/client";
 import { buildSubmissionPlan, plannedSubmissionTargetFiles, type SubmissionPlanFile } from "./submission-plan";
@@ -259,8 +260,21 @@ export function validateCriticalMetadataEvidenceForBuildPlan(
       return;
     }
     if (typeof sourcePage !== "number" || sourcePage < 1) {
-      blockers.push(`Critical metadata field ${label} has invalid source page.`);
-      return;
+      // A page the text proves is as good as a page the model returned.
+      // 2026-09-30, Preview: a stated reference number had a file id and a
+      // contained quote but no page, and every Run Engine stopped here. The
+      // quote-containment check below still applies in full.
+      const fileForPage = activeFileMap.get(sourceFileId!);
+      const proven = provenPageOfQuote(
+        (fileForPage as { extractedText?: string | null } | undefined)?.extractedText,
+        sourceQuote,
+        (fileForPage as { totalPages?: number | null } | undefined)?.totalPages,
+      );
+      if (proven === null) {
+        blockers.push(`Critical metadata field ${label} has invalid source page.`);
+        return;
+      }
+      sourcePage = proven;
     }
     // ENFORCE sourcePage <= totalPages when totalPages exists
     const file = activeFileMap.get(sourceFileId!);

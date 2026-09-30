@@ -52,6 +52,21 @@ import { extractScopeItems } from "./scope-delivery-plan";
 import { tenderAsksFor } from "./tender-asks-for";
 import { possessive } from "./possessive";
 import { corporateFactsFromProfile } from "./company-profile-facts";
+import { BENCHMARK_CONTEXT_LINES } from "./proposal-intelligence";
+
+/** Writer directives generate-elite prepends to input.requirements. */
+const WRITER_DIRECTIVE_LINES = new Set(BENCHMARK_CONTEXT_LINES.map((line) => line.trim()));
+
+/** Requirement rows about submitting, credentials or price: answered outside Section C. */
+const NOT_A_WORK_PHASE = /\b(?:site visit|pre-?bid|submi(?:t|ssion)|signature|signed|seal|stamp|validity|valid for|deadline|envelope|financial proposal|price|payment|tax|tin|vat|licen[cs]e|registration|legal documentation|company profile|corporate qualifications?|qualifications? of key|team qualifications|curriculum|cvs?|resumes?|portfolio|years in business|examples of related work|relevant experience|references?)\b/i;
+
+/** "Title — long description" -> "Title", never cut mid-word. */
+function workPhaseTitle(line: string): string {
+  const title = line.split(/\s+[—–-]\s+/)[0]!.replace(/[\s"')(]+$/g, "").trim();
+  if (title.length <= 80) return title;
+  const cut = title.slice(0, 80);
+  return cut.slice(0, Math.max(cut.lastIndexOf(" "), 40)).trim();
+}
 
 // ─── Section-specific system prompts ─────────────────────────────────────────
 // Each persona is the EXACT senior bid-team specialist who would write
@@ -1136,12 +1151,30 @@ export function buildSectionFallback(spec: ProposalSectionSpec, writerInput: AIB
       const tenderRef = input.tenderTitle ? `**${input.tenderTitle}**` : "this assignment";
       const client = input.clientName || "the Client";
       // Parse top scored/mandatory requirements from the requirements string
+      // Only requirement lines that describe WORK become methodology phases.
+      //
+      // 2026-09-29, Preview, a new tender: Section C.2.1 of the delivered
+      // proposal was titled "FORBIDDEN PHRASES: Never write 'demonstrated
+      // experience' without a project name; 'c" and the Work Plan's first
+      // stage repeated it. generate-elite prepends BENCHMARK_CONTEXT_LINES
+      // (writer directives) to input.requirements; the filter here caught
+      // only the directives containing "BENCHMARK" or "RULE:". The directives
+      // are now excluded exactly, plus any ALL-CAPS "LABEL:" line.
+      //
+      // The same Section C made "Site Visit", "Bid Submission Format",
+      // "Project Team Qualifications" and "Company Profile and
+      // Qualifications" methodology phases and Work Plan stages, cut mid-word.
+      // Those rows say how to submit and what credentials to show; the
+      // proposal answers them elsewhere (Sections A, B, E, the cover letter).
+      // A phase is titled from the requirement's own title, on a word boundary.
       const reqLines = input.requirements
         .split("\n")
-        .map((l) => l.replace(/^[-*•]\s*/, "").replace(/^(MANDATORY|SCORED|INFORMATIONAL):?\s*/i, "").trim())
-        // Exclude ALL BENCHMARK_CONTEXT_LINES injected as prompt meta-directives:
-        // they all start with an ALL-CAPS keyword followed by " RULE:" or " BENCHMARK"
-        .filter((l) => l.length > 15 && !/\bBENCHMARK\b|\bRULE:\s/i.test(l.slice(0, 60)))
+        .map((l) => l.replace(/^[-*•]\s*/, "").replace(/^(MANDATORY|SCORED|INFORMATIONAL|CRITICAL):?\s*/i, "").trim())
+        .filter((l) => l.length > 15)
+        .filter((l) => !WRITER_DIRECTIVE_LINES.has(l) && !/^[A-Z][A-Z0-9 /&()'-]{3,}:\s/.test(l))
+        .filter((l) => !NOT_A_WORK_PHASE.test(l))
+        .map(workPhaseTitle)
+        .filter((l) => l.length > 3)
         .slice(0, 8);
       // Sector-specific scope item sets replace the generic fallback when sector detected.
       const SECTOR_SCOPE_ITEMS: Record<string, string[]> = {
@@ -1161,14 +1194,22 @@ export function buildSectionFallback(spec: ProposalSectionSpec, writerInput: AIB
         port: ["Traffic Volume and Vessel Call Analysis", "Port Master Plan and Terminal Layout Design", "Berth, Quay and Fender System Engineering", "Dredging and Coastal Impact Assessment", "Container Handling Equipment Specification", "Maritime Safety and Navigation Study", "Environmental and ESMP Compliance", "Operational Procedures and Port Regulations"],
       };
       // Detect sector from tender text for sector-specific fallback scope items
-      const haystack = [input.tenderText ?? "", input.tenderTitle ?? "", input.requirements ?? ""].join(" ").toLowerCase();
+      const haystack = [input.tenderText ?? "", input.tenderTitle ?? "", input.requirements ?? ""]
+        .join("\n")
+        .split("\n")
+        .filter((line) => !WRITER_DIRECTIVE_LINES.has(line.replace(/^[-*•]\s*/, "").trim()))
+        .join(" ")
+        .toLowerCase();
       const detectedFallbackSector = (() => {
         if (/health|hospital|clinic|medical|patient|ward|pharmacy|radiology/.test(haystack)) return "healthcare";
         if (/water|borehole|hydraulic|sanitar|epanet|watercad|chlorin/.test(haystack)) return "water";
         if (/\broad\b|highway|pavement|bridge|culvert|cbr|aashto|bitumen/.test(haystack)) return "road";
         if (/esia|esmp|environmental assessment|safeguard|mitigation hierarchy/.test(haystack)) return "environmental";
-        if (/software|ict|digital|api|uat|database|mis|erp|system.*develop/.test(haystack)) return "ict";
-        if (/financ|bank|micro.?financ|aml|kyc|basel|lending/.test(haystack)) return "financial";
+        // Word boundaries: bare "api"/"mis"/"uat" matched inside "capital",
+        // "commission", "evaluation"; bare "financ" matched the "Financial
+        // Proposal" row every tender carries.
+        if (/\b(?:software|ict|digital platform|api|uat|database|mis|erp)\b|system.*develop/.test(haystack)) return "ict";
+        if (/micro.?financ|financial (?:sector|services|inclusion|institution)|\bbank(?:ing)?\b|\baml\b|\bkyc\b|\bbasel\b|\blending\b/.test(haystack)) return "financial";
         if (/telecom|spectrum|base station|5g|4g|lte|backhaul|broadband/.test(haystack)) return "telecoms";
         if (/energy|power|solar|wind|grid|generation|transmission|scada/.test(haystack)) return "energy";
         if (/agri|farm|irrigation|crop|yield|fao|value.?chain|livestock/.test(haystack)) return "agriculture";
@@ -1212,15 +1253,14 @@ export function buildSectionFallback(spec: ProposalSectionSpec, writerInput: AIB
         const body = isGeneric
           ? `The ${req.toLowerCase()} phase follows the firm's staged-delivery methodology. The discipline lead applies the applicable technical standards and the firm's quality-gate process, and each stage deliverable is prepared at schematic, detailed and final levels with internal peer review before submission to ${client} for approval.`
           : `Our approach to this requirement begins with a review of ${possessive(client)} stated scope, constraints and applicable standards. The deliverable is prepared at schematic, detailed and final stages with quality review at each gate before submission to ${client} for approval.\n\nQuality gate: peer review at 30%, cross-discipline check at 60% and senior sign-off at 100%.`;
-        return `### C.2.${i + 1} ${req.slice(0, 80)}\n\n${body}`;
+        return `### C.2.${i + 1} ${req}\n\n${body}`;
       });
       // Work-plan rows derived from normalised requirement scope items (scales to 10 items)
       const PHASE_TIMELINES = ["Week 1–2", "Week 2–4", "Week 4–6", "Week 6–8", "Week 8–12", "Week 12–16", "Week 16–18", "Week 18–20", "Week 20–22", "Week 22–24"];
       const PHASE_GATES = ["PM sign-off", "Senior Engineer review", "QA peer review", "Client interim review", "30% client review", "60%/100% gates", "Director sign-off", "Client acceptance", "Final QA review", "PM close-out"];
       const workPlanRows = normalizedReqs.map((req, i) => {
         const responsible = "Discipline lead";
-        const deliverable = req.slice(0, 60).replace(/\s*\(.*$/, "").trim();
-        return [`${i + 1} — ${req.slice(0, 40).replace(/\s*\(.*$/, "").trim()}`, `${deliverable} Report`, responsible, PHASE_TIMELINES[i] ?? `Week ${i * 2 + 1}–${i * 2 + 2}`, PHASE_GATES[i] ?? "PM sign-off"];
+        return [`${i + 1} — ${req}`, `${req} Report`, responsible, PHASE_TIMELINES[i] ?? `Week ${i * 2 + 1}–${i * 2 + 2}`, PHASE_GATES[i] ?? "PM sign-off"];
       });
       return [
         "# Section C: Technical Approach",

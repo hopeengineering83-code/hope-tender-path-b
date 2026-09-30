@@ -159,3 +159,31 @@ export function locateQuoteProvenPage(
   }
   return provenPage ?? null;
 }
+
+/**
+ * The page a quote sits on in a file's extracted text, or null when the quote
+ * is not in the text (or the page cannot be proven).
+ *
+ * 2026-09-30, Preview: a tender's reference number carried a quote the file
+ * contains and a file id, but the model returned no page. The Build Plan then
+ * refused Run Engine with "Critical metadata field reference has invalid
+ * source page" on every attempt, although the page was provable from the text.
+ */
+export function provenPageOfQuote(
+  text: string | null | undefined,
+  quote: string | null | undefined,
+  totalPages: number | null | undefined,
+): number | null {
+  const haystack = String(text ?? "");
+  const needle = String(quote ?? "").trim();
+  if (!haystack || needle.length < 4) return null;
+  let index = haystack.indexOf(needle);
+  if (index < 0) index = haystack.toLowerCase().indexOf(needle.toLowerCase());
+  if (index < 0) {
+    // Whitespace can differ between the quote and the extracted text.
+    const pattern = needle.split(/\s+/).map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+");
+    const match = new RegExp(pattern, "i").exec(haystack);
+    index = match ? match.index : -1;
+  }
+  return index < 0 ? null : computeProvenPageNumber(haystack, index, totalPages);
+}

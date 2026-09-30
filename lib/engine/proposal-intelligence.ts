@@ -788,7 +788,13 @@ export function inferSector(tenderText: string): string {
   // financial advisory IS a form of advisory services; the more specific
   // pattern must win. Without this ordering "Financial advisory services
   // for treasury optimisation" misclassified as the generic advisory bucket.
-  if (/financial\s+advisory|economic\s+analysis|due\s+diligence|valuation|audit\s+services|tax\s+consult/i.test(tenderText)) return "Financial / Audit Advisory";
+  //
+  // \bvaluation\b, not "valuation": the bare substring matched inside
+  // "EVALUATION", which almost every tender contains ("evaluation criteria").
+  // 2026-09-29, Preview: an architectural office-design tender went through
+  // every earlier pattern, landed here, and B.2 told the client each project
+  // maps "to a Financial / Audit Advisory requirement of this assignment".
+  if (/financial\s+advisory|economic\s+analysis|due\s+diligence|\bvaluation\b|audit\s+services|tax\s+consult/i.test(tenderText)) return "Financial / Audit Advisory";
   if (/supply\s+of|procurement\s+of\s+(goods|equipment|materials)|equipment\s+supply|goods\s+procurement/i.test(tenderText)) return "Supply / Goods Procurement";
   if (/capacity\s+build|training\s+services|institutional\s+strength|technical\s+assistance|trainer.of.trainers/i.test(tenderText)) return "Capacity Building / Advisory";
   if (/solar\s+(power|farm|pv)|wind\s+(power|farm)|hydropower|grid\s+(connect|extension)|renewable\s+energy|power\s+(generation|transmission|distribution)|energy|power.*plant|grid.*connect|generation.*capacity|transmission.*line|substation.*design/i.test(tenderText)) return "Energy / Power Infrastructure";

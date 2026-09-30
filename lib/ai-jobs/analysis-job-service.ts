@@ -1,5 +1,6 @@
 import { toSafeAiFailureCategory } from "../engine/analysis/safe-diagnostics";
 import { groundRequirementInActiveFiles } from "../engine/repair-source-grounding";
+import { provenPageOfQuote } from "../engine/page-provenance";
 import { sourceGroundedExactFileName } from "../engine/source-grounded-file-name";
 import { decideManualRearm, isAnyProviderEligible, isProviderConfigFailureCategory, reclassifyHistoricalTenderFailure } from "../ai-analyze/retry-service";
 import { logger } from "../observability";
@@ -1539,11 +1540,20 @@ export async function finalizeJob(jobId: string, userId: string) {
             const existingFileIdStillActive = refEntry?.fileId
               ? attrFiles.some((f: any) => f.id === refEntry.fileId && (f.deletionStatus ?? "ACTIVE") === "ACTIVE")
               : false;
-            if (refEntry && refEntry.quote && refEntry.quote.trim().length >= 6 && (!refEntry.fileId || !existingFileIdStillActive)) {
-                const refFileId = attributeMetadataSourceFileId(refEntry.quote, attrFiles);
-                if (refFileId && refFileId !== refEntry.fileId) {
+            const pageIsValid = typeof refEntry?.page === "number" && Number.isInteger(refEntry.page) && refEntry.page >= 1;
+            if (refEntry && refEntry.quote && refEntry.quote.trim().length >= 6 && (!refEntry.fileId || !existingFileIdStillActive || !pageIsValid)) {
+                const refFileId = existingFileIdStillActive ? refEntry.fileId! : attributeMetadataSourceFileId(refEntry.quote, attrFiles);
+                // The page is derived from where the quote sits in the file
+                // whenever the model's page is missing or invalid; the Build
+                // Plan refuses a stated reference without one.
+                const refFile = attrFiles.find((f: any) => f.id === refFileId);
+                const provenPage = !pageIsValid && refFile
+                    ? provenPageOfQuote(refFile.extractedText, refEntry.quote, refFile.totalPages)
+                    : null;
+                const page = pageIsValid ? refEntry.page! : provenPage;
+                if (refFileId && (refFileId !== refEntry.fileId || page !== (refEntry.page ?? null))) {
                     contactDetails["procurementReferenceNumber"] = {
-                        page: refEntry.page ?? null,
+                        page: page ?? null,
                         quote: refEntry.quote,
                         fileId: refFileId,
                     };
