@@ -1,4 +1,5 @@
 import { resolveArtifactQualitySchema, resolvePackageRole } from "./artifact-quality-schema";
+import { requiresEvidenceOfType } from "./mandatory-evidence-requirement";
 import { looksLikeEncodedBytes } from "./encoded-content";
 import { findRenderedArtifactHygieneFailures } from "./client-text-hygiene";
 import { prisma, prismaReady } from "../prisma";
@@ -1039,8 +1040,10 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
   if ((tender.readinessScore ?? 0) <= 0 || /^(ANALYZED|AI_ANALYZED|AI_ANALYSIS_PARTIAL|FALLBACK_DRAFT_CREATED|ANALYSIS_REQUIRES_REVIEW|DRAFT)$/i.test(tender.status) || /^(ANALYSIS|TENDER_INTAKE)$/i.test(tender.stage)) blockers.push(tenderBlocker("FULL_PROPOSAL_NOT_READY", `Tender is still at ${tender.status}/${tender.stage} with workflow progress ${tender.readinessScore ?? 0}.`, "Follow the canonical current action. Safe generation, validation and finalization continue automatically after successful Run Engine."));
   if (hasStrategyOnlySignals(tender.files)) blockers.push(tenderBlocker("OFFICIAL_SOURCE_REQUIRED", "Uploaded source appears to be strategy/market-intelligence only, not an official RFP/ToR/forms package.", "Upload the official tender source package before final export."));
 
-  const requiresExperts = tender.requirements.some((r) => r.requirementType === "EXPERT");
-  const requiresProjects = tender.requirements.some((r) => r.requirementType === "PROJECT_EXPERIENCE");
+  // Only a MANDATORY/CRITICAL row makes missing evidence an export blocker
+  // (mandatory-evidence-requirement.ts).
+  const requiresExperts = requiresEvidenceOfType(tender.requirements, ["EXPERT"]);
+  const requiresProjects = requiresEvidenceOfType(tender.requirements, ["PROJECT_EXPERIENCE"]);
   const reviewedSelectedExperts = tender.expertMatches.filter((m) => m.expert.trustLevel === "REVIEWED" || m.expert.trustLevel === "SOURCE_VERIFIED" || m.expert.trustLevel === "AI_DRAFT").length;
   const reviewedSelectedProjects = tender.projectMatches.filter((m) => m.project.trustLevel === "REVIEWED" || m.project.trustLevel === "SOURCE_VERIFIED" || m.project.trustLevel === "AI_DRAFT").length;
   if (requiresExperts && reviewedSelectedExperts === 0) blockers.push(tenderBlocker("NO_SELECTED_REVIEWED_EXPERTS", "Tender requires experts but no selected reviewed expert matches exist.", "Run Engine and select/review expert matches before export."));

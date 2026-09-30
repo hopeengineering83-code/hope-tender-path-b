@@ -41,6 +41,8 @@ export type CanonicalWorkflowDecision = {
   nextRequiredAction: string;
   nextRequiredActionLabel: string;
   nextRequiredActionReason: string;
+  /** Planned files waiting only for an original the owner must sign/supply. */
+  awaitingOwnerOriginalFileNames?: string[];
   blockingStageCode: string;
   blockerCodes: string[];
   blockerDetails: string[];
@@ -175,6 +177,8 @@ export function buildCanonicalWorkflowDecision(input: {
 
   // Export
   finalExportAllowed: boolean;
+  /** Planned files waiting only for an original the owner must sign/supply. */
+  awaitingOwnerOriginalFileNames?: string[];
   authorityOrQualityBlockers: boolean;
   /**
    * The export blockers that are NOT generation blockers — i.e. exactly the
@@ -584,6 +588,7 @@ export function buildCanonicalWorkflowDecision(input: {
     exportReadyDocumentsTotal: input.exportReadyDocumentsTotal,
     pdfRequiredButUnavailable: input.pdfRequiredButUnavailable,
     finalExportAllowed: input.finalExportAllowed,
+    awaitingOwnerOriginalFileNames: input.awaitingOwnerOriginalFileNames ?? [],
   };
 }
 
@@ -778,6 +783,13 @@ export async function getCanonicalTenderWorkflowDecision(
   // so the workflow told the owner the package was ready while the gate
   // declined it.
   const generatedDocs = filterFinalExportCandidateDocuments(generatedDocRows);
+  // Rows that can only be completed by the owner's signed/issued original.
+  // Named so the owner is told exactly what to upload instead of "Processing
+  // automatically" while nothing is processing.
+  const awaitingOwnerOriginalFileNames = generatedDocRows
+    .filter((row) => row.reviewStatus === "REPLACE_WITH_ORIGINAL")
+    .map((row) => row.exactFileName ?? row.name)
+    .filter((name): name is string => typeof name === "string" && name.trim().length > 0);
 
   const generatedDocumentsTotal = generatedDocs.length;
 
@@ -909,6 +921,7 @@ export async function getCanonicalTenderWorkflowDecision(
     documentsApproved,
     pdfRequiredButUnavailable,
     finalExportAllowed,
+    awaitingOwnerOriginalFileNames,
     authorityOrQualityBlockers,
     authorityOrQualityBlockerNames,
   });

@@ -1,4 +1,5 @@
 import { formatFromExtension } from "./export-format-policy";
+import { isMandatoryPriority } from "./mandatory-evidence-requirement";
 import { logger } from "../observability";
 import { verifiedIntegrityDataFromBase64, verifyPersistedFileBytes } from "./persisted-byte-integrity";
 import { withTransactionalGenerationGate } from "./transactional-generation-gate";
@@ -1514,7 +1515,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
   // criterion without evidence is a compliance gap in the matrix, not a
   // reason to withhold the whole bid; nothing is claimed for it.
   const mandatoryEvidenceRows = tender.requirements.filter((r) =>
-    /^(?:MANDATORY|CRITICAL)$/i.test(String((r as { priority?: string }).priority ?? "")));
+    isMandatoryPriority((r as { priority?: string }).priority));
   const expertRequired = exactSelectionLimit(mandatoryEvidenceRows, "EXPERT");
   const projectRequired = exactSelectionLimit(mandatoryEvidenceRows, "PROJECT_EXPERIENCE");
   const tenderNeedsExperts = expertRequired > 0 || mandatoryEvidenceRows.some((r) => {

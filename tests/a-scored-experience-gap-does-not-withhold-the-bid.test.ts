@@ -56,7 +56,7 @@ plainDescribe("the generator's zero-evidence guard reads only mandatory rows", (
     const source = readFileSync("lib/engine/generate-elite.ts", "utf8");
     const start = source.indexOf("const mandatoryEvidenceRows");
     const guard = source.slice(start, source.indexOf("ZERO_REVIEWED_PROJECT_EVIDENCE:", start));
-    assert.match(guard, /MANDATORY\|CRITICAL/);
+    assert.match(guard, /isMandatoryPriority/);
     assert.match(guard, /exactSelectionLimit\(mandatoryEvidenceRows, "PROJECT_EXPERIENCE"\)/);
     assert.doesNotMatch(guard, /tender\.requirements\.some/);
   });

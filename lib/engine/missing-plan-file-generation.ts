@@ -151,6 +151,15 @@ function needsOriginalReplacement(fileName: string, documentType: string) {
   const label = `${fileName} ${documentType}`.toLowerCase();
   const type = documentType.toUpperCase();
   if (["FINANCIAL_EVIDENCE", "LEGAL_EVIDENCE", "FORM_OR_TEMPLATE", "BID_FORM", "TENDER_FORM"].includes(type)) return true;
+  // A bidder DECLARATION is a legal statement only the company can make and
+  // sign. 2026-09-30, Preview, a telecom-tower EOI: "Litigation History
+  // Disclosure.docx" and "Declaration of Non-Performing Contracts.docx" were
+  // written as "generated support control" stubs ("This package item was
+  // created from the tender submission plan...") and marked ready for the ZIP,
+  // while "Declaration of Non-Debarment and Eligibility.docx" waited for an
+  // original. The app cannot know a firm's litigation or debarment history and
+  // must not assert it, so every declaration waits for the signed original.
+  if (type === "DECLARATION" || /\b(?:declarations?|undertakings?|disclosures?|affidavits?|attestations?|power\s+of\s+attorney)\b/.test(label)) return true;
   return /\bform\b|template|annex\s*[a-z0-9]+\s*\(?official\)?|audited|financial\s+statement|tax\s+clearance|business\s+licen|trade\s+licen|registration\s+cert|tin\s+cert|vat\s+cert/i.test(label);
 }
 

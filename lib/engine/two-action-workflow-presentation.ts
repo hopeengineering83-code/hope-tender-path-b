@@ -26,6 +26,22 @@ export function presentTwoActionWorkflowDecision(
     };
   }
 
+  // The only files still missing are ones the owner must sign or supply
+  // (bidder declarations, tender-issued forms, certified originals). Saying
+  // "Processing automatically" there left the owner waiting on a worker that
+  // had nothing left to do (2026-09-30, Preview, a telecom-tower EOI).
+  const awaiting = decision.awaitingOwnerOriginalFileNames ?? [];
+  const missing = Math.max(0, decision.requiredDocumentsTotal - decision.generatedDocumentsTotal);
+  if (decision.currentBlockingStage === "REQUIRED_DOCS_NOT_GENERATED" && awaiting.length > 0 && missing <= awaiting.length) {
+    return {
+      ...decision,
+      nextRequiredAction: "UPLOAD_SIGNED_ORIGINALS",
+      nextRequiredActionLabel: awaiting.length === 1 ? "Upload your signed original" : "Upload your signed originals",
+      nextRequiredActionReason:
+        `Everything the app can prepare is done. The package waits only on ${awaiting.length === 1 ? "a document" : "documents"} your company must sign or supply: ${awaiting.join("; ")}. Upload the signed original of each on the tender's Documents page; the package completes automatically after that.`,
+    };
+  }
+
   if ([
     "REQUIRED_DOCS_NOT_GENERATED",
     "PDF_REQUIRED_UNAVAILABLE",

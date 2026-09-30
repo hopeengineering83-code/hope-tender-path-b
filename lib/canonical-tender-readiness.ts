@@ -1,4 +1,5 @@
 import type { PrismaClient } from "@prisma/client";
+import { requiresEvidenceOfType } from "./engine/mandatory-evidence-requirement";
 import { getTenderGenerationReadinessStrict } from "./tender-generation-readiness-strict";
 import { assessMatchingQuality } from "./matching-quality";
 import { getCompanyIngestionReadiness } from "./company-ingestion-readiness";
@@ -161,8 +162,10 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
     return rev !== "READY_FOR_EXPORT" && rev !== "APPROVED";
   });
 
-  const expertRequirementExists = tender.requirements.some((r) => r.requirementType === "EXPERT");
-  const projectRequirementExists = tender.requirements.some((r) => r.requirementType === "PROJECT_EXPERIENCE");
+  // Only a MANDATORY/CRITICAL row makes missing evidence a readiness blocker
+  // (engine/mandatory-evidence-requirement.ts).
+  const expertRequirementExists = requiresEvidenceOfType(tender.requirements, ["EXPERT"]);
+  const projectRequirementExists = requiresEvidenceOfType(tender.requirements, ["PROJECT_EXPERIENCE"]);
   const reviewedSelectedExperts = tender.expertMatches.filter((m) => m.isSelected && canUseVaultRecord(m.expert as ReviewRecordState, "GENERATION")).length;
   const reviewedSelectedProjects = tender.projectMatches.filter((m) => m.isSelected && canUseVaultRecord(m.project as ReviewRecordState, "GENERATION")).length;
   const unresolvedCriticalGaps = tender.complianceGaps.filter((g) => !g.isResolved && g.severity === "CRITICAL").length;
