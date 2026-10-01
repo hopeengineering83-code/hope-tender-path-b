@@ -708,6 +708,17 @@ export function recordBasedOpeningSections(params: OpeningParams & {
   ].filter((s) => s !== "").join("\n\n");
 }
 
+/**
+ * A section heading the section orderer recognises. The tender's own name for
+ * a section ("Technical Approach") was used bare, and the orderer moved it
+ * after the Declaration (2026-10-01): the letter prefix is what it reads.
+ */
+function sectionLabel(stated: string | undefined, letter: string, fallback: string): string {
+  const name = (stated ?? "").trim();
+  if (!name) return `Section ${letter}: ${fallback}`;
+  return /^section\s+[a-z]\b/i.test(name) ? name : `Section ${letter}: ${name}`;
+}
+
 function fallbackProposalMarkdown(params: {
   tenderTitle: string;
   clientName: string;
@@ -912,7 +923,7 @@ function fallbackProposalMarkdown(params: {
   }
 
   // ── Section A: Company Profile ─────────────────────────────────────────────────
-  const sectionALabel = sections.find((s) => /company profile|section a/i.test(s)) ?? "Section A: Company Profile";
+  const sectionALabel = sectionLabel(sections.find((s) => /company profile|section a/i.test(s)), "A", "Company Profile");
   lines.push(`# ${sectionALabel}`);
   lines.push("## A.1 Company Overview");
   const rawProfileDesc = params.companyProfileSummary ?? null;
@@ -965,7 +976,7 @@ function fallbackProposalMarkdown(params: {
   // before the full team table (A.5) and the bios (A.5.1).
 
   // ── Section B: Relevant Experience ────────────────────────────────────────────
-  const sectionBLabel = sections.find((s) => /relevant experience|section b/i.test(s)) ?? "Section B: Relevant Experience";
+  const sectionBLabel = sectionLabel(sections.find((s) => /relevant experience|section b/i.test(s)), "B", "Relevant Experience");
   // No project selected, no Section B: the stub that stood here promised
   // "project references demonstrating comparable experience ... as
   // attachments" that the record does not hold (2026-10-01).
@@ -985,7 +996,7 @@ function fallbackProposalMarkdown(params: {
   }
 
   // ── Section C: Technical Approach ─────────────────────────────────────────────
-  const sectionCLabel = sections.find((s) => /technical approach|methodology|section c/i.test(s)) ?? "Section C: Technical Approach";
+  const sectionCLabel = sectionLabel(sections.find((s) => /technical approach|methodology|section c/i.test(s)), "C", "Technical Approach");
   lines.push(`# ${sectionCLabel}`);
 
   if (themes.length > 0) {
@@ -1005,7 +1016,7 @@ function fallbackProposalMarkdown(params: {
   // second repeated the team table (A.5) inside Section C (run 36074770709).
 
   // ── Section D: Additional Information ─────────────────────────────────────────
-  const sectionDLabel = sections.find((s) => /additional information|value.?added|section d/i.test(s)) ?? "Section D: Additional Information";
+  const sectionDLabel = sectionLabel(sections.find((s) => /additional information|value.?added|section d/i.test(s)), "D", "Additional Information");
   lines.push(`# ${sectionDLabel}`);
   lines.push(`${params.companyName} offers the following value-added capabilities and institutional advantages relevant to this assignment:`);
   const sectionDDifferentiators = params.differentiators.slice(

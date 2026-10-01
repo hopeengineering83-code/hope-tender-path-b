@@ -334,7 +334,12 @@ function completeMissingClientSections(markdown: string, input: BenchmarkGuardIn
   // "Technical Proposal" is the document's own title: the rendered document
   // carries it on its cover page. Appended here as a section it was a heading
   // and a "Prepared by" line printed after the Declaration.
-  const missing = benchmarkMissingSections(output).filter((section) => section !== "Technical Proposal");
+  // No "Relevant Experience" stub without a selected project: it pointed the
+  // client at "project references ... in Section B" that did not exist
+  // (2026-10-01).
+  const missing = benchmarkMissingSections(output)
+    .filter((section) => section !== "Technical Proposal")
+    .filter((section) => section !== "Relevant Experience" || input.projectCount > 0);
   for (const section of missing) {
     output += `\n\n## ${section}\n`;
     if (section === "Cover Letter") {
@@ -350,7 +355,7 @@ function completeMissingClientSections(markdown: string, input: BenchmarkGuardIn
     } else if (section === "Proposed Team") {
       output += `${input.expertCount > 0 ? `${input.expertCount} expert(s) are proposed, each named with the role, professional registration and project history stated in their own CV.` : "The proposed team is presented in Section A."}\n`;
     } else if (section === "Relevant Experience") {
-      output += `${input.projectCount > 0 ? `${input.projectCount} project reference(s) are presented in Section B, each with the project name, client, country, sector and scope the firm's record states.` : "The firm's project references are presented in Section B."}\n`;
+      output += `${input.projectCount > 0 ? `${input.projectCount} project reference(s) are presented in Section B, each with the project name, client, country, sector and scope the firm's record states.` : ""}\n`;
     } else if (section === "Technical Approach") {
       output += "The technical approach is structured to directly address the scope of services and key technical requirements specified in the tender. The delivery methodology follows a staged process: (1) inception and document review, (2) stakeholder consultation and site data collection, (3) technical assessment and gap analysis, (4) concept and schematic design, (5) detailed design, specifications, BOQ, and cost estimates, (6) quality assurance review and client validation, and (7) construction-document finalisation and submission support. Each stage defines inputs, outputs, responsible experts, quality review checkpoints, and client approval milestones. The methodology incorporates risk controls for technical coordination, regulatory compliance, schedule management, and evidence sufficiency.\n";
     } else if (section === "Compliance and Bid Review Strategy") {

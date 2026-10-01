@@ -91,3 +91,23 @@ describe("deterministic text claims no comparable work it cannot show", () => {
     assert.match(source, /if \(projectSelected > 0\) lines\.push\(`# \$\{sectionBLabel\}`\);/);
   });
 });
+
+import { detectThemes } from "../lib/engine/proposal-intelligence";
+
+// 2026-10-01, inspect run 36884141758: the whole-document fallback used the
+// tender's own section names bare ("Technical Approach"), and the orderer put
+// them after the Declaration; /tender.*management/ and /contract.*admin/
+// matched words a page apart and planned FIDIC claims administration into a
+// telecom-tower EOI.
+describe("the fallback's sections are ordered and its themes are the tender's", () => {
+  it("section headings carry the letter the orderer reads", () => {
+    const source = readFileSync("lib/engine/generate-elite.ts", "utf8");
+    assert.match(source, /sectionLabel\(sections\.find\(\(s\) => \/technical approach\|methodology\|section c\/i\.test\(s\)\), "C", "Technical Approach"\)/);
+  });
+
+  it("contract administration is not inferred from distant words", () => {
+    const text = "The tender will be evaluated by the procurement team. Bidders shall declare non-performance of any contract. Records management is handled by the client's admin office.";
+    assert.equal(detectThemes(text).some((t) => t.code === "CONTRACT_ADMINISTRATION"), false);
+    assert.equal(detectThemes("Scope: contract administration and claims management under FIDIC.").some((t) => t.code === "CONTRACT_ADMINISTRATION"), true);
+  });
+});

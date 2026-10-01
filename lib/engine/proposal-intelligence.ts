@@ -187,7 +187,7 @@ export const PROPOSAL_THEMES: ProposalTheme[] = [
     // Bounded: bare /ISO/i matched "superv-iso-r", "adv-iso-ry" and
     // "compar-iso-n", and planned FIDIC payment certification into a
     // telecom-tower EOI's Understanding (2026-10-01).
-    triggers: [/World Bank/i, /\bUNDP\b/i, /\bESF\b/i, /environmental.*social/i, /safeguard/i, /\bISO\b/i, /\bFIDIC\b/i, /procurement.*rule/i, /\bdonor/i, /\bgrants?\b/i],
+    triggers: [/World Bank/i, /\bUNDP\b/i, /\bESF\b/i, /environmental.{0,20}social/i, /safeguard/i, /\bISO\b/i, /\bFIDIC\b/i, /procurement.{0,20}rules?\b/i, /\bdonor/i, /\bgrants?\b/i],
     proofTerms: [/World Bank/i, /\bUNDP\b/i, /\bESF\b/i, /British Council/i, /\bISO\b/i, /\bFIDIC\b/i, /\bESG\b/i, /environmental/i, /\bsocial\b/i],
     methodologyBullets: [
       "project-specific Quality Management Plan aligned to ISO 9001:2015, with document control, design-review gates, and audit trail",
@@ -377,7 +377,10 @@ export const PROPOSAL_THEMES: ProposalTheme[] = [
   {
     code: "CONTRACT_ADMINISTRATION",
     label: "Contract administration, cost control and claims management",
-    triggers: [/contract administration/i, /contract.*admin/i, /FIDIC/i, /variation order/i, /payment certificate/i, /claims management/i, /cost control/i, /quantity survey/i, /procurement.*advisory/i, /bid.*management/i, /tender.*management/i],
+    // Bounded gaps: /tender.*management/ and /contract.*admin/ matched words
+    // a whole flattened page apart and planned FIDIC claims administration
+    // into a telecom-tower EOI (2026-10-01).
+    triggers: [/contract administration/i, /\bcontract.{0,20}\badmin/i, /\bFIDIC\b/i, /variation order/i, /payment certificate/i, /claims management/i, /cost control/i, /quantity survey/i, /procurement.{0,20}advisory/i, /\bbid.{0,15}management/i, /\btender.{0,15}management/i],
     proofTerms: [/FIDIC/i, /variation/i, /claim/i, /payment certificate/i, /BOQ/i, /quantity/i, /cost.*report/i, /cash.*flow/i, /extension.*time/i, /EOT/i, /final.*account/i, /contract.*sum/i, /retention/i, /bond/i],
     methodologyBullets: [
       "contract document review at award: identify ambiguities, prepare contract administration manual, and issue Employer's notification of contract start",
