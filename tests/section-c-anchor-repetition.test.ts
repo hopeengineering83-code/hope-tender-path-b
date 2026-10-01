@@ -65,8 +65,10 @@ describe("a single reviewed project is anchored once per Section C block", () =>
     // alternative rather than to silence — except where the sector paragraph
     // already says the same thing, which the quality sub-section does.
     for (const fallback of [
-      /methodology has been developed and refined/,
-      /phased work programme draws on established delivery templates/,
+      // Reworded 2026-10-01: the fallbacks no longer claim comparable work
+      // ("refined through repeat delivery of comparable-scope assignments").
+      /methodology is calibrated to the deliverable schedule/,
+      /Each phase produces a formal deliverable/,
     ]) {
       assert.match(markdown, fallback);
     }

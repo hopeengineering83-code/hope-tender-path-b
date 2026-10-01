@@ -963,7 +963,10 @@ function valueFrameworkPillars(primarySector: string, clientName: string, source
   ];
   return [
     { pillar: "Scope Understanding", clientGains: `${clientName} receives an evidence-led response that maps every tender requirement to a deliverable, responsible expert, and quality gate.` },
-    { pillar: "Team Continuity", clientGains: "Same proposed experts have performed the same roles on comparable previous projects — zero learning curve, predictable delivery." },
+    // Not "the same experts performed the same roles on comparable projects":
+    // no record proves it, and on a tender with no comparable project it was
+    // plainly untrue (2026-10-01).
+    { pillar: "Named Team", clientGains: "Each proposed expert is named in Section A with the role, registration and tools their own CV records." },
     { pillar: "Quality Discipline", clientGains: "Three-stage design review (schematic, developed, pre-issue) with named reviewer sign-off catches issues before issue." },
     { pillar: "Compliance & Documentation", clientGains: "Submission package follows tender file naming, ordering, and format rules exactly — no mechanical compliance failures." },
     { pillar: "Risk Reduction", clientGains: "Senior bid-review controls, source-evidence verification, and final validation pass reduce delivery risk for the awarding authority." },

@@ -305,6 +305,9 @@ function sectorMethodologyParagraphRaw(sector: string, subSection: string): stri
 // The four canonical Section C sub-sections we ensure are present + deep.
 // More can be added later — the amplifier handles arbitrary numbered
 // sub-sections gracefully.
+// The fallbacks below run when no selected project anchors the paragraph,
+// so they claim no comparable work (2026-10-01: "validated delivery experience
+// across comparable assignment types" for a firm with no comparable project).
 const CANONICAL_SUB_SECTIONS: SubSectionSpec[] = [
   {
     number: "C.1",
@@ -312,7 +315,7 @@ const CANONICAL_SUB_SECTIONS: SubSectionSpec[] = [
     matchPatterns: [/^##\s+C\.1\b/im, /^##\s+Understanding\s+of\s+the\s+Assignment/im],
     buildDepth: ({ primarySector, projects, anchored, sourceText }) => {
       const anchor = anchorOnce([projects[0]], anchored, "validated on")
-        ?? "The team brings validated delivery experience across comparable assignment types and applies a structured inception process — site orientation, document review, and stakeholder mapping — in the opening week to confirm scope before any technical work begins.";
+        ?? "The team applies a structured inception process — site orientation, document review, and stakeholder mapping — in the opening week to confirm scope before any technical work begins.";
       const para = sectorMethodologyParagraph(primarySector, "C.1", sourceText);
       return joinWithoutEcho(para, anchor);
     },
@@ -323,7 +326,7 @@ const CANONICAL_SUB_SECTIONS: SubSectionSpec[] = [
     matchPatterns: [/^##\s+C\.2\b/im, /^##\s+Technical\s+Methodology/im, /^##\s+Methodology/im],
     buildDepth: ({ primarySector, projects, anchored, sourceText }) => {
       const anchor = anchorOnce([projects[1], projects[0]], anchored, "demonstrated on")
-        ?? "The methodology has been developed and refined through repeat delivery of comparable-scope assignments and is calibrated to the specific deliverable schedule, client reporting cadence, and stakeholder engagement requirements of this engagement.";
+        ?? "The methodology is calibrated to the deliverable schedule, client reporting cadence, and stakeholder engagement requirements of this engagement.";
       const para = sectorMethodologyParagraph(primarySector, "C.2", sourceText);
       return joinWithoutEcho(para, anchor);
     },
@@ -334,7 +337,7 @@ const CANONICAL_SUB_SECTIONS: SubSectionSpec[] = [
     matchPatterns: [/^##\s+C\.3\b/im, /^##\s+Work\s+Plan/im, /^##\s+Deliverables/im],
     buildDepth: ({ primarySector, projects, anchored, sourceText }) => {
       const anchor = anchorOnce([projects[2], projects[1], projects[0]], anchored, "demonstrated on")
-        ?? "The phased work programme draws on established delivery templates refined across comparable assignments. Each phase produces a formal deliverable with client sign-off before the next phase commences, ensuring predictable progress milestones and no scope creep between stages.";
+        ?? "Each phase produces a formal deliverable with client sign-off before the next phase commences, ensuring predictable progress milestones and no scope creep between stages.";
       const para = sectorMethodologyParagraph(primarySector, "C.3", sourceText);
       return joinWithoutEcho(para, anchor);
     },

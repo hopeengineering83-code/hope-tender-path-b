@@ -63,3 +63,31 @@ describe("Section F answers a legal-history criterion with the declaration", () 
     }
   });
 });
+
+import { readFileSync } from "node:fs";
+import { amplifySectionCDepth } from "../lib/engine/section-c-depth-amplifier";
+import { buildValueFrameworkTable } from "../lib/engine/benchmark-tables";
+
+// 2026-10-01, inspect run 36879342204: with no comparable project selected,
+// the Section C amplifier still said "validated delivery experience across
+// comparable assignment types", D.2 said the experts "performed the same roles
+// on comparable previous projects", and the fallback's Section B promised
+// "project references demonstrating comparable experience ... as attachments".
+describe("deterministic text claims no comparable work it cannot show", () => {
+  it("the Section C amplifier, without a project, claims none", () => {
+    const md = "# Section C: Technical Approach\n\n## C.1 Understanding of the Assignment\n\nShort.\n\n## C.2 Technical Methodology\n\nShort.\n\n## C.3 Work Plan and Deliverables\n\nShort.\n\n# Section D: Additional Information\n\nx";
+    const out = amplifySectionCDepth(md, { primarySector: "General Consultancy / Engineering", projects: [], companyName: "S" }).markdown;
+    assert.doesNotMatch(out, /comparable/i);
+  });
+
+  it("the value framework makes no continuity claim", () => {
+    const md = buildValueFrameworkTable({ primarySector: "General Consultancy / Engineering", clientName: "C" } as never);
+    assert.doesNotMatch(md, /same roles on comparable/i);
+  });
+
+  it("the whole-document fallback prints no Section B without a project", () => {
+    const source = readFileSync("lib/engine/generate-elite.ts", "utf8");
+    assert.doesNotMatch(source, /Detailed project references demonstrating comparable experience/);
+    assert.match(source, /if \(projectSelected > 0\) lines\.push\(`# \$\{sectionBLabel\}`\);/);
+  });
+});

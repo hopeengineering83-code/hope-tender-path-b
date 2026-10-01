@@ -843,7 +843,7 @@ function fallbackProposalMarkdown(params: {
   if (sections.length >= 2) {
     tocItems.push(...sections);
   } else {
-    tocItems.push("Section A: Company Profile", "Section B: Relevant Experience", "Section C: Technical Approach", "Section D: Additional Information");
+    tocItems.push("Section A: Company Profile", ...(projectSelected > 0 ? ["Section B: Relevant Experience"] : []), "Section C: Technical Approach", "Section D: Additional Information");
   }
   tocItems.push("Declaration");
   lines.push("# Table of Contents");
@@ -966,7 +966,10 @@ function fallbackProposalMarkdown(params: {
 
   // ── Section B: Relevant Experience ────────────────────────────────────────────
   const sectionBLabel = sections.find((s) => /relevant experience|section b/i.test(s)) ?? "Section B: Relevant Experience";
-  lines.push(`# ${sectionBLabel}`);
+  // No project selected, no Section B: the stub that stood here promised
+  // "project references demonstrating comparable experience ... as
+  // attachments" that the record does not hold (2026-10-01).
+  if (projectSelected > 0) lines.push(`# ${sectionBLabel}`);
   if (projectSelected > 0) {
     lines.push(`${params.companyName} presents ${projectSelected} reviewed project reference(s) directly relevant to this assignment:`);
     // The reference line, not the writer's proof line: the latter carries the
@@ -979,8 +982,6 @@ function fallbackProposalMarkdown(params: {
       lines.push("## Project Evidence Attachments");
       lines.push(...params.projectEvidenceLines.slice(0, 25).map((x) => `- ${x}`));
     }
-  } else {
-    lines.push(`${params.companyName} is committed to delivering this assignment at the required standard. Detailed project references demonstrating comparable experience will be provided as attachments and are available upon request. Each reference will include: project name, client, contract value, country, scope summary, and client reference letter or contract as required by the tender.`);
   }
 
   // ── Section C: Technical Approach ─────────────────────────────────────────────

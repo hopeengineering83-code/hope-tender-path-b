@@ -184,8 +184,11 @@ export const PROPOSAL_THEMES: ProposalTheme[] = [
   {
     code: "DONOR_COMPLIANCE",
     label: "Donor compliance, ESG, quality and institutional standards",
-    triggers: [/World Bank/i, /UNDP/i, /ESF/i, /environmental.*social/i, /safeguard/i, /ISO/i, /FIDIC/i, /procurement.*rule/i, /donor/i, /grant/i],
-    proofTerms: [/World Bank/i, /UNDP/i, /ESF/i, /British Council/i, /ISO/i, /FIDIC/i, /ESG/i, /environmental/i, /social/i],
+    // Bounded: bare /ISO/i matched "superv-iso-r", "adv-iso-ry" and
+    // "compar-iso-n", and planned FIDIC payment certification into a
+    // telecom-tower EOI's Understanding (2026-10-01).
+    triggers: [/World Bank/i, /\bUNDP\b/i, /\bESF\b/i, /environmental.*social/i, /safeguard/i, /\bISO\b/i, /\bFIDIC\b/i, /procurement.*rule/i, /\bdonor/i, /\bgrants?\b/i],
+    proofTerms: [/World Bank/i, /\bUNDP\b/i, /\bESF\b/i, /British Council/i, /\bISO\b/i, /\bFIDIC\b/i, /\bESG\b/i, /environmental/i, /\bsocial\b/i],
     methodologyBullets: [
       "project-specific Quality Management Plan aligned to ISO 9001:2015, with document control, design-review gates, and audit trail",
       "Environmental and Social Management Plan (ESMP) prepared to World Bank ESF or equivalent donor standard",
