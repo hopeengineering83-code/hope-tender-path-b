@@ -11,7 +11,7 @@ import { protectPrompt, protectPromptWithBoundary } from "./ai-trust-boundary";
 import { redactSecrets } from "./sanitize-error";
 import { GEMINI_TIMEOUT_MS, DEEPSEEK_DEFAULT_TIMEOUT_MS, MISTRAL_EXTRACTION_TIMEOUT_MS, OPENAI_COMPAT_DEFAULT_TIMEOUT_MS, O1_O3_TIMEOUT_MS, PROPOSAL_SECTION_TIMEOUT_MS, PROPOSAL_SECTION_TIMEOUT_CEILING_MS, PROPOSAL_SECTION_MS_PER_OUTPUT_TOKEN, PROPOSAL_SECTION_BASE_OVERHEAD_MS, PROPOSAL_SECTION_STITCH_RESERVE_MS, PROPOSAL_SECTION_POOL_RESERVE_MS, PROPOSAL_SECTION_MIN_WRITE_MS, COOLDOWN_WAIT_SETTLE_MS, PROPOSAL_AI_TIMEOUT_MS, REFINEMENT_CALL_TIMEOUT_MS } from "./timeout-config";
 import { AI_TRACE_PATTERNS, countOwnPriceMentions, hasUnprovenClaim, scrubOwnPriceSentences, scrubSourceDocumentMetadata, scrubUnprovenClaimSentences, scrubWritingBriefSentences } from "./engine/detection-patterns";
-import { scrubUngroundedCompanyCredentials } from "./engine/company-credential-grounding";
+import { scrubUngroundedCompanyCredentials, scrubUngroundedExperienceClaims } from "./engine/company-credential-grounding";
 import { containsPricingLeakage } from "./engine/pricing-hygiene";
 import { CURRENCY_TOKEN_ALTERNATION } from "./engine/currency-reference";
 import { withoutAIWriterContractPrompt } from "./engine/ai-writer-contract-prompt";
@@ -6084,6 +6084,14 @@ export async function generateProposalSectionsParallel(input: AIBidWriterInput, 
     if (credentials.removed.length > 0) {
       logger.warn(`[ai] section "${r.id}": removed ${credentials.removed.length} sentence(s) stating a credential the company record does not hold — ${credentials.removed.join(" | ").slice(0, 300)}`);
     }
+    // A past-work claim built from the tender's words, not the firm's record
+    // (2026-09-30: "Telecom Tower Audit & Strengthening, Addis Ababa (2022)",
+    // a project the firm never recorded).
+    const experience = scrubUngroundedExperienceClaims(credentials.markdown, companyGroundingText(input), withoutAIWriterContractPrompt(input).tenderText ?? "");
+    if (experience.removed.length > 0) {
+      logger.warn(`[ai] section "${r.id}": removed ${experience.removed.length} past-work claim(s) the company record does not support — ${experience.removed.join(" | ").slice(0, 300)}`);
+    }
+    credentials.markdown = experience.markdown;
     const incomplete = sectionOutputProblem(filteredSpecs[i].id, credentials.markdown);
     if (incomplete) {
       logger.warn(`[ai] section "${r.id}" model output is incomplete (${incomplete}) — using its deterministic text.`);

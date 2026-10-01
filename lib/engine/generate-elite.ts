@@ -611,7 +611,7 @@ function repairSectionC2SubSections(markdown: string, requirements: string, tend
       `### C.2.${n} ${topic.slice(0, 80)}\n\n` +
       `The ${topic.toLowerCase()} phase ensures that all deliverables for ${tenderTitle || "this assignment"} meet ${possessive(client)} stated requirements and applicable technical standards. ` +
       `The assigned expert leads this scope item, applying the firm's staged-delivery methodology with formal quality-review gates at 30%, 60%, and 100% completion. ` +
-      `Each deliverable undergoes internal peer review before submission to ${client} for approval, and no stage progresses until the prior deliverable has been formally accepted.\n\n` +
+      `Each deliverable undergoes peer review by a second engineer before submission to ${client} for approval, and no stage progresses until the prior deliverable has been formally accepted.\n\n` +
       `**The assigned technical lead will oversee this sub-task and is responsible for the final deliverable.**`,
     );
   }

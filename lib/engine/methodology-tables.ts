@@ -165,7 +165,7 @@ function sectorRiskRows(sector: string): RiskRow[] {
     { category: "Schedule", risk: "Late client decision on key approvals delays critical-path activities", likelihood: "Medium", impact: "High", mitigation: "Approval-pack pre-circulation 5 working days ahead; standing weekly client meeting; escalation matrix with 48-hour SLA", owner: "Project Principal" },
     { category: "Scope", risk: "Mid-engagement scope expansion erodes budget and quality", likelihood: "Medium", impact: "Medium", mitigation: "Variation log maintained from week 1; signed change-order required before any work outside ToR; monthly scope-health memo", owner: "Project Principal" },
     { category: "Resource", risk: "Loss of a key expert during the engagement", likelihood: "Low", impact: "High", mitigation: "Named back-up expert per role in this proposal; CV-rotation kept current; 48-hour mobilization commitment", owner: "Lead Specialist" },
-    { category: "Quality", risk: "Deliverable fails internal peer review at 100% gate", likelihood: "Low", impact: "High", mitigation: "30%/60%/100% formal QA gates signed off by Project Principal + Senior Reviewer; independent peer review at 100%", owner: "Senior Reviewer" },
+    { category: "Quality", risk: "Deliverable fails peer review at the 100% gate", likelihood: "Low", impact: "High", mitigation: "30%/60%/100% formal QA gates signed off by Project Principal + Senior Reviewer; independent peer review at 100%", owner: "Senior Reviewer" },
     { category: "Compliance", risk: "Regulatory or licensing change during engagement", likelihood: "Low", impact: "Medium", mitigation: "Compliance scan at inception and 60% review; named regulatory liaison; designs reference current statutes by clause", owner: "Compliance Lead" },
   ];
 

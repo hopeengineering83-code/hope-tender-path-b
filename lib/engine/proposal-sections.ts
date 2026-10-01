@@ -1128,6 +1128,10 @@ export function sectionOutputProblem(id: ProposalSectionId, markdown: string): s
   for (const heading of REQUIRED_SECTION_HEADINGS[id] ?? []) {
     if (!heading.rx.test(text)) return `missing its "${heading.label}" heading`;
   }
+  // A table row the model stopped writing mid-cell: "| Nejat … – Geotech Lead
+  // | Lead Geotechnical" shipped in a delivered EOI (2026-09-30).
+  const cutRow = text.split("\n").find((line) => /^\s*\|/.test(line) && !/\|\s*$/.test(line));
+  if (cutRow) return `a table row is cut off ("${cutRow.trim().slice(0, 60)}")`;
   return markdownEndsMidSentence(text);
 }
 
@@ -1260,7 +1264,7 @@ export function buildSectionFallback(spec: ProposalSectionSpec, writerInput: AIB
       const methodBlocks = normalizedReqs.map((req, i) => {
         const isGeneric = i >= reqLines.length;
         const body = isGeneric
-          ? `The ${req.toLowerCase()} phase follows the firm's staged-delivery methodology. The discipline lead applies the applicable technical standards and the firm's quality-gate process, and each stage deliverable is prepared at schematic, detailed and final levels with internal peer review before submission to ${client} for approval.`
+          ? `The ${req.toLowerCase()} phase follows the firm's staged-delivery methodology. The discipline lead applies the applicable technical standards and the firm's quality-gate process, and each stage deliverable is prepared at schematic, detailed and final levels with peer review by a second engineer before submission to ${client} for approval.`
           : `Our approach to this requirement begins with a review of ${possessive(client)} stated scope, constraints and applicable standards. The deliverable is prepared at schematic, detailed and final stages with quality review at each gate before submission to ${client} for approval.\n\nQuality gate: peer review at 30%, cross-discipline check at 60% and senior sign-off at 100%.`;
         return `### C.2.${i + 1} ${req}\n\n${body}`;
       });
@@ -1288,7 +1292,7 @@ export function buildSectionFallback(spec: ProposalSectionSpec, writerInput: AIB
         scopeItems.length > 0 ? "" : "## C.3 Work Plan and Deliverables",
         scopeItems.length > 0 ? "" : `The assignment is structured across overlapping stages with defined deliverables and client approval milestones. Each later stage depends on approved outputs from the one before.\n\n| Stage | Deliverable | Responsible | Timeline | Quality Gate |\n|---|---|---|---|---|\n${workPlanRows.map((r) => `| ${r.join(" | ")} |`).join("\n")}`,
         "## C.4 Quality Assurance",
-        `Quality assurance for ${tenderRef} is managed through a three-gate quality review cycle: 30% gate (internal peer review by a senior engineer not on the primary design team), 60% gate (cross-discipline coordination check and client interim review), and 100% gate (director-level sign-off and final compliance verification before issue). No deliverable proceeds to the next stage without written confirmation that the prior gate has been passed.\n\nAll technical documents are version-controlled and issued with a revision history. Comments received from ${client} at each interim review are logged in a comment-response matrix and formally closed before the next stage begins. This approach ensures full traceability between ${possessive(client)} requirements, the technical response, and the final submitted deliverables.\n\nRisk management is integrated into the QA programme: the top three technical risks for this assignment (scope ambiguity, tight schedule, and specialist availability) are tracked on a live risk register updated at each gate and shared with ${client} at every interim submission.`,
+        `Quality assurance for ${tenderRef} is managed through a three-gate quality review cycle: 30% gate (peer review by a senior engineer not on the primary design team), 60% gate (cross-discipline coordination check and client interim review), and 100% gate (director-level sign-off and final compliance verification before issue). No deliverable proceeds to the next stage without written confirmation that the prior gate has been passed.\n\nAll technical documents are version-controlled and issued with a revision history. Comments received from ${client} at each interim review are logged in a comment-response matrix and formally closed before the next stage begins. This approach ensures full traceability between ${possessive(client)} requirements, the technical response, and the final submitted deliverables.\n\nRisk management is integrated into the QA programme: the top three technical risks for this assignment (scope ambiguity, tight schedule, and specialist availability) are tracked on a live risk register updated at each gate and shared with ${client} at every interim submission.`,
       ].filter(Boolean).join("\n\n");
     }
 
