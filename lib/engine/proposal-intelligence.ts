@@ -9,7 +9,17 @@ export type TenderLite = { title: string; reference?: string | null; clientName?
 export type CompanyLite = { name: string; legalName?: string | null; description?: string | null; profileSummary?: string | null; serviceLines: string; sectors: string; email?: string | null; phone?: string | null; website?: string | null; address?: string | null };
 export type ExpertLite = { fullName: string; title?: string | null; yearsExperience?: number | null; disciplines: string; sectors: string; certifications: string; profile?: string | null };
 export type ProjectLite = { name: string; clientName?: string | null; country?: string | null; sector?: string | null; serviceAreas: string; contractValue?: number | null; currency?: string | null; summary?: string | null; startDate?: Date | string | null; endDate?: Date | string | null };
-export type ProposalTheme = { code: string; label: string; triggers: RegExp[]; proofTerms: RegExp[]; methodologyBullets: string[] };
+export type ProposalTheme = {
+  code: string; label: string; triggers: RegExp[]; proofTerms: RegExp[]; methodologyBullets: string[];
+  /**
+   * Distinct triggers a tender must hit before the theme applies. A
+   * cross-cutting theme is not the tender's subject on one incidental phrase:
+   * "ineligible by ... the World Bank Group" in a debarment declaration, or a
+   * "Tax Registration/Payment Certificate", planned donor-safeguard and FIDIC
+   * claims-administration methodology into a telecom-tower EOI (2026-10-01).
+   */
+  minScore?: number;
+};
 export type EvaluationWeight = { criterion: string; weight: string; rawMatch: string };
 export type CommercialTerms = {
   bidBond: string | null;
@@ -184,6 +194,7 @@ export const PROPOSAL_THEMES: ProposalTheme[] = [
   {
     code: "DONOR_COMPLIANCE",
     label: "Donor compliance, ESG, quality and institutional standards",
+    minScore: 2,
     // Bounded: bare /ISO/i matched "superv-iso-r", "adv-iso-ry" and
     // "compar-iso-n", and planned FIDIC payment certification into a
     // telecom-tower EOI's Understanding (2026-10-01).
@@ -377,6 +388,7 @@ export const PROPOSAL_THEMES: ProposalTheme[] = [
   {
     code: "CONTRACT_ADMINISTRATION",
     label: "Contract administration, cost control and claims management",
+    minScore: 2,
     // Bounded gaps: /tender.*management/ and /contract.*admin/ matched words
     // a whole flattened page apart and planned FIDIC claims administration
     // into a telecom-tower EOI (2026-10-01).
@@ -747,7 +759,7 @@ function detectSubmissionRules(tender: TenderLite, tenderText: string): string[]
  */
 export function detectThemes(tenderText: string): ProposalTheme[] {
   const scored = PROPOSAL_THEMES.map((t) => ({ theme: t, score: t.triggers.filter((p) => p.test(tenderText)).length }))
-    .filter((s) => s.score > 0)
+    .filter((s) => s.score >= (s.theme.minScore ?? 1))
     .sort((a, b) => b.score - a.score);
   // Return only matched themes. An empty array is correct when no themes
   // trigger — forcing donor-compliance on an unrelated tender (e.g. road

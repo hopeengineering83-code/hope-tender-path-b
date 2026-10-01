@@ -111,3 +111,15 @@ describe("the fallback's sections are ordered and its themes are the tender's", 
     assert.equal(detectThemes("Scope: contract administration and claims management under FIDIC.").some((t) => t.code === "CONTRACT_ADMINISTRATION"), true);
   });
 });
+
+describe("one incidental phrase does not make a cross-cutting theme", () => {
+  it("a debarment clause naming the World Bank and a tax payment certificate select neither theme", () => {
+    const text = "Supplier must confirm it is not identified as ineligible by any UN Organization, the World Bank Group, or any other international organization. Submit a Tax Registration/Payment Certificate.";
+    const codes = detectThemes(text).map((t) => t.code);
+    assert.equal(codes.includes("DONOR_COMPLIANCE"), false);
+    assert.equal(codes.includes("CONTRACT_ADMINISTRATION"), false);
+  });
+  it("a tender about the subject still selects it", () => {
+    assert.ok(detectThemes("World Bank financed; ESMP to the ESF safeguards.").some((t) => t.code === "DONOR_COMPLIANCE"));
+  });
+});
