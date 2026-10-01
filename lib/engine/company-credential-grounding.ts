@@ -165,3 +165,71 @@ export function scrubUngroundedExperienceClaims(markdown: string, grounding: str
   }
   return { markdown: out.join("\n"), removed };
 }
+
+// ─── Whole-section fabrication ───────────────────────────────────────────────
+//
+// 2026-10-01, Preview, the same telecom-tower EOI with more providers awake:
+// the model-written cover letter, executive summary and Section B presented
+// "the proposal team Confirmed Telecommunications Tower Audit Project (Client
+// and contract value subject to proposal team confirmation)", two "Featured
+// Project" cards with no project behind them, and a firm with no comparable
+// project at all. The firm's record held no tower project; the engine had
+// correctly selected none. A sentence-level scrub cannot rescue a section
+// whose argument rests on invented work, so such a section takes its
+// deterministic text, which states only what the record holds.
+
+const CONFIRMATION_RESIDUE = /\b(?:subject\s+to\s+(?:the\s+)?(?:proposal|bid)[-\s]team\s+confirmation|(?:proposal|bid)[-\s]team\s+confirm(?:ed|ation)?|to\s+be\s+confirmed|\bTBC\b)/i;
+const PROJECT_PRESENTATION = /\b(?:featured\s+project|previous\s+comparable\s+project|comparable\s+(?:projects?|undertakings?|assignments?)|anchors\s+this\s+tender|project\s+references?)\b/i;
+// Leading words that make a phrase a description, not a name: "Proposed
+// Project", "Each Project", "Overall Project".
+const GENERIC_PROJECT_WORDS = /^(?:(?:The|Our|This|That|A|An|Each|Every|Any|Proposed|Overall|Entire|Whole|Current|Future|Subsequent|Previous|Same|Specific|Relevant|Comparable|Similar|Sample|Pilot|Successful|Recent|Total|Typical|Key|Major|Large|Small|Further|New|Main)\s+)+/;
+const NAMED_PROJECT = /\b((?:[A-Z][\w&'’-]*\s+){1,8}(?:Project|Programme|Program))\b/g;
+
+/**
+ * Why a model-written section must not be kept, or null.
+ * `hasSelectedProjects` is whether the engine selected any project for this
+ * tender; `grounding` is the firm's record the writer was given.
+ */
+export function modelSectionFabrication(markdown: string, grounding: string, hasSelectedProjects: boolean): string | null {
+  const text = String(markdown ?? "");
+  const residue = text.match(CONFIRMATION_RESIDUE);
+  if (residue) return `carries a confirmation placeholder ("${residue[0]}")`;
+  if (!hasSelectedProjects) {
+    const presented = text.match(PROJECT_PRESENTATION);
+    if (presented) return `presents project experience ("${presented[0]}") although no project was selected for this tender`;
+  }
+  const record = grounding.toLowerCase();
+  for (const match of text.matchAll(NAMED_PROJECT)) {
+    const name = match[1]!.trim().replace(GENERIC_PROJECT_WORDS, "");
+    if (name.split(/\s+/).length < 2) continue;
+    if (!record.includes(name.toLowerCase())) return `names a project the firm's record does not hold ("${name}")`;
+  }
+  return null;
+}
+
+// A bidder's legal history is the owner's signed declaration, never the
+// writer's: "a clean history of non-performing contracts, and a clear
+// litigation history", "have not been convicted of professional misconduct".
+const LEGAL_HISTORY_ASSERTION = /\b(?:litigation|non-performing|non-performance|debar(?:red|ment)|suspended|sanction(?:ed|s)?|convicted|misconduct|arbitra(?:l|tion)|court\s+(?:case|award|decision)s?)\b/i;
+const ASSERTIVE = /\b(?:no|zero|clean|clear|free\s+of|never|not\s+(?:been|under|subject)|without\s+any|have\s+not|has\s+not)\b/i;
+
+/** Remove sentences in which a model asserts the firm's legal history. */
+export function scrubLegalHistoryAssertions(markdown: string): CredentialScrubResult {
+  const removed: string[] = [];
+  const out: string[] = [];
+  for (const line of markdown.split("\n")) {
+    if (/^\s*(?:#|\|)/.test(line) || !line.trim()) {
+      out.push(line);
+      continue;
+    }
+    const sentences = line.split(/(?<=[.!?])\s+/);
+    const kept = sentences.filter((sentence) => {
+      const assertion = LEGAL_HISTORY_ASSERTION.test(sentence) && ASSERTIVE.test(sentence);
+      if (assertion) removed.push(sentence.trim().slice(0, 140));
+      return !assertion;
+    });
+    if (kept.length === sentences.length) out.push(line);
+    else if (kept.join(" ").trim()) out.push(kept.join(" ").trim());
+  }
+  return { markdown: out.join("\n"), removed };
+}

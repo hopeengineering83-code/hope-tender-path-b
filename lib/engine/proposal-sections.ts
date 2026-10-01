@@ -1132,6 +1132,13 @@ export function sectionOutputProblem(id: ProposalSectionId, markdown: string): s
   // | Lead Geotechnical" shipped in a delivered EOI (2026-09-30).
   const cutRow = text.split("\n").find((line) => /^\s*\|/.test(line) && !/\|\s*$/.test(line));
   if (cutRow) return `a table row is cut off ("${cutRow.trim().slice(0, 60)}")`;
+  // Any paragraph, not only the last: "… at the 30%, 60%, and 100% deliverable
+  // gates by an independent" ended a paragraph mid-section (2026-10-01).
+  const paragraphs = text.split(/\n\s*\n/).map((block) => block.trim()).filter(Boolean);
+  for (const paragraph of paragraphs.slice(0, -1)) {
+    const cut = markdownEndsMidSentence(paragraph);
+    if (cut) return cut;
+  }
   return markdownEndsMidSentence(text);
 }
 

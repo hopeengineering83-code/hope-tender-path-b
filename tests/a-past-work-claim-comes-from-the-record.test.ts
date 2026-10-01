@@ -68,3 +68,48 @@ describe("the generic methodology wording survives the client-text passes", () =
     assert.match(md, /peer review by a second engineer/);
   });
 });
+
+import { modelSectionFabrication, scrubLegalHistoryAssertions } from "../lib/engine/company-credential-grounding";
+
+// 2026-10-01, inspect run 36872690221: with more providers awake, the
+// model-written cover letter, summary and Section B invented "Confirmed
+// Telecommunications Tower Audit Project (Client and contract value subject to
+// proposal team confirmation)", two "Featured Project" cards, and asserted "a
+// clean history of non-performing contracts, and a clear litigation history".
+describe("a model section resting on invented work takes its deterministic text", () => {
+  it("rejects confirmation placeholders", () => {
+    assert.match(String(modelSectionFabrication("Our comparable work: Mast Audit (Client subject to proposal team confirmation).", RECORD, true)), /placeholder/);
+  });
+
+  it("rejects project presentation when no project was selected", () => {
+    assert.match(String(modelSectionFabrication("## B.2 Featured Project 1\n\nScope of services ...", RECORD, false)), /no project was selected/);
+    assert.equal(modelSectionFabrication("## A.1 Company Background\n\nThe firm has an in-house laboratory.", RECORD, false), null);
+  });
+
+  it("rejects a named project the record does not hold, and accepts one it does", () => {
+    assert.match(String(modelSectionFabrication("We delivered the Communication Mast Strengthening Project in 2022.", RECORD, true)), /does not hold/);
+    assert.equal(modelSectionFabrication("The Proposed Project team is led by the Project Manager.", RECORD, true), null);
+    assert.equal(modelSectionFabrication("See the Riverside Health Centre Project.", `${RECORD} Riverside Health Centre Project`, true), null);
+  });
+
+  it("removes assertions of the firm's legal history and keeps the rest", () => {
+    const r = scrubLegalHistoryAssertions("We confirm a clean history of non-performing contracts and a clear litigation history. Our team is available.\nOur directors have not been convicted of professional misconduct.");
+    assert.doesNotMatch(r.markdown, /litigation|convicted/);
+    assert.match(r.markdown, /Our team is available\./);
+    assert.equal(r.removed.length, 2);
+  });
+
+  it("the section writer applies both", () => {
+    const source = readFileSync("lib/ai.ts", "utf8");
+    assert.match(source, /scrubLegalHistoryAssertions\(credentials\.markdown\)/);
+    assert.match(source, /modelSectionFabrication\(credentials\.markdown, companyGroundingText\(input\)/);
+  });
+});
+
+describe("a paragraph cut off mid-section is an incomplete section", () => {
+  it("is reported", () => {
+    const md = "# Cover Letter\n\nDear Committee,\n\n# Executive Summary\n\nQuality is reviewed at each gate by an independent\n\nThe team is available.";
+    assert.match(String(sectionOutputProblem("cover-and-summary" as never, md)), /mid-sentence/);
+    assert.equal(sectionOutputProblem("cover-and-summary" as never, md.replace("by an independent", "by an independent reviewer.")), null);
+  });
+});
