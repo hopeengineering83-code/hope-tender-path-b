@@ -68,6 +68,9 @@ export function hasEvaluatorMirrorHeading(markdown: string): boolean {
  * compliance-matrix-builder, but tuned for evaluator-criterion phrasing
  * (which is more abstract than requirement phrasing).
  */
+const DECLARATION_CRITERION = /\b(?:litigation|non-?performing|non-?performance|debar|eligib|declaration|disclosure|conflict\s+of\s+interest)/;
+const COMPANY_RECORD_CRITERION = /\b(?:legal\s+status|supplier\s+certificates?|company\s+documents?|registration|incorporation|tax|financial\s+(?:standing|statements?|reports?)|audited|turnover)\b/;
+
 function inferAnswerSection(criterion: string): string {
   const c = criterion.toLowerCase();
   // Each pointer names a heading exactly as the proposal prints it, so the
@@ -75,6 +78,12 @@ function inferAnswerSection(criterion: string): string {
   // the final order is known. The pointers below these four named headings
   // the document no longer has ("A.4 Proposed Project Team + A.5
   // Team-to-Project Mapping").
+  // A criterion about the firm's legal history or standing is answered by the
+  // firm's own declaration or records, not by projects or experts: "Litigation
+  // History" was sent to "B.2 Featured Projects" beside "Proposed lead expert"
+  // (2026-10-01, a telecom-tower EOI).
+  if (DECLARATION_CRITERION.test(c)) return "Declaration";
+  if (COMPANY_RECORD_CRITERION.test(c)) return "Section D Professional Certifications and Affiliations";
   if (/portfolio/.test(c)) return "Section B.2 Project Portfolio";
   if (/team|expert|personnel|cv|qualification|multidisciplinary|staff/.test(c)) return "Section A.5 Proposed Project Team and A.6 Team-to-Project Experience Mapping";
   if (/experience|similar|reference|track.record/.test(c)) return "Section B.2 Project Portfolio and B.1 Client References";
@@ -185,6 +194,8 @@ function inferEvidenceAnchor(criterion: string, input: EvaluatorMirrorBuilderInp
   const c = criterion.toLowerCase();
   const specific = specificEvidence(criterion, input);
   if (specific) return specific;
+  if (DECLARATION_CRITERION.test(c)) return "The company's signed declaration, submitted as a separate document in this package";
+  if (COMPANY_RECORD_CRITERION.test(c)) return "The company's registration, tax and financial records";
   const project = input.topProjectName?.trim();
   const expert = input.topExpertName?.trim();
   if (/team|expert|personnel|cv/.test(c) && expert) return `Lead expert ${expert} on a comparable previous project (see Section A.5)`;

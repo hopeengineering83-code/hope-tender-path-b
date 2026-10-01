@@ -131,6 +131,16 @@ import { isCurrentRecordStatus } from "./record-status";
 import { possessive } from "./possessive";
 export { isCurrentRecordStatus };
 
+/** Rename the document's references to itself when it is not a Technical Proposal. */
+export function withSubmissionDocumentLabel(markdown: string, label: string): string {
+  if (!label || /^technical proposal$/i.test(label)) return markdown;
+  return markdown
+    .replace(/\bThis is a TECHNICAL PROPOSAL ONLY\.?/g, `This ${label} contains no financial offer.`)
+    .replace(/\bTECHNICAL PROPOSAL\b/g, label.toUpperCase())
+    .replace(/\b(this|the|our|a)\s+technical\s+proposal\b/gi, (_m, det: string) => `${det} ${label}`)
+    .replace(/\bTechnical Proposal\b/g, label);
+}
+
 export function disambiguateRepeatedHeadings(markdown: string): string {
   const seen = new Map<string, number>();
   return markdown.split("\n").map((line) => {
@@ -808,11 +818,13 @@ function fallbackProposalMarkdown(params: {
   // best placed" with property-assessment methodology and geotechnical rigs on
   // a healthcare tender, while the healthcare-relevant claims sat in the
   // covering note. Order of allocation is deliberately not order of appearance.
-  if (params.differentiators.length > 0) {
+  // The lead-in only above a list: with fewer differentiators than the
+  // summary takes, it introduced nothing (2026-10-01).
+  const coverDifferentiators = params.differentiators
+    .slice(EXECUTIVE_SUMMARY_DIFFERENTIATORS, EXECUTIVE_SUMMARY_DIFFERENTIATORS + COVER_LETTER_DIFFERENTIATORS);
+  if (coverDifferentiators.length > 0) {
     lines.push("Key differentiators that make us well-placed to serve this assignment:");
-    lines.push(...params.differentiators
-      .slice(EXECUTIVE_SUMMARY_DIFFERENTIATORS, EXECUTIVE_SUMMARY_DIFFERENTIATORS + COVER_LETTER_DIFFERENTIATORS)
-      .map((d) => `- ${d}`));
+    lines.push(...coverDifferentiators.map((d) => `- ${d}`));
   }
   lines.push("We trust this proposal demonstrates our capacity, commitment, and technical depth.");
   }
@@ -861,7 +873,7 @@ function fallbackProposalMarkdown(params: {
     if (reviewedProjects.length === 0) {
       // Fall back to a compact metadata sentence so the section is not empty.
       lines.push(
-        `${params.companyName} presents this technical proposal as a ${params.primarySector} assignment requiring an evidence-led, evaluator-facing response. ` +
+        `${params.companyName} presents this technical proposal for ${params.tenderTitle}. ` +
         `${expertSelected > 0 ? `${expertSelected} reviewed specialist(s)` : "A qualified professional team"} ${expertSelected > 0 ? "are" : "is"} aligned to the scope.`,
       );
     }
@@ -4134,6 +4146,12 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
     logger.info(`[generate-elite] Client register: ${register.rewrites} provenance phrasing(s) rewritten, ${register.caveatsRemoved} internal caveat sentence(s) removed.`);
     workingMarkdown = register.text;
   }
+
+  // The document calls itself what the plan says it is. Templates across the
+  // generator say "Technical Proposal"; on an EOI every one of them was wrong
+  // (2026-10-01: the whole-document fallback opened "Subject: Technical
+  // Proposal for …" and "This is a TECHNICAL PROPOSAL ONLY").
+  workingMarkdown = withSubmissionDocumentLabel(workingMarkdown, submissionDocumentLabel);
 
   const proseHygiene = repairClientTextHygiene(workingMarkdown);
   if (proseHygiene.removedLines > 0) {

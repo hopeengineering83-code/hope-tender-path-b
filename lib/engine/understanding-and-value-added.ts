@@ -361,7 +361,9 @@ export function buildConflictOfInterestSection(opts: { companyName: string; clie
     "",
     `- The firm has no current contractual or commercial relationship with ${opts.clientName} that would constitute a conflict of interest with the impartial delivery of this assignment.`,
     `- The proposed team members have not participated in the drafting of this tender's specifications, evaluation criteria, or terms of reference.`,
-    `- The firm and its proposed team members are not under any current debarment, suspension, sanction, or compliance condition imposed by any government, multilateral institution, or industry regulator.`,
+    // No debarment statement: the firm's debarment, litigation and
+    // non-performance history is stated in its own signed declaration, which
+    // the package waits for (2026-10-01).
     `- The firm will disclose, immediately and in writing, any change to the above during the course of this engagement.`,
     "",
     `This declaration is made in good faith and is supported by documentary evidence available on request.`,
