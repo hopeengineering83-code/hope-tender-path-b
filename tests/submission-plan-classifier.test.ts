@@ -4,12 +4,11 @@
 // rule titles:
 //   • "Email Recipients: Both Contacts Mandatory.docx"           ← submission rule
 //   • "Financial Proposal Exclusion: Technical Only at This Stage.docx"  ← commercial-separation rule
+//   • "No Financial Proposal.docx"                              ← negative rule, NOT a file
 //   • "Submission Format and Document Control.pdf"               ← internal control row
 //
 // These tests pin the classifier to NEVER produce a planned file from
-// those titles. Real deliverables (Technical Proposal, Cover Letter,
-// Bid Bond Confirmation Letter, form templates) still classify as
-// planned files.
+// those titles. Real deliverables remain planned files.
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
@@ -29,6 +28,20 @@ describe("submission-plan-classifier — rules must not become files", () => {
     const r = classifySubmissionPlanItem({ title: "Financial Proposal Exclusion: Technical Only at This Stage" });
     assert.equal(r.category, "COMMERCIAL_SEPARATION_RULE");
     assert.equal(r.shouldBePlannedFile, false);
+  });
+
+  it("negative financial instructions never become synthetic deliverables, even with a .docx filename", () => {
+    const examples = [
+      { title: "No Financial Proposal", exactFileName: "No Financial Proposal.docx" },
+      { title: "Financial Proposal: Not required at this stage", exactFileName: "Financial-Proposal.docx" },
+      { title: "Do not generate a financial proposal" },
+      { title: "Technical submission without financial proposal" },
+    ];
+    for (const input of examples) {
+      const r = classifySubmissionPlanItem(input);
+      assert.equal(r.category, "COMMERCIAL_SEPARATION_RULE", JSON.stringify(input));
+      assert.equal(r.shouldBePlannedFile, false, JSON.stringify(input));
+    }
   });
 
   it("'Submission Format and Document Control' is an internal control", () => {
@@ -87,7 +100,26 @@ describe("submission-plan-classifier — real deliverables ARE planned files", (
     assert.equal(r.shouldBePlannedFile, true);
   });
 
-  it("form templates / annexes / schedules are planned files (to be completed)", () => {
+  it("a generic bidder-assembled supporting-document annex is an output, not an invented official form", () => {
+    const r = classifySubmissionPlanItem({
+      title: "Annexes for Supporting Documents",
+      exactFileName: "Annexes for Supporting Documents.docx",
+    });
+    assert.equal(r.category, "REQUIRED_OUTPUT_FILE");
+    assert.equal(r.shouldBePlannedFile, true);
+  });
+
+  it("an explicitly tender-issued annex remains a form/template and fail-closed", () => {
+    const r = classifySubmissionPlanItem({
+      title: "Annex 3",
+      description: "Submit the attached prescribed Annex 3 without modification.",
+      exactFileName: "Annex-3.docx",
+    });
+    assert.equal(r.category, "FORM_TEMPLATE_TO_COMPLETE");
+    assert.equal(r.shouldBePlannedFile, true);
+  });
+
+  it("form templates / numbered annexes / schedules are planned files (to be completed)", () => {
     assert.equal(classifySubmissionPlanItem({ title: "Form 1: Bidder Information Form" }).category, "FORM_TEMPLATE_TO_COMPLETE");
     assert.equal(classifySubmissionPlanItem({ title: "Schedule 2: Price Schedule" }).category, "FORM_TEMPLATE_TO_COMPLETE");
     assert.equal(classifySubmissionPlanItem({ title: "Annex 3: Technical Schedule" }).category, "FORM_TEMPLATE_TO_COMPLETE");
@@ -101,8 +133,6 @@ describe("submission-plan-classifier — real deliverables ARE planned files", (
   });
 
   it("exactFileName forces planned-file when no rule pattern matches", () => {
-    // No pattern matches "Site Visit Confirmation" but the exactFileName
-    // signals an explicit deliverable, so it becomes a planned file.
     const r = classifySubmissionPlanItem({ title: "Site Visit Confirmation", exactFileName: "site-visit.pdf" });
     assert.equal(r.shouldBePlannedFile, true);
   });

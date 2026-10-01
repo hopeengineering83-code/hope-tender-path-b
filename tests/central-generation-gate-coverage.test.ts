@@ -60,17 +60,32 @@ describe("Central generation gate — GENERATED-document route coverage", () => 
   });
 
   describe("PROPOSAL_GENERATION handler (already guarded)", () => {
-    it("calls the gate before prisma.generatedDocument.create", () => {
-      const src = read("lib/ai-job-handlers.ts");
+    // The handler no longer persists GeneratedDocument rows itself — it
+    // delegates to the same canonical generateTenderDocuments() pipeline the
+    // interactive /generate route uses (real DOCX, not a parallel Markdown
+    // implementation), so the coverage check is the same shape as the
+    // "generate route" test above: gate before generateTenderDocuments(.
+    it("calls the gate before generateTenderDocuments", () => {
+      const src = read("lib/ai-job-handlers-legacy.ts");
       expectContains(src, /assertTenderReadyForGenerationAndExport/);
       const propGenBlock = src.slice(
         src.indexOf("PROPOSAL_GENERATION:"),
         src.indexOf("EVALUATOR_SIM:"),
       );
       const gateIdx = propGenBlock.indexOf("assertTenderReadyForGenerationAndExport");
-      const createIdx = propGenBlock.indexOf("generatedDocument.create");
-      assert.ok(gateIdx > -1 && createIdx > -1 && gateIdx < createIdx,
-        "PROPOSAL_GENERATION handler must call the gate BEFORE generatedDocument.create");
+      const genIdx = propGenBlock.indexOf("generateTenderDocuments(");
+      assert.ok(gateIdx > -1 && genIdx > -1 && gateIdx < genIdx,
+        "PROPOSAL_GENERATION handler must call the gate BEFORE generateTenderDocuments");
+    });
+
+    it("also guards against a concurrent in-flight generation for the same tender", () => {
+      const src = read("lib/ai-job-handlers-legacy.ts");
+      const propGenBlock = src.slice(
+        src.indexOf("PROPOSAL_GENERATION:"),
+        src.indexOf("EVALUATOR_SIM:"),
+      );
+      assert.match(propGenBlock, /GENERATING.*QUEUED|QUEUED.*GENERATING/s);
+      assert.match(propGenBlock, /GENERATION_IN_PROGRESS/);
     });
   });
 
@@ -129,12 +144,12 @@ describe("Central generation gate — GENERATED-document route coverage", () => 
 
   describe("generate-missing-plan-files route (NEWLY guarded)", () => {
     it("imports the central gate", () => {
-      const src = read("app/api/tenders/[id]/generate-missing-plan-files/route.ts");
+      const src = read("app/api/tenders/[id]/generate-missing-plan-files/route.ts") + read("lib/engine/missing-plan-file-generation.ts");
       expectContains(src, /import\s*\{[^}]*assertTenderReadyForGenerationAndExport[^}]*\}\s*from\s*["'][^"']*generation-readiness-gate["']/);
     });
 
     it("calls the gate before prisma.generatedDocument.create", () => {
-      const src = read("app/api/tenders/[id]/generate-missing-plan-files/route.ts");
+      const src = read("app/api/tenders/[id]/generate-missing-plan-files/route.ts") + read("lib/engine/missing-plan-file-generation.ts");
       const gateIdx = src.indexOf("assertTenderReadyForGenerationAndExport(");
       const createIdx = src.indexOf("generatedDocument.create");
       assert.ok(gateIdx > -1 && createIdx > -1 && gateIdx < createIdx,
@@ -148,7 +163,7 @@ describe("Central generation gate — GENERATED-document route coverage", () => 
       // confirmed plan (see getCurrentConfirmedBuildPlan check downstream) and
       // must fail closed on every central-gate blocker, including
       // BUILD_PLAN_MISSING and BUILD_PLAN_NOT_CONFIRMED.
-      const src = read("app/api/tenders/[id]/generate-missing-plan-files/route.ts");
+      const src = read("app/api/tenders/[id]/generate-missing-plan-files/route.ts") + read("lib/engine/missing-plan-file-generation.ts");
       expectContains(src, /if\s*\(\s*!centralGate\.ok\s*\)\s*\{/);
       // The old dead carve-out must NOT be present
       if (src.includes('blockerCode !== "SUBMISSION_PLAN_MISSING"') || src.includes("blockerCode !== 'SUBMISSION_PLAN_MISSING'")) {
@@ -157,7 +172,7 @@ describe("Central generation gate — GENERATED-document route coverage", () => 
     });
 
     it("uses a distinct purpose string for audit traceability", () => {
-      const src = read("app/api/tenders/[id]/generate-missing-plan-files/route.ts");
+      const src = read("app/api/tenders/[id]/generate-missing-plan-files/route.ts") + read("lib/engine/missing-plan-file-generation.ts");
       expectContains(src, /purpose:\s*["']generate-missing-plan-files["']/);
     });
   });

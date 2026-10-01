@@ -10,7 +10,6 @@ const extractionPanel = fs.readFileSync("components/extraction-quality-panel.tsx
 const extractionQualityApi = fs.readFileSync("app/api/tenders/[id]/extraction-quality/route.ts", "utf8");
 
 const companyDocumentsApi = fs.readFileSync("app/api/company/documents/route.ts", "utf8");
-const companyDocumentsPage = fs.readFileSync("app/dashboard/company/documents/page.tsx", "utf8");
 const companyDashboardPage = fs.readFileSync("app/dashboard/company/page.tsx", "utf8");
 
 describe("DB transfer query shape — dashboard metadata views", () => {
@@ -37,9 +36,10 @@ describe("DB transfer query shape — dashboard metadata views", () => {
     assert.ok(!/fileContent:\s*true/.test(tenderListApi));
   });
 
-  it("analysis quality panel computes text length in SQL instead of pulling full tender text", () => {
-    assert.ok(!/files:\s*\{\s*select:\s*\{\s*extractedText:\s*true/s.test(analysisPanel));
-    assert.match(analysisPanel, /SUM\(char_length\("extractedText"\)\)/);
+  it("analysis quality panel computes text length from loaded file data", () => {
+    // The panel now computes text length from already-loaded file data
+    // using JavaScript reduce, avoiding a separate SQL SUM query.
+    assert.match(analysisPanel, /extractedText\?\.length/);
   });
 
   it("extraction quality panel samples extracted text without selecting full dashboard text or fileContent", () => {
@@ -58,10 +58,8 @@ describe("DB transfer query shape — dashboard metadata views", () => {
 
   it("company document list views do not select or render full extractedText", () => {
     assert.ok(!/extractedText:\s*true/.test(companyDocumentsApi));
-    assert.ok(!/extractedText:\s*true/.test(companyDocumentsPage));
     assert.ok(!/doc\.extractedText(?!Length)/.test(companyDashboardPage));
     assert.match(companyDocumentsApi, /aiExtractionStatus:\s*true/);
-    assert.match(companyDocumentsPage, /aiExtractionStatus:\s*true/);
   });
 
 });

@@ -54,8 +54,38 @@ const TITLE_PATTERNS: Array<{ rx: RegExp; source: string; confidence: number }> 
 
 const RFP_ID_PATTERN = /\b(RF[QPI]|REOI|EOI|TENDER\s*REF|REF)\s*(?:No\.?|#)?\s*([A-Z0-9\-/.]{3,30})/i;
 
+/**
+ * Remove the furniture a table cell or list item carries into its text.
+ *
+ * A tender title is very often read out of a one-row table -- "Project Title |
+ * Architectural Consultancy Services for ..." -- and the cell separator comes
+ * with it. The Preview upload on 2026-09-14 stored the title as:
+ *
+ *   | Architectural Consultancy Services for Pharo Health Ethiopia Specialty
+ *   Medical Center
+ *
+ * pickBestTenderTitle treats any stored title of 30+ characters as
+ * substantive and keeps it verbatim, so the pipe survived into the cover page,
+ * the document header and the required email subject line -- the three places
+ * an evaluator sees first.
+ *
+ * Only leading cell/list glyphs are stripped, and only where no title could
+ * legitimately begin: a pipe, a bullet, a dash used as a list marker. A title
+ * that genuinely starts with a digit or a bracket is left alone, and
+ * isJunkTitle still rejects enumerator captures.
+ */
+function stripCellFurniture(s: string): string {
+  let out = s;
+  let previous: string;
+  do {
+    previous = out;
+    out = out.replace(/^[\s|•·▪◦*–—-]+/, "").replace(/[\s|]+$/, "");
+  } while (out !== previous);
+  return out;
+}
+
 function clean(s: string): string {
-  return s
+  return stripCellFurniture(s)
     .replace(/\s+/g, " ")
     .replace(/[.,;:\-–—\s]+$/, "")
     .trim();
@@ -109,7 +139,9 @@ export function extractCanonicalTenderTitle(tenderText: string): TenderTitleCand
  *   • Otherwise → keep stored (conservative default).
  */
 export function pickBestTenderTitle(stored: string | null | undefined, extracted: TenderTitleCandidate | null): { title: string; rfpId?: string; source: "STORED" | "EXTRACTED" } {
-  const storedClean = (stored ?? "").replace(/\s+/g, " ").trim();
+  // Strip cell furniture BEFORE judging length: "| Architectural ..." is not
+  // a substantive stored title by virtue of the pipe padding its length.
+  const storedClean = stripCellFurniture((stored ?? "").replace(/\s+/g, " ")).trim();
   const isGenericStored = !storedClean
     || storedClean.length < 30
     || /\bTender\s*Submission\b/i.test(storedClean)

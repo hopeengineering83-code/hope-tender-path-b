@@ -25,7 +25,11 @@ import {
   RETRY_DELAYS_MS,
   MAX_RETRY_COUNT,
   NON_RETRYABLE_CATEGORIES,
+  TERMINAL_FAILURE_CATEGORIES,
+  PROVIDER_CONFIG_FAILURE_CATEGORIES,
+  decideManualRearm,
   RETRYABLE_CATEGORIES,
+  reclassifyHistoricalTenderFailure,
 } from "../lib/ai-analyze/retry-service";
 
 // ── Backoff schedule ─────────────────────────────────────────────────────────
@@ -80,6 +84,22 @@ describe("classifyFailure — retryable vs non-retryable", () => {
     assert.equal(classifyFailure("Worker returned 401 unauthorized", undefined, "FAILED").retryable, false);
   });
 
+  it("classifies provider model-not-found phrases before generic tender not-found", () => {
+    for (const message of ["model not found", "unknown model", "model_not_found", "no such model"]) {
+      const result = classifyFailure(message, undefined, "FAILED");
+      assert.equal(result.category, "MODEL_UNAVAILABLE", message);
+      assert.equal(result.retryable, false, message);
+    }
+    assert.equal(classifyFailure("Tender not found or access denied", undefined, "FAILED").category, "TENDER_NOT_FOUND");
+  });
+
+  it("repairs a historical false TENDER_NOT_FOUND category from its model error", () => {
+    assert.equal(
+      classifyFailure("Provider response: unknown model", "TENDER_NOT_FOUND", "FAILED").category,
+      "MODEL_UNAVAILABLE",
+    );
+  });
+
   it("treats PARTIAL_SUCCESS as retryable (remaining chunks may complete)", () => {
     const c = classifyFailure(undefined, undefined, "PARTIAL_SUCCESS");
     assert.equal(c.retryable, true);
@@ -111,6 +131,48 @@ describe("isAnyProviderEligible gates both scheduling and re-arming", () => {
     } finally {
       for (const k of keys) { if (saved[k] !== undefined) process.env[k] = saved[k]; }
     }
+  });
+
+  it("accepts the effective configured model without a custom free-model policy", () => {
+    assert.equal(isAnyProviderEligible("extraction", {
+      NODE_ENV: "test",
+      AI_ZERO_PAID_MODE: "true",
+      MISTRAL_API_KEY: "present",
+      MISTRAL_PROPOSAL_MODEL: "unknown-cost-model",
+      MISTRAL_ANALYSIS_MODEL: "unknown-cost-model",
+      MISTRAL_FAST_MODEL: "unknown-cost-model",
+    }), true);
+  });
+
+  it("returns true for a genuinely eligible exact free-model configuration", () => {
+    assert.equal(isAnyProviderEligible("extraction", {
+      NODE_ENV: "test",
+      AI_ZERO_PAID_MODE: "true",
+      GEMINI_API_KEY: "present",
+      GEMINI_MODEL: "gemini-2.5-flash",
+      GEMINI_ANALYSIS_MODEL: "gemini-2.5-flash",
+      GEMINI_EXTRACTION_MODEL: "gemini-2.0-flash",
+    }), true);
+  });
+
+  it("never reports an empty eligible chain as usable", () => {
+    assert.equal(isAnyProviderEligible("extraction", { NODE_ENV: "test", AI_ZERO_PAID_MODE: "true" }), false);
+  });
+});
+
+describe("historical tender-not-found recovery uses current ownership facts", () => {
+  it("clears stale TENDER_NOT_FOUND after current ownership is proven", () => {
+    assert.equal(reclassifyHistoricalTenderFailure({
+      recordedCategory: "TENDER_NOT_FOUND", errorMessage: "Tender not found",
+      currentOwnershipProven: true, jobStatus: "FAILED",
+    }), "UNKNOWN");
+  });
+
+  it("keeps a genuine current ownership failure terminal", () => {
+    assert.equal(reclassifyHistoricalTenderFailure({
+      recordedCategory: "TENDER_NOT_FOUND", errorMessage: "Tender not found",
+      currentOwnershipProven: false, jobStatus: "FAILED",
+    }), "TENDER_NOT_FOUND");
   });
 });
 
@@ -185,5 +247,112 @@ describe("Vercel cron budget is not exceeded", () => {
     const vercel = JSON.parse(readFileSync("vercel.json", "utf8")) as { crons?: unknown[] };
     assert.ok(Array.isArray(vercel.crons), "crons must be an array");
     assert.ok((vercel.crons ?? []).length <= 2, `expected ≤ 2 crons, found ${(vercel.crons ?? []).length}`);
+  });
+});
+
+// ── The two "do not auto-retry" sets must not contradict each other ──────────
+describe("failure category sets are consistent", () => {
+  it("no category is both retryable and non-retryable", () => {
+    // These sets are read by different code paths — one decides whether to
+    // schedule a backoff, the other whether to refuse. A category in both makes
+    // the answer depend on which path asked, which is how AI_PROVIDERS_EXHAUSTED
+    // came to be simultaneously "retry in 30s" and "never retry".
+    const overlap = [...RETRYABLE_CATEGORIES].filter((c) => NON_RETRYABLE_CATEGORIES.has(c));
+    assert.deepEqual(overlap, [], `categories in both sets: ${overlap.join(", ")}`);
+  });
+
+  it("terminal and provider-config failures are disjoint", () => {
+    // The whole point of the split: terminal failures can never be cleared by
+    // fixing provider configuration, and provider-config failures can never be
+    // caused by the source document.
+    const overlap = [...TERMINAL_FAILURE_CATEGORIES].filter((c) =>
+      PROVIDER_CONFIG_FAILURE_CATEGORIES.has(c),
+    );
+    assert.deepEqual(overlap, [], `categories in both sets: ${overlap.join(", ")}`);
+  });
+});
+
+// ── Manual retry re-arm after a provider configuration change ────────────────
+describe("decideManualRearm — a repaired provider must not leave a tender dead", () => {
+  it("re-arms after a provider auth failure once a provider is available", () => {
+    // The defect this closes: a run that died because an API key was wrong was
+    // recorded nonRetryable, and createAnalysisJob then refused every future
+    // attempt on that content hash. Fixing the key changed nothing — the tender
+    // stayed dead forever because of a fault that had already been repaired.
+    const decision = decideManualRearm({
+      failureCategory: "PROVIDER_AUTH_FAILED",
+      nonRetryable: true,
+      sourceIntegrityIntact: true,
+      providerAvailable: true,
+    });
+    assert.equal(decision.allowed, true);
+    assert.equal(decision.reason, "OK");
+  });
+
+  it("re-arms after a billing block once a free provider is available", () => {
+    const decision = decideManualRearm({
+      failureCategory: "BILLING_BLOCKED",
+      nonRetryable: true,
+      sourceIntegrityIntact: true,
+      providerAvailable: true,
+    });
+    assert.equal(decision.allowed, true);
+  });
+
+  it("re-arms after a model-unavailable failure once the model is fixed", () => {
+    const decision = decideManualRearm({
+      failureCategory: "MODEL_UNAVAILABLE",
+      nonRetryable: true,
+      sourceIntegrityIntact: true,
+      providerAvailable: true,
+    });
+    assert.equal(decision.allowed, true);
+  });
+
+  it("refuses, but says it is provider-fixable, when nothing is usable yet", () => {
+    const decision = decideManualRearm({
+      failureCategory: "CONFIGURATION_INVALID",
+      nonRetryable: true,
+      sourceIntegrityIntact: true,
+      providerAvailable: false,
+    });
+    assert.equal(decision.allowed, false);
+    assert.equal(decision.reason, "NO_PROVIDER_AVAILABLE");
+    assert.equal(decision.clearableByProviderFix, true);
+  });
+
+  it("keeps genuinely terminal failures terminal, however healthy the providers are", () => {
+    for (const category of [
+      "SOURCE_BYTES_CHANGED",
+      "CONTENT_HASH_CHANGED",
+      "OWNERSHIP_REVOKED",
+      "EXTRACTION_CORRUPTED",
+      "PROVENANCE_INTEGRITY_FAILED",
+    ]) {
+      const decision = decideManualRearm({
+        failureCategory: category,
+        nonRetryable: true,
+        sourceIntegrityIntact: true,
+        providerAvailable: true,
+      });
+      assert.equal(decision.allowed, false, `${category} must stay terminal`);
+      assert.equal(decision.reason, "TERMINAL_FAILURE");
+      assert.equal(decision.clearableByProviderFix, false);
+    }
+  });
+
+  it("refuses when source integrity has changed, whatever the failure category", () => {
+    // Unconditional: the SUCCEEDED chunks a resume reuses are evidence about
+    // one specific set of bytes, and may only be reused if it is still those
+    // bytes. A provider fault does not license reusing evidence about a
+    // document that has since changed.
+    const decision = decideManualRearm({
+      failureCategory: "PROVIDER_AUTH_FAILED",
+      nonRetryable: true,
+      sourceIntegrityIntact: false,
+      providerAvailable: true,
+    });
+    assert.equal(decision.allowed, false);
+    assert.equal(decision.reason, "SOURCE_INTEGRITY_CHANGED");
   });
 });

@@ -265,7 +265,7 @@ describe("operation gate — FINAL_SUBMISSION_READY (strict)", () => {
       buildPlan: null,
     }));
     assert.equal(r.ok, false);
-    assert.ok(r.blockers.some((b) => b.includes("BuildPlan")));
+    assert.ok(r.blockers.some((b) => b.includes("Build Plan")));
   });
 
   it("blocks when BuildPlan is present but not ok", () => {

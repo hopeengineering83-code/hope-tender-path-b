@@ -5,9 +5,9 @@ export type TenderNextActionPrimary =
   | "RUN_AI_ANALYZE"
   | "RERUN_AI_ANALYZE"
   | "EDIT_METADATA"
-  | "REVIEW_REQUIREMENTS"
   | "BUILD_SUBMISSION_PLAN"
   | "GENERATE_DOCUMENTS"
+  | "AUTOMATIC_PROCESSING"
   | "FIX_EXPORT_BLOCKERS"
   | "EXPORT_READY";
 
@@ -88,7 +88,7 @@ function extractionIsNotReady(input: TenderNextActionInput["extraction"]) {
 
 function extractionBlockers(input: TenderNextActionInput["extraction"]): string[] {
   const blockers: string[] = [];
-  if (input.corrupted) blockers.push("Extraction is corrupted — run OCR or upload a clearer source file");
+  if (input.corrupted) blockers.push("Extraction is corrupted — upload a clearer, text-based source file");
   if (input.ocrRequired) blockers.push("OCR is required before reliable AI analysis");
   if (input.partial) blockers.push("Document is only partially extracted");
   if (typeof input.pageCoveragePercent === "number" && input.pageCoveragePercent < 80) {
@@ -116,7 +116,7 @@ export function resolveTenderNextAction(input: TenderNextActionInput): TenderNex
     return {
       primary: "FIX_EXTRACTION",
       label: "Fix Extraction First",
-      reason: "Extraction is weak, partial, corrupted, or below readiness coverage. Run OCR / re-extract before AI Analyze.",
+      reason: "Extraction is weak, partial, corrupted, or below readiness coverage. Upload a clearer, text-based copy; extraction and analysis re-run against it automatically.",
       blockers: extractionBlockers(input.extraction),
       tone: input.extraction.corrupted ? "red" : "amber",
     };
@@ -167,11 +167,11 @@ export function resolveTenderNextAction(input: TenderNextActionInput): TenderNex
         }
       : undefined;
     return {
-      primary: "REVIEW_REQUIREMENTS",
-      label: input.aiAnalysis.regexFallback ? "Review fallback requirements" : "Review AI analysis",
+      primary: "RERUN_AI_ANALYZE",
+      label: "Re-run AI Analyze",
       reason: input.aiAnalysis.regexFallback
-        ? "Regex fallback is draft-only. Review source tracing and do not treat it as final-export ready unless there is an explicit admin override."
-        : "AI analysis is partial or untrusted. Review it before continuing downstream.",
+        ? "Regex fallback is draft-only and cannot be promoted by review. Re-extract or improve the source, then re-run AI Analyze for grounded requirements."
+        : "AI analysis is partial or untrusted. Re-run AI Analyze; a review click cannot promote unsupported provenance.",
       blockers: [
         input.aiAnalysis.regexFallback ? "Analysis used regex fallback (weak extraction) — re-extract and re-run AI Analyze for a trusted result" : "Analysis is partial or untrusted",
         ...(input.requirements.mandatoryCount > input.requirements.mandatoryTracedCount ? [`Mandatory traced: ${input.requirements.mandatoryTracedCount}/${input.requirements.mandatoryCount}`] : []),
@@ -209,11 +209,11 @@ export function resolveTenderNextAction(input: TenderNextActionInput): TenderNex
 
   if (!requirementsTrusted) {
     return {
-      primary: "REVIEW_REQUIREMENTS",
-      label: "Review requirements",
+      primary: "RERUN_AI_ANALYZE",
+      label: "Re-run AI Analyze",
       reason: input.requirements.rawCount === 0
-        ? "No requirements are available. Run AI Analyze only after extraction is ready, or add requirements manually."
-        : "Raw requirements exist, but trusted source-traced requirements are not ready.",
+        ? "No requirements are available. Re-run AI Analyze after extraction is ready."
+        : "Raw requirements exist, but trusted source-traced requirements are not ready. Re-run AI Analyze; if the active source cannot prove them, upload a better source or make a genuine source correction.",
       blockers: input.requirements.rawCount === 0
         ? ["No requirements available"]
         : [`Trusted traced requirements: ${input.requirements.trustedTracedCount}/${input.requirements.rawCount}`, `Mandatory traced: ${input.requirements.mandatoryTracedCount}/${input.requirements.mandatoryCount}`],
@@ -225,22 +225,22 @@ export function resolveTenderNextAction(input: TenderNextActionInput): TenderNex
   if (!input.submissionPlanBuilt) {
     return {
       primary: "BUILD_SUBMISSION_PLAN",
-      label: "Build submission plan",
-      reason: "Extraction, analysis, Tender Details, and requirements are ready. Build the submission plan before generating documents.",
-      blockers: ["No submission plan"],
+      label: "Run Engine",
+      reason: "Extraction, source-grounded AI analysis, Tender Details, and requirements are ready. Run Engine starts matching and creates the Build Plan; valid downstream processing then continues automatically.",
+      blockers: ["No current source-verified Build Plan"],
       tone: "amber",
     };
   }
 
   if (!input.documents.current) {
     return {
-      primary: "GENERATE_DOCUMENTS",
-      label: input.documents.stale ? "Regenerate stale documents" : "Generate proposal documents",
+      primary: "AUTOMATIC_PROCESSING",
+      label: "Processing automatically",
       reason: input.documents.stale
-        ? "Generated documents are stale against the current analysis/readiness state."
-        : "All pre-generation gates pass. Generate proposal documents.",
+        ? "The durable post-Engine workflow must regenerate documents against the current canonical revision."
+        : "All upstream gates pass. Durable generation, validation, finalization, and packaging continue automatically.",
       blockers: input.documents.stale ? ["Generated documents are stale"] : [],
-      tone: input.documents.stale ? "amber" : "green",
+      tone: "amber",
     };
   }
 

@@ -22,6 +22,7 @@
  */
 
 import type { ExpertRecord } from "./benchmark-tables";
+import { softwareNamedInCv } from "./cv-grounding";
 
 const MARKER_MOBILIZATION = "<!-- mobilization-plan:table -->";
 const MARKER_CHECKLIST = "<!-- submission-checklist:list -->";
@@ -60,13 +61,27 @@ interface MobilizationRow {
 
 function mobilizationRows(experts: ExpertRecord[]): MobilizationRow[] {
   const teamSize = experts.length;
-  const teamLabel = teamSize > 0 ? `${teamSize} reviewed expert(s) from the firm's vault` : "Bid-Team Action: confirm team selection before mobilization";
+  // "the firm's vault" is this application's internal name for the evidence
+  // store. It reached a delivered client proposal as "3 reviewed expert(s)
+  // from the firm's supervision vault", which tells an evaluator nothing about
+  // the team and reveals how the document was assembled.
+  // No "from the firm's permanent staff": no record states anybody's terms
+  // of employment. The tools and kit are the ones the team's own CVs name, not
+  // a list written for water and road schemes ("EPANET / WaterCAD", "sand-cone
+  // density", "hydrology kit") that reached a hospital-design proposal.
+  const teamLabel = teamSize > 0 ? `the ${teamSize} named experts of Section A` : "the named experts of Section A";
+  const software = Array.from(new Set(experts.flatMap((e) => softwareNamedInCv(e.profile)))).slice(0, 8);
+  const softwareLine = software.length > 0
+    ? `Design and project software the team's CVs name (${software.join(", ")}) provisioned to the team; shared project workspace set up`
+    : "Design and project-management software provisioned to the team; shared project workspace set up";
 
   return [
     {
       category: "Core Team Mobilization",
-      week1to2: `Project Principal + Lead Specialist on site / virtual engagement; ${teamLabel}`,
-      week3to8: "Full multi-discipline team mobilized; specialist sub-consultants if required",
+      week1to2: `Project lead and discipline leads engaged; ${teamLabel} confirmed on the assignment`,
+      // No "specialist sub-consultants if required": the proposal names its
+      // team, and no record names a sub-consultant.
+      week3to8: "Full multi-discipline team active on the design and coordination work",
       week9plus: "Phased ramp-down as deliverables close; resident engineer remains for supervision",
     },
     {
@@ -77,25 +92,25 @@ function mobilizationRows(experts: ExpertRecord[]): MobilizationRow[] {
     },
     {
       category: "Software & Digital Tools",
-      week1to2: "Licensed CAD / BIM / GIS / hydraulic / pavement / project-management tools provisioned to team; cloud-storage workspace per engagement",
-      week3to8: "Active design + collaboration; daily backups; version control; coordination tools (BIM 360 / Revit / EPANET / WaterCAD / AutoCAD Civil 3D / ArcGIS as relevant to scope)",
+      week1to2: softwareLine,
+      week3to8: "Active design and coordination in the same tools; daily backups; version control",
       week9plus: "Final-deliverable file format conversion (DWG → DWF, PDF/A); model handover pack",
     },
     {
       category: "Field Equipment",
-      week1to2: "Site-survey kit (total station / GNSS / drone); geotechnical kit (DCP, sand-cone density, sampling tubes); hydrology kit if relevant",
+      week1to2: "Survey and site-inspection equipment mobilised as the scope requires",
       week3to8: "Active deployment as per programme; condition checks weekly",
       week9plus: "Equipment de-mobilization; calibration certificates filed",
     },
     {
       category: "Support Staff",
-      week1to2: "Document controller, GIS analyst, drafting team, admin support active from week 1",
+      week1to2: "Document control, drafting and administrative support active from the start",
       week3to8: "Continued support with phase-aligned ramp; technical writers engaged for deliverable production",
       week9plus: "Admin + document control active until close-out memo signed",
     },
     {
       category: "Quality Assurance Resourcing",
-      week1to2: "Technical Director nominated as 100% gate reviewer; independent peer reviewer identified",
+      week1to2: "A senior reviewer outside the design team nominated for the 100% gate",
       week3to8: "Active gate reviews at 30% / 60% / 100%; independent peer review at 100%",
       week9plus: "Close-out QA — final-deliverable audit; client-comment resolution log signed off",
     },
@@ -110,14 +125,16 @@ function mobilizationRows(experts: ExpertRecord[]): MobilizationRow[] {
 
 function buildMobilizationTable(experts: ExpertRecord[]): string {
   const rows = mobilizationRows(experts);
-  const head = "| Resource Category | Weeks 1–2 (Inception / Mobilization) | Weeks 3–8 (Active Delivery) | Week 9+ (Steady State / Close-out) |";
+  // Stages, not week windows. "Weeks 1–2 / 3–8 / Week 9+" was a programme
+  // nobody stated; the work plan places each phase by what starts it.
+  const head = "| Resource Category | Inception / Mobilisation | Active Delivery | Close-out |";
   const sep = "|-------------------|--------------------------------------|-----------------------------|------------------------------------|";
   const body = rows.map((r) => `| ${r.category} | ${r.week1to2} | ${r.week3to8} | ${r.week9plus} |`);
   return [
     MARKER_MOBILIZATION,
     "## Mobilization and Resourcing Plan",
     "",
-    "Mobilization is structured in three windows: an Inception window (Weeks 1–2) that establishes team, workspace, tools, and reporting cadence; an Active Delivery window (Weeks 3–8) that runs the design / methodology with full team commitment; and a Steady State / Close-out window (Week 9 onwards) that transitions to construction supervision or handover. The plan below shows what is in place at each window.",
+    "Mobilisation follows the work plan in three stages: inception, which establishes the team, workspace, tools and reporting cadence; active delivery, which runs the design and coordination work with the full team; and close-out, which transitions to supervision or handover. The plan below shows what is in place at each stage.",
     "",
     head,
     sep,
@@ -133,13 +150,20 @@ interface ChecklistGroup {
   items: { item: string; mandatory: boolean }[];
 }
 
-function checklistGroups(): ChecklistGroup[] {
+// `financialProposalRequired === false` means the tender asks for no financial
+// proposal at this stage. Checklist wording must not then point the reader at a
+// financial document that is not part of the submission. Nothing changes for
+// tenders that do require one.
+function checklistGroups(financialProposalRequired: boolean): ChecklistGroup[] {
+  const stampTargets = financialProposalRequired
+    ? "cover letter, declaration, financial proposal"
+    : "cover letter, declaration";
   return [
     {
       group: "Identity & Authorization",
       items: [
         { item: "Cover letter signed by authorized signatory (typically GM)", mandatory: true },
-        { item: "Company stamp affixed where required (cover letter, declaration, financial proposal)", mandatory: true },
+        { item: `Company stamp affixed where required (${stampTargets})`, mandatory: true },
         { item: "Power of Attorney attached if signatory is not GM", mandatory: false },
         { item: "Authorised representative contact details correct on cover", mandatory: true },
       ],
@@ -200,8 +224,8 @@ function checklistGroups(): ChecklistGroup[] {
   ];
 }
 
-function buildChecklist(): string {
-  const groups = checklistGroups();
+function buildChecklist(financialProposalRequired: boolean): string {
+  const groups = checklistGroups(financialProposalRequired);
   const blocks: string[] = [
     MARKER_CHECKLIST,
     "## Submission Readiness Checklist",
@@ -276,7 +300,7 @@ export interface MobAndChecklistResult {
 
 export function injectMobilizationAndChecklist(
   markdown: string,
-  opts: { experts: ExpertRecord[] },
+  opts: { experts: ExpertRecord[]; financialProposalRequired?: boolean },
 ): MobAndChecklistResult {
   let result = markdown;
   const injected = { mobilization: false, checklist: false };
@@ -296,7 +320,7 @@ export function injectMobilizationAndChecklist(
   }
 
   if (!hasChecklist(result)) {
-    const block = buildChecklist();
+    const block = buildChecklist(opts.financialProposalRequired !== false);
     const insertAt = findChecklistInsertPoint(result);
     const lines = result.split("\n");
     result = [

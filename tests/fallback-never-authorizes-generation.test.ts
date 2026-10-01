@@ -1,181 +1,98 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import {
-  canGenerateFromState,
-  getStateMessage,
-  getTenderAnalysisState,
-} from "../lib/ai-analyze/state-resolver";
-import { computeAnalysisContentHash } from "../lib/ai-analyze/content-hash";
+  analysisStateLabel,
+  canExportWithAnalysisState,
+  canResumeAnalysis,
+  deriveAnalysisStateDetail,
+  type DeriveAnalysisStateInput,
+  type ResolverJobInput,
+} from "../lib/engine/analysis-state-resolver";
 
-function mockPrisma(job: Record<string, unknown>, tender?: Record<string, unknown>) {
+const NOW = new Date("2026-07-19T12:00:00.000Z");
+
+function job(overrides: Partial<ResolverJobInput> = {}): ResolverJobInput {
   return {
-    aiJob: {
-      findFirst: async () => job,
-    },
-    tender: {
-      findFirst: async () => tender ?? null,
-    },
-  } as any;
+    id: "job-1", status: "SUCCEEDED", analysisInputHash: "hash-1",
+    stagedMergedResult: null, promotedAt: NOW, supersededBy: null,
+    startedAt: NOW, finishedAt: NOW, errorMessage: null, ...overrides,
+  };
 }
 
-const tenderContentRow = {
-  id: "tender-1",
-  title: "Road Design Tender",
-  description: "Consultancy services",
-  deadline: new Date("2026-12-31T00:00:00.000Z"),
-  reference: "RFP-001",
-  clientName: "Public Client",
-  budget: null,
-  country: "Ethiopia",
-  submissionMethod: "Email",
-  userId: "user-1",
-  user: {
-    company: {
-      name: "Hope",
-      legalName: "Hope Urban Planning Architectural and Engineering Consultancy PLC",
-      foundingYear: 2018,
-    },
-  },
-  files: [
-    { id: "file-1", extractedText: "Mandatory technical and financial requirements." },
-  ],
-};
+function input(overrides: Partial<DeriveAnalysisStateInput> = {}): DeriveAnalysisStateInput {
+  return {
+    job: job(), chunks: [{ status: "SUCCEEDED", provider: "gemini" }],
+    legacyNotesAiAnalyzed: false, requirementsExtracted: 2,
+    requirementsPersisted: 2, sourceReferencesCreated: true,
+    metadataFieldsPersisted: true, sectionsDetectedButNoRequirements: false,
+    ...overrides,
+  };
+}
 
-const expectedHash = computeAnalysisContentHash({
-  tenderId: "tender-1",
-  fileHashes: [
-    {
-      fileId: "file-1",
-      fileContentHash: "c36003e8dd4285e2bca25619f8861aac5d39cb07e759f4641e5d7a73de23681d",
-    },
-  ],
-  tenderMetadata: {
-    title: "Road Design Tender",
-    description: "Consultancy services",
-    deadline: "2026-12-31T00:00:00.000Z",
-    reference: "RFP-001",
-    clientName: "Public Client",
-    budget: null,
-    country: "Ethiopia",
-    submissionMethod: "Email",
-  },
-  companyMetadata: {
-    name: "Hope",
-    legalName: "Hope Urban Planning Architectural and Engineering Consultancy PLC",
-    foundingYear: 2018,
-  },
-});
-
-describe("fallback and stale AI state never authorize generation", () => {
-  it("treats human-approved regex fallback as audit-only", async () => {
-    const result = await getTenderAnalysisState(
-      "tender-1",
-      "user-1",
-      mockPrisma({
-        id: "job-fallback",
-        status: "HUMAN_APPROVED_FALLBACK",
-        analysisVersion: 1n,
-        analysisInputHash: "fallback-hash",
-        promotedAt: new Date(),
-        analyzeChunks: [],
-      }),
-    );
-
+describe("canonical analysis state remains fail-closed", () => {
+  it("blocks a promoted human-approved fallback from export", () => {
+    const result = deriveAnalysisStateDetail(input({
+      job: job({ status: "FAILED", stagedMergedResult: JSON.stringify({ analysisSource: "FALLBACK_DRAFT" }), promotedAt: NOW }),
+      chunks: [{ status: "FAILED", provider: "gemini" }],
+    }));
     assert.equal(result.state, "HUMAN_APPROVED_FALLBACK");
-    assert.equal(result.canGenerate, false);
-    assert.match(result.error ?? "", /audit only/i);
-    assert.equal(canGenerateFromState("HUMAN_APPROVED_FALLBACK"), false);
-    assert.match(getStateMessage("HUMAN_APPROVED_FALLBACK"), /Re-run AI Analyze/i);
+    assert.equal(result.analysisSource, "REGEX_FALLBACK");
+    assert.equal(canExportWithAnalysisState(result.state), false);
+    assert.equal(canResumeAnalysis(result.state), false);
+    assert.match(result.nextAction, /lower confidence/i);
   });
 
-  it("blocks a SUCCEEDED job that was never canonically promoted", async () => {
-    const result = await getTenderAnalysisState(
-      "tender-1",
-      "user-1",
-      mockPrisma({
-        id: "job-unpromoted",
-        status: "SUCCEEDED",
-        analysisVersion: 2n,
-        analysisInputHash: expectedHash,
-        promotedAt: null,
-        analyzeChunks: [],
-      }),
-    );
+  it("keeps an unapproved fallback resumable but not exportable", () => {
+    const result = deriveAnalysisStateDetail(input({
+      job: job({ status: "FAILED", stagedMergedResult: JSON.stringify({ analysisSource: "FALLBACK_DRAFT" }), promotedAt: null }),
+      chunks: [{ status: "FAILED", provider: "gemini" }],
+    }));
+    assert.equal(result.state, "REGEX_FALLBACK_UNAPPROVED");
+    assert.equal(canExportWithAnalysisState(result.state), false);
+    assert.equal(canResumeAnalysis(result.state), true);
+  });
 
-    assert.equal(result.canGenerate, false);
+  it("blocks a succeeded job that was never canonically promoted", () => {
+    const result = deriveAnalysisStateDetail(input({ job: job({ status: "SUCCEEDED", promotedAt: null }) }));
     assert.equal(result.state, "FAILED");
-    assert.match(result.error ?? "", /not promoted/i);
+    assert.equal(result.canonicalJobId, null);
+    assert.equal(canExportWithAnalysisState(result.state), false);
   });
 
-  it("blocks a promoted job when the current tender hash differs", async () => {
-    const result = await getTenderAnalysisState(
-      "tender-1",
-      "user-1",
-      mockPrisma(
-        {
-          id: "job-stale",
-          status: "SUCCEEDED",
-          analysisVersion: 3n,
-          analysisInputHash: "stale-content-hash",
-          promotedAt: new Date(),
-          analyzeChunks: [],
-        },
-        tenderContentRow,
-      ),
-    );
-
-    assert.equal(result.canGenerate, false);
-    assert.equal(result.state, "SUPERSEDED");
-    assert.match(result.error ?? "", /content changed/i);
-  });
-
-  it("blocks promoted analysis with any incomplete chunk", async () => {
-    const result = await getTenderAnalysisState(
-      "tender-1",
-      "user-1",
-      mockPrisma(
-        {
-          id: "job-partial",
-          status: "SUCCEEDED",
-          analysisVersion: 4n,
-          analysisInputHash: expectedHash,
-          promotedAt: new Date(),
-          analyzeChunks: [
-            { chunkIndex: 0, status: "SUCCEEDED" },
-            { chunkIndex: 1, status: "FAILED" },
-          ],
-        },
-        tenderContentRow,
-      ),
-    );
-
-    assert.equal(result.canGenerate, false);
+  it("blocks promoted analysis while any chunk remains incomplete", () => {
+    const result = deriveAnalysisStateDetail(input({ chunks: [
+      { status: "SUCCEEDED", provider: "gemini" },
+      { status: "FAILED", provider: "openrouter" },
+    ] }));
     assert.equal(result.state, "PARTIAL_NEEDS_RESUME");
-    assert.equal(result.requiresResume, true);
+    assert.equal(result.completedChunks, 1);
+    assert.equal(result.totalChunks, 2);
+    assert.equal(canExportWithAnalysisState(result.state), false);
+    assert.equal(canResumeAnalysis(result.state), true);
   });
 
-  it("allows only promoted, current-hash, complete AI success", async () => {
-    const result = await getTenderAnalysisState(
-      "tender-1",
-      "user-1",
-      mockPrisma(
-        {
-          id: "job-current",
-          status: "SUCCEEDED",
-          analysisVersion: 5n,
-          analysisInputHash: expectedHash,
-          promotedAt: new Date(),
-          analyzeChunks: [
-            { chunkIndex: 0, status: "SUCCEEDED" },
-            { chunkIndex: 1, status: "SUCCEEDED" },
-          ],
-        },
-        tenderContentRow,
-      ),
-    );
+  it("blocks superseded analysis even when its prior run succeeded", () => {
+    const result = deriveAnalysisStateDetail(input({ job: job({ supersededBy: "job-2" }) }));
+    assert.equal(result.state, "SUPERSEDED");
+    assert.equal(canExportWithAnalysisState(result.state), false);
+    assert.equal(canResumeAnalysis(result.state), false);
+  });
 
+  it("blocks detected sections when no structured requirements were produced", () => {
+    const result = deriveAnalysisStateDetail(input({
+      requirementsExtracted: 0, requirementsPersisted: 0, sectionsDetectedButNoRequirements: true,
+    }));
+    assert.equal(result.state, "SECTION_DETECTED_REQUIREMENTS_NOT_STRUCTURED");
+    assert.equal(canExportWithAnalysisState(result.state), false);
+    assert.equal(canResumeAnalysis(result.state), true);
+  });
+
+  it("allows only promoted, complete AI success", () => {
+    const result = deriveAnalysisStateDetail(input());
     assert.equal(result.state, "AI_SUCCEEDED");
-    assert.equal(result.canGenerate, true);
-    assert.equal(canGenerateFromState(result.state), true);
+    assert.equal(result.canonicalJobId, "job-1");
+    assert.equal(canExportWithAnalysisState(result.state), true);
+    assert.equal(canResumeAnalysis(result.state), false);
+    assert.equal(analysisStateLabel(result.state), "Analysis Complete");
   });
 });

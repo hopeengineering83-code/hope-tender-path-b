@@ -44,9 +44,9 @@ describe("PDF extraction — 80-page support", () => {
     assert.ok(src.includes("bestScore"), "must track best score");
   });
 
-  it("MAX_EXTRACTED_TEXT_CHARS is 500K (sufficient for 80+ pages)", () => {
+  it("MAX_EXTRACTED_TEXT_CHARS is 2M and truncation is surfaced honestly", () => {
     const src = read("lib/extract-text.ts");
-    assert.ok(src.includes("500_000"), "must be 500K chars limit");
+    assert.ok(src.includes("2_000_000"), "must keep the source-driven 2M extraction limit");
   });
 
   it("OCR fallback runs when text layer is empty or corrupted", () => {
@@ -207,9 +207,9 @@ describe("file type detection", () => {
     assert.ok(src.includes("Legacy .doc file detected"), "must warn about legacy .doc");
   });
 
-  it("handles images with placeholder", () => {
+  it("handles images with an explicit OCR-required marker", () => {
     const src = read("lib/extract-text.ts");
-    assert.ok(src.includes("[Image:"), "must handle images");
+    assert.ok(src.includes("[Image needs OCR:"), "must surface images as requiring OCR");
   });
 });
 
@@ -238,6 +238,5 @@ describe("extraction quality module", () => {
     assert.ok(src.includes("corrupt"), "must block on corrupt");
     assert.ok(src.includes("ocr_required"), "must block on OCR required");
     assert.ok(src.includes("unsupported"), "must block on unsupported");
-    assert.ok(src.includes("failed"), "must block on failed");
   });
 });

@@ -65,13 +65,10 @@ describe("Dashboard panel consistency — no contradictory statuses", () => {
     );
   });
 
-  it("final-submission panel does not show 'ready' when generation is blocked", () => {
-    const src = readFileSync("components/final-submission-control-center.tsx", "utf8");
-    assert.ok(
-      src.includes("generationBlocked") || src.includes("blocked"),
-      "Final submission panel must check generation blocked state",
-    );
-  });
+  // "final-submission panel does not show 'ready' when blocked" retired --
+  // was pinned to final-submission-control-center.tsx, which nothing imports
+  // or renders (superseded by the live, rendered export-readiness-panel.tsx,
+  // which extensively checks blocked states before allowing export).
 
   it("authority-review panel uses errorCodeLabel for blocker codes (not raw enum)", () => {
     const src = readFileSync("components/authority-review-panel.tsx", "utf8");
@@ -83,12 +80,18 @@ describe("Dashboard panel consistency — no contradictory statuses", () => {
     );
   });
 
-  it("metadata-truth panel uses canonical field states (not independent classification)", () => {
-    const src = readFileSync("components/metadata-truth-panel.tsx", "utf8");
+  // "metadata-truth panel uses canonical field states" retired --
+  // components/metadata-truth-panel.tsx was deleted as superseded dead code
+  // (a read-only summary of the same snapshot.metadata.fields data that
+  // components/client-submission-details-panel.tsx's ClientSubmissionDetailsPanel
+  // fully subsumes, including the same canonical STATUS_BADGE usage).
+
+  it("client-submission-details panel uses canonical field states (not independent classification)", () => {
+    const src = readFileSync("components/client-submission-details-panel.tsx", "utf8");
     // The panel should consume canonical states, not reclassify
     assert.ok(
       src.includes("status") && src.includes("STATUS_BADGE"),
-      "Metadata truth panel must use canonical status badges",
+      "Client submission details panel must use canonical status badges",
     );
   });
 });
@@ -96,11 +99,20 @@ describe("Dashboard panel consistency — no contradictory statuses", () => {
 describe("Dashboard panel consistency — PLANNED/SUPERSEDED never shown as ready", () => {
 
   it("document-validator-panel distinguishes PLANNED from GENERATED", () => {
+    // PLANNED rows carry no content and are not current outputs. The panel no
+    // longer decides that itself — it defers to the canonical current-document
+    // selection (which excludes PLANNED, QUEUED, GENERATING, FAILED, STALE and
+    // SUPERSEDED), the same selection the export readiness gate uses. Assert
+    // the panel is on that selection rather than re-deriving the rule.
     const src = readFileSync("components/document-validator-panel.tsx", "utf8");
-    // The panel should check hasContent (PLANNED has no content)
     assert.ok(
-      src.includes("hasContent") || src.includes("PLANNED"),
-      "Document validator must distinguish PLANNED (no content) from GENERATED",
+      src.includes("selectCurrentDocuments"),
+      "Document validator must select current documents through the canonical selection",
+    );
+    const selection = readFileSync("lib/engine/document-output-state.ts", "utf8");
+    assert.ok(
+      /NON_CANDIDATE_GENERATION_STATES[\s\S]{0,200}"PLANNED"/.test(selection),
+      "the canonical selection must exclude PLANNED rows",
     );
   });
 
@@ -113,12 +125,12 @@ describe("Dashboard panel consistency — PLANNED/SUPERSEDED never shown as read
     );
   });
 
-  it("submission-plan-reconciliation panel does not count PLANNED as generated", () => {
-    const src = readFileSync("components/submission-plan-reconciliation-panel.tsx", "utf8");
+  it("the Build Plan panel does not count PLANNED as generated", () => {
+    const src = readFileSync("components/submission-plan-completeness-panel.tsx", "utf8");
     // The panel should distinguish planned from generated
     assert.ok(
       src.includes("PLANNED") || src.includes("generationStatus") || src.includes("derivedDocumentCount"),
-      "Submission plan reconciliation must track PLANNED vs generated separately",
+      "The Build Plan panel must track PLANNED vs generated separately",
     );
   });
 });

@@ -23,11 +23,13 @@ describe("Generation Readiness — no 'Ready' when blockers exist", () => {
       src.includes("effectivelyReady"),
       "must compute effectivelyReady = fullProposalReady && !hasFullProposalBlockers && !hasNoConfirmedPlan",
     );
-    // Score must be capped when blockers exist
+    // The real score remains informational; it must not be falsified to make
+    // the blocked state look internally consistent.
     assert.ok(
-      src.includes("Math.min(score, 45)"),
-      "must cap score at 45 when blockers exist (prevents 95/100 next to 'blocked')",
+      src.includes("<ScoreGauge score={score}"),
+      "must show the actual informational score while canonical blockers control readiness",
     );
+    assert.ok(!src.includes("Math.min(score, 45)"), "must not cosmetically rewrite the score");
   });
 
   it("checks for no confirmed Build Plan before showing Ready", () => {
@@ -45,8 +47,8 @@ describe("Generation Readiness — no 'Ready' when blockers exist", () => {
       "must detect BUILD_PLAN_NOT_CONFIRMED blocker code",
     );
     assert.ok(
-      src.includes("No confirmed Build Plan"),
-      "must show 'No confirmed Build Plan' message when plan is missing",
+      src.includes("No source-verified Build Plan"),
+      "must show the source-verified Build Plan blocker when plan is missing",
     );
   });
 
@@ -109,16 +111,16 @@ describe("Export Readiness — structured blockers not generic failure", () => {
   it("primaryBlockerReason priority: no-build-plan > ungenerated > document-blockers > tender-blockers", () => {
     const src = read("app/api/tenders/[id]/export-readiness/route.ts");
     assert.ok(
-      src.includes("No confirmed Build Plan"),
-      "must surface 'No confirmed Build Plan' as highest priority blocker",
+      src.includes("No source-verified Build Plan"),
+      "must surface the source-verified Build Plan blocker as highest priority",
     );
     assert.ok(
       src.includes("planned but not generated"),
       "must surface planned-not-generated as second priority",
     );
     assert.ok(
-      src.includes("Build/confirm submission plan"),
-      "must recommend 'Build/confirm submission plan' as fix action",
+      src.includes("Run Engine to create and source-verify the Build Plan automatically"),
+      "must name Run Engine as the sole normal Build Plan action",
     );
   });
 });
@@ -150,19 +152,8 @@ describe("Export Readiness panel — structured blocker display", () => {
     );
   });
 
-  it("Repair prohibited assets button only shows when prohibited assets exist", () => {
-    const src = read("components/export-readiness-panel.tsx");
-    // The repair button must be conditional — either via prohibitedAssetCount
-    // or via tenderLevelBlockers PROHIBITED_ASSET category check.
-    assert.ok(
-      src.includes("prohibitedAssetCount") || src.includes("PROHIBITED_ASSET"),
-      "must check for prohibited assets before showing repair button (prohibitedAssetCount or PROHIBITED_ASSET category)",
-    );
-    // The old unconditional button must NOT be present
-    assert.ok(
-      !/Repair prohibited assets \(if any\)/.test(src),
-      "must NOT show 'Repair prohibited assets (if any)' unconditionally",
-    );
+  it("Repair prohibited assets button removed from export panel", () => {
+    assert.doesNotMatch(read("components/export-readiness-panel.tsx"), /Repair prohibited assets/);
   });
 });
 

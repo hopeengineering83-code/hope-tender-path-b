@@ -5,16 +5,20 @@
 import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
 import { clientLogger } from "@/lib/ui/client-logger";
-import { SearchIcon, WarningIcon, ListIcon, UploadIcon, DocumentIcon, AlertCircleIcon, CheckCircleIcon, ClockIcon } from "./icons";
+import { SearchIcon, WarningIcon, ListIcon, UploadIcon, DocumentIcon, AlertCircleIcon, CheckCircleIcon, ClockIcon, LinkIcon, FolderIcon } from "./icons";
 
-// Map suggestion icon keys to SVG components
+// Map suggestion icon keys to SVG components. Each key must resolve to a
+// visually distinct icon — up to 6 suggestions can render together in one
+// list, so two unrelated suggestions sharing a glyph (e.g. "pin"/"folder"
+// both previously falling back to DocumentIcon) makes them indistinguishable
+// at a glance.
 const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   search: SearchIcon,
   warning: WarningIcon,
   list: ListIcon,
   upload: UploadIcon,
-  pin: DocumentIcon,
-  folder: DocumentIcon,
+  pin: LinkIcon,
+  folder: FolderIcon,
   document: DocumentIcon,
   alert: AlertCircleIcon,
   check: CheckCircleIcon,
@@ -63,8 +67,8 @@ export async function AICopilotSuggestionsPanel({ tenderId }: { tenderId: string
     if (!tender.analysisSummary) {
       suggestions.push({
         icon: "search",
-        title: "Run AI Analyze",
-        detail: "No analysis yet — AI Analyze extracts requirements, client details, and evaluation criteria automatically.",
+        title: "Analysis pending",
+        detail: "No analysis yet — analysis extracts requirements, client details, and evaluation criteria automatically once extraction completes.",
         priority: "HIGH",
       });
     }
@@ -76,8 +80,8 @@ export async function AICopilotSuggestionsPanel({ tenderId }: { tenderId: string
     ) {
       suggestions.push({
         icon: "warning",
-        title: "Re-run AI Analyze on weak extraction",
-        detail: "Analysis ran on partial extraction. Re-uploading a cleaner PDF and re-running will improve requirement coverage.",
+        title: "Analysis ran on weak extraction",
+        detail: "Analysis ran on partial extraction. Uploading a cleaner copy of the source re-runs extraction and analysis against it automatically, improving requirement coverage.",
         priority: "HIGH",
       });
     }
@@ -125,7 +129,7 @@ export async function AICopilotSuggestionsPanel({ tenderId }: { tenderId: string
           suggestions.push({
             icon: "pin",
             title: "Improve requirement traceability",
-            detail: `${untracedCount} mandatory requirement(s) lack source page/quote. Run AI Analyze again or use the repair tool.`,
+            detail: `${untracedCount} mandatory requirement(s) lack source page/quote. Traceability improves when analysis re-runs against a cleaner extraction of the source file.`,
             priority: "MEDIUM",
           });
         }

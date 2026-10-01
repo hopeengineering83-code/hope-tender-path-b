@@ -46,6 +46,7 @@ import {
   isValidCountry,
   isValidClientContact,
   containsMetadataPlaceholder,
+  containsMetadataScaffolding,
 } from "./metadata-validators";
 
 /**
@@ -58,7 +59,7 @@ import {
  */
 function withPlaceholderRejection(validator: (v: string | null | undefined) => boolean): (v: string | null | undefined) => boolean {
   return (value) => {
-    if (containsMetadataPlaceholder(value)) return false;
+    if (containsMetadataPlaceholder(value) || containsMetadataScaffolding(value)) return false;
     return validator(value);
   };
 }
@@ -72,7 +73,53 @@ export type StoredMetadataLike = {
   legalClientName?: string | null;
   donorAgency?: string | null;
   implementingAgency?: string | null;
+  // Free-text location fields. They have no format validator -- an address is
+  // whatever the tender says it is -- so they are checked ONLY for placeholders
+  // and extractor scaffolding. See the note on ADDRESS_LIKE_FIELDS below.
+  submissionAddress?: string | null;
+  clientAddress?: string | null;
+  clientCity?: string | null;
+  preBidMeetingLocation?: string | null;
+  preBidChannel?: string | null;
+  submissionEmailSubject?: string | null;
+  clientRepresentative?: string | null;
 };
+
+/**
+ * Fields with no format validator, cleaned on contamination alone.
+ *
+ * THE DEFECT THIS FIXES. This module's whole purpose is "nullify any stored
+ * tender metadata that fails the canonical validators", and
+ * `containsMetadataScaffolding` is imported here and used here -- but only
+ * through `withPlaceholderRejection`, which wraps the eight NAME-shaped fields.
+ * Nothing address-shaped was covered.
+ *
+ * On the exact-head Preview (tender d2b85e2a) that was the entire reason the
+ * ZIP was locked: "Submission address", "Client address" and "Pre-bid meeting
+ * location" each held a multi-field extraction worksheet. The export gate
+ * refused them, and this cleanup -- the one path that exists to clear exactly
+ * that -- could not see them.
+ *
+ * An address has no shape to validate against, so these are judged ONLY by the
+ * two contamination checks. A legitimate address is never touched; a worksheet
+ * or a placeholder becomes null, which is MISSING_SOURCE and recoverable by
+ * manual confirmation, as CLAUDE.md requires.
+ */
+const ADDRESS_LIKE_FIELDS = [
+  "submissionAddress",
+  "clientAddress",
+  "clientCity",
+  "preBidMeetingLocation",
+  "preBidChannel",
+  "submissionEmailSubject",
+  "clientRepresentative",
+] as const satisfies readonly (keyof StoredMetadataLike)[];
+
+/** True when a free-text value is a placeholder or extractor scaffolding. */
+export function isContaminatedFreeText(value: string | null | undefined): boolean {
+  if (typeof value !== "string" || !value.trim()) return false;
+  return containsMetadataPlaceholder(value) || containsMetadataScaffolding(value);
+}
 
 /**
  * Returns a clean view of the tender's metadata fields. Invalid values
@@ -93,6 +140,9 @@ export function sanitizeStoredMetadataForEngine<T extends StoredMetadataLike>(te
     legalClientName: validOrNull(tender.legalClientName, withPlaceholderRejection(isValidClientName)),
     donorAgency: validOrNull(tender.donorAgency, withPlaceholderRejection(isValidClientName)),
     implementingAgency: validOrNull(tender.implementingAgency, withPlaceholderRejection(isValidClientName)),
+    ...Object.fromEntries(
+      ADDRESS_LIKE_FIELDS.map((field) => [field, isContaminatedFreeText(tender[field]) ? null : tender[field] ?? null]),
+    ),
   };
 }
 
@@ -106,17 +156,8 @@ export function sanitizeStoredMetadataForEngine<T extends StoredMetadataLike>(te
  * Returns an empty object when nothing needs cleaning; caller can skip
  * the DB write in that case.
  */
-export function computeStoredMetadataPatch(tender: StoredMetadataLike): {
-  reference?: null;
-  clientName?: null;
-  country?: null;
-  clientContactName?: null;
-  procuringEntityName?: null;
-  legalClientName?: null;
-  donorAgency?: null;
-  implementingAgency?: null;
-} {
-  const patch: Record<string, null> = {};
+export function computeStoredMetadataPatch(tender: StoredMetadataLike): Partial<Record<keyof StoredMetadataLike, null>> {
+  const patch: Partial<Record<keyof StoredMetadataLike, null>> = {};
   if (hasInvalidValue(tender.reference, withPlaceholderRejection(isValidReferenceNumber))) patch.reference = null;
   if (hasInvalidValue(tender.clientName, withPlaceholderRejection(isValidClientName))) patch.clientName = null;
   if (hasInvalidValue(tender.country, withPlaceholderRejection(isValidCountry))) patch.country = null;
@@ -125,6 +166,9 @@ export function computeStoredMetadataPatch(tender: StoredMetadataLike): {
   if (hasInvalidValue(tender.legalClientName, withPlaceholderRejection(isValidClientName))) patch.legalClientName = null;
   if (hasInvalidValue(tender.donorAgency, withPlaceholderRejection(isValidClientName))) patch.donorAgency = null;
   if (hasInvalidValue(tender.implementingAgency, withPlaceholderRejection(isValidClientName))) patch.implementingAgency = null;
+  for (const field of ADDRESS_LIKE_FIELDS) {
+    if (isContaminatedFreeText(tender[field])) patch[field] = null;
+  }
   return patch;
 }
 
@@ -142,6 +186,16 @@ export function listInvalidStoredFields(tender: StoredMetadataLike): string[] {
   if (hasInvalidValue(tender.legalClientName, withPlaceholderRejection(isValidClientName))) out.push("legalClientName");
   if (hasInvalidValue(tender.donorAgency, withPlaceholderRejection(isValidClientName))) out.push("donorAgency");
   if (hasInvalidValue(tender.implementingAgency, withPlaceholderRejection(isValidClientName))) out.push("implementingAgency");
+  // The address-like fields are cleaned by computeStoredMetadataPatch but were
+  // never LISTED here, and both callers only apply the patch when this list is
+  // non-empty. So a contaminated submission address on an otherwise-valid
+  // tender was never cleaned: on 2026-09-23 Run Engine completed and every
+  // downstream stage paused on "Field \"Submission address\": Value contains
+  // extractor field-label scaffolding" — the very value this module exists to
+  // clear. Listing and patching now name the same fields.
+  for (const field of ADDRESS_LIKE_FIELDS) {
+    if (isContaminatedFreeText(tender[field])) out.push(field);
+  }
   return out;
 }
 

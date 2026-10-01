@@ -204,3 +204,29 @@ describe("authority review gate wiring — download route", () => {
     assert.doesNotMatch(source, /warnings\.push\(\{[\s\S]*?METADATA_CONTAMINATED/);
   });
 });
+
+describe("authority-review API route — does not leak a stale 'ready' recommendedFix when outer ok is false", () => {
+  // Confirmed by a real Playwright screenshot: for a tender with zero
+  // generated documents and no confirmed Build Plan, runAuthorityReview's
+  // own internal status is AUTHORITY_READY (no document-level blockers to
+  // find), so it pushes "All authority review checks pass. Document is
+  // ready for final export." into recommendedFixes. The route then
+  // overrides status to BLOCKED (via canonicalBlockers / buildPlan.confirmed)
+  // but was spreading the stale recommendedFixes array unchanged — so the
+  // response said BLOCKED and "ready for final export" at the same time.
+  const source = readFileSync("app/api/tenders/[id]/authority-review/route.ts", "utf8");
+
+  it("computes a corrected recommendedFixes gated on the outer ok flag", () => {
+    assert.match(source, /const recommendedFixes = ok\s*\n\s*\? result\.recommendedFixes\s*\n\s*: result\.recommendedFixes\.filter\(/);
+  });
+
+  it("filters out the misleading ready-for-export fix when ok is false", () => {
+    assert.match(source, /fix !== "All authority review checks pass\. Document is ready for final export\."/);
+  });
+
+  it("the response uses the corrected recommendedFixes, not the raw result spread", () => {
+    const authorityReviewObjMatch = source.match(/authorityReview:\s*\{([\s\S]*?)\n\s*\},/);
+    assert.ok(authorityReviewObjMatch, "authorityReview response object must exist");
+    assert.match(authorityReviewObjMatch![1], /recommendedFixes,/);
+  });
+});

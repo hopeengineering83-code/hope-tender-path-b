@@ -86,9 +86,10 @@ a fallback is approved.
 
 **What to check:**
 - Check the AI Health panel for provider status.
-- The provider fallback order is: Z.ai → Cerebras → Mistral → Groq →
-  OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic. If all
-  providers fail, the system falls back to regex extraction.
+- The automatic fallback order is: Gemini → Groq → Mistral → Z.ai → Cerebras →
+  OpenRouter → OpenAI → Together → DeepSeek → Anthropic. Missing, rate-limited,
+  timed-out, misconfigured, or failed providers fall through automatically.
+  Deterministic draft fallback runs only after all configured AI providers fail.
 - Check server logs for `[ai-analyze]` entries with the `failureCategory`.
 - Check `AI_ANALYSIS_TIMEOUT_MS` (default 50s on Hobby, 240s on Pro).
 - If using background mode (?mode=background), check the AiJob status in the

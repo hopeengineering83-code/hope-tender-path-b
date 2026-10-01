@@ -75,6 +75,38 @@ export function containsMetadataPlaceholder(value: string | null | undefined): b
   return false;
 }
 
+/**
+ * Detect extractor scaffolding accidentally stored as a field value.
+ *
+ * A source quote may genuinely contain labels such as "Client Name:", but the
+ * scalar value itself must not be an entire multi-field extraction worksheet or
+ * an instruction to the extractor. These strings can be perfectly source-
+ * grounded while still being invalid values, so grounding alone must never
+ * promote them to EXTRACTED_AND_GROUNDED.
+ */
+export function containsMetadataScaffolding(value: string | null | undefined): boolean {
+  if (!value || typeof value !== "string") return false;
+  const text = value.replace(/[\u00A0\u200B\u200C\u200D\uFEFF]/g, " ").replace(/\s+/g, " ").trim();
+  if (!text) return false;
+
+  // Explicit extractor/self-instruction prose is never a field value.
+  if (/\b(?:mark\s+as\s+(?:not\s+applicable|not\s+found|not\s+stated)|do\s+not\s+generate\s+(?:a\s+)?financial\s+proposal|use\s+email\s+submission\s+only)\b/i.test(text)) {
+    return true;
+  }
+
+  // Two or more embedded field labels mean a multi-field worksheet was stored
+  // in one scalar. One label alone is tolerated because a legitimate endpoint
+  // can sometimes be presented as "Portal: https://..." in source text.
+  const labelPattern = /\b(?:procuring\s+entity\s*\/\s*client\s+name|legal\s+client\s+name|project\s+name|page\s+limit|financial\s+proposal|bid\s+bond(?:\s*\/\s*bid\s+security)?|submission\s+(?:address|method|email)|client\s+(?:address|contact|website)|pre[-\s]?bid\s+(?:meeting|location)|tender\s+status|portal)\s*:/gi;
+  const labels = text.match(labelPattern) ?? [];
+  if (labels.length >= 2) return true;
+
+  // Observed portal residue appended to an otherwise plausible city/address.
+  if (/\b(?:tender\s+status)\s*$/i.test(text) && text.split(/\s+/).length > 2) return true;
+
+  return false;
+}
+
 // ─── Generic field-label / heading detection ─────────────────────────────────
 
 /**
@@ -289,11 +321,19 @@ export function isValidClientContact(value: string | null | undefined): boolean 
  * pipes (|) or suspicious phrase combinations suggesting mixed content.
  * Examples: "ABC Ministry | Tender Portal | Old Tender: XYZ"
  */
+// Extraction-label echo: a real organization name never contains field
+// labels like "Client Name:" or "Project Name:" inside it. Values such as
+// "X Procuring Entity / Client Name: X Legal Client Name: X Project Name: Y"
+// are several extracted fields concatenated with their labels (observed live
+// on the dashboard pipeline) and must be treated as contaminated.
+export const EMBEDDED_FIELD_LABEL = /\b(?:client|legal\s+client|project|entity|contact(?:\s+person)?|procuring\s+entity|reference)\s*(?:name)?\s*:/i;
+
 export function isClientNameContaminated(value: string | null | undefined): boolean {
   const text = (value ?? "").trim();
   if (text.length === 0) return false;
   // Pipe characters almost always indicate merged portal/navigation text
   if (text.includes("|")) return true;
+  if (EMBEDDED_FIELD_LABEL.test(text)) return true;
   // Detect phrases that suggest portal/navigation contamination
   if (/(tender\s+portal|old\s+tender|alert|notification|browse|tenders?|portal|dashboard|published|deadline.*passed|archived|closed)/i.test(text)) {
     // But allow legitimate phrases like "Ministry of Health & Tender Division"
@@ -311,6 +351,9 @@ export function clientNameContaminationReason(value: string | null | undefined):
   if (text.length === 0) return null;
   if (text.includes("|")) {
     return "Client name contains pipe separators (|), indicating mixed portal/navigation text. Manually separate the legitimate client name from portal artifacts.";
+  }
+  if (EMBEDDED_FIELD_LABEL.test(text)) {
+    return "Client name contains embedded field labels (e.g. \"Client Name:\", \"Project Name:\") — several extracted fields were concatenated into one value. Manually enter only the procuring entity's name.";
   }
   if (/(tender\s+portal|old\s+tender|alert|notification|dashboard|published|deadline.*passed|archived|closed)/i.test(text)) {
     if (!/&|and|division|department/i.test(text)) {

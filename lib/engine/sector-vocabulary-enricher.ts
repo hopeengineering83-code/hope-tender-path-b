@@ -13,7 +13,19 @@
  * If the AI output already covers all expected terms, nothing is appended.
  */
 
-type VocabularyEntry = { term: string; context: string };
+import { resolveJurisdictionTokens, sourceNamesInstrument, type JurisdictionEvidenceKey } from "./jurisdiction-instruments";
+
+type VocabularyEntry = {
+  term: string;
+  context: string;
+  /**
+   * Set when the TERM ITSELF names a jurisdiction instrument. Such an entry is
+   * dropped entirely unless a source names that instrument — tokenising only
+   * its context would still print "**EBCS** — ..." as a heading on a tender
+   * that EBCS does not govern.
+   */
+  requiresInstrument?: JurisdictionEvidenceKey;
+};
 
 const SECTOR_VOCABULARY: Record<string, VocabularyEntry[]> = {
   healthcare: [
@@ -23,18 +35,20 @@ const SECTOR_VOCABULARY: Record<string, VocabularyEntry[]> = {
     { term: "medical gas", context: "Medical gas pipeline systems (oxygen, medical air, vacuum, nitrous oxide) are designed with zone valve boxes, pressure alarm panels, and emergency shutoff systems." },
     { term: "lead shielding", context: "Radiation shielding (lead-lined wall, floor, and ceiling specifications) is applied to all imaging areas including X-ray, CT, and fluoroscopy rooms." },
     { term: "Legionella", context: "Hot and cold water temperatures are specified to prevent Legionella, with documented commissioning checks." },
-    { term: "HTM 02-01", context: "Medical gas systems are aligned with HTM 02-01 principles where the local Health Authority does not specify a stricter standard." },
+    // Not "HTM 02-01": a named foreign standard that neither the tender nor the
+    // firm's records support. The approach is stated by function instead.
+    { term: "medical-gas standard", context: "Medical gas systems follow the medical-gas standard the approving authority applies; where the tender and the authority name none, the standard is agreed with the client at inception and recorded in the design basis." },
   ],
   water: [
     { term: "EPANET", context: "Hydraulic modelling uses EPANET for network analysis, pressure-zone definition, and demand-projection scenarios." },
     { term: "WaterCAD", context: "WaterCAD is used for distribution-network sizing, pressure-zone validation, and pump-curve matching." },
     { term: "yield testing", context: "Borehole yield testing follows step-drawdown and constant-rate methodology with documented recovery analysis." },
-    { term: "EBCS", context: "Materials testing follows EBCS / ASTM standards for concrete, aggregates, and reinforcement." },
+    { term: "EBCS", context: "Materials testing follows {{JURISDICTION:MATERIALS_TESTING_STANDARD}} standards for concrete, aggregates, and reinforcement.", requiresInstrument: "MATERIALS_TESTING_STANDARD" },
     { term: "chlorination", context: "Disinfection design includes chlorination dosing, contact time calculation, and residual monitoring schedule." },
     { term: "sanitary protection zone", context: "A defined sanitary protection zone is established around each source, with land-use restrictions and monitoring frequency." },
   ],
   road: [
-    { term: "ESAL", context: "Equivalent Single Axle Load calculations drive pavement layer thickness design per the ERA / AASHTO methodology adopted." },
+    { term: "ESAL", context: "Equivalent Single Axle Load calculations drive pavement layer thickness design per the {{JURISDICTION:ROAD_DESIGN_STANDARD}} methodology adopted." },
     { term: "CBR", context: "California Bearing Ratio testing of subgrade material is the primary input to pavement layer specification." },
     { term: "Marshall", context: "Marshall mix design is applied for asphalt concrete with documented stability, flow, and air-void compliance." },
     { term: "FIDIC", context: "Construction supervision follows FIDIC contract administration discipline for variation control, payment certification, and defects-liability monitoring." },
@@ -141,8 +155,15 @@ function detectVocabulary(primarySector: string): VocabularyEntry[] {
 export function enrichSectorVocabulary(opts: {
   markdown: string;
   primarySector: string;
+  /**
+   * The tender's own text. Glossary entries name a materials standard and a
+   * road-design manual; those are named only when this text names them.
+   */
+  sourceText?: string;
 }): { markdown: string; injectedTerms: string[] } {
-  const expected = detectVocabulary(opts.primarySector);
+  const expected = detectVocabulary(opts.primarySector)
+    .filter((entry) => !entry.requiresInstrument || sourceNamesInstrument(opts.sourceText, entry.requiresInstrument))
+    .map((entry) => ({ ...entry, context: resolveJurisdictionTokens(entry.context, opts.sourceText) }));
   if (expected.length === 0) return { markdown: opts.markdown, injectedTerms: [] };
 
   const text = opts.markdown.toLowerCase();

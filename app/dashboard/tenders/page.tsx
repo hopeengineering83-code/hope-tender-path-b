@@ -10,6 +10,7 @@ import { DuplicateButton } from "../history/duplicate-button";
 import { SortSelect } from "./sort-select";
 import { TenderSearchBar } from "../../../components/tender-search-bar";
 import { TenderNotificationsBanner } from "../../../components/tender-notifications-banner";
+import { WarningIcon, ClockIcon, ListIcon } from "../../../components/icons";
 
 const SORT_OPTIONS = [
   { value: "createdAt_desc", label: "Newest first" },
@@ -31,29 +32,34 @@ function buildOrderBy(sort: SortOption): { [key: string]: "asc" | "desc" } {
 }
 
 /** Returns JSX for a deadline cell with urgency coloring. */
-function DeadlineCell({ deadline }: { deadline: Date | null }) {
+function DeadlineCell({ deadline, now }: { deadline: Date | null; now: number }) {
   if (!deadline) {
     return <span className="text-slate-400">No deadline</span>;
   }
-  const daysLeft = Math.ceil((new Date(deadline).getTime() - Date.now()) / 86_400_000);
+  // Use the passed `now` (captured once at request time on the server) instead
+  // of Date.now() during render. This prevents React hydration error #418
+  // when the server renders "5d left" and the client hydrates with a slightly
+  // different Date.now() value (e.g. "4d left" near a day boundary).
+  const daysLeft = Math.ceil((new Date(deadline).getTime() - now) / 86_400_000);
   if (daysLeft < 0) {
-    return <span className="font-medium text-red-600">⚠ Overdue ({formatDate(deadline)})</span>;
+    return <span className="font-medium text-red-600"><WarningIcon /> Overdue ({formatDate(deadline)})</span>;
   }
   if (daysLeft <= 7) {
-    return <span className="font-medium text-red-500">⚠ {daysLeft}d left ({formatDate(deadline)})</span>;
+    return <span className="font-medium text-red-500"><WarningIcon /> {daysLeft}d left ({formatDate(deadline)})</span>;
   }
   if (daysLeft <= 14) {
-    return <span className="text-amber-500">⏰ {daysLeft}d left ({formatDate(deadline)})</span>;
+    return <span className="text-amber-500"><ClockIcon /> {daysLeft}d left ({formatDate(deadline)})</span>;
   }
   return <span className="text-slate-500">{formatDate(deadline)}</span>;
 }
 
 /** Returns JSX for a mobile deadline with pulsing red dot when ≤ 3 days. */
-function MobileDeadlineCell({ deadline }: { deadline: Date | null }) {
+function MobileDeadlineCell({ deadline, now }: { deadline: Date | null; now: number }) {
   if (!deadline) {
     return <span className="text-slate-400">No deadline</span>;
   }
-  const daysLeft = Math.ceil((new Date(deadline).getTime() - Date.now()) / 86_400_000);
+  // Use the passed `now` — see DeadlineCell comment for the hydration rationale.
+  const daysLeft = Math.ceil((new Date(deadline).getTime() - now) / 86_400_000);
   if (daysLeft < 0) {
     return <span className="font-medium text-red-600"><span className="inline-block h-2 w-2 rounded-full bg-red-500 animate-pulse mr-1" />Overdue ({formatDate(deadline)})</span>;
   }
@@ -61,10 +67,10 @@ function MobileDeadlineCell({ deadline }: { deadline: Date | null }) {
     return <span className="font-medium text-red-500"><span className="inline-block h-2 w-2 rounded-full bg-red-500 animate-pulse mr-1" />{daysLeft}d left ({formatDate(deadline)})</span>;
   }
   if (daysLeft <= 7) {
-    return <span className="font-medium text-red-500">⚠ {daysLeft}d left ({formatDate(deadline)})</span>;
+    return <span className="font-medium text-red-500"><WarningIcon /> {daysLeft}d left ({formatDate(deadline)})</span>;
   }
   if (daysLeft <= 14) {
-    return <span className="text-amber-500">⏰ {daysLeft}d left ({formatDate(deadline)})</span>;
+    return <span className="text-amber-500"><ClockIcon /> {daysLeft}d left ({formatDate(deadline)})</span>;
   }
   return <span className="text-slate-500">{formatDate(deadline)}</span>;
 }
@@ -94,7 +100,7 @@ const STAGE_COLORS: Record<PipelineStage, string> = {
   TENDER_INTAKE: "bg-slate-100 text-slate-600",
   ANALYSIS_COMPLETE: "bg-blue-100 text-blue-700",
   PLAN_CONFIRMED: "bg-violet-100 text-violet-700",
-  DOCUMENTS_GENERATED: "bg-amber-100 text-amber-700",
+  DOCUMENTS_GENERATED: "bg-amber-100 text-amber-800",
   EXPORT_READY: "bg-emerald-100 text-emerald-700",
   EXPORTED: "bg-green-100 text-green-700",
 };
@@ -110,10 +116,11 @@ function StageBadge({ stage }: { stage: string | null }) {
   );
 }
 
-function isUrgentRow(deadline: Date | null, tenderStatus: string): boolean {
+function isUrgentRow(deadline: Date | null, tenderStatus: string, now: number): boolean {
   if (!deadline) return false;
   if (tenderStatus === "EXPORTED" || tenderStatus === "CLOSED") return false;
-  const daysLeft = Math.ceil((new Date(deadline).getTime() - Date.now()) / 86_400_000);
+  // Use the passed `now` — see DeadlineCell comment for the hydration rationale.
+  const daysLeft = Math.ceil((new Date(deadline).getTime() - now) / 86_400_000);
   return daysLeft >= 0 && daysLeft <= 7;
 }
 
@@ -174,7 +181,14 @@ export default async function TendersPage({
   ]);
 
   // KPI derivations
+  // Capture `now` once at request time on the server and pass it to every
+  // deadline calculation (DeadlineCell, MobileDeadlineCell, isUrgentRow) so
+  // the server-rendered HTML matches the client-hydrated HTML. Calling
+  // Date.now() during render causes intermittent React hydration error #418
+  // when the server renders "5d left" and the client hydrates with a slightly
+  // different Date.now() value near a day boundary.
   const now = new Date();
+  const nowMs = now.getTime();
   const kpi = {
     total: allTenders.length,
     draft: allTenders.filter((t) => t.status === "DRAFT").length,
@@ -192,11 +206,19 @@ export default async function TendersPage({
     }).length,
   };
 
-  // Stage counts for pipeline visualization
+  // Stage counts for pipeline visualization.
+  // tender.stage is a free-form String column (not a Prisma enum), and at
+  // legacy rows can contain values (including "COMPLIANCE") outside STAGE_ORDER's six
+  // canonical names — those tenders were previously silently absent from
+  // every bucket below, so the bucket counts could sum to less than the
+  // "Total" tenders shown above them. otherCount makes that reconcile
+  // instead of hiding the discrepancy.
   const stageCounts = STAGE_ORDER.reduce<Record<string, number>>((acc, s) => {
     acc[s] = allTenders.filter((t) => t.stage === s).length;
     return acc;
   }, {});
+  const classifiedCount = STAGE_ORDER.reduce((sum, s) => sum + stageCounts[s], 0);
+  const otherCount = allTenders.length - classifiedCount;
 
   return (
     <div className="space-y-6">
@@ -228,7 +250,7 @@ export default async function TendersPage({
               <p className="text-xs text-slate-500 mt-0.5">In Progress</p>
             </div>
             <div className="p-4 text-center">
-              <p className="text-2xl font-bold text-amber-700">{kpi.generated}</p>
+              <p className="text-2xl font-bold text-amber-800">{kpi.generated}</p>
               <p className="text-xs text-slate-500 mt-0.5">Generated</p>
             </div>
             <div className="p-4 text-center bg-emerald-50">
@@ -243,7 +265,7 @@ export default async function TendersPage({
                 </>
               ) : (
                 <>
-                  <p className={`text-2xl font-bold ${kpi.urgentDeadlines > 0 ? "text-amber-700" : "text-slate-400"}`}>{kpi.urgentDeadlines}</p>
+                  <p className={`text-2xl font-bold ${kpi.urgentDeadlines > 0 ? "text-amber-800" : "text-slate-400"}`}>{kpi.urgentDeadlines}</p>
                   <p className={`text-xs mt-0.5 ${kpi.urgentDeadlines > 0 ? "text-amber-600" : "text-slate-400"}`}>Due &le;7d</p>
                 </>
               )}
@@ -262,6 +284,15 @@ export default async function TendersPage({
                   </div>
                 );
               })}
+              {otherCount > 0 && (
+                <div
+                  className="flex items-center gap-1.5 rounded-lg bg-slate-200 px-2.5 py-1 text-xs font-medium text-slate-700"
+                  title="Tenders whose stage value does not match one of the six pipeline stages above (e.g. set by a workflow outside the standard pipeline)"
+                >
+                  <span>Other</span>
+                  <span className="font-bold">{otherCount}</span>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -296,7 +327,7 @@ export default async function TendersPage({
             </div>
           ) : (
             <div className="flex flex-col items-center py-16 text-center px-6">
-              <div className="text-5xl mb-4">📋</div>
+              <div className="mb-4 flex justify-center text-5xl"><ListIcon /></div>
               <h2 className="text-lg font-semibold text-slate-900 mb-2">No tenders yet</h2>
               <p className="text-slate-500 text-sm max-w-sm mb-6">
                 Upload your first tender document to get started with AI-powered analysis and proposal generation.
@@ -327,7 +358,7 @@ export default async function TendersPage({
                 {tenders.map((tender) => {
                   const unresolvedGaps = tender.complianceGaps.filter((gap) => !gap.isResolved).length;
                   const criticalGaps = tender.complianceGaps.filter((gap) => !gap.isResolved && gap.severity === "CRITICAL").length;
-                  const urgent = isUrgentRow(tender.deadline, tender.status);
+                  const urgent = isUrgentRow(tender.deadline, tender.status, nowMs);
                   return (
                     <tr key={tender.id} className={`hover:bg-slate-50 ${urgent ? "bg-amber-50/60 hover:bg-amber-50" : ""}`}>
                       <td className="px-6 py-4">
@@ -344,14 +375,14 @@ export default async function TendersPage({
                       </td>
                       <td className="px-6 py-4 text-slate-500">{tender.reference || "—"}</td>
                       <td className="px-6 py-4">
-                        <DeadlineCell deadline={tender.deadline} />
+                        <DeadlineCell deadline={tender.deadline} now={nowMs} />
                       </td>
                       <td className="px-6 py-4 text-slate-500">
                         {(() => {
                           const src = parseAnalysisSource(tender.notes);
                           if (!src) return null;
-                          if (src === "REGEX") return <span className="rounded bg-red-100 px-1 py-0.5 text-[10px] font-semibold text-red-700" title="Analysis by regex fallback — AI providers failed. Re-run AI Analyze.">REGEX</span>;
-                          if (src === "PARTIAL") return <span className="rounded bg-amber-100 px-1 py-0.5 text-[10px] font-semibold text-amber-700" title="Partial AI analysis — some chunks failed.">PARTIAL</span>;
+                          if (src === "REGEX") return <span className="rounded bg-red-100 px-1 py-0.5 text-[10px] font-semibold text-red-700" title="Analysis by regex fallback — AI providers failed. Analysis is retried automatically.">REGEX</span>;
+                          if (src === "PARTIAL") return <span className="rounded bg-amber-100 px-1 py-0.5 text-[10px] font-semibold text-amber-800" title="Partial AI analysis — some chunks failed.">PARTIAL</span>;
                           // "AI" badge is the analysis SOURCE, not a readiness/Clear verdict.
                           // Neutral slate color to avoid implying export readiness.
                           return <span className="rounded bg-slate-100 px-1 py-0.5 text-[10px] font-semibold text-slate-600" title="Analysis source: AI. NOT a canonical Clear verdict — per-tender verification required.">AI</span>;
@@ -386,12 +417,12 @@ export default async function TendersPage({
                 const unresolvedGaps = tender.complianceGaps.filter((gap) => !gap.isResolved).length;
                 const criticalGaps = tender.complianceGaps.filter((gap) => !gap.isResolved && gap.severity === "CRITICAL").length;
                 const clientName = cleanClientName(tender.clientName || tender.procuringEntityName);
-                const mobileUrgent = isUrgentRow(tender.deadline, tender.status);
+                const mobileUrgent = isUrgentRow(tender.deadline, tender.status, nowMs);
                 return (
                   <div key={tender.id} className={`p-4 flex flex-col gap-2 ${mobileUrgent ? "bg-amber-50/60" : "bg-white"}`}>
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex-1 min-w-0">
-                        <p className="font-semibold text-slate-900 leading-snug">
+                        <p className="break-words font-semibold text-slate-900 leading-snug">
                           {cleanTenderTitle(tender.title, { clientName: tender.clientName || tender.procuringEntityName })}
                         </p>
                         {clientName && clientName !== "Client" && (
@@ -408,8 +439,8 @@ export default async function TendersPage({
                         {(() => {
                           const src = parseAnalysisSource(tender.notes);
                           if (!src) return null;
-                          if (src === "REGEX") return <span className="rounded bg-red-100 px-1 py-0.5 text-[10px] font-semibold text-red-700" title="Analysis by regex fallback — AI providers failed. Re-run AI Analyze.">REGEX</span>;
-                          if (src === "PARTIAL") return <span className="rounded bg-amber-100 px-1 py-0.5 text-[10px] font-semibold text-amber-700" title="Partial AI analysis — some chunks failed.">PARTIAL</span>;
+                          if (src === "REGEX") return <span className="rounded bg-red-100 px-1 py-0.5 text-[10px] font-semibold text-red-700" title="Analysis by regex fallback — AI providers failed. Analysis is retried automatically.">REGEX</span>;
+                          if (src === "PARTIAL") return <span className="rounded bg-amber-100 px-1 py-0.5 text-[10px] font-semibold text-amber-800" title="Partial AI analysis — some chunks failed.">PARTIAL</span>;
                           // "AI" badge is the analysis SOURCE, not a readiness/Clear verdict.
                           // Neutral slate color to avoid implying export readiness.
                           return <span className="rounded bg-slate-100 px-1 py-0.5 text-[10px] font-semibold text-slate-600" title="Analysis source: AI. NOT a canonical Clear verdict — per-tender verification required.">AI</span>;
@@ -418,7 +449,7 @@ export default async function TendersPage({
                     </div>
 
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-                      <MobileDeadlineCell deadline={tender.deadline} />
+                      <MobileDeadlineCell deadline={tender.deadline} now={nowMs} />
                       {unresolvedGaps > 0 && (
                         <span className={`text-xs ${criticalGaps > 0 ? "text-red-500" : "text-amber-500"}`}>
                           {unresolvedGaps} gaps

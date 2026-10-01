@@ -157,6 +157,8 @@ describe("lib/ai.ts wires the retry-once helper into the chunk loop", () => {
   });
 
   it("retries ONLY for transient errors (non-transient re-throws)", () => {
-    assert.match(source, /if \(!isTransientChunkError\(err\)\) throw err/);
+    // 2026-09-29: the retry-once became a bounded cooldown wait; a non-recoverable
+    // error (malformed answer, any non-provider failure) still re-throws at once.
+    assert.match(source, /if \(!isRecoverableByWaiting\(err\) \|\| round >= MAX_CHUNK_COOLDOWN_WAITS\) throw err/);
   });
 });

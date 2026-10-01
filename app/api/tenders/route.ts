@@ -109,7 +109,7 @@ export async function POST(req: Request) {
         clientName: cleanClient === "Client" ? null : cleanClient,
         category: body.category || "General",
         budget: body.budget ? parseFloat(body.budget) : null,
-        currency: body.currency || "USD",
+        currency: body.currency || null,
         deadline: body.deadline ? new Date(body.deadline) : null,
         submissionMethod: body.submissionMethod || null,
         submissionAddress: body.submissionAddress || null,

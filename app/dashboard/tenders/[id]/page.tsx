@@ -1,64 +1,78 @@
 import type { ReactNode } from "react";
+import Link from "next/link";
 import { FinalPackageManifestPanel } from "../../../../components/final-package-manifest-panel";
+import { ArrowRightIcon, ChevronDownIcon } from "../../../../components/icons";
 import { SubmissionPlanTruthPanel } from "../../../../components/submission-plan-truth-panel";
-import { AuthorityReviewTruthPanel } from "../../../../components/authority-review-truth-panel";
+import { SubmissionPlanCompletenessPanel } from "../../../../components/submission-plan-completeness-panel";
+// ClientSubmissionDetailsPanel is intentionally NOT imported here — it was
+// found to be a duplicate of TenderIntakeDetailPanel in the normal Stage 1
+// workflow (see tests/generic-tender-ui-defects.test.ts "defect 3"). It
+// remains available as a component file for a future Final Submission Check
+// or admin-diagnostics surface, but must not appear in the normal draft
+// workflow.
 import { RequirementTruthBanner } from "../../../../components/requirement-truth-banner";
-import { TenderWorkflowActionCenter } from "../../../../components/tender-workflow-action-center";
-import { ExtractionSnapshotPanel } from "../../../../components/extraction-snapshot-panel";
 import { notFound, redirect } from "next/navigation";
 import { getSession, getCurrentUser } from "../../../../lib/auth";
 import { canMutateTender } from "../../../../lib/recovery-command-actions";
-import { getCurrentConfirmedBuildPlan } from "../../../../lib/engine/build-plan";
-import { prisma, prismaReady } from "../../../../lib/prisma";
+import { prismaReady } from "../../../../lib/prisma";
 import { isAIEnabled } from "../../../../lib/ai";
 import { getTenderGenerationReadinessStrict } from "../../../../lib/tender-generation-readiness-strict";
 import { getCanonicalTenderReadiness } from "../../../../lib/canonical-tender-readiness";
-import { getCanonicalTenderWorkflowDecision } from "../../../../lib/engine/canonical-workflow-decision";
-import { ExecutiveSnapshot } from "./executive-snapshot";
 import { TenderIntakeDetailPanel } from "./tender-intake-detail-panel";
-// ClientSubmissionDetailsPanel is intentionally NOT imported here — it was a
-// duplicate of TenderIntakeDetailPanel in the normal Stage 1 workflow.
-// It may still be used under Final Submission Check or admin diagnostics,
-// but it must not appear in the normal draft workflow.
 import { TenderAICopilotPanel } from "../../../../components/tender-ai-copilot-panel";
 import { ExportReadinessPanel } from "../../../../components/export-readiness-panel";
 import { EvaluatorObjectionsPanel } from "../../../../components/evaluator-objections-panel";
 import { PricingWorkbookPanel } from "../../../../components/pricing-workbook-panel";
-import { ProposalEvidenceReadinessPanel } from "../../../../components/proposal-evidence-readiness-panel";
 import { GenerationReadinessPanel } from "../../../../components/generation-readiness-panel";
 import { GenerationActionPanel } from "../../../../components/generation-action-panel";
-import { SubmissionPlanReconciliationPanel } from "../../../../components/submission-plan-reconciliation-panel";
-import { BidControlVerdictPanel } from "../../../../components/bid-control-verdict-panel";
-import { EngineActionPanel } from "../../../../components/engine-action-panel";
 import { AIHealthPanel } from "../../../../components/ai-health-panel";
 import { ExtractionQualityPanel } from "../../../../components/extraction-quality-panel";
-import { ExtractionQualityDashboard } from "../../../../components/extraction-quality-dashboard";
 import { AnalysisQualityPanel } from "../../../../components/analysis-quality-panel";
-import { MatchingQualityPanel } from "../../../../components/matching-quality-panel";
+import { MatchingSelectedEvidencePanel, type SelectedEvidenceCandidate } from "../../../../components/matching-selected-evidence-panel";
 import { AuthorityReviewPanel } from "../../../../components/authority-review-panel";
 import { DocumentValidatorPanel } from "../../../../components/document-validator-panel";
 import { AIAnalyzeRecoveryPanel } from "../../../../components/ai-analyze-recovery-panel";
 import { AIAnalyzePanel } from "../../../../components/ai-analyze-panel";
-// ClientSubmissionDetailsPanel removed from normal workflow — was a duplicate
-// of TenderIntakeDetailPanel. Kept available for Final Submission Check /
-// admin diagnostics via its component file.
-import { EvidenceCoveragePanel } from "../../../../components/evidence-coverage-panel";
-import { ComplianceHeatmapPanel } from "../../../../components/compliance-heatmap-panel";
-import { TenderHealthScorePanel } from "../../../../components/tender-health-score-panel";
 import { AICopilotSuggestionsPanel } from "../../../../components/ai-copilot-suggestions-panel";
-import VaultEvidenceSearchPanel from "../../../../components/vault-evidence-search-panel";
 import { TenderSharePanel } from "../../../../components/tender-share-panel";
 import { AuditTrailPanel } from "../../../../components/audit-trail-panel";
 import { TenderChatPanelWrapper } from "../../../../components/tender-chat-panel-wrapper";
-import TenderRecoveryCommandCenter from "../../../../components/tender-recovery-command-center";
-import { CanonicalReadinessScoreWidget } from "../../../../components/canonical-readiness-score-widget";
 import RequirementCoveragePanel from "../../../../components/requirement-coverage-panel";
 import { TenderSourceFilesPanel } from "../../../../components/tender-source-files-panel";
-import { TenderDownloadActionsPanel } from "../../../../components/tender-download-actions-panel";
 import { NextActionPanel } from "../../../../components/next-action-panel";
-import { FinalSubmissionControlCenter } from "../../../../components/final-submission-control-center";
 import { ClientEntityWarningBanner } from "../../../../components/corrupted-metadata-banner";
+import { BidStrategyPanel } from "../../../../components/bid-strategy-panel";
+import TenderControlsPanel from "../../../../components/tender-controls-panel";
 import { prisma as prismaClient } from "../../../../lib/prisma";
+import {
+  TENDER_PACKAGE_INTAKE_OPERATION,
+  parseTenderPackageSessionResult,
+} from "../../../../lib/tender-package-intake-session";
+
+function Disclosure({
+  title,
+  description,
+  children,
+  defaultOpen = false,
+}: {
+  title: string;
+  description: string;
+  children: ReactNode;
+  defaultOpen?: boolean;
+}) {
+  return (
+    <details open={defaultOpen} className="group rounded-2xl border border-slate-200 bg-slate-50 shadow-sm">
+      <summary className="flex cursor-pointer list-none items-start gap-3 px-5 py-4 marker:content-none">
+        <span className="min-w-0 flex-1">
+          <span className="block text-base font-semibold text-slate-900">{title}</span>
+          <span className="mt-0.5 block text-sm text-slate-600">{description}</span>
+        </span>
+        <span aria-hidden="true" className="mt-1 text-slate-400 transition-transform group-open:rotate-180"><ChevronDownIcon /></span>
+      </summary>
+      <div className="space-y-4 border-t border-slate-200 bg-white p-4 sm:p-5">{children}</div>
+    </details>
+  );
+}
 
 function WorkflowStage({
   number,
@@ -74,14 +88,18 @@ function WorkflowStage({
   open?: boolean;
 }) {
   return (
-    <details open={open} className="group rounded-2xl border border-slate-200 bg-slate-50 shadow-sm">
+    <details
+      id={`workflow-stage-${number}`}
+      open={open}
+      className="group scroll-mt-24 rounded-2xl border border-slate-200 bg-slate-50 shadow-sm"
+    >
       <summary className="flex cursor-pointer list-none items-start gap-3 px-5 py-4 marker:content-none">
         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-bold text-white">{number}</span>
         <span className="min-w-0 flex-1">
           <span className="block text-base font-semibold text-slate-900">{title}</span>
           <span className="mt-0.5 block text-sm text-slate-600">{description}</span>
         </span>
-        <span aria-hidden="true" className="mt-1 text-slate-400 transition-transform group-open:rotate-180">⌄</span>
+        <span aria-hidden="true" className="mt-1 text-slate-400 transition-transform group-open:rotate-180"><ChevronDownIcon /></span>
       </summary>
       <div className="space-y-4 border-t border-slate-200 bg-white p-4 sm:p-5">{children}</div>
     </details>
@@ -118,6 +136,9 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         include: { project: { select: { id: true, name: true, clientName: true, country: true, sector: true, contractValue: true, currency: true, trustLevel: true } } },
       },
       complianceMatrix: { orderBy: { createdAt: "asc" } },
+      metadataOverrides: {
+        select: { field: true, fieldState: true, overrideValue: true },
+      },
     },
   });
 
@@ -163,20 +184,94 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
   }));
 
   const ai = isAIEnabled();
-  const generationReadiness = await getTenderGenerationReadinessStrict(prismaClient, userId, tender.id).catch(() => null);
-  const canonicalReadiness = await getCanonicalTenderReadiness(prismaClient, userId, tender.id).catch(() => null);
-  // Canonical workflow decision provides staleAnalysis, mandatoryComplianceRowsCount,
-  // mandatoryRequirementCount — needed to wire TenderHealthScorePanel so the
-  // AI Analysis dimension fails when stale and Compliance dimension fails when
-  // compliance rows = 0.
-  const workflowDecision = await getCanonicalTenderWorkflowDecision(prismaClient, userId, tender.id).catch(() => null);
-  // Confirmed BuildPlan items feed the executive snapshot's planned-doc counts
-  // so the dashboard can never show plan numbers the gates do not enforce.
-  const confirmedPlanForSnapshot = await getCurrentConfirmedBuildPlan(prismaClient, tender.id, userId).catch(() => ({ ok: false as const, blocker: "unavailable" }));
-  const confirmedPlanItems = confirmedPlanForSnapshot.ok ? confirmedPlanForSnapshot.items : null;
+  // FIX 7: Removed unscoped `succeededAnalysisJob` and `succeededEngineJob`
+  // queries — they were legacy readiness sources that could be confused by
+  // stale/deleted/superseded/duplicate historical jobs. The single canonical
+  // readiness service (getCanonicalTenderReadiness) is now the only source
+  // of truth for analysisCurrent/engineCurrent/etc. We still query
+  // `activeAnalysisJob` and `activeEngineJob` (QUEUED/RUNNING only) to surface
+  // the "in-flight" indicator on the page — that is current-state, not
+  // historical truth, and is not used as a workflow authority.
+  const [generationReadiness, canonicalReadiness, activeAnalysisJob, activeEngineJob, activeIntakeRun] = await Promise.all([
+    getTenderGenerationReadinessStrict(prismaClient, userId, tender.id).catch(() => null),
+    getCanonicalTenderReadiness(prismaClient, userId, tender.id).catch(() => null),
+    prismaClient.aiJob.findFirst({
+      where: {
+        userId,
+        tenderId: tender.id,
+        jobType: "AI_ANALYZE",
+        status: { in: ["QUEUED", "RUNNING"] },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { id: true },
+    }).catch(() => null),
+    prismaClient.aiJob.findFirst({
+      where: {
+        userId,
+        tenderId: tender.id,
+        jobType: "ENGINE_RUN",
+        status: { in: ["QUEUED", "RUNNING"] },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { id: true },
+    }).catch(() => null),
+    prismaClient.tenderWorkflowRun.findFirst({
+      where: {
+        tenderId: tender.id,
+        operation: TENDER_PACKAGE_INTAKE_OPERATION,
+        status: "QUEUED",
+      },
+      orderBy: { createdAt: "desc" },
+      select: { resultJson: true },
+    }).catch(() => null),
+  ]);
+  const activeIntakeSession = parseTenderPackageSessionResult(activeIntakeRun?.resultJson);
+
+  // ─── Truthful workflow state derived from ONE canonical readiness service ──
+  //
+  // FIX 7: Removed legacy per-file `extractionScore` booleans and unscoped
+  // succeededAnalysisJob/succeededEngineJob queries. The single canonical
+  // readiness service (getCanonicalTenderReadiness) drives every workflow
+  // decision: AI Analyze panel, Analysis Quality panel, Run Engine panel,
+  // Next Action, workflow navigation, generation readiness, export readiness,
+  // API authorization, worker authorization. Stale/deleted/superseded/
+  // duplicate historical jobs or files can no longer become a second truth
+  // source.
+  //
+  // The canonical service exposes `readyForAnalysis` (extraction + byte
+  // integrity complete and not corrupted), `matchingComplete` (Engine has
+  // produced a current-revision match set), `readyForFullProposal` (Engine
+  // + Build Plan + generation all current), and per-module `state` strings.
+  // We derive the panel props from those — never from raw AiJob queries.
+  const extractionModuleState = canonicalReadiness?.modules?.extraction?.state ?? "NOT_RUN";
+  const analysisModuleState = canonicalReadiness?.modules?.analysis?.state ?? "NOT_RUN";
+  const matchingModuleState = canonicalReadiness?.modules?.matching?.state ?? "NOT_RUN";
+
+  // sourceIntegrityValid: true when the canonical extraction module reports
+  // byte integrity is valid for all active files (no extraction BLOCKED/STALE).
+  const sourceIntegrityValid = Boolean(canonicalReadiness?.readyForAnalysis)
+    && extractionModuleState !== "BLOCKED";
+
+  // extractionComplete: true when the canonical extraction module has reached
+  // a READY state (text was successfully extracted from at least one file).
+  const extractionComplete = extractionModuleState === "READY"
+    || extractionModuleState === "WARNING";
+
+  // analysisComplete: true when the canonical analysis module is READY (the
+  // current-revision AI_ANALYZE job has SUCCEEDED and been promoted).
+  const analysisComplete = analysisModuleState === "READY"
+    || analysisModuleState === "WARNING";
+
+  // engineRunning: true when an ENGINE_RUN job is QUEUED or RUNNING but the
+  // canonical matching module has not yet reached READY (Engine still in
+  // flight). engineComplete: true when the canonical matching module reports
+  // READY (Engine has SUCCEEDED for the current source revision).
+  const engineComplete = matchingModuleState === "READY"
+    || matchingModuleState === "WARNING";
+  const engineRunning = Boolean(activeEngineJob) && !engineComplete;
 
   return (
-    <main className="space-y-5" aria-label="Tender workflow workspace">
+    <section className="space-y-5" aria-label="Tender workflow workspace">
       <ClientEntityWarningBanner tender={{
         id: tender.id,
         reference: tender.reference,
@@ -186,79 +281,131 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         clientContactName: tender.clientContactName,
       }} canMutate={canMutate} />
 
-      <ExecutiveSnapshot tender={tenderForUi} canonicalReadiness={canonicalReadiness} confirmedPlanItems={confirmedPlanItems} />
-      <TenderWorkflowActionCenter tenderId={tender.id} canMutate={canMutate} />
       <RequirementTruthBanner tenderId={tender.id} />
       <NextActionPanel tenderId={tender.id} />
-      <TenderRecoveryCommandCenter tenderId={tender.id} canMutate={canMutate} />
-      <CanonicalReadinessScoreWidget tenderId={tender.id} />
-      <TenderHealthScorePanel
-        tenderId={tender.id}
-        canonicalReadiness={canonicalReadiness}
-        analysisStale={workflowDecision?.staleAnalysis ?? false}
-        mandatoryComplianceRowsCount={workflowDecision?.mandatoryComplianceRowsCount}
-        mandatoryRequirementCount={workflowDecision?.mandatoryRequirementCount}
-      />
-      <BidControlVerdictPanel tenderId={tender.id} />
-      <FinalSubmissionControlCenter tenderId={tender.id} generationReadiness={generationReadiness} />
 
-      <nav aria-label="Tender workflow stages" className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-900">
-        Work from Stage 1 through Stage 5. Each major action appears once and uses the canonical server-side readiness gates.
-      </nav>
-
-      <WorkflowStage number={1} title="Intake and extraction" description="Manage source documents and confirm submission-critical Tender Details." open>
-        <TenderSourceFilesPanel tenderId={tender.id} initialFiles={tender.files} canMutate={canMutate} />
-        <ExtractionQualityDashboard tenderId={tender.id} />
-        <ExtractionSnapshotPanel tenderId={tender.id} />
+      <WorkflowStage number={1} title="Intake and extraction" open description="Manage source documents, automatic extraction quality, and submission-critical Tender Details.">
+        <TenderSourceFilesPanel
+          tenderId={tender.id}
+          initialFiles={tender.files}
+          canMutate={canMutate}
+          activeIntakeSession={activeIntakeSession}
+        />
+        <Disclosure
+          title="Extraction quality"
+          description="One canonical report for page coverage, OCR availability, weak or failed pages, and extraction readiness."
+        >
+          <div id="extraction-quality" className="scroll-mt-24">
+            <ExtractionQualityPanel tenderId={tender.id} />
+          </div>
+        </Disclosure>
         <TenderIntakeDetailPanel tender={tenderForUi} />
-        <ExtractionQualityPanel tenderId={tender.id} />
+        <Disclosure
+          title="Tender controls"
+          description="Track addenda, clarifications, questions, milestones, tasks, risks, and commercial assumptions raised over the life of this tender."
+        >
+          <TenderControlsPanel tenderId={tender.id} />
+        </Disclosure>
       </WorkflowStage>
 
-      <WorkflowStage number={2} title="Analysis and engine" description="Run the authoritative engine, inspect AI health, and repair incomplete analysis.">
-        <AIAnalyzePanel tenderId={tender.id} aiEnabled={ai} canMutate={canMutate} />
-        <AIHealthPanel />
-        <EngineActionPanel
+      <WorkflowStage number={2} title="Analysis and engine" description="Extraction completes automatically. Select AI Analyze, review the grounded result, then select Run Engine; every valid later stage continues automatically.">
+        <AIAnalyzePanel
           tenderId={tender.id}
-          vaultReviewedExperts={generationReadiness?.matchingQuality?.vaultReviewedExperts ?? 0}
-          vaultReviewedProjects={generationReadiness?.matchingQuality?.vaultReviewedProjects ?? 0}
-          lifecycleBlockersExist={(generationReadiness?.blockers?.length ?? 0) > 0}
+          initialContinueJobId={activeAnalysisJob?.id ?? null}
+          aiEnabled={ai}
           canMutate={canMutate}
+          analysisAlreadySucceeded={analysisComplete}
+          extractionComplete={extractionComplete}
+          sourceIntegrityValid={sourceIntegrityValid}
+          hasActiveJob={Boolean(activeAnalysisJob)}
         />
         <AnalysisQualityPanel tenderId={tender.id} />
-        <AIAnalyzeRecoveryPanel tenderId={tender.id} />
         <RequirementCoveragePanel tenderId={tender.id} canMutate={canMutate} />
-        <AICopilotSuggestionsPanel tenderId={tender.id} />
-        {ai && <TenderChatPanelWrapper tenderId={tender.id} canMutate={canMutate} />}
-        {ai && <TenderAICopilotPanel tenderId={tender.id} canMutate={canMutate} />}
+        <BidStrategyPanel tenderId={tender.id} />
+        <Disclosure
+          title="AI diagnostics and assistance"
+          description="Provider health, recovery information, suggestions, chat, and Copilot are secondary aids—not separate workflow authorities."
+        >
+          <AIHealthPanel />
+          <AIAnalyzeRecoveryPanel tenderId={tender.id} />
+          <AICopilotSuggestionsPanel tenderId={tender.id} />
+          {ai && <TenderChatPanelWrapper tenderId={tender.id} canMutate={canMutate} />}
+          {ai && <TenderAICopilotPanel tenderId={tender.id} canMutate={canMutate} />}
+        </Disclosure>
       </WorkflowStage>
 
-      <WorkflowStage number={3} title="Evidence and matching" description="Verify reviewed experts, projects, requirement coverage, and compliance evidence.">
-        <MatchingQualityPanel tenderId={tender.id} />
-        <ProposalEvidenceReadinessPanel tenderId={tender.id} />
-        <EvidenceCoveragePanel tenderId={tender.id} />
-        <VaultEvidenceSearchPanel tenderId={tender.id} />
-        <ComplianceHeatmapPanel tenderId={tender.id} />
+      <WorkflowStage number={3} title="Evidence and matching" description="After Run Engine, inspect the persisted company-owned evidence selected automatically for this tender.">
+        <MatchingSelectedEvidencePanel
+          tenderId={tender.id}
+          canMutate={canMutate}
+          analysisComplete={analysisComplete}
+          engineRunning={engineRunning}
+          engineComplete={engineComplete}
+          experts={tender.expertMatches.map((m): SelectedEvidenceCandidate => ({
+            id: m.id,
+            name: m.expert.fullName,
+            subtitle: m.expert.title,
+            score: m.score,
+            rationale: m.rationale,
+            isSelected: m.isSelected,
+            trustLevel: m.expert.trustLevel,
+          }))}
+          projects={tender.projectMatches.map((m): SelectedEvidenceCandidate => ({
+            id: m.id,
+            name: m.project.name,
+            subtitle: m.project.clientName,
+            score: m.score,
+            rationale: m.rationale,
+            isSelected: m.isSelected,
+            trustLevel: m.project.trustLevel,
+          }))}
+        />
       </WorkflowStage>
 
-      <WorkflowStage number={4} title="Generation and review" description="Confirm the submission plan, generate through the canonical gate, and complete document review.">
-        <GenerationReadinessPanel tenderId={tender.id} readiness={generationReadiness} />
+      <WorkflowStage number={4} title="Generation and review" description="Run Engine owns Build Plan verification, matching, generation, validation, and finalization automatically. Review status and resolve only genuine source, quality, or legal blockers.">
         <GenerationActionPanel tenderId={tender.id} readiness={generationReadiness} canonicalReadiness={canonicalReadiness} canMutate={canMutate} />
         <SubmissionPlanTruthPanel tenderId={tender.id} />
-        <SubmissionPlanReconciliationPanel tenderId={tender.id} />
-        <AuthorityReviewTruthPanel tenderId={tender.id} />
         <AuthorityReviewPanel tenderId={tender.id} />
         <DocumentValidatorPanel tenderId={tender.id} />
-        <EvaluatorObjectionsPanel tenderId={tender.id} canMutate={canMutate} />
+        <Disclosure
+          title="Generation and review diagnostics"
+          description="Detailed readiness, reconciliation, and evaluator simulation remain available without adding another normal workflow action."
+        >
+          <GenerationReadinessPanel tenderId={tender.id} readiness={generationReadiness} />
+          <SubmissionPlanCompletenessPanel tenderId={tender.id} canMutate={canMutate} />
+          <EvaluatorObjectionsPanel tenderId={tender.id} canMutate={canMutate} />
+        </Disclosure>
       </WorkflowStage>
 
-      <WorkflowStage number={5} title="Final package and submission" description="Reconcile pricing, inspect the exact manifest, verify export readiness, and release the package.">
+      <WorkflowStage number={5} title="Final package and submission" description="Reconcile pricing, inspect the exact manifest, verify export readiness, and download the released package.">
         <PricingWorkbookPanel tenderId={tender.id} canMutate={canMutate} />
         <FinalPackageManifestPanel tenderId={tender.id} />
         <ExportReadinessPanel tenderId={tender.id} canMutate={canMutate} />
         <TenderSharePanel tenderId={tender.id} canMutate={canMutate} />
-        <AuditTrailPanel tenderId={tender.id} />
+        <Disclosure
+          title="Submission audit trail"
+          description="Open the historical activity record only when an audit or handoff review requires it."
+        >
+          <AuditTrailPanel tenderId={tender.id} />
+        </Disclosure>
       </WorkflowStage>
-      <TenderDownloadActionsPanel tenderId={tender.id} canMutate={canMutate} />
-    </main>
+
+      <Disclosure
+        title="Diagnostics and audit"
+        description="Open the separate read-only Command Center only when you need full blocker, export, pricing, version, objection, or background-job detail."
+      >
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+          <p className="text-sm text-slate-700">
+            The Command Center reads the same canonical release state as the status card above. It does not add a second next action, mutation owner, readiness score, or final-ZIP decision to this workspace.
+          </p>
+          <Link
+            href={`/dashboard/tenders/${tender.id}/command-center`}
+            className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white no-underline hover:bg-slate-800"
+          >
+            Open read-only Command Center <ArrowRightIcon />
+          </Link>
+        </div>
+      </Disclosure>
+    </section>
   );
 }

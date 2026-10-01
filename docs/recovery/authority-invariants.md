@@ -1,0 +1,1 @@
+Tender controls scope. Company Vault is factual source only. No invented evidence. Anthropic remains last. Regex fallback is never AI. Partial/fallback analysis cannot unlock generation or export. Roles and ownership remain secure. GeneratedDocument rows remain zero before valid extraction, grounded requirements, evidence, and Build Plan. Final ZIP gates remain strict.

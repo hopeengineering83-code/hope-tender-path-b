@@ -16,16 +16,41 @@ import {
 import {
   filterFinalExportCandidateDocuments,
   isFinalExportCandidateDocument,
+  isValidationPassed,
   type DocumentLike,
 } from "./document-output-state";
+import { planDocumentReclassification } from "./document-type-normalizer";
+
+/**
+ * The document type "Reclassify to plan" would write for this row, or null when
+ * the action would change nothing. One computation, shared by the panel (which
+ * decides whether to offer the action) and the route (which decides whether to
+ * write and audit it).
+ */
+function reclassificationTargetFor(doc: {
+  name: string;
+  exactFileName?: string | null;
+  documentType?: string | null;
+  reviewStatus?: string | null;
+}): string | null {
+  const plan = planDocumentReclassification(doc);
+  return plan.wouldChange ? plan.normalizedType.toUpperCase() : null;
+}
 
 export type SubmissionPlanRowStatus =
   | "GENERATED"
   | "GENERATED_NEEDS_REVIEW"
   | "GENERATED_QUALITY_FAILED"
   | "PLANNED"
-  | "OFFICIAL_ORIGINAL_REQUIRED"
-  | "REPLACE_WITH_ORIGINAL"
+  // Unified blocker for any tender-issued source form the app does not have
+  // — whether it never matched a Tender Intake file (was OFFICIAL_ORIGINAL_REQUIRED)
+  // or matched one but the produced row is still a placeholder reviewStatus
+  // (was REPLACE_WITH_ORIGINAL). Both collapse into one user-facing signal:
+  // the tender package is incomplete until the missing form is uploaded. The
+  // underlying GeneratedDocument.reviewStatus DB value (REPLACE_WITH_ORIGINAL,
+  // NOT_EXPORTABLE) is unchanged — only the row-status enum the resolver emits
+  // to panels and gates is renamed.
+  | "MISSING_TENDER_SOURCE_FORM"
   | "MISSING"
   | "OUTSIDE_PLAN"
   | "SUPERSEDED";
@@ -48,6 +73,18 @@ export type SubmissionPlanRow = {
   hasStoragePath: boolean;
   officialOriginal: boolean;
   recommendedAction: string;
+  /**
+   * The document type a "Reclassify to plan" action would actually write, or
+   * null when reclassifying would change nothing.
+   *
+   * normalizeDocumentType returns the current type for a correctly-typed
+   * document, so most rows reclassify to themselves. The panel used to offer
+   * the action on every actionable row regardless, and the route wrote and
+   * audited it unconditionally, producing
+   * "Done — reclassified TECHNICAL_PROPOSAL → TECHNICAL_PROPOSAL". Surfacing
+   * the target here lets the panel offer the action only when there is one.
+   */
+  reclassifyTo: string | null;
 };
 
 export type SubmissionPlanState =
@@ -135,7 +172,7 @@ function fileKey(value: string | null | undefined): string {
 function resolveStatus(doc: GeneratedDocSnapshot | null, planFile: SubmissionPlanFile | null, qualityFailed: boolean): SubmissionPlanRowStatus {
   if (!doc && planFile) {
     const label = `${planFile.exactFileName} ${planFile.documentType}`;
-    if (looksLikeOfficialOriginal(label)) return "OFFICIAL_ORIGINAL_REQUIRED";
+    if (looksLikeOfficialOriginal(label)) return "MISSING_TENDER_SOURCE_FORM";
     return "MISSING";
   }
   if (!doc) return "MISSING";
@@ -146,8 +183,8 @@ function resolveStatus(doc: GeneratedDocSnapshot | null, planFile: SubmissionPla
     status === "GENERATED_QUALITY_FAILED" || status === "QUALITY_FAILED" || status === "NEEDS_REWRITE",
   );
   if (gen === "SUPERSEDED") return "SUPERSEDED";
-  if (rev === "REPLACE_WITH_ORIGINAL") return "REPLACE_WITH_ORIGINAL";
-  if (rev === "NOT_EXPORTABLE") return "REPLACE_WITH_ORIGINAL";
+  if (rev === "REPLACE_WITH_ORIGINAL") return "MISSING_TENDER_SOURCE_FORM";
+  if (rev === "NOT_EXPORTABLE") return "MISSING_TENDER_SOURCE_FORM";
   if (gen === "PLANNED") return "PLANNED";
   if (qualityFailed || storedQualityFailed) return "GENERATED_QUALITY_FAILED";
   if (!isFinalExportCandidateDocument(doc)) return "PLANNED";
@@ -158,13 +195,17 @@ function resolveStatus(doc: GeneratedDocSnapshot | null, planFile: SubmissionPla
 function recommendedActionFor(status: SubmissionPlanRowStatus, planFile: SubmissionPlanFile | null, doc: GeneratedDocSnapshot | null): string {
   switch (status) {
     case "GENERATED": return "Ready for export.";
-    case "GENERATED_NEEDS_REVIEW": return "Complete reviewer approval — mark READY_FOR_EXPORT.";
-    case "GENERATED_QUALITY_FAILED": return "Quality gate failed — rewrite or attach the official original.";
-    case "PLANNED": return "Generate the planned document. This row has no final file content yet.";
-    case "OFFICIAL_ORIGINAL_REQUIRED": return "Upload the tender-issued original via Attach official original — do not generate.";
-    case "REPLACE_WITH_ORIGINAL": return "Attach the exact tender-issued original; the current row is a placeholder.";
-    case "MISSING": return `Generate the required file (${planFile?.exactFileName ?? "missing file"}) or attach the official original.`;
-    case "OUTSIDE_PLAN": return `Map this document into the submission plan or supersede it; it is not part of the tender-required file list (${doc?.exactFileName ?? doc?.name ?? "unmapped doc"}).`;
+    case "GENERATED_NEEDS_REVIEW": return "Machine validation is complete; any genuine final-owner or legal review remains explicit.";
+    case "GENERATED_QUALITY_FAILED": return "Quality gate failed; automatic recovery must rewrite or regenerate before export.";
+    case "PLANNED": return "Automatic post-Engine generation has not produced final file content yet.";
+    case "MISSING_TENDER_SOURCE_FORM": return "Upload the tender-issued source form from the complete tender package. Company Vault documents are already official — this only applies to tender-issued forms.";
+    case "MISSING": return `Automatic post-Engine generation must produce the required file (${planFile?.exactFileName ?? "missing file"}).`;
+    // Previously interpolated the document's OWN filename into "not part of the
+    // tender-required file list (…)", so the row read as a file missing from a
+    // list containing only itself. It also opened with four manual verbs for a
+    // document the app generated. An unplanned extra is simply left out of the
+    // package — no owner action is required for the normal path.
+    case "OUTSIDE_PLAN": return `${doc?.exactFileName ?? doc?.name ?? "This document"} is not one of the tender-required files, so it is excluded from the package automatically. No action is needed unless it should replace a required file.`;
     case "SUPERSEDED": return "Historical row — already excluded from the final package.";
     default: return "Review the row status.";
   }
@@ -215,12 +256,30 @@ export function resolveSubmissionPlanCompleteness(input: ResolvePlanCompleteness
     }
   }
 
+  // When several generated documents share a key, the plan row must adopt the
+  // CURRENT one. This kept whichever arrived first, so a superseded or
+  // content-less predecessor could claim the plan row and strand the live
+  // document — which then fell through to the OUTSIDE_PLAN default below and
+  // demanded the owner Reclassify / Supersede / Exclude a file the app had
+  // just produced itself. Tenders accumulate these: the reported tender showed
+  // 11 historical rows behind a single required file.
+  //
+  // Rank: never-superseded first, then a document that actually has bytes,
+  // then validated over unvalidated. Ordering is otherwise preserved, so a
+  // single-document key behaves exactly as before.
+  const docRank = (doc: GeneratedDocSnapshot): number => {
+    const superseded = (doc.generationStatus ?? "").toUpperCase() === "SUPERSEDED";
+    const hasBytes = Boolean((doc.fileContent ?? "").length > 0 || (doc.storagePath ?? "").length > 0);
+    const validated = isValidationPassed(doc.validationStatus);
+    return (superseded ? 0 : 4) + (hasBytes ? 2 : 0) + (validated ? 1 : 0);
+  };
   const docByKey = new Map<string, GeneratedDocSnapshot>();
   const usedDocIds = new Set<string>();
   for (const doc of input.generatedDocuments) {
     const key = fileKey(doc.exactFileName ?? doc.name);
-    if (!key || docByKey.has(key)) continue;
-    docByKey.set(key, doc);
+    if (!key) continue;
+    const existing = docByKey.get(key);
+    if (!existing || docRank(doc) > docRank(existing)) docByKey.set(key, doc);
   }
 
   const rows: SubmissionPlanRow[] = [];
@@ -251,6 +310,7 @@ export function resolveSubmissionPlanCompleteness(input: ResolvePlanCompleteness
       hasStoragePath: Boolean(doc?.storagePath && (doc.storagePath ?? "").length > 0),
       officialOriginal,
       recommendedAction: recommendedActionFor(status, planFile, doc),
+      reclassifyTo: doc ? reclassificationTargetFor(doc) : null,
     });
   }
 
@@ -288,6 +348,7 @@ export function resolveSubmissionPlanCompleteness(input: ResolvePlanCompleteness
       hasStoragePath: Boolean(doc.storagePath && doc.storagePath.length > 0),
       officialOriginal,
       recommendedAction: recommendedActionFor(effectiveStatus, null, doc),
+      reclassifyTo: reclassificationTargetFor(doc),
     });
   }
 
@@ -303,7 +364,7 @@ export function resolveSubmissionPlanCompleteness(input: ResolvePlanCompleteness
   const totalGenerated = rows.filter((r) => r.status === "GENERATED" || r.status === "GENERATED_NEEDS_REVIEW").length;
   const plannedOnlyCount = rows.filter((r) => r.status === "PLANNED").length;
   const totalMissing = rows.filter((r) => r.status === "MISSING").length + plannedOnlyCount;
-  const totalOfficialOriginalsRequired = rows.filter((r) => r.status === "OFFICIAL_ORIGINAL_REQUIRED" || r.status === "REPLACE_WITH_ORIGINAL").length;
+  const totalOfficialOriginalsRequired = rows.filter((r) => r.status === "MISSING_TENDER_SOURCE_FORM").length;
   const totalOutsidePlan = rows.filter((r) => r.status === "OUTSIDE_PLAN").length;
   const totalSuperseded = rows.filter((r) => r.status === "SUPERSEDED").length;
   const totalQualityFailed = rows.filter((r) => r.status === "GENERATED_QUALITY_FAILED").length;
@@ -332,26 +393,36 @@ export function resolveSubmissionPlanCompleteness(input: ResolvePlanCompleteness
     planState = "NO_REQUIREMENTS";
   }
 
-  const requiresUserConfirmation = planState === "DERIVED_DRAFT_UNCONFIRMED";
+  // Only a current machine-verified BuildPlan authorizes generation/export. An
+  // explicit tender-issued file list is stronger than a derived draft, but it
+  // is still an input to the Build Plan—not proof that a BuildPlan was built
+  // and confirmed.
+  // Compatibility field only. A missing/draft plan requires Run Engine or a
+  // genuine source correction, never a routine confirmation click.
+  const requiresUserConfirmation = false;
 
   if ((planState as string) === "REQUIREMENTS_FOUND_PLAN_NOT_BUILT" || (planState as string) === "PLAN_NOT_BUILT") {
-    warnings.push(`${requirementCount} tender requirement(s) exist, but no submission file plan has been built or confirmed. Build Submission Plan before Generate Docs so outputs can be validated against tender scope.`);
+    warnings.push(`${requirementCount} tender requirement(s) exist, but no submission file plan has been built or confirmed. Run Engine uses the verified source and current AI analysis to create and verify the Build Plan, so generated outputs can be validated against tender scope.`);
   }
-  if (requiresUserConfirmation) {
-    warnings.push("Submission plan is a derived draft from requirement titles/types. Confirm tender-issued file names/order before final export; do not treat derived rows as official tender forms.");
+  if (planState !== "CONFIRMED_BUILD_PLAN") {
+    warnings.push(
+      planState === "EXPLICIT_TENDER_PLAN"
+        ? "Tender-issued file scope is available, but no current source-verified Build Plan exists. Run Engine creates and verifies it automatically."
+        : "Submission plan is a derived draft from requirement titles/types. Run Engine must verify tender-issued file names/order against the active source; derived rows are not official tender forms.",
+    );
   }
 
   if (totalRequired > 0 && totalMissing > 0) {
     warnings.push(`${totalMissing}/${totalRequired} required submission documents are still missing from current outputs.`);
   }
   if (plannedOnlyCount > 0) {
-    warnings.push(`${plannedOnlyCount} planned document placeholder(s) have no file content yet. Use Generate Missing Planned Docs before validation or export.`);
+    warnings.push(`${plannedOnlyCount} planned document placeholder(s) have no file content yet. Automatic post-Engine generation must create and validate their bytes before export.`);
   }
   if (totalOutsidePlan > 0) {
     warnings.push(`${totalOutsidePlan} generated document(s) are outside the explicit submission plan and must be mapped or superseded.`);
   }
   if (totalOfficialOriginalsRequired > 0) {
-    warnings.push(`${totalOfficialOriginalsRequired} official-original document(s) are required — attach via Attach official original; do not generate.`);
+    warnings.push(`${totalOfficialOriginalsRequired} tender-issued form(s) are required — upload the complete tender package; do not generate.`);
   }
 
   return {
@@ -374,6 +445,98 @@ export function resolveSubmissionPlanCompleteness(input: ResolvePlanCompleteness
 
 export const __testing__ = { looksLikeOfficialOriginal, fileKey };
 export { filterFinalExportCandidateDocuments };
+
+export type LoadedSubmissionPlanCompleteness = {
+  report: SubmissionPlanCompletenessReport;
+  /** Identity of the tender the report was resolved for. */
+  tender: { id: string; title: string };
+  /** False when no CONFIRMED Build Plan exists, so the plan is still derived. */
+  hasConfirmedPlan: boolean;
+  /** Why there is no confirmed plan. Null exactly when hasConfirmedPlan. */
+  planBlocker: string | null;
+};
+
+/**
+ * Load a tender and resolve its plan completeness in one place.
+ *
+ * The row selection and the confirmed-plan lookup are the contract between
+ * this resolver and the database; every caller that duplicated them was one
+ * more place the panel, the gates and the automatic pipeline could silently
+ * disagree about how many files a package still owes. Callers that already
+ * hold the tender in memory should call `resolveSubmissionPlanCompleteness`
+ * directly instead of re-querying through this.
+ *
+ * Returns null when the tender does not exist for this user — the query is
+ * user-scoped, so a cross-tenant id is indistinguishable from a missing one.
+ */
+export async function loadSubmissionPlanCompleteness(
+  client: any,
+  tenderId: string,
+  userId: string,
+): Promise<LoadedSubmissionPlanCompleteness | null> {
+  const { getCurrentConfirmedBuildPlan } = await import("./build-plan");
+
+  const tender = await client.tender.findFirst({
+    where: { id: tenderId, userId },
+    select: {
+      id: true,
+      title: true,
+      exactFileNaming: true,
+      exactFileOrder: true,
+      pageLimit: true,
+      requirements: {
+        select: {
+          id: true,
+          title: true,
+          description: true,
+          requirementType: true,
+          priority: true,
+          exactFileName: true,
+          exactOrder: true,
+          requiredQuantity: true,
+          pageLimit: true,
+          restrictions: true,
+          sectionReference: true,
+        },
+      },
+      generatedDocuments: {
+        orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
+        select: {
+          id: true,
+          name: true,
+          exactFileName: true,
+          exactOrder: true,
+          documentType: true,
+          format: true,
+          generationStatus: true,
+          validationStatus: true,
+          reviewStatus: true,
+          storagePath: true,
+          contentSummary: true,
+        },
+      },
+    },
+  });
+  if (!tender) return null;
+
+  // Metadata-only: fileContent is deliberately not loaded. Deep byte/quality
+  // checks belong to the export-readiness gate, which reads the bytes it is
+  // about to package.
+  const confirmedPlan = await getCurrentConfirmedBuildPlan(client, tenderId, userId);
+  const report = resolveSubmissionPlanCompleteness({
+    tender,
+    generatedDocuments: tender.generatedDocuments.map((doc: GeneratedDocSnapshot) => ({ ...doc, fileContent: null })),
+    qualityFailedIds: new Set<string>(),
+    confirmedPlanItems: confirmedPlan.ok ? confirmedPlan.items : null,
+  });
+
+  return {
+    report,
+    tender: { id: tender.id, title: tender.title },
+    hasConfirmedPlan: confirmedPlan.ok,
+    planBlocker: confirmedPlan.ok ? null : confirmedPlan.blocker ?? null,
+  };
+}
 
 export type SubmissionPlanCheckResult = {
   valid: boolean;

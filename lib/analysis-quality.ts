@@ -106,6 +106,21 @@ export function assessTenderAnalysisQuality(params: {
   submissionAddress?: string | null;
   submissionEmails?: string | null;
   analysisExtractionStatus?: string | null;
+  // ─── Canonical AI Analyze state ──────────────────────────────────────
+  // The zero-requirements message below used to be keyed on requirementCount
+  // alone, so a tender whose AI Analyze had FAILED — or been superseded, or
+  // fallen back to unapproved regex — was told "Source-text-only generation
+  // will proceed". Nothing was going to proceed: the generation gate blocks
+  // every one of those states. The panel was reassuring the owner about a
+  // path the backend had already closed.
+  //
+  // The state is supplied by the caller (lib/engine/analysis-state-resolver.ts
+  // is the one authority). ABSENT means "not established", which is never
+  // treated as release-ready — an unknown state is not grounds for
+  // reassurance. This changes what is SAID, never what is allowed.
+  analysisState?: string | null;
+  /** False when the promoted analysis no longer matches the canonical source. */
+  analysisMatchesCurrentSource?: boolean | null;
 }): AnalysisQualityReport {
   const REGEX_FALLBACK_SCORE_CAP = 45;
   const analysisSourceText = (params.analysisSource ?? "").trim();
@@ -135,6 +150,13 @@ export function assessTenderAnalysisQuality(params: {
   const hasRequiredDocumentsOrForms = hasExactFileNaming || exactFileNameCount > 0 || requirements.some((req) => /form|annex|schedule|certificate|declaration|document|file|envelope|technical|financial/i.test(`${req.title ?? ""} ${req.description ?? ""} ${req.requirementType ?? ""}`));
   const hasDeadline = Boolean(params.deadline);
   const hasSubmissionMethodOrEndpoint = Boolean((params.submissionMethod ?? "").trim() || (params.submissionAddress ?? "").trim() || (params.submissionEmails ?? "").trim());
+  // Mirrors canExportWithAnalysisState(): only a promoted AI_SUCCEEDED analysis
+  // that still matches the current source is release-ready. This is a reading of
+  // the gate, never a second copy of it — no decision here unblocks anything.
+  const analysisStateText = String(params.analysisState ?? "").trim().toUpperCase();
+  const analysisIsReleaseReady =
+    analysisStateText === "AI_SUCCEEDED" && params.analysisMatchesCurrentSource !== false;
+  const analysisStateSuffix = analysisStateText ? ` (current state: ${analysisStateText})` : "";
   const extractionStatusText = String(params.analysisExtractionStatus ?? "").toUpperCase();
   const extractionUnsafe = /EXTRACTION_CORRUPTED|OCR_REQUIRED|EXTRACTION_WEAK_REVIEW_REQUIRED|REGEX_FALLBACK_FROM_WEAK_EXTRACTION/.test(extractionStatusText);
   const extractionPartial = extractionStatusText === "PARTIAL_EXTRACTION_AI_ANALYZED";
@@ -150,9 +172,25 @@ export function assessTenderAnalysisQuality(params: {
   let score = 100;
 
   if (requirementCount === 0) {
-    warnings.push("No requirements were extracted from the tender.");
-    recommendations.push("Run AI Analyze / Run Engine again after confirming extraction quality.");
-    score -= 70;
+    // Gap 1: No requirements is no longer a 70-point penalty. Readable,
+    // integrity-verified extracted tender text must proceed even when there
+    // are no structured requirements. Source-text-only generation uses the
+    // extracted scope, tender type, requested services, deliverables, forms
+    // and submission instructions. Genuinely absent information is stored as
+    // NOT_STATED — never invented.
+    //
+    // That is true only while AI Analyze itself is release-ready. When it is
+    // not — FAILED, superseded, unapproved regex fallback, still running, or
+    // no longer matching the source — "generation will proceed" is a promise
+    // the generation gate will refuse to keep, and stating it sends the owner
+    // to a button that cannot work.
+    if (analysisIsReleaseReady) {
+      warnings.push("No structured requirements were extracted. Source-text-only generation will proceed using the extracted tender scope, deliverables, and submission instructions.");
+      recommendations.push("Review the generated proposal carefully — it is based on source text only, not structured requirements.");
+    } else {
+      warnings.push(`No structured requirements were extracted, and AI Analyze is not in a release-ready state${analysisStateSuffix}. Any source-text-only output is DRAFT ONLY and is not export authority.`);
+      recommendations.push("Re-run AI Analyze on the current tender source and let it complete before relying on anything generated from source text alone.");
+    }
   } else if (requirementCount < 5) {
     warnings.push(`Only ${requirementCount} requirement(s) were extracted; complex tenders usually contain more.`);
     recommendations.push("Review the tender manually for missing eligibility, technical, financial, form, and submission requirements.");
@@ -320,7 +358,7 @@ export function assessTenderAnalysisQuality(params: {
     isUnsafe = true;
   }
   if (extractionPartial) {
-    warnings.push("AI analysis ran on partially-extracted tender pages — results may be missing sections. Re-extract or run OCR for a fully reliable analysis.");
+    warnings.push("AI analysis ran on partially-extracted tender pages — results may be missing sections. Upload a clearer, text-based copy for a fully reliable analysis.");
     score = Math.min(score, 74);
   }
   if (isRegexFallback) {
@@ -341,7 +379,16 @@ export function assessTenderAnalysisQuality(params: {
   const rawSeverity: AnalysisQualitySeverity = isUnsafe ? "UNSAFE" : score < 50 ? "POOR" : score < 75 ? "WARNING" : "GOOD";
   const severity: AnalysisQualitySeverity = zeroGrounding && rawSeverity === "GOOD" ? "WARNING" : rawSeverity;
   if (zeroGrounding && severity === "WARNING") score = Math.min(score, 74);
-  if (severity === "GOOD" && warnings.length === 0) recommendations.push("Tender analysis appears usable for matching, scoring, and generation.");
+  // Only claim usability when the analysis behind the score is itself
+  // release-ready. A good score computed over a FAILED or superseded analysis
+  // describes the data, not permission to use it.
+  if (severity === "GOOD" && warnings.length === 0) {
+    recommendations.push(
+      analysisIsReleaseReady || !analysisStateText
+        ? "Tender analysis appears usable for matching, scoring, and generation."
+        : `Extracted content looks good, but AI Analyze is not release-ready${analysisStateSuffix} — re-run it before relying on this analysis for generation or export.`,
+    );
+  }
 
   return {
     severity,

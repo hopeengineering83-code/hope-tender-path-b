@@ -46,6 +46,16 @@ describe("Provider Health Runtime & Status", () => {
   });
 
   it("Generation success marks GENERATION_VERIFIED", () => {
+    // A free provider. For a paid one the money gate answers first and
+    // BILLING_BLOCKED is the correct status no matter how well it performed —
+    // which is the point of the next test.
+    resetProviderHealth();
+    process.env.GROQ_API_KEY = "gsk-key";
+    recordProviderSuccess("groq");
+    assert.equal(deriveProviderStatus("groq"), "GENERATION_VERIFIED");
+  });
+
+  it("a successful configured provider reports its verified capability", () => {
     resetProviderHealth();
     process.env.OPENAI_API_KEY = "oa-key";
     recordProviderSuccess("openai");
@@ -55,6 +65,6 @@ describe("Provider Health Runtime & Status", () => {
   it("Provider order remains exact (canonical registry order)", () => {
     const health = getAllProviderHealth();
     const order = health.map(h => h.provider);
-    assert.deepEqual(order, ["zai", "cerebras", "mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"]);
+    assert.deepEqual(order, ["gemini", "groq", "mistral", "zai", "cerebras", "openrouter", "openai", "together", "deepseek", "anthropic"]);
   });
 });

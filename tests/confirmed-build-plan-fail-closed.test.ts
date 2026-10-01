@@ -45,7 +45,7 @@ describe("getCurrentConfirmedBuildPlan — fail-closed verification", () => {
     const prisma = { buildPlan: { findFirst: async () => null }, tender: { findFirst: async () => null } };
     const result = await getCurrentConfirmedBuildPlan(prisma as any, "t1", "u1");
     assert.equal(result.ok, false);
-    assert.match((result as { blocker: string }).blocker, /No confirmed Build Plan/);
+    assert.match((result as { blocker: string }).blocker, /No source-verified Build Plan/);
   });
 
   it("corrupted itemsJson (invalid JSON) → blocked, never ok", async () => {
@@ -176,11 +176,8 @@ describe("confirmed BuildPlan is enforced on the readiness gates (P1-D wiring)",
   it("confirmed-plan consumers use the safely parsed items — no raw JSON.parse of itemsJson at call sites", () => {
     for (const path of [
       "lib/engine/workflow/workflow-state.ts",
-      "lib/engine/analysis/plan-truth.ts",
-      "lib/engine/analysis/authority-truth.ts",
       "app/api/tenders/[id]/auto-finalize/route.ts",
       "app/api/tenders/[id]/supersede-outside-plan/route.ts",
-      "components/submission-plan-reconciliation-panel.tsx",
     ]) {
       const source = readFileSync(path, "utf8");
       assert.ok(!/JSON\.parse\([^)]*itemsJson/.test(source), `${path} must consume confirmedPlan.items instead of re-parsing itemsJson`);
@@ -202,8 +199,6 @@ describe("confirmed BuildPlan is enforced on the readiness gates (P1-D wiring)",
     assert.ok(!(TENDER_STATUSES as readonly string[]).includes("PLAN_APPROVED"));
     for (const path of [
       "lib/engine/workflow/workflow-state.ts",
-      "lib/engine/analysis/plan-truth.ts",
-      "lib/engine/analysis/authority-truth.ts",
     ]) {
       const source = readFileSync(path, "utf8");
       assert.match(source, /confirmedPlan\.ok \? "CANONICAL_APPROVED"/, `${path} must derive approval from the confirmed BuildPlan`);
@@ -226,13 +221,12 @@ describe("confirmed BuildPlan is enforced on the readiness gates (P1-D wiring)",
       "app/api/tenders/[id]/generate-missing-plan-files/route.ts",
       "app/api/tenders/[id]/reconcile-docs/route.ts",
       "components/final-package-manifest-panel.tsx",
-      "app/dashboard/tenders/[id]/executive-snapshot.tsx",
+      // components/tender-release-state-panel.tsx was deleted as unrendered
+      // dead code (nothing imports or renders it).
       "lib/engine/submission-plan-completeness.ts",
       "lib/engine/workflow/workflow-state.ts",
       "lib/canonical-tender-readiness.ts",
       "lib/engine/final-submission-readiness.ts",
-      "lib/engine/analysis/plan-truth.ts",
-      "lib/engine/analysis/authority-truth.ts",
     ]) {
       const source = readFileSync(path, "utf8");
       if (path === "lib/engine/submission-plan-completeness.ts") {
@@ -249,14 +243,21 @@ describe("confirmed BuildPlan is enforced on the readiness gates (P1-D wiring)",
     const generate = readFileSync("app/api/tenders/[id]/generate/route.ts", "utf8");
     assert.match(generate, /const confirmedPlanForRun = await getCurrentConfirmedBuildPlan\(prisma, id, userId\);/);
     assert.match(generate, /const explicitSubmissionScope = confirmedPlanForRun\.ok;/);
-    const missing = readFileSync("app/api/tenders/[id]/generate-missing-plan-files/route.ts", "utf8");
+    const missing = readFileSync("app/api/tenders/[id]/generate-missing-plan-files/route.ts", "utf8")
+      + readFileSync("lib/engine/missing-plan-file-generation.ts", "utf8");
     // BuildPlan requirement relaxed for draft — confirmed plan no longer required for missing-plan-files;
     assert.match(missing, /confirmedPlan\.items/);
   });
 
   it("submission-plan GET and lifecycle orchestrator pass confirmed items into completeness", () => {
+    // The GET route no longer resolves this itself — it and the automatic
+    // finalize pipeline share loadSubmissionPlanCompleteness, so the confirmed
+    // plan is applied in exactly one place for both. Assert the guarantee at
+    // its new home, and that the route actually goes through it.
     const route = readFileSync("app/api/tenders/[id]/submission-plan/route.ts", "utf8");
-    assert.match(route, /confirmedPlanItems: confirmedPlan\.ok \? confirmedPlan\.items : null/);
+    assert.match(route, /loadSubmissionPlanCompleteness\(prisma, id, actor\.id\)/);
+    const loader = readFileSync("lib/engine/submission-plan-completeness.ts", "utf8");
+    assert.match(loader, /confirmedPlanItems: confirmedPlan\.ok \? confirmedPlan\.items : null/);
     const orchestrator = readFileSync("lib/engine/tender-lifecycle-orchestrator.ts", "utf8");
     assert.match(orchestrator, /confirmedPlanItems: confirmedPlan\.ok \? confirmedPlan\.items : null/);
   });

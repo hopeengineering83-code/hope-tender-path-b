@@ -51,6 +51,12 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      // SECURITY (audit H-11): enable the Chromium sandbox so a renderer
+      // compromise cannot reach Node.js APIs even via the preload bridge.
+      // Compatible with this app because no preload script is used.
+      sandbox: true,
+      // SECURITY: <webview> tags are not used and would bypass sandboxing.
+      webviewTag: false,
     },
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     title: "Hope Tender Proposal Generator",
@@ -65,18 +71,50 @@ function createWindow() {
   mainWindow.loadURL(TARGET_URL).catch((err) => {
     dialog.showErrorBox(
       "Cannot connect to Hope Tender",
-      `The desktop app could not reach ${TARGET_URL}.\n\n${err.message ?? err}\n\nCheck your network connection and try again. To use a different server, set the HOPE_TENDER_DESKTOP_URL environment variable before launching.`,
+      `The desktop app could not reach ${TARGET_URL}.\n\nCheck your network connection and try again. To use a different server, set the HOPE_TENDER_DESKTOP_URL environment variable before launching.`,
     );
   });
 
-  // Open external links (anything outside our domain) in the system browser
-  // — keeps third-party sites from being hosted inside our app shell.
+  // SECURITY (audit C-7): global navigation guard. Prevents the renderer
+  // from being navigated to any origin other than the configured TARGET_URL
+  // origin. Without this, a crafted link inside a generated proposal could
+  // navigate the main window to an attacker-controlled URL.
+  const ALLOWED_ORIGIN = (() => {
+    try { return new URL(TARGET_URL).origin; }
+    catch { return TARGET_URL; }
+  })();
+
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    try {
+      if (new URL(url).origin !== ALLOWED_ORIGIN) {
+        event.preventDefault();
+      }
+    } catch {
+      event.preventDefault();
+    }
+  });
+
+  // SECURITY (audit C-7): window-open handler with explicit scheme
+  // allowlist. Only http(s) and mailto: URLs are passed to shell.openExternal;
+  // dangerous schemes (ms-msdt:, search-ms:, file://, javascript:) are silently
+  // dropped. The previous implementation passed any URL to openExternal.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (!url.startsWith(TARGET_URL.split("/").slice(0, 3).join("/"))) {
-      shell.openExternal(url);
+    try {
+      const parsed = new URL(url);
+      const isSameOrigin = parsed.origin === ALLOWED_ORIGIN;
+      const isSafeExternal = ["http:", "https:", "mailto:"].includes(parsed.protocol);
+      if (isSameOrigin) {
+        return { action: "allow" };
+      }
+      if (isSafeExternal) {
+        shell.openExternal(url);
+      }
+      // Unsafe schemes (ms-msdt:, file:, javascript:, etc.) are silently dropped.
+      return { action: "deny" };
+    } catch {
+      // Invalid URL — silently drop.
       return { action: "deny" };
     }
-    return { action: "allow" };
   });
 
   buildMenu();
@@ -139,9 +177,13 @@ function buildMenu() {
 
 function startNextServer() {
   return new Promise((resolve, reject) => {
+    // SECURITY (audit C-8): bind explicitly to 127.0.0.1 so the local Next.js
+    // server is NOT reachable from other hosts on the LAN. The previous
+    // implementation passed only --port, which left Next.js binding to
+    // 0.0.0.0 by default.
     const cmd = isDev
-      ? `npx next dev --port ${PORT}`
-      : `npx next start --port ${PORT}`;
+      ? `npx next dev --hostname 127.0.0.1 --port ${PORT}`
+      : `npx next start --hostname 127.0.0.1 --port ${PORT}`;
 
     nextServer = exec(cmd, { cwd: path.join(__dirname, "..") }, (err) => {
       if (err && !err.killed) reject(err);
@@ -179,10 +221,17 @@ app.whenReady().then(async () => {
 });
 
 app.on("window-all-closed", () => {
-  if (nextServer) nextServer.kill();
+  // SECURITY (audit L-11): graceful shutdown. Send SIGTERM first so Next.js
+  // can finish in-flight requests, then SIGKILL after 3s as a fallback.
+  if (nextServer) {
+    try { nextServer.kill("SIGTERM"); } catch {}
+    setTimeout(() => { try { nextServer.kill("SIGKILL"); } catch {} }, 3000);
+  }
   if (process.platform !== "darwin") app.quit();
 });
 
 app.on("before-quit", () => {
-  if (nextServer) nextServer.kill();
+  if (nextServer) {
+    try { nextServer.kill("SIGTERM"); } catch {}
+  }
 });

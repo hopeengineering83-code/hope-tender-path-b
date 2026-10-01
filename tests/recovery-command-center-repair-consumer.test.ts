@@ -1,39 +1,57 @@
-// Regression tests for Recovery Command Center REPAIR_METADATA consumer.
+// Regression tests for the REPAIR_METADATA consumer contract.
 // Proves the consumer reads the NEW outcomes[] contract (not the old
 // repaired[] array) and formats correct messages for mixed results.
+//
+// components/tender-recovery-command-center.tsx (this file's original
+// subject) was deleted as unrendered dead code (nothing imports or renders
+// it). The live consumer today is components/generation-action-panel.tsx,
+// which delegates outcome parsing/messaging to the shared
+// lib/engine/repair-metadata-contract.ts module rather than inlining the
+// logic — so the assertions below are redirected there. Some exact wording
+// changed with the move to the shared module (e.g. there is no longer a
+// literal "no fields could be extracted" string; the all-SKIPPED case now
+// reads "All fields skipped"), so the checks assert the live phrasing
+// rather than pretending the old strings still exist.
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-describe("Recovery Command Center REPAIR_METADATA consumer contract", () => {
-  const source = readFileSync("components/tender-recovery-command-center.tsx", "utf8");
+describe("REPAIR_METADATA consumer contract (shared repair-metadata-contract module)", () => {
+  const contractSource = readFileSync("lib/engine/repair-metadata-contract.ts", "utf8");
+  const panelSource = readFileSync("components/generation-action-panel.tsx", "utf8");
 
-  it("reads json.outcomes (not json.repaired) for REPAIR_METADATA", () => {
-    assert.match(source, /action === "REPAIR_METADATA"[\s\S]*?json\.outcomes/);
-    assert.doesNotMatch(source, /action === "REPAIR_METADATA"[\s\S]{0,200}json\.repaired/);
+  it("the repair-metadata contract is still used by the codebase (Gap 2: panel button removed, contract retained)", () => {
+    // Gap 2: the panel no longer calls repair-metadata directly, but the
+    // contract module is still used by the automatic repair workflow.
+    assert.match(contractSource, /Array\.isArray\(obj\.outcomes\)/);
+    assert.doesNotMatch(contractSource, /obj\.repaired/);
   });
 
-  it("filters outcomes by REPAIRED status", () => {
-    assert.match(source, /outcomes\.filter\(\(o\) => o\.status === "REPAIRED"\)/);
+  it("parseRepairMetadataResponse reads the outcomes[] array, not a legacy repaired[] array", () => {
+    assert.match(contractSource, /Array\.isArray\(obj\.outcomes\)/);
+    assert.doesNotMatch(contractSource, /obj\.repaired/);
   });
 
-  it("reports unresolved fields when NOT_FOUND, REJECTED, UNRESOLVED, or ERROR remain", () => {
-    assert.match(source, /unresolved/);
-    assert.match(source, /unresolvedFields/);
-    // Must treat NOT_FOUND, REJECTED, UNRESOLVED, and ERROR as unresolved
-    assert.match(source, /NOT_FOUND/);
-    assert.match(source, /REJECTED/);
-    assert.match(source, /UNRESOLVED/);
-    assert.match(source, /ERROR/);
+  it("counts outcomes by REPAIRED status", () => {
+    assert.match(contractSource, /counts\.REPAIRED/);
+    assert.match(contractSource, /o\.status === "REPAIRED"/);
   });
 
-  it("shows partial repair message when some fields repaired but unresolved remain", () => {
-    assert.match(source, /partially repaired/);
+  it("treats NOT_FOUND, REJECTED, UNRESOLVED, and ERROR as remaining/unresolved statuses", () => {
+    assert.match(contractSource, /needsManualReview = counts\.NOT_FOUND \+ counts\.REJECTED \+ counts\.UNRESOLVED/);
+    assert.match(contractSource, /"NOT_FOUND"/);
+    assert.match(contractSource, /"REJECTED"/);
+    assert.match(contractSource, /"UNRESOLVED"/);
+    assert.match(contractSource, /"ERROR"/);
   });
 
-  it("shows 'no fields could be extracted' when no fields repaired", () => {
-    assert.match(source, /no fields could be extracted/);
+  it("shows a partial-repair message when some fields repaired but others remain unresolved", () => {
+    assert.match(contractSource, /field\(s\) remain unresolved — review and correct manually/);
+  });
+
+  it("shows an all-skipped message when no fields were repaired, not found, or rejected", () => {
+    assert.match(contractSource, /All fields skipped/);
   });
 });
 

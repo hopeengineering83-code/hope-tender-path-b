@@ -67,16 +67,22 @@ describe("operation gate wiring — /api/tenders/[id]/generate (DRAFT_GENERATION
 
 describe("operation gate wiring — /api/tenders/[id]/generate-missing-plan-files (SUPPORT_PACKAGE_GENERATION)", () => {
   it("imports resolveTenderOperationGate from tender-operation-gate", () => {
-    const src = read("app/api/tenders/[id]/generate-missing-plan-files/route.ts");
+    const src = read("app/api/tenders/[id]/generate-missing-plan-files/route.ts") + read("lib/engine/missing-plan-file-generation.ts");
+    // The gate call moved into lib/engine/missing-plan-file-generation.ts, which
+    // sits beside tender-operation-gate.ts and so imports it as "./" rather than
+    // climbing out of the app directory. Accept either spelling of the same
+    // module — the point is that this path resolves the gate from the canonical
+    // module, not that the relative prefix has a particular depth.
     assert.ok(
-      src.includes('from "../../../../../lib/engine/tender-operation-gate"'),
+      src.includes('from "../../../../../lib/engine/tender-operation-gate"')
+      || src.includes('from "./tender-operation-gate"'),
       "must import from tender-operation-gate",
     );
     assert.ok(src.includes("resolveTenderOperationGate"), "must import resolveTenderOperationGate");
   });
 
   it("calls resolveTenderOperationGate with operation: SUPPORT_PACKAGE_GENERATION", () => {
-    const src = read("app/api/tenders/[id]/generate-missing-plan-files/route.ts");
+    const src = read("app/api/tenders/[id]/generate-missing-plan-files/route.ts") + read("lib/engine/missing-plan-file-generation.ts");
     assert.ok(
       src.includes('operation: "SUPPORT_PACKAGE_GENERATION"'),
       "must call with SUPPORT_PACKAGE_GENERATION",
@@ -85,7 +91,7 @@ describe("operation gate wiring — /api/tenders/[id]/generate-missing-plan-file
   });
 
   it("returns 422 with errorCode OPERATION_GATE_BLOCKED if the gate blocks", () => {
-    const src = read("app/api/tenders/[id]/generate-missing-plan-files/route.ts");
+    const src = read("app/api/tenders/[id]/generate-missing-plan-files/route.ts") + read("lib/engine/missing-plan-file-generation.ts");
     assert.ok(src.includes("OPERATION_GATE_BLOCKED"), "must return OPERATION_GATE_BLOCKED errorCode");
     assert.ok(src.includes("operationGate.blockers.length > 0"), "must check blockers length");
   });

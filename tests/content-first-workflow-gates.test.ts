@@ -617,35 +617,32 @@ describe("[content-first] /api/upload route is restored", () => {
     assert.ok(/export async function POST/.test(src), "Upload route must export a POST handler");
   });
 
-  it("source: handleSecureUpload persists pageStatusJson (no more PAGE_STATUS_INCOMPLETE on fresh upload)", () => {
-    const src = readFileSync(resolve("lib/secure-upload-handler.ts"), "utf8");
-    assert.ok(/pageStatusJson/.test(src), "handleSecureUpload must persist pageStatusJson");
+  it("source: durable extraction persists pageStatusJson after verified bytes are processed", () => {
+    const upload = readFileSync(resolve("lib/secure-upload-handler.ts"), "utf8");
+    const worker = readFileSync(resolve("lib/ai-jobs/tender-extraction-service.ts"), "utf8");
+    assert.ok(!/extractTextFromBuffer/.test(upload), "upload request must not own extraction");
+    assert.ok(/pageStatusJson: metrics!\.pageStatusJson/.test(worker), "worker must persist pageStatusJson");
   });
 });
 
 // ─── 18. ocrModel column is written ────────────────────────────────────────
 describe("[content-first] ocrModel column is written when OCR runs", () => {
-  it("source: lib/tender-upload-first.ts writes ocrModel when OCR marker is present", () => {
-    const src = readFileSync(resolve("lib/tender-upload-first.ts"), "utf8");
-    assert.ok(/ocrModel/.test(src), "tender-upload-first must write ocrModel");
+  it("source: durable extraction writes ocrModel when OCR marker is present", () => {
+    const src = readFileSync(resolve("lib/ai-jobs/tender-extraction-service.ts"), "utf8");
+    assert.ok(/ocrModel/.test(src), "durable extraction must write ocrModel");
     // The OCR model label is derived from the marker prefix
     assert.ok(/claude-vision/.test(src), "ocrModel must be set to 'claude-vision' when OCR marker is present");
   });
 
-  it("source: lib/tender-upload-first.ts writes pageStatusJson (no more false PAGE_STATUS_INCOMPLETE)", () => {
-    const src = readFileSync(resolve("lib/tender-upload-first.ts"), "utf8");
-    assert.ok(/pageStatusJson/.test(src), "tender-upload-first must write pageStatusJson");
+  it("source: durable extraction writes pageStatusJson (no false PAGE_STATUS_INCOMPLETE)", () => {
+    const src = readFileSync(resolve("lib/ai-jobs/tender-extraction-service.ts"), "utf8");
+    assert.ok(/pageStatusJson/.test(src), "durable extraction must write pageStatusJson");
   });
 });
 
-// ─── 19. ExtractionSnapshotPanel reads json.files (not json.reports) ───────
-describe("[content-first] ExtractionSnapshotPanel reads the actual API response shape", () => {
-  it("source: components/extraction-snapshot-panel.tsx reads json.files (with json.reports fallback)", () => {
-    const src = readFileSync(resolve("components/extraction-snapshot-panel.tsx"), "utf8");
-    // The panel must read json.files first (the actual API response shape)
-    assert.ok(/json\?\.files|json\.files/.test(src), "Panel must read json.files (the actual API response shape)");
-  });
-});
+// ─── 19. retired -- was pinned to extraction-snapshot-panel.tsx, which
+//     nothing imports or renders (superseded by tender-source-files-panel.tsx,
+//     see tests/latest-preview-extraction-engine-contradictions.test.ts).
 
 // ─── 20. Test runner picks up subdirectory tests ───────────────────────────
 describe("[content-first] test runner discovers tests in subdirectories", () => {

@@ -496,7 +496,7 @@ export function summarizeSevenPassForReviewNotes(evaluation: SevenPassEvaluation
   if (evaluation.finalApprovalAllowed) {
     return `Seven-pass gate: all ${passCount} passes cleared. Recommended for final approval.`;
   }
-  return `Seven-pass gate: ${blockCount} of ${evaluation.passes.length} passes blocked. Blockers: ${blockers.join("; ")}. Action: Regenerate with reviewed evidence, remove placeholders, or attach official original.`;
+  return `Seven-pass gate: ${blockCount} of ${evaluation.passes.length} passes blocked. Blockers: ${blockers.join("; ")}. Action: Regenerate with reviewed evidence or remove placeholders.`;
 }
 
 // ── Convenience wrapper ────────────────────────────────────────────────────

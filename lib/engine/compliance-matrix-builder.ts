@@ -31,6 +31,8 @@
  * decide whether to append.
  */
 
+import { isStrongSupportLevel, normalizeSupportLevel } from "./requirement-evidence-profile";
+import { clientSafeComplianceEvidence } from "./automatic-requirement-coverage";
 type RequirementLite = {
   id?: string | null;
   title?: string | null;
@@ -78,50 +80,55 @@ function priorityRank(p?: string | null): number {
   return 4;
 }
 
-/**
- * PR KK: Map a requirement type to the submission package appendix / annex
- * reference that carries the corresponding document. Evaluators use this
- * to locate evidence in the submission package without reading the full
- * proposal narrative.
- */
-function inferPackageReference(req: RequirementLite): string {
+export function inferProposalLocation(req: RequirementLite): string {
   const type = (req.requirementType ?? "").toUpperCase();
-  const text = `${req.title ?? ""} ${req.description ?? ""}`.toLowerCase();
-
-  if (type === "EXPERT" || /expert|cv|curriculum vitae|key personnel|team composition/.test(text))
-    return "Annex A — CV & Qualifications";
-  if (type === "PROJECT_EXPERIENCE" || /project.*experience|similar.*project|portfolio|reference/.test(text))
-    return "Annex B — Project Reference Sheets";
-  if (type === "DECLARATION" || /declaration|conflict.*interest|eligibility|anti.corruption/.test(text))
-    return "Annex D — Declarations";
-  if (type === "FINANCIAL" || /financial|turnover|audit|balance.*sheet|bank.*statement/.test(text))
-    return "Annex E — Financial Records";
-  if (type === "ELIGIBILITY" || /registration|licen[sc]e|certificate|tin|vat|accreditation/.test(text))
-    return "Annex F — Eligibility Documents";
-  if (type === "ANNEX" || /annex|appendix/.test(text))
-    return "Annex (per tender numbering)";
-  if (type === "FORM" || /form|template|fill.*in|bid.*form/.test(text))
-    return "Annex G — Tender Forms";
-  if (type === "METHODOLOGY" || /methodology|technical.*approach|work.*plan|scope.*understanding/.test(text))
-    return "Section C — Technical Methodology";
-  if (type === "FORMAT" || /page.*limit|font.*size|file.*format|file.*naming/.test(text))
-    return "Submission Package Cover Sheet";
-  if (type === "COMPANY_PROFILE" || /company.*profile|firm.*profile/.test(text))
-    return "Annex C — Company Profile";
-  return "Proposal body (cross-referenced)";
+  const title = (req.title ?? "").toLowerCase();
+  // A requirement about HOW the proposal is submitted is answered by the
+  // submission itself, which the Cover Letter states. Read from the
+  // description first, "Technical Proposal Submission — … demonstrating
+  // project experience …" was sent to the Project Portfolio (2026-09-28).
+  if (/\b(?:submission|submit(?:ted)?|file\s+name|pdf|format|envelope|deadline)\b/.test(title)
+    && !/\b(?:experience|portfolio|reference|expert|cv|team)\b/.test(title)) {
+    return "Cover Letter";
+  }
+  // The title says what the requirement IS; the description only elaborates.
+  // A keyword in the description decides only when the title matches nothing.
+  return locationFromText(title, type)
+    ?? locationFromText(`${title} ${(req.description ?? "").toLowerCase()}`, type)
+    // The requirement's type, when no keyword placed it: a METHODOLOGY
+    // requirement worded "Outline the approach to infection prevention and
+    // patient flow" is answered in Section C, not "Sections A–D" (2026-09-28).
+    ?? locationFromType(type)
+    // No annex: the proposal has none, and the column promised one to every
+    // requirement the keyword map could not place (2026-09-27).
+    ?? "Sections A–D";
 }
 
-function inferProposalLocation(req: RequirementLite): string {
-  const text = `${req.title ?? ""} ${req.description ?? ""}`.toLowerCase();
-  const type = (req.requirementType ?? "").toUpperCase();
+function locationFromType(type: string): string | null {
+  if (type === "METHODOLOGY" || type === "TECHNICAL") return "Section C.2 Technical Methodology";
+  if (type === "SCHEDULE") return "Section C.6 Work Plan and Schedule";
+  if (type === "COMPANY_PROFILE" || type === "ELIGIBILITY") return "Section A.1 Company Background";
+  if (type === "FORMAT" || type === "SUBMISSION_RULE") return "Cover Letter";
+  if (type === "DECLARATION") return "Declaration";
+  return null;
+}
 
+function locationFromText(text: string, type: string): string | null {
+
+  if (/^\s*(?:a\s+)?cover(?:ing)?\s+letter\b/.test(text))
+    return "Cover Letter";
   if (type === "EXPERT" || /expert|cv|curriculum vitae|key personnel|team composition|qualifications/.test(text))
     return "Section A.4 Proposed Project Team";
   if (type === "PROJECT_EXPERIENCE" || /project.*experience|similar.*project|portfolio|reference|testimony/.test(text))
     return "Section B.2 Project Portfolio";
   if (/methodology|technical approach|work plan|scope.*understanding/.test(text))
     return "Section C.2 Technical Methodology";
-  if (/quality|qa|qc|review|audit|iso/.test(text))
+  // Before the quality pattern, whose bare "audit" claimed "Audited Financial
+  // Statements" for Quality Assurance; and no "Appendix E", which no proposal
+  // contains. The statements are listed with the firm's records in Section D.
+  if (/financial.*statement|audited.*(?:account|financial|report)|turnover/.test(text))
+    return "Section D Professional Certifications and Affiliations";
+  if (/quality|\bqa\b|\bqc\b|review|\baudit\b|\biso\b/.test(text))
     return "Section C.3 Quality Assurance";
   if (/risk|mitigation|contingency/.test(text))
     return "Section C.5 Risk Register";
@@ -129,17 +136,49 @@ function inferProposalLocation(req: RequirementLite): string {
     return "Section C.6 Work Plan and Schedule";
   if (/value.*added|innovation|additional.*service/.test(text))
     return "Section D.2 Value-Added Services";
-  if (/registration|license|tin|vat|business.*reg|company.*profile/.test(text))
+  if (/registration|licen[cs]e|certificat|\btin\b|\bvat\b|business.*reg|company.*profile/.test(text))
     return "Section A.1 Company Background";
-  if (/financial.*statement|audited.*account|turnover/.test(text))
-    return "Appendix E (Audited Financial Statements)";
   if (/declaration|eligibility|conflict.*interest/.test(text))
-    return "Section D.4 Declaration of Eligibility";
+    return "Declaration";
   if (/safeguard|esmp|environmental|social/.test(text))
     return "Section C.2 Methodology + C.5 Risk Register";
   if (/photo|drawing|floor plan/.test(text))
-    return "Appendix D Project Photos and Drawings";
-  return "Section A–D (cross-referenced in proposal annex)";
+    return "Section B.2 Project Portfolio";
+  return null;
+}
+
+/**
+ * Removes every Compliance Matrix section (heading through the next heading of
+ * the same or higher level). Section E is a table of the app's own data —
+ * requirements, their support levels, where each is answered — so the
+ * canonical builder writes it on every path, as buildSelfScoreSection does for
+ * Section H. On the model path the evaluator appendix planted the last-resort
+ * repair matrix first, and the canonical builder saw the heading and stood
+ * down: accept run 36462108495 shipped "Cover Letter — PARTIALLY MET —
+ * Technical Methodology and Work Plan — evidence: Tax Clearance", and
+ * "partially evidenced" beside FULLY MET.
+ */
+export function stripComplianceMatrixSections(markdown: string): string {
+  const headingRe = /^\s*(#{1,4})\s*(?:section\s*[E:.\-\s]*)?\s*compliance\s+matrix\b/i;
+  const lines = markdown.split("\n");
+  const out: string[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const match = lines[i].match(headingRe);
+    if (match) {
+      const level = match[1].length;
+      i += 1;
+      while (i < lines.length) {
+        const next = lines[i].match(/^\s*(#+)\s/);
+        if (next && next[1].length <= level) break;
+        i += 1;
+      }
+      continue;
+    }
+    out.push(lines[i]);
+    i += 1;
+  }
+  return out.join("\n");
 }
 
 /**
@@ -150,6 +189,12 @@ function inferProposalLocation(req: RequirementLite): string {
  */
 function statusFromSupportLevel(supportLevel?: string | null): "FULLY MET" | "PARTIALLY MET" | "NOT MET" {
   const v = (supportLevel ?? "").toUpperCase().trim();
+  // One definition of "met": the engine's. SUBSTANTIAL is strong support
+  // everywhere else (export readiness, the readiness model's FULLY_MET), and
+  // printing it here as PARTIALLY MET told the evaluator that 5 of the 7
+  // requirements the app itself rated met were only partly answered
+  // (2026-09-27, accept run 36339908536).
+  if (isStrongSupportLevel(normalizeSupportLevel(v))) return "FULLY MET";
   if (v.includes("FULL") || v.includes("STRONG") || v === "YES" || v === "MET") return "FULLY MET";
   if (v.includes("NONE") || v.includes("MISSING") || v.includes("GAP") || v.includes("WEAK") || v.includes("NO ") || v === "NO" || v === "NOT") return "NOT MET";
   // Default to PARTIALLY MET for PARTIAL / unspecified — the intake's default
@@ -175,6 +220,13 @@ export function hasComplianceMatrixHeading(markdown: string): boolean {
  * Build the deterministic Section E Compliance Matrix as a Markdown
  * fragment. Returns null when there are no requirements to map.
  */
+const DECLARATION_TITLE = /\b(?:declarations?|undertakings?|disclosures?|affidavits?|attestations?)\b/i;
+
+function isBidderDeclaration(req: RequirementLite): boolean {
+  if (String(req.requirementType ?? "").toUpperCase() === "DECLARATION") return true;
+  return DECLARATION_TITLE.test(String(req.title ?? ""));
+}
+
 export function buildComplianceMatrixSection(input: ComplianceMatrixBuilderInput): string | null {
   const rawReqs = input.requirements.filter((r) => (r.title ?? "").trim().length > 0 || (r.description ?? "").trim().length > 0);
   // Deduplicate by normalized title to prevent duplicate rows when the same
@@ -210,6 +262,7 @@ export function buildComplianceMatrixSection(input: ComplianceMatrixBuilderInput
   let mandatoryFullyMet = 0;
   let mandatoryPartiallyMet = 0;
   let mandatoryNotMet = 0;
+  let rowsWithoutMitigation = 0;
 
   sorted.forEach((req, idx) => {
     const baseReqText = (req.title || (req.description ?? "").slice(0, 220)).trim();
@@ -232,14 +285,41 @@ export function buildComplianceMatrixSection(input: ComplianceMatrixBuilderInput
     } else {
       status = "NOT MET";
     }
+    // A row whose evidence is the proposal's own narrative was rated before the
+    // proposal existed (the engine marks it "pending until generated"). Section
+    // E is read inside that proposal, where the response now stands at a named
+    // section, and the final readiness links the validated proposal to it at
+    // FULL. Printing PARTIALLY MET beside "Cover Letter" in the proposal's own
+    // matrix contradicted both (2026-09-28, accept run 36456526332). Only rows
+    // answered by the proposal alone, at a concrete destination, with no gap.
+    const answeredByThisProposal = matchingRows.length > 0
+      && matchingRows.every((r) => String(r.evidenceType ?? "").toUpperCase() === "PROPOSAL_RESPONSE");
+    if (status === "PARTIALLY MET" && answeredByThisProposal && proposalLocation !== "Sections A–D"
+      && ((reqId && gapsByReqId.get(reqId)) || []).length === 0) {
+      status = "FULLY MET";
+    }
 
     // Evidence cell — concatenate up to 2 evidence sources.
     const evidenceParts: string[] = [];
     for (const row of matchingRows.slice(0, 2)) {
-      const piece = [row.evidenceType, row.evidenceSource, row.evidenceReference].filter(Boolean).join(" — ");
+      // Rendered through the client-safe form. The raw fields are the
+      // engine's own: run 36071201669 printed "PROPOSALRESPONSE — ... CV
+      // evidence available for drafting — Expert CVS.pdf.txt; GENERATEDDOCUMENT
+      // — AUTOGENERATEDARTIFACT" in the submitted compliance matrix. The
+      // status column already states coverage, so it is not repeated here.
+      const piece = clientSafeComplianceEvidence({ evidenceType: row.evidenceType, evidenceReference: row.evidenceReference });
       if (piece) evidenceParts.push(piece);
     }
     let evidenceCell = evidenceParts.join("; ");
+    // A bidder declaration is met by the firm's own signed statement, not by a
+    // vault document. 2026-09-30, a telecom-tower EOI: "Litigation History
+    // Disclosure" printed an audit firm's name as its evidence at FULLY MET.
+    // The package cannot complete without the signed original (the declaration
+    // row waits as REPLACE_WITH_ORIGINAL), so the matrix names that document
+    // as its evidence. The status is left as the engine rated it.
+    if (isBidderDeclaration(req)) {
+      evidenceCell = "The company's signed declaration, submitted as a separate document in this package";
+    }
     // If NOT MET / PARTIALLY MET, append mitigation from gaps.
     if (status !== "FULLY MET") {
       const matchingGaps = (reqId && gapsByReqId.get(reqId)) || [];
@@ -253,9 +333,10 @@ export function buildComplianceMatrixSection(input: ComplianceMatrixBuilderInput
           ? `${evidenceCell}. Mitigation: ${mitigation}`
           : `Mitigation: ${mitigation}`;
       }
-      if (!evidenceCell) {
-        evidenceCell = "Bid-Team Action: confirm evidence and attach supporting document before submission.";
-      }
+      // Counted so the introduction only promises a mitigation every such row
+      // carries. The "Bid-Team Action: confirm evidence" text that stood here
+      // was deleted with its whole row by the final bid-team sweep.
+      if (!mitigation) rowsWithoutMitigation += 1;
     }
     if (!evidenceCell) evidenceCell = "Cross-referenced in proposal narrative";
 
@@ -265,28 +346,32 @@ export function buildComplianceMatrixSection(input: ComplianceMatrixBuilderInput
       else mandatoryNotMet++;
     }
 
-    const packageRef = inferPackageReference(req);
-    rows.push(`| ${idx + 1} | ${escCell(reqText)} | ${escCell(proposalLocation)} | ${escCell(packageRef)} | ${escCell(evidenceCell)} | ${status} |`);
+    // No "Package Reference" column. It pointed each row at an annex letter
+    // of the engine's own ("Annex F — Eligibility Documents", "Annex A — CV &
+    // Qualifications") in a package that, in run 36074770709, was one PDF
+    // with no annexes; nothing in the proposal defines those letters.
+    rows.push(`| ${idx + 1} | ${escCell(reqText)} | ${escCell(proposalLocation)} | ${escCell(evidenceCell)} | ${status} |`);
   });
 
   if (rows.length === 0) return null;
 
   const totalMandatory = mandatoryFullyMet + mandatoryPartiallyMet + mandatoryNotMet;
+  const mitigationNote = rowsWithoutMitigation === 0 ? " (mitigation stated in the row)" : "";
   const summaryLine = totalMandatory > 0
-    ? `**Mandatory requirements**: ${totalMandatory} total — ${mandatoryFullyMet} fully met, ${mandatoryPartiallyMet} partially met (mitigation listed), ${mandatoryNotMet} not met (mitigation listed).`
+    ? `**Mandatory requirements**: ${totalMandatory} total — ${mandatoryFullyMet} fully met${mandatoryPartiallyMet > 0 ? `, ${mandatoryPartiallyMet} partially met${mitigationNote}` : ""}${mandatoryNotMet > 0 ? `, ${mandatoryNotMet} not met${mitigationNote}` : ""}.`
     : `**${rows.length} requirements** mapped to proposal sections with evidence anchors and compliance status.`;
 
   return [
-    "## SECTION E: COMPLIANCE MATRIX",
+    "# SECTION E: COMPLIANCE MATRIX",
     "",
-    "Every mandatory and scored requirement detected during tender analysis is mapped below to the proposal section that addresses it, the supporting evidence anchor, and a compliance status. NOT MET and PARTIALLY MET rows include a mitigation plan in the evidence column.",
+    `Every mandatory and scored requirement detected during tender analysis is mapped below to the proposal section that addresses it, the supporting evidence anchor, and a compliance status.${rowsWithoutMitigation === 0 ? " NOT MET and PARTIALLY MET rows include a mitigation plan in the evidence column." : ""}`,
     "",
     summaryLine,
     "",
-    "| # | Requirement (paraphrased from tender) | Where Addressed in This Proposal | Package Reference (Annex / Section) | Supporting Evidence / Mitigation | Compliance Status |",
-    "|---|---|---|---|---|---|",
+    "| # | Requirement (paraphrased from tender) | Where Addressed in This Proposal | Supporting Evidence / Mitigation | Compliance Status |",
+    "|---|---|---|---|---|",
     ...rows,
     "",
-    "_Compliance Status: FULLY MET = evidence directly satisfies the requirement; PARTIALLY MET = partially satisfies, mitigation provided; NOT MET = cannot meet as stated, credible mitigation proposed. Package Reference = the annex or section in the submission package where the evaluator will find the supporting document._",
+    "_Compliance Status: FULLY MET = the evidence satisfies the requirement; PARTIALLY MET = the evidence satisfies it in part; NOT MET = cannot be met as stated._",
   ].join("\n");
 }

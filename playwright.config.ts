@@ -1,6 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
 const baseURL = process.env.PLAYWRIGHT_BASE_URL || "http://127.0.0.1:3000";
+const baseOrigin = new URL(baseURL).origin;
 const isolatedFullAuth = process.env.E2E_FULL_AUTH === "true";
 
 // Desktop-only authenticated specs — these exercise the full app at desktop
@@ -11,12 +12,26 @@ const isolatedFullAuth = process.env.E2E_FULL_AUTH === "true";
 const DESKTOP_AUTHENTICATED_SPECS = [
   "golden-tender-workflow.spec.ts",
   "production-smoke.spec.ts",
+  "pr1175-independent-release-audit.spec.ts",
+  "exact-head-evidence.spec.ts",
   "tender-pipeline.spec.ts",
   "cross-user-isolation.spec.ts",
   "health.spec.ts",
   "manual-tender-facts-flexibility.spec.ts",
   "share-link.spec.ts",
   "tender-list.spec.ts",
+  "mobile-overflow-gap-repair.spec.ts",
+  "full-route-mobile-tablet-overflow.spec.ts",
+  "workflow-control-center-action-buttons.spec.ts",
+  // Defect 6: exact-head Preview test for the Vault upload → Plan B import →
+  // tender upload → refresh flow. Verifies that Plan B import never
+  // overwrites official Company Vault bytes/hash/mime/fileName.
+  "vault-plan-b-tender-refresh.spec.ts",
+  // Company Vault recovery acceptance: supported uploads use /api/upload,
+  // refresh immediately, wake VAULT_INGEST, and Plan B displays restored
+  // canonical totals without repeated missing-source warnings.
+  "company-vault-plan-b-recovery.spec.ts",
+  "phase2-workflow-truth-screenshot.spec.ts",
 ];
 
 // Tablet-authenticated contract specs validate responsive UI, role-aware
@@ -30,6 +45,10 @@ const TABLET_AUTHENTICATED_SPECS = [
 
 export default defineConfig({
   testDir: "./e2e",
+  // Playwright clears outputDir before a run. Keep transient traces, videos,
+  // and screenshots away from test-results/, which stores the exact-head CI
+  // command ledger and the pre-browser migration/test/build logs.
+  outputDir: "./browser-results/test-artifacts",
   fullyParallel: true,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 2 : 0,
@@ -41,6 +60,14 @@ export default defineConfig({
   globalSetup: "./e2e/global-setup.ts",
   use: {
     baseURL,
+    // Browser-context request clients do not synthesize Origin/Referer for
+    // programmatic API calls. Supply the same headers as the routed browser
+    // origin so strict CSRF is exercised rather than bypassed or falsely
+    // rejecting legitimate same-origin test mutations.
+    extraHTTPHeaders: {
+      Origin: baseOrigin,
+      Referer: `${baseOrigin}/dashboard`,
+    },
     trace: "on-first-retry",
     screenshot: "only-on-failure",
     video: "retain-on-failure",

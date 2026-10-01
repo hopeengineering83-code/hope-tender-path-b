@@ -1,74 +1,42 @@
-// Gap A regression: RecoveryCommandCenter must use ?mode=background, NOT SSE.
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
-const read = (p: string) => readFileSync(p, "utf8");
+import { getTenderAction } from "../lib/ui/action-registry";
 
-describe("Gap A — RecoveryCommandCenter uses durable background, not SSE", () => {
+const read = (path: string) => readFileSync(path, "utf8");
 
-  it("lib/recovery-command-actions.ts: ALL ai-analyze paths include ?mode=background", () => {
-    const src = read("lib/recovery-command-actions.ts");
-    const lines = src.split("\n");
-    for (let i = 0; i < lines.length; i++) {
-      if (lines[i].includes("/ai-analyze") && lines[i].includes("path:")) {
-        assert.match(
-          lines[i],
-          /mode=background/,
-          `Line ${i + 1}: AI Analyze path must include ?mode=background: ${lines[i].trim()}`,
-        );
-      }
-    }
+describe("AI Analyze is a MANUAL user action via POST /api/tenders/:id/manual-ai-analyze", () => {
+  it("the canonical registry exposes AI_ANALYZE as a NORMAL action with a manual mutation", () => {
+    const action = getTenderAction("AI_ANALYZE");
+    assert.equal(action.mutation, "POST /api/tenders/:id/manual-ai-analyze");
+    assert.equal(action.owner, "AIAnalyzePanel");
+    assert.equal(action.availability, "NORMAL");
   });
 
-  it("lib/recovery-command-actions.ts: NO ai-analyze path uses bare endpoint without ?mode=background", () => {
-    const src = read("lib/recovery-command-actions.ts");
-    // Find all ai-analyze paths
-    const matches = src.match(/path:\s*"\/api\/tenders\/\{tenderId\}\/ai-analyze[^"]*"/g) ?? [];
-    for (const m of matches) {
-      assert.match(m, /mode=background/, `Path without ?mode=background: ${m}`);
-    }
+  it("the normal workflow owner never posts or streams AI analysis via SSE", () => {
+    const owner = read("components/workflow-step-links.tsx");
+    // workflow-step-links is navigation-only — no fetch, no SSE, no manual-ai-analyze call.
+    // The actual AI Analyze button lives in the AIAnalyzePanel component, not in workflow-step-links.
+    assert.doesNotMatch(owner, /method:\s*"POST"/);
+    assert.doesNotMatch(owner, /run-next\?jobType/);
+    assert.doesNotMatch(owner, /text\/event-stream|getReader\(\)/);
   });
 
-  it("components/tender-recovery-command-center.tsx: does NOT use Accept: text/event-stream", () => {
-    const src = read("components/tender-recovery-command-center.tsx");
-    assert.ok(
-      !/Accept.*text\/event-stream/.test(src),
-      "RecoveryCommandCenter must NOT use Accept: text/event-stream (direct SSE)",
-    );
-  });
-
-  it("components/tender-recovery-command-center.tsx: does NOT call runStreamingAnalyze", () => {
-    const src = read("components/tender-recovery-command-center.tsx");
-    assert.ok(
-      !/runStreamingAnalyze/.test(src),
-      "RecoveryCommandCenter must NOT call runStreamingAnalyze (the old SSE handler)",
-    );
-  });
-
-  it("components/tender-recovery-command-center.tsx: calls runDurableAnalyze for ai-analyze actions", () => {
-    const src = read("components/tender-recovery-command-center.tsx");
-    assert.match(src, /runDurableAnalyze/);
-    assert.match(src, /spec\.path\.includes\("\/ai-analyze"\)/);
-  });
-
-  it("components/tender-recovery-command-center.tsx: runDurableAnalyze enqueues via POST (not SSE)", () => {
-    const src = read("components/tender-recovery-command-center.tsx");
-    const block = src.slice(src.indexOf("async function runDurableAnalyze"), src.indexOf("async function executeAction"));
-    // Must POST to the path (which includes ?mode=background)
-    assert.match(block, /fetch\(path,\s*\{\s*method:\s*"POST"\s*\}\)/);
-    // Must expect 202
-    assert.match(block, /enqueueRes\.status !== 202/);
-    // Must poll /api/ai-jobs/
-    assert.match(block, /\/api\/ai-jobs\/\$\{jobId\}/);
-    // Must NOT use text/event-stream
-    assert.ok(!/text\/event-stream/.test(block), "runDurableAnalyze must NOT use SSE");
-  });
-
-  it("components/tender-recovery-command-center.tsx: surfaces worker 401/403/500 errors", () => {
-    const src = read("components/tender-recovery-command-center.tsx");
-    const block = src.slice(src.indexOf("async function runDurableAnalyze"), src.indexOf("async function executeAction"));
-    assert.match(block, /workerRes\.status === 401/, "must handle worker 401");
-    assert.match(block, /workerRes\.status === 403/, "must handle worker 403");
-    assert.match(block, /workerRes\.status >= 500/, "must handle worker 500");
+  it("the manual AI Analyze route is durable and idempotent", () => {
+    const route = read("app/api/tenders/[id]/manual-ai-analyze/route.ts");
+    const service = read("lib/ai-jobs/analysis-job-service.ts");
+    assert.match(route, /export async function POST/);
+    assert.match(route, /requireRole\("ADMIN",\s*"PROPOSAL_MANAGER"\)/);
+    assert.match(route, /createAnalysisJob/);
+    // FIX 1: the route forwards manualAuthority (no separate updateMany patch).
+    assert.match(route, /manualAuthority:/);
+    assert.match(route, /source: "manual-ai-analyze"/);
+    assert.match(route, /actorUserId: actor\.id/);
+    // The atomic write of manualRequested=true and autoContinue=false happens
+    // in the service, in the same transaction as job creation.
+    assert.match(service, /manualRequested: true/);
+    assert.match(service, /autoContinue: false/);
+    // The race-window updateMany patch must NOT exist in the route.
+    assert.doesNotMatch(route, /prisma\.aiJob\.updateMany/);
   });
 });

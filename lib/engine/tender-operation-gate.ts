@@ -141,9 +141,9 @@ export function resolveTenderOperationGate(input: OperationGateInput): Operation
   const extractionStatus = tender.analysisExtractionStatus ?? null;
   if (extractionStatus === "OCR_REQUIRED") {
     if (operation === "FINAL_SUBMISSION_READY") {
-      blockers.push("Extraction was corrupted and AI Analyze was skipped — re-run OCR + AI Analyze before final submission.");
+      blockers.push("Extraction was corrupted and AI Analyze was skipped — upload a clearer, text-based copy before final submission.");
     } else {
-      warnings.push("Extraction was corrupted — AI Analyze was skipped. Re-run OCR for better results.");
+      warnings.push("Extraction was corrupted — AI Analyze was skipped. Upload a clearer, text-based copy for better results.");
     }
   } else if (extractionStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION") {
     if (operation === "FINAL_SUBMISSION_READY") {
@@ -203,7 +203,7 @@ export function resolveTenderOperationGate(input: OperationGateInput): Operation
 
   // ── 3. Confirmed BuildPlan required ──────────────────────────────
   if (!buildPlan || !buildPlan.ok) {
-    blockers.push("No confirmed BuildPlan — build and confirm the submission plan before final submission.");
+    blockers.push("No current source-verified Build Plan — Run Engine creates and verifies it automatically before final submission processing.");
   }
 
   // ── 4. Submission endpoint validation (operation-specific) ───────

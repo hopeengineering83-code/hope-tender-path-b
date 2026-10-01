@@ -29,7 +29,7 @@ const currentnessSrc = readFileSync("lib/engine/tender-currentness.ts", "utf8");
 const aiEnvSrc = readFileSync("lib/ai-environment-readiness.ts", "utf8");
 const systemSrc = readFileSync("lib/system-readiness.ts", "utf8");
 
-const EXPECTED_ORDER = ["zai", "cerebras", "mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
+const EXPECTED_ORDER = ["gemini", "groq", "mistral", "zai", "cerebras", "openrouter", "openai", "together", "deepseek", "anthropic"];
 
 describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
   describe("dashboard critical-blockers count uses canonical currentness", () => {
@@ -131,8 +131,11 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
       assert.match(systemSrc, /CANONICAL_AI_PROVIDER_ORDER/);
     });
 
-    it("lib/system-readiness.ts uses REQUIRED_PROVIDER_ORDER from the canonical names", () => {
-      assert.match(systemSrc, /REQUIRED_PROVIDER_ORDER.*CANONICAL_AI_PROVIDER_DISPLAY_NAMES/);
+    it("lib/system-readiness.ts derives REQUIRED_PROVIDER_ORDER from the ACTIVE chain", () => {
+      // Previously derived from CANONICAL_AI_PROVIDER_DISPLAY_NAMES, i.e. all
+      // ten. Under zero-paid that told an operator to configure five providers
+      // the app is forbidden to contact.
+      assert.match(systemSrc, /REQUIRED_PROVIDER_ORDER\s*=\s*getAutomaticProviderOrder\(\)/);
     });
 
     it("the registry catalog defines Anthropic as the last provider", () => {
@@ -369,12 +372,12 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
     it("ready is false when no AI provider is configured", () => {
       const saved: Record<string, string | undefined> = {};
       const apiKeys = [
-        "ZAI_API_KEY",
-        "CEREBRAS_API_KEY",
-        "MISTRAL_API_KEY",
-        "GROQ_API_KEY",
-        "OPENROUTER_API_KEY",
         "GEMINI_API_KEY",
+        "GROQ_API_KEY",
+        "MISTRAL_API_KEY",
+        "ZAI_API_KEY",
+        "OPENROUTER_API_KEY",
+        "CEREBRAS_API_KEY",
         "OPENAI_API_KEY",
         "TOGETHER_API_KEY",
         "DEEPSEEK_API_KEY",
@@ -428,12 +431,12 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
     it("reports CRITICAL ai_providers check when no provider configured", async () => {
       const saved: Record<string, string | undefined> = {};
       const apiKeys = [
-        "ZAI_API_KEY",
-        "CEREBRAS_API_KEY",
-        "MISTRAL_API_KEY",
-        "GROQ_API_KEY",
-        "OPENROUTER_API_KEY",
         "GEMINI_API_KEY",
+        "GROQ_API_KEY",
+        "MISTRAL_API_KEY",
+        "ZAI_API_KEY",
+        "OPENROUTER_API_KEY",
+        "CEREBRAS_API_KEY",
         "OPENAI_API_KEY",
         "TOGETHER_API_KEY",
         "DEEPSEEK_API_KEY",
@@ -469,8 +472,16 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
       }
     });
 
-    it("REQUIRED_PROVIDER_ORDER matches CANONICAL order exactly", () => {
-      assert.ok(/REQUIRED_PROVIDER_ORDER\s*=\s*CANONICAL_AI_PROVIDER_DISPLAY_NAMES/.test(systemSrc));
+    it("REQUIRED_PROVIDER_ORDER matches the ACTIVE automatic chain exactly", () => {
+      assert.ok(/REQUIRED_PROVIDER_ORDER\s*=\s*getAutomaticProviderOrder\(\)/.test(systemSrc));
+    });
+
+    it("the AI readiness check requires a runtime-verified provider, not just a key", () => {
+      // It used to pass the moment any provider had a key, so production
+      // readiness reported green on an environment where every provider
+      // rejected every request — green exactly when it needed to be informative.
+      assert.match(systemSrc, /aiHealth\.state === "healthy" \? "OK"/);
+      assert.match(systemSrc, /aiHealth\.state === "degraded" \? "WARNING"/);
     });
   });
 
@@ -488,7 +499,7 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
     });
 
     it("labels the Live Pipeline table as limited to recent tenders", () => {
-      assert.match(dashboardSrc, /Recent \{recentTenders\.length\} tenders/);
+      assert.match(dashboardSrc, /Last \{recentTenders\.length\} tender\{recentTenders\.length === 1 \? "" : "s"\}/);
     });
   });
 
@@ -502,19 +513,23 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
     });
 
     it("renders Blocked badge for blocked extraction", () => {
-      assert.match(dashboardSrc, /✗ Blocked/);
+      // Icon is a real inline SVG (components/icons.tsx), not a raw Unicode
+      // glyph — glyph rendering depends on the viewer's OS/browser emoji
+      // font and shows blank "tofu" boxes in many environments.
+      assert.match(dashboardSrc, /<CrossIcon \/> Blocked/);
     });
 
     it("renders Not analyzed badge for not-analyzed extraction", () => {
-      assert.match(dashboardSrc, /○ Not analyzed/);
+      assert.match(dashboardSrc, /Not analyzed/);
     });
 
     it("renders Provisional badge (NOT Clear) when currentness === PROVISIONAL_NOT_BLOCKED", () => {
       // The dashboard must NEVER render "Clear" wording — the workspace
       // projection is a lower bound, not a canonical authority.
       assert.match(dashboardSrc, /extractionState === "PROVISIONAL_NOT_BLOCKED"/);
-      assert.match(dashboardSrc, /◐ Provisional/);
+      assert.match(dashboardSrc, /<AlertCircleIcon \/> Provisional/);
       assert.doesNotMatch(dashboardSrc, /✓ Clear/);
+      assert.doesNotMatch(dashboardSrc, />\s*Clear\s*</);
     });
 
     it("does NOT render a workflow % bar in the Live Pipeline (bar removed)", () => {
@@ -581,8 +596,8 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
       assert.match(dashboardSrc, /minimum — per-tender verification still required/);
     });
 
-    it("labels Live Pipeline as 'Workspace projection (NOT canonical Clear)'", () => {
-      assert.match(dashboardSrc, /Workspace projection \(NOT canonical Clear\)/);
+    it("labels Live Pipeline as a non-canonical workspace projection", () => {
+      assert.match(dashboardSrc, /workspace projection — the canonical state lives in each tender/);
     });
 
     it("does not use green color for the Critical blockers count", () => {
@@ -690,12 +705,9 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
     });
   });
 
-  describe("System readiness production path (worker_auth WARNING, not unconditional CRITICAL)", () => {
-    it("marks worker_auth as requiredForProduction: false (not unconditional)", () => {
-      // CHATGPT-M1 recheck 9 item #2: marking production CRITICAL is only
-      // correct when the deployment requires automated processing. We cannot
-      // infer that, so it's a WARNING, not requiredForProduction.
-      assert.match(systemSrc, /key: "worker_auth"[\s\S]*?requiredForProduction: false/);
+  describe("System readiness production path for upload-and-continue automation", () => {
+    it("requires automated worker authentication for production readiness", () => {
+      assert.match(systemSrc, /key: "worker_auth"[\s\S]*?requiredForProduction: true/);
     });
 
     it("title reflects operational (not security) rationale", () => {
@@ -704,17 +716,14 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
 
     it("documents the requireRole fallback (not public unauthenticated)", () => {
       assert.match(systemSrc, /requireRole\("ADMIN", "PROPOSAL_MANAGER"\)|requireRole\(ADMIN, PROPOSAL_MANAGER\)/);
-      assert.match(systemSrc, /falls back to requireRole/);
+      assert.match(systemSrc, /It falls back/i);
     });
 
     it("does NOT claim the endpoint is unauthenticated when secrets are absent", () => {
       assert.doesNotMatch(systemSrc, /endpoints are unauthenticated/);
     });
 
-    it("returns WARNING (not CRITICAL) in production when no secret", async () => {
-      // The endpoint remains safely usable through user-scoped execution.
-      // Missing secrets are an operational limitation, not a production
-      // blocker.
+    it("returns CRITICAL in production when no secret because continuations would stall", async () => {
       const savedNodeEnv = process.env.NODE_ENV;
       const savedVercelEnv = process.env.VERCEL_ENV;
       const savedWorker = process.env.AI_JOBS_WORKER_SECRET;
@@ -726,17 +735,9 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
       try {
         const r = await getSystemReadiness();
         const workerCheck = r.checks.find((c) => c.key === "worker_auth");
-        assert.equal(workerCheck?.severity, "WARNING", "worker_auth must be WARNING, not CRITICAL");
-        assert.equal(workerCheck?.requiredForProduction, false);
-        // productionReady should NOT be false just because worker_auth is WARNING
-        // (it's not requiredForProduction)
-        const otherRequiredFailures = r.checks.filter(
-          (c) => c.requiredForProduction && c.severity !== "OK",
-        );
-        // productionReady is false only if OTHER required checks fail (e.g. DB
-        // connectivity in test env). worker_auth alone must NOT cause it.
-        const workerCausesFailure = otherRequiredFailures.some((c) => c.key === "worker_auth");
-        assert.equal(workerCausesFailure, false, "worker_auth must not cause productionReady=false");
+        assert.equal(workerCheck?.severity, "CRITICAL");
+        assert.equal(workerCheck?.requiredForProduction, true);
+        assert.equal(r.productionReady, false);
       } finally {
         Reflect.set(process.env, "NODE_ENV", savedNodeEnv ?? "test");
         if (savedVercelEnv !== undefined) process.env.VERCEL_ENV = savedVercelEnv;
@@ -792,12 +793,12 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
   describe("PROVISIONAL_NOT_BLOCKED is never treated as canonical readiness (recheck 9 item #4)", () => {
     it("dashboard never renders 'Clear' wording for PROVISIONAL_NOT_BLOCKED", () => {
       assert.doesNotMatch(dashboardSrc, /✓ Clear/);
-      assert.match(dashboardSrc, /◐ Provisional/);
+      assert.match(dashboardSrc, /<AlertCircleIcon \/> Provisional/);
     });
 
     it("analysis page never renders 'Clear' wording for PROVISIONAL_NOT_BLOCKED", () => {
       assert.doesNotMatch(analysisSrc, /✓ Clear/);
-      assert.match(analysisSrc, /◐ Provisional/);
+      assert.match(analysisSrc, /Provisional/);
     });
 
     it("tenders page never renders 'Clear' wording", () => {
@@ -862,24 +863,22 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
       assert.match(ccSrc, /No HIGH objections/);
     });
 
-    it("command center Documents card reads ONLY canonical summary values (no local filtering)", () => {
+    it("command center Documents card reads readiness ONLY from the canonical Tender Release State (no local filtering or re-derived counts)", () => {
       const ccSrc = readFileSync("app/dashboard/tenders/[id]/command-center/page.tsx", "utf8");
-      // Must use ONLY the counts from getFinalSubmissionReadiness summary.
-      assert.match(ccSrc, /summary\.exportReadyDocumentsTotal/);
-      assert.match(ccSrc, /summary\.finalExportCandidates/);
-      assert.match(ccSrc, /summary\.documentBlockers/);
+      // The Documents card's blocker/readiness caption must come from the
+      // canonical releaseState (lib/engine/tender-release-state.ts), not a
+      // second, locally re-derived export-ready/final-candidate split.
+      assert.match(ccSrc, /releaseState\.blockerTotal/);
+      assert.match(ccSrc, /releaseState\.criticalBlockerTotal/);
       // Must NOT import or use local document filtering helpers.
       assert.doesNotMatch(ccSrc, /from ["']\.\.\/.+lib\/engine\/document-output-state["']/);
       assert.doesNotMatch(ccSrc, /filterFinalExportCandidateDocuments/);
       assert.doesNotMatch(ccSrc, /isExportReady/);
       // Must NOT use a local ACTIVE_DOC_STATUSES vocabulary.
       assert.doesNotMatch(ccSrc, /ACTIVE_DOC_STATUSES/);
-      // Must label the second count "final candidates" (not "generated").
-      assert.match(ccSrc, /final candidates/);
-      assert.doesNotMatch(ccSrc, /\d+ generated/);
-      // Must fail closed when canonical is unavailable.
+      // Must fail closed when the canonical release state is unavailable.
       assert.match(ccSrc, /Canonical readiness unavailable/);
-      assert.match(ccSrc, /canonical\s*\?\s*[\s\S]*?:\s*"Canonical readiness unavailable"/);
+      assert.match(ccSrc, /releaseState\s*\?\s*[\s\S]*?:\s*"Canonical readiness unavailable"/);
     });
 
     it("command center AI jobs section is labelled 'Historical' (not current state)", () => {
@@ -895,15 +894,15 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
       assert.doesNotMatch(ccSrc, /bg-green-100 text-green-700/);
     });
 
-    it("package-lock.json has NO diff vs authorized base (fsevents dev:true preserved)", () => {
-      // Verify the fsevents 2.3.2 entry still has "dev": true — the
+    it("package-lock.json has NO diff vs authorized base (fsevents optional:true preserved)", () => {
+      // Verify the fsevents 2.3.2 entry still has "optional": true — the
       // unauthorized lockfile change removed it. We check the specific
       // entry to avoid greedy regex matching across the whole file.
       const lockSrc = readFileSync("package-lock.json", "utf8");
-      // Find the playwright fsevents 2.3.2 block and verify dev:true is present.
+      // Find the playwright fsevents 2.3.2 block and verify optional:true is present.
       const fseventsBlock = lockSrc.match(/"node_modules\/playwright\/node_modules\/fsevents":\s*\{[^}]*\}/);
       assert.ok(fseventsBlock, "playwright fsevents block must exist");
-      assert.match(fseventsBlock[0], /"dev": true/, 'fsevents 2.3.2 must have "dev": true (unauthorized lockfile change reverted)');
+      assert.match(fseventsBlock[0], /"optional": true/, 'fsevents 2.3.2 must have "optional": true (unauthorized lockfile change reverted)');
     });
   });
 });

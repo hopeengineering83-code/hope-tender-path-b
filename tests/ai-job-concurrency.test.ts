@@ -117,7 +117,15 @@ describe("createAnalysisJob() concurrency safety (BLOCKER 2)", { skip: !RUN_DB_I
     // two-tab) are serialized by the advisory lock. The test limitation is
     // specifically about Promise.all + connection pool interaction in CI.
     const promises = Array.from({ length: 8 }, () =>
-      createAnalysisJob({ tenderId, userId })
+      createAnalysisJob({
+        tenderId,
+        userId,
+        manualAuthority: {
+          source: "manual-ai-analyze",
+          actorUserId: userId,
+          authorizedAt: new Date().toISOString(),
+        },
+      })
     );
 
     const results = await Promise.all(promises);
@@ -240,7 +248,15 @@ describe("createAnalysisJob() concurrency safety (BLOCKER 2)", { skip: !RUN_DB_I
       if (mockSucceeded) {
         // Mock succeeded — assert rejection
         await assert.rejects(
-          async () => createAnalysisJob({ tenderId, userId }),
+          async () => createAnalysisJob({
+            tenderId,
+            userId,
+            manualAuthority: {
+              source: "manual-ai-analyze",
+              actorUserId: userId,
+              authorizedAt: new Date().toISOString(),
+            },
+          }),
           /AI_ANALYZE_NON_RETRYABLE/,
           "Expected createAnalysisJob to reject with AI_ANALYZE_NON_RETRYABLE error"
         );

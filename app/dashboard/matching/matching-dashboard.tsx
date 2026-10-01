@@ -1,263 +1,91 @@
 "use client";
 
-import { useState } from "react";
 import Link from "next/link";
+import {
+  MatchingSelectedEvidencePanel,
+  type SelectedEvidenceCandidate,
+} from "../../../components/matching-selected-evidence-panel";
 
-type Expert = { id: string; fullName: string; title?: string | null; disciplines: string; sectors: string; trustLevel?: string | null };
-type Project = { id: string; name: string; clientName?: string | null; sector?: string | null; contractValue?: number | null; currency?: string | null; trustLevel?: string | null };
+type Expert = { fullName: string; title?: string | null; trustLevel?: string | null };
+type Project = { name: string; clientName?: string | null; trustLevel?: string | null };
 type ExpertMatch = { id: string; score: number; rationale?: string | null; isSelected: boolean; expert: Expert };
 type ProjectMatch = { id: string; score: number; rationale?: string | null; isSelected: boolean; project: Project };
-type Tender = { id: string; title: string; expertMatches: ExpertMatch[]; projectMatches: ProjectMatch[] };
+type Tender = {
+  id: string;
+  title: string;
+  expertMatchCount: number;
+  projectMatchCount: number;
+  expertMatches: ExpertMatch[];
+  projectMatches: ProjectMatch[];
+};
 
-function TrustBadge({ level }: { level?: string | null }) {
-  if (level === "REVIEWED") return <span className="rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-semibold text-green-700">✓ REVIEWED</span>;
-  if (level === "AI_DRAFT") return <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">AI DRAFT</span>;
-  return <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold text-red-600">DRAFT — review needed</span>;
-}
+type Pagination = { page: number; totalPages: number; totalTenders: number; perPage: number };
 
-function ScoreBar({ score }: { score: number }) {
-  const pct = Math.min(100, Math.round(score * 100));
-  const color = pct >= 70 ? "bg-green-500" : pct >= 40 ? "bg-amber-400" : "bg-red-400";
+export function MatchingDashboard({ tenders, pagination }: { tenders: Tender[]; pagination: Pagination }) {
   return (
-    <div className="flex items-center gap-2">
-      <div className="h-1.5 w-24 overflow-hidden rounded-full bg-slate-100">
-        <div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }} />
-      </div>
-      <span className={`text-xs font-semibold ${pct >= 70 ? "text-green-700" : pct >= 40 ? "text-amber-600" : "text-red-500"}`}>
-        {pct}%
-      </span>
-    </div>
-  );
-}
-
-export function MatchingDashboard({ tenders: initial }: { tenders: Tender[] }) {
-  const [tenders, setTenders] = useState(initial);
-  const [togglingId, setTogglingId] = useState<string | null>(null);
-  const [expandedTender, setExpandedTender] = useState<string | null>(initial[0]?.id ?? null);
-  const [expandedMatches, setExpandedMatches] = useState<Set<string>>(new Set());
-  function toggleMatch_(id: string) {
-    setExpandedMatches((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
-  }
-
-  async function toggleMatch(tenderId: string, matchId: string, matchType: "expert" | "project", isSelected: boolean) {
-    setTogglingId(matchId);
-    try {
-      const res = await fetch(`/api/tenders/${tenderId}/matches`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ matchId, matchType, isSelected }),
-      });
-      if (res.ok) {
-        setTenders((prev) =>
-          prev.map((t) => {
-            if (t.id !== tenderId) return t;
-            if (matchType === "expert") {
-              return { ...t, expertMatches: t.expertMatches.map((m) => m.id === matchId ? { ...m, isSelected } : m) };
-            } else {
-              return { ...t, projectMatches: t.projectMatches.map((m) => m.id === matchId ? { ...m, isSelected } : m) };
-            }
-          })
-        );
-      }
-    } finally {
-      setTogglingId(null);
-    }
-  }
-
-  if (tenders.length === 0) {
-    return (
-      <div className="space-y-6">
-        <h1 className="text-2xl font-bold text-slate-900">Matching Engine</h1>
-        <div className="rounded-2xl border bg-white p-12 text-center shadow-sm">
-          <p className="text-slate-400">No tenders with match data yet. Run the engine on a tender to generate matches.</p>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-900">Matching Engine</h1>
-        <p className="mt-1 text-sm text-slate-500">
-          Review ranked experts and project references. Toggle selection to include or exclude from proposal.
+    <div className="min-w-0 space-y-6">
+      <header>
+        <h1 className="text-2xl font-bold text-slate-900">Matching and Selected Evidence</h1>
+        <p className="mt-1 text-sm text-slate-600">
+          Run Engine owns scoring and selection automatically. This page is a read-only view of persisted evidence across {pagination.totalTenders} tender{pagination.totalTenders === 1 ? "" : "s"}.
         </p>
-      </div>
+      </header>
 
-      <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-        <strong>Note:</strong> Only <strong>REVIEWED</strong> experts and projects can be used for final document generation.
-        {" "}<Link href="/dashboard/company/review" className="font-semibold underline hover:text-amber-900">Review knowledge records →</Link>
-      </div>
+      {tenders.length === 0 ? (
+        <div className="rounded-2xl border bg-white p-12 text-center shadow-sm">
+          <p className="text-slate-600">Automatic verification running.</p>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {tenders.map((tender) => {
+            const experts = tender.expertMatches.map((match): SelectedEvidenceCandidate => ({
+              id: match.id,
+              name: match.expert.fullName,
+              subtitle: match.expert.title ?? null,
+              score: match.score,
+              rationale: match.rationale ?? null,
+              isSelected: match.isSelected,
+              trustLevel: match.expert.trustLevel ?? "",
+            }));
+            const projects = tender.projectMatches.map((match): SelectedEvidenceCandidate => ({
+              id: match.id,
+              name: match.project.name,
+              subtitle: match.project.clientName ?? null,
+              score: match.score,
+              rationale: match.rationale ?? null,
+              isSelected: match.isSelected,
+              trustLevel: match.project.trustLevel ?? "",
+            }));
 
-      <div className="space-y-4">
-        {tenders.map((tender) => {
-          const selectedExperts = tender.expertMatches.filter((m) => m.isSelected).length;
-          const selectedProjects = tender.projectMatches.filter((m) => m.isSelected).length;
-          const isExpanded = expandedTender === tender.id;
-
-          return (
-            <div key={tender.id} className="rounded-2xl border bg-white shadow-sm">
-              <div
-                className="flex cursor-pointer items-center justify-between gap-4 p-6"
-                onClick={() => setExpandedTender(isExpanded ? null : tender.id)}
-              >
-                <div>
-                  <h2 className="text-lg font-semibold text-slate-900">{tender.title}</h2>
-                  <p className="text-sm text-slate-500">
-                    {tender.expertMatches.length} expert candidates · {tender.projectMatches.length} project candidates
-                    {(selectedExperts + selectedProjects > 0) && (
-                      <span className="ml-2 text-green-600">· {selectedExperts} experts + {selectedProjects} projects selected</span>
-                    )}
+            return (
+              <details key={tender.id} className="min-w-0 max-w-full overflow-hidden rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <summary className="cursor-pointer break-all text-base font-semibold text-slate-900">
+                  {tender.title}
+                </summary>
+                <div className="mt-4">
+                  <MatchingSelectedEvidencePanel
+                    tenderId={tender.id}
+                    experts={experts}
+                    projects={projects}
+                    sectionId={`matching-selected-evidence-${tender.id}`}
+                  />
+                  <p className="mt-2 text-xs text-slate-500">
+                    Showing persisted selections first and up to {tender.expertMatchCount} expert / {tender.projectMatchCount} project match records.
                   </p>
                 </div>
-                <div className="flex items-center gap-3">
-                  <Link
-                    href={`/dashboard/tenders/${tender.id}`}
-                    className="rounded border px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    Open workspace
-                  </Link>
-                  <span className="text-slate-400">{isExpanded ? "▲" : "▼"}</span>
-                </div>
-              </div>
+              </details>
+            );
+          })}
+        </div>
+      )}
 
-              {isExpanded && (
-                <div className="border-t px-6 pb-6 pt-4">
-                  <div className="grid gap-6 lg:grid-cols-2">
-                    <div>
-                      <p className="mb-3 text-sm font-semibold text-slate-700">
-                        Experts
-                        <span className="ml-1.5 font-normal text-slate-400">({selectedExperts} selected)</span>
-                      </p>
-                      <div className="space-y-2">
-                        {tender.expertMatches.length === 0 && (
-                          <p className="text-sm text-slate-400">No expert matches yet.</p>
-                        )}
-                        {tender.expertMatches.map((match) => {
-                          const disciplines = (() => { try { return JSON.parse(match.expert.disciplines) as string[]; } catch { return []; } })();
-                          const isBusy = togglingId === match.id;
-                          const isExpanded = expandedMatches.has(match.id);
-                          return (
-                            <div key={match.id} className={`rounded-xl border px-4 py-3 transition-colors ${match.isSelected ? "border-green-300 bg-green-50" : "hover:bg-slate-50"}`}>
-                              <div className="flex items-center justify-between gap-2">
-                                <button
-                                  onClick={() => toggleMatch_(match.id)}
-                                  className="flex min-w-0 flex-1 items-center gap-2 text-left"
-                                >
-                                  <svg className={`h-3 w-3 shrink-0 text-slate-400 transition-transform ${isExpanded ? "rotate-180" : ""}`} fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                                  </svg>
-                                  <div className="min-w-0 flex-1">
-                                    <div className="flex items-center gap-2 flex-wrap">
-                                      <p className="font-medium text-slate-900">{match.expert.fullName}</p>
-                                      <TrustBadge level={match.expert.trustLevel} />
-                                    </div>
-                                    {match.expert.title && <p className="text-xs text-slate-500">{match.expert.title}</p>}
-                                    <div className="mt-1.5">
-                                      <ScoreBar score={match.score} />
-                                    </div>
-                                  </div>
-                                </button>
-                                <button
-                                  onClick={() => toggleMatch(tender.id, match.id, "expert", !match.isSelected)}
-                                  disabled={isBusy}
-                                  className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium disabled:opacity-60 ${
-                                    match.isSelected
-                                      ? "bg-green-600 text-white hover:bg-green-700"
-                                      : "border border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
-                                  }`}
-                                >
-                                  {isBusy ? "…" : match.isSelected ? "✓ Selected" : "Select"}
-                                </button>
-                              </div>
-                              {isExpanded && (
-                                <div className="mt-2 pl-5 space-y-1.5">
-                                  {disciplines.length > 0 && (
-                                    <div className="flex flex-wrap gap-1">
-                                      {disciplines.map((d) => (
-                                        <span key={d} className="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] text-blue-700">{d}</span>
-                                      ))}
-                                    </div>
-                                  )}
-                                  {match.rationale && (
-                                    <p className="text-xs text-slate-600 leading-relaxed">{match.rationale}</p>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-
-                    <div>
-                      <p className="mb-3 text-sm font-semibold text-slate-700">
-                        Projects
-                        <span className="ml-1.5 font-normal text-slate-400">({selectedProjects} selected)</span>
-                      </p>
-                      <div className="space-y-2">
-                        {tender.projectMatches.length === 0 && (
-                          <p className="text-sm text-slate-400">No project matches yet.</p>
-                        )}
-                        {tender.projectMatches.map((match) => {
-                          const isBusy = togglingId === match.id;
-                          const isExpanded = expandedMatches.has(match.id);
-                          return (
-                            <div key={match.id} className={`rounded-xl border px-4 py-3 transition-colors ${match.isSelected ? "border-green-300 bg-green-50" : "hover:bg-slate-50"}`}>
-                              <div className="flex items-center justify-between gap-2">
-                                <button
-                                  onClick={() => toggleMatch_(match.id)}
-                                  className="flex min-w-0 flex-1 items-center gap-2 text-left"
-                                >
-                                  <svg className={`h-3 w-3 shrink-0 text-slate-400 transition-transform ${isExpanded ? "rotate-180" : ""}`} fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                                  </svg>
-                                  <div className="min-w-0 flex-1">
-                                    <div className="flex items-center gap-2 flex-wrap">
-                                      <p className="font-medium text-slate-900">{match.project.name}</p>
-                                      <TrustBadge level={match.project.trustLevel} />
-                                    </div>
-                                    {match.project.clientName && <p className="text-xs text-slate-500">{match.project.clientName}</p>}
-                                    <div className="mt-1.5">
-                                      <ScoreBar score={match.score} />
-                                    </div>
-                                  </div>
-                                </button>
-                                <button
-                                  onClick={() => toggleMatch(tender.id, match.id, "project", !match.isSelected)}
-                                  disabled={isBusy}
-                                  className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium disabled:opacity-60 ${
-                                    match.isSelected
-                                      ? "bg-green-600 text-white hover:bg-green-700"
-                                      : "border border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
-                                  }`}
-                                >
-                                  {isBusy ? "…" : match.isSelected ? "✓ Selected" : "Select"}
-                                </button>
-                              </div>
-                              {isExpanded && (
-                                <div className="mt-2 pl-5 space-y-1.5">
-                                  {match.project.sector && (
-                                    <span className="inline-block rounded bg-purple-100 px-1.5 py-0.5 text-[10px] text-purple-700">{match.project.sector}</span>
-                                  )}
-                                  {match.rationale && (
-                                    <p className="text-xs text-slate-600 leading-relaxed">{match.rationale}</p>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
+      {pagination.totalPages > 1 && (
+        <nav aria-label="Matching pages" className="flex flex-wrap items-center justify-center gap-2">
+          {pagination.page > 1 && <Link href={`/dashboard/matching?page=${pagination.page - 1}`} className="min-h-10 rounded-lg border bg-white px-3 py-2 text-sm font-medium text-slate-700">Previous</Link>}
+          <span className="text-sm text-slate-500">Page {pagination.page} of {pagination.totalPages}</span>
+          {pagination.page < pagination.totalPages && <Link href={`/dashboard/matching?page=${pagination.page + 1}`} className="min-h-10 rounded-lg border bg-white px-3 py-2 text-sm font-medium text-slate-700">Next</Link>}
+        </nav>
+      )}
     </div>
   );
 }
