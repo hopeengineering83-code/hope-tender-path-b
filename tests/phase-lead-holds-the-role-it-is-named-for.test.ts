@@ -52,6 +52,9 @@ test("nobody is named as the lead for a role they do not hold", () => {
     const lead = /\*\*Phase lead:\*\*\s*([^.]+)\./.exec(block);
     const role = /\*\*Accountable role:\*\*\s*([^.—]+)/.exec(block);
     if (!lead || !role) continue;
+    // The Project Principal is the firm's executive — the organogram names
+    // them so — and no executive title says "Project Principal".
+    if (/^Project Principal$/i.test(role[1].trim()) && /General Manager|Managing Director|Chief Executive|\bCEO\b|\bPresident\b|\bOwner\b/i.test(lead[1])) continue;
     const roleWords = role[1].toLowerCase().split(/[^a-z]+/).filter((w) => w.length > 3 && w !== "team");
     assert.ok(
       roleWords.some((word) => lead[1].toLowerCase().includes(word)),

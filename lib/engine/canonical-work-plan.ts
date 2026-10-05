@@ -323,11 +323,25 @@ export interface CanonicalWorkPlanPhase {
  * checking the CV finds it immediately. A phase with no matching expert names
  * no lead instead.
  */
+// Words every engineering title carries. Matched alone they name whoever
+// comes first: the "Resident Engineer" phase of a delivered healthcare plan
+// was led by a Senior Electrical Engineer, through "engineer" (2026-10-05).
+const GENERIC_ROLE_WORDS = new Set([
+  "team", "lead", "leader", "senior", "engineer", "engineers", "specialist", "specialists",
+  "expert", "experts", "project", "manager", "director", "consultant", "and", "the", "for", "with",
+]);
+
 function leadKeywordsFor(role: string): readonly string[] {
-  return role
-    .toLowerCase()
-    .split(/[^a-z]+/)
-    .filter((word) => word.length > 3 && word !== "team");
+  const out: string[] = [];
+  const add = (k: string) => { if (k && !out.includes(k)) out.push(k); };
+  // "Lead Architect + Interior Designer" holds two roles.
+  for (const part of role.toLowerCase().replace(/\([^)]*\)/g, " ").split(/\s*(?:\+|\/|&|,|\band\b)\s*/)) {
+    const phrase = part.replace(/[^a-z\s-]+/g, " ").replace(/\s+/g, " ").trim();
+    if (!phrase) continue;
+    add(phrase);
+    for (const word of phrase.split(/[\s-]+/)) if (word.length >= 3 && !GENERIC_ROLE_WORDS.has(word)) add(word);
+  }
+  return out.length > 0 ? out : [role.toLowerCase().trim()];
 }
 
 /**

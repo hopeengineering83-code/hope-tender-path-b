@@ -51,6 +51,7 @@ import { canonicalWorkPlan } from "./canonical-work-plan";
 import type { ExpertRecord, ProjectRecord } from "./benchmark-tables";
 import { truncateAtWordBoundary } from "./proposal-intelligence";
 import { titleStatesRole } from "./requirement-constraints";
+import { holdsExecutiveOffice } from "./signatory";
 import { tenderAsksFor } from "./tender-asks-for";
 
 const MARKER_CROSSWALK = "<!-- deliverable:crosswalk -->";
@@ -182,14 +183,23 @@ export function namedPhaseLead(experts: ExpertRecord[], keywords: readonly strin
 }
 
 function pickName(experts: ExpertRecord[], keywords: string[], used: Set<string>): string {
+  const named = (e: ExpertRecord) => `${e.fullName}${e.title ? ` (${e.title})` : ""}`;
   for (const k of keywords) {
+    // A role that recurs (the Project Principal opens and closes the plan) is
+    // the same person both times, not a named lead and then a vacancy.
+    const prior = [...used].find((u) => u.startsWith(`@${k}:`));
+    const priorExpert = prior ? experts.find((e) => e.fullName === prior.slice(k.length + 2)) : undefined;
+    if (priorExpert) return named(priorExpert);
     // The title only. The real record behind the defect below carried the
     // firm-wide "Architecture" discipline tag, so a discipline match still
     // named the electrical engineer as the Architect after the fallback went.
-    const match = experts.find((e) => !used.has(e.fullName) && titleStatesRole(e.title, k));
+    // The Project Principal is the firm's executive, as the organogram names
+    // them; no title says "Project Principal".
+    const match = experts.find((e) => !used.has(e.fullName) && (titleStatesRole(e.title, k) || (k === "project principal" && holdsExecutiveOffice(e.title ?? ""))));
     if (match) {
       used.add(match.fullName);
-      return `${match.fullName}${match.title ? ` (${match.title})` : ""}`;
+      used.add(`@${k}:${match.fullName}`);
+      return named(match);
     }
   }
   // No fallback to "the first unused expert". That is how a Senior Electrical

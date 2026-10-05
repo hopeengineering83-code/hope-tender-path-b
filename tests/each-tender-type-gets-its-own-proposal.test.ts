@@ -203,3 +203,23 @@ describe("a quantity on one role is not the size of the team", () => {
     assert.equal(profile.explicitExpertCount, 4);
   });
 });
+
+describe("a phase lead holds the phase's own role, not the word 'engineer'", () => {
+  it("a Senior Electrical Engineer does not lead the construction-supervision phase", async () => {
+    const { buildWorkPlanTable } = await import("../lib/engine/work-plan-timeline");
+    const table = buildWorkPlanTable({
+      primarySector: "Healthcare / Medical Facility Design",
+      experts: [
+        { fullName: "Hanna Tadesse", title: "General Manager & Practicing Professional Engineer" },
+        { fullName: "Ruth Haile", title: "Senior Electrical Engineer" },
+      ],
+    });
+    const supervision = table.split("\n").find((l) => /Construction Supervision/.test(l))!;
+    assert.doesNotMatch(supervision, /Ruth Haile/);
+    assert.match(supervision, /Resident Engineer/);
+    // The executive is the Project Principal, at the start and at close-out.
+    const principalRows = table.split("\n").filter((l) => /^\| (?:1\. Inception|5\. Close-out)/.test(l));
+    assert.equal(principalRows.length, 2);
+    for (const row of principalRows) assert.match(row, /Hanna Tadesse/);
+  });
+});

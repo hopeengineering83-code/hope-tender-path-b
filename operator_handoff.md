@@ -242,6 +242,7 @@ Branch `release/consolidated-recovery-20260717`, PR #1175 (draft, unmerged). Pro
   12. "laboratory testing (the national materials standard … compliant)" and "chlorination compliant with … materials standards" rephrased.
   13. ZERO_REVIEWED_EXPERT/PROJECT_EVIDENCE now name the required roles instead of "zero reviewed experts".
   14. **One EXPERT row with quantity 1 ("A registered architect", "Team Leader") capped the whole team at one person**: `deriveRequirementConstraintProfile` took the largest per-row `requiredQuantity` as the stated head count, while `exactSelectionLimit` already required head-count wording. A quantity on a row that names one role is now a floor (summed), not the team size; a personnel row with no single role ("Personnel: provide key staff", 3) is still the head count. The 0.75 selection threshold is unchanged.
+  15. Phase leads matched on the bare word "engineer": the Pharo plan named a Senior Electrical Engineer to lead "Tender & Construction Supervision" (role: Resident Engineer). Lead keywords are now the role phrase and its distinctive words; the Project Principal resolves to the firm's executive and is the same person wherever the role recurs.
 - **Matrix result after fixes:** 10/11 CLEAN; ICT refuses with the role-named message (the firm has no systems analyst — correct).
 - **Next action:** push, confirm CI, re-run hands-off on the Pharo tender and read the PDF.
 - **Merge status:** not reviewed for merge. DO NOT MERGE OR PROMOTE PRODUCTION without the owner's explicit instruction.
