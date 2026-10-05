@@ -3,7 +3,7 @@
 Two problems have recurred every time the owner swaps the Preview database or
 redeploys the Preview: the app loses its database schema, and AI output falls
 back to the deterministic draft. This file records how each was actually
-solved (2026-09-07, 09-11, 09-19, 09-22, 09-24, 09-26, 09-28) so the next session repeats the
+solved (2026-09-07, 09-11, 09-19, 09-22, 09-24, 09-26, 09-28, 10-05) so the next session repeats the
 fix instead of rediscovering it.
 
 All steps use the workflow `.github/workflows/lockfile-refresh-artifact.yml`
@@ -62,6 +62,21 @@ health run 36423969628 (503, bootstrap schema: 54 tables, no
 run 36424118789 (53/53 migrations, zero drift, owner ADMIN + company created),
 healthy at 12:49Z (run 36424331221), ready run 36424405702 (sign-in, 6 pages
 and 5 upload APIs 200; `ai_providers` WARNING until the first capability test).
+
+2026-10-05 instance: fingerprint pooled `be37dc0dd53d` / direct `6bf84179d06d`,
+health run 37371062616 (503, bootstrap schema: 54 tables, no
+`_prisma_migrations`, `User.deletedAt` missing, only 4 `Role` rows), provision
+run 37373668639 (53/53 migrations, zero drift, critical-schema ok, owner ADMIN +
+company created), `/api/health` healthy at 21:17Z on release `84afe4da`.
+**New this time:** GitHub's hosted runners repeatedly failed to start jobs
+("The job was not acquired by Runner of type hosted even after multiple
+attempts"); four dispatches were cancelled after 15 minutes with no runner.
+That is GitHub-side, not the app or the database. Re-dispatch until a runner
+takes the job; a small loop that re-dispatches while the job ends `cancelled`
+with no runner name did it (`gh api -X POST …/actions/workflows/lockfile-refresh-artifact.yml/dispatches`).
+`/api/health` can be read without a runner through the Vercel connector's
+`web_fetch_vercel_url`, which is how the 503 and the healthy state were
+confirmed here.
 
 Step 7 of the sequence is section B below. On a new database there is no
 tender yet; `confirm=inspect` then skips only its tender-scoped steps and
