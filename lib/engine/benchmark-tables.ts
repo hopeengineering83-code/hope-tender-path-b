@@ -267,7 +267,7 @@ export function withoutUpstreamTeamTables(markdown: string, replace: { team: boo
 function servicesInDiscipline(title: string | null | undefined, services: string[]): string[] {
   const t = String(title ?? "");
   const families: RegExp[] = [];
-  if (/architect|urban\s+plan|interior/i.test(t)) families.push(/architect|design\b|master\s*plan|urban|interior|modification|renovation/i);
+  if (/architect|urban\s+plan|interior/i.test(t)) families.push(/architect|master\s*plan|urban|interior|modification|renovation|space\s+plan/i);
   if (/structural/i.test(t)) families.push(/structur|geotech|foundation/i);
   if (/electrical|mechanical|sanitary|plumbing|\bMEP\b|electro/i.test(t)) families.push(/\bMEP\b|electrical|mechanical|sanitary|plumbing|services\s+design/i);
   if (/quantity\s+survey|cost\s+engineer|estimator/i.test(t)) families.push(/quantit|tender\s+doc|contract\s+admin/i);

@@ -375,7 +375,7 @@ export function buildComplianceMatrixSection(input: ComplianceMatrixBuilderInput
   return [
     "# SECTION E: COMPLIANCE MATRIX",
     "",
-    `Every mandatory and scored requirement detected during tender analysis is mapped below to the proposal section that addresses it, the supporting evidence anchor, and a compliance status.${rowsWithoutMitigation === 0 ? " NOT MET and PARTIALLY MET rows include a mitigation plan in the evidence column." : ""}`,
+    `Every mandatory and scored requirement detected during tender analysis is mapped below to the proposal section that addresses it, the supporting evidence anchor, and a compliance status.${rowsWithoutMitigation === 0 && (mandatoryPartiallyMet + mandatoryNotMet) > 0 ? " NOT MET and PARTIALLY MET rows include a mitigation plan in the evidence column." : ""}`,
     "",
     summaryLine,
     "",

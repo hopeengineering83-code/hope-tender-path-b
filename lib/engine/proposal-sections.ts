@@ -1604,9 +1604,21 @@ function buildAdditionalAndDeclarationFallback(input: AIBidWriterInput): string 
   // "Date: YYYY-MM-DD (bid team to confirm before export)": an instruction to
   // the bid desk is not a signature block. Without a recorded signatory the
   // declaration carries the company line and the sign-off pass completes it.
+  // The signatory comes from the same resolver as the cover letter: the
+  // vault GM, else the one proposed expert whose title states an executive
+  // office. On 2026-10-05 the cover letter was signed by the General Manager
+  // and this declaration, reading only the vault field, by nobody — a
+  // declaration with no name and nowhere to sign.
+  const signatory = resolveSignatory({
+    gmName: v.gmName,
+    gmTitle: v.gmTitle,
+    gmLicense: v.gmLicense,
+    experts: signatoryExpertsFromProofLines(input.experts),
+  });
   const sigBlock = [
-    ...(v.gmName ? [`Name: ${v.gmName}`, `Title: ${v.gmTitle || "General Manager"}${v.gmLicense ? ` | Licence No.: ${v.gmLicense}` : ""}`] : []),
-    `Company: ${v.legalName ?? companyName}`,
+    `For and on behalf of ${v.legalName ?? companyName}:`,
+    ...(signatory ? [`**${signatory.name}**`, `${signatory.title}${signatory.registration ? ` | ${signatory.registration}` : ""}`] : []),
+    "Signature: ____________________   Stamp: ____________________   Date: ____________________",
   ].join("\n");
   const declarationBody = [
     `We, ${v.legalName ?? companyName}${v.registrationNumber ? ` (Reg. No. ${v.registrationNumber})` : ""}, hereby declare that this ${input.submissionDocumentLabel?.trim() || "Technical Proposal"} has been prepared specifically in response to ${tenderTitle} issued by ${input.clientName || "the Client"}.`,

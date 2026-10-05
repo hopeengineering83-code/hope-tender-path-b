@@ -223,3 +223,35 @@ describe("a phase lead holds the phase's own role, not the word 'engineer'", () 
     for (const row of principalRows) assert.match(row, /Hanna Tadesse/);
   });
 });
+
+describe("a service-lines list that collapsed to one bullet is rebuilt from the firm's records", () => {
+  it("adds the recorded service lines the tender calls for, and leaves a real list alone", async () => {
+    const { repairCollapsedServiceLines } = await import("../lib/engine/service-lines-repair");
+    const serviceLines = ["Feasibility studies", "Architectural design", "MEP design", "Road and infrastructure consultancy", "Heritage conservation", "Tender document preparation"];
+    const tenderText = "The consultant shall prepare architectural designs and coordinate MEP systems after a feasibility review of the premises.";
+    const collapsed = "## A.2 Core Service Lines (directly relevant to the clinic)\n- Feasibility studies\n\n## A.3 Proposed Project Team\n";
+    const out = repairCollapsedServiceLines(collapsed, { serviceLines, tenderText });
+    assert.equal(out.repaired, true);
+    assert.match(out.markdown, /- Architectural design/);
+    assert.match(out.markdown, /- MEP design/);
+    assert.doesNotMatch(out.markdown, /Road and infrastructure|Heritage|Tender document/);
+    assert.equal((out.markdown.match(/- Feasibility studies/g) ?? []).length, 1);
+    assert.match(out.markdown, /## A\.3 Proposed Project Team/);
+    const full = "## A.2 Core Service Lines\n- Architectural design\n- MEP design\n";
+    assert.equal(repairCollapsedServiceLines(full, { serviceLines, tenderText }).repaired, false);
+  });
+});
+
+describe("an architect's contribution is architectural work", () => {
+  it("does not credit an Architect with structural or MEP design", () => {
+    const projects = [{
+      name: "Riverside District Hospital",
+      summary: "Riverside District Hospital / Riverside Town (12,000 m²)",
+      serviceAreas: JSON.stringify(["Feasibility study", "Architectural design", "Structural design", "MEP design", "Renovation design"]),
+    }] as ProjectRecord[];
+    const experts: ExpertRecord[] = [{ fullName: "Lidya Alemu", title: "Architect", profile: "Architect on Riverside District Hospital." }];
+    const row = buildTeamToProjectMappingTable(experts, projects).split("\n").find((l) => l.startsWith("| Lidya Alemu"))!;
+    assert.match(row, /Architectural design and renovation design, the firm's recorded services/);
+    assert.doesNotMatch(row.split("|").at(-2)!, /Structural design|MEP design/);
+  });
+});

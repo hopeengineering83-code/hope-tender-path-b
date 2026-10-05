@@ -30,11 +30,20 @@ for (let pageNumber = 1; pageNumber <= doc.numPages; pageNumber += 1) {
     if (typeof item.str !== "string" || item.str.trim().length === 0) continue;
     const y = Math.round(item.transform[5]);
     if (!rows.has(y)) rows.set(y, []);
-    rows.get(y).push({ x: item.transform[4], text: item.str });
+    rows.get(y).push({ x: item.transform[4], width: item.width ?? 0, text: item.str });
   }
+  // Join on the real gap. A font change (bold to regular) starts a new text
+  // item, and joining every item with a space printed "Project Principal :"
+  // and "Medical Center ." for text the PDF draws with no space at all.
+  const joinRow = (parts) => parts.reduce((out, p, i) => {
+    if (i === 0) return p.text;
+    const prev = parts[i - 1];
+    const gap = p.x - (prev.x + prev.width);
+    return out + (gap > 1 ? " " : "") + p.text;
+  }, "");
   const lines = [...rows.entries()]
     .sort((a, b) => b[0] - a[0])
-    .map(([, parts]) => parts.sort((a, b) => a.x - b.x).map((p) => p.text).join(" ").replace(/\s+/g, " ").trim())
+    .map(([, parts]) => joinRow(parts.sort((a, b) => a.x - b.x)).replace(/\s+/g, " ").trim())
     .filter(Boolean);
 
   console.log(`\n----- PAGE ${pageNumber} of ${doc.numPages} -----`);

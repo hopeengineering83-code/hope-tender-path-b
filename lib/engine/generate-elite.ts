@@ -22,6 +22,7 @@ import { finalizeClientReadyProposalMarkdown } from "./proposal-benchmark-guard"
 import { appendEvaluatorResponseMatrix } from "./proposal-evaluator-matrix";
 import { resolveSignatory, signOffLines } from "./signatory";
 import { orderTeamForPresentation, withoutUnassignedExperts } from "./team-order";
+import { repairCollapsedServiceLines } from "./service-lines-repair";
 import { composeCoverLetterBody, composeExecutiveSummary } from "./executive-summary-composer";
 import { corporateFactsFromProfile } from "./company-profile-facts";
 import { sourceGroundedEvaluationCriteria } from "./tender-evaluation-criteria";
@@ -3146,7 +3147,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
   const methodologyTables = injectMethodologyTables(humanizedMarkdown, {
     primarySector: intelligence.primarySector,
     sourceText: tenderText,
-    experts: allSelectedExperts as unknown as Parameters<typeof injectMethodologyTables>[1]["experts"],
+    experts: experts as unknown as Parameters<typeof injectMethodologyTables>[1]["experts"],
     projects: evidenceLibrary,
     totalDays,
   });
@@ -3213,7 +3214,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
   // Checklist sits at end of document.
   const mobAndChecklist = injectMobilizationAndChecklist(humanizedMarkdown, {
     financialProposalRequired: intelligence.noFinancialProposal !== true,
-    experts: allSelectedExperts as unknown as Parameters<typeof injectMobilizationAndChecklist>[1]["experts"],
+    experts: experts as unknown as Parameters<typeof injectMobilizationAndChecklist>[1]["experts"],
   });
   if (mobAndChecklist.injected.mobilization) {
     logger.info(`[generate-elite] Mobilization & Resourcing Plan injected.`);
@@ -4180,6 +4181,12 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
 
   // Every "where answered" pointer names a heading this document has, and
   // Section F states what Section E states for the same requirement.
+  const serviceLines = repairCollapsedServiceLines(workingMarkdown, { serviceLines: safeParseArr(company.serviceLines), tenderText });
+  if (serviceLines.repaired) {
+    logger.info("[generate-elite] Service-lines list had collapsed below two items; rebuilt from the firm's recorded service lines the tender calls for.");
+    workingMarkdown = serviceLines.markdown;
+  }
+
   const pointers = reconcileSectionPointers(workingMarkdown);
   if (pointers.pointersRewritten > 0 || pointers.rowsAlignedToComplianceMatrix > 0) {
     logger.info(`[generate-elite] Section pointers: ${pointers.pointersRewritten} rewritten to real headings; ${pointers.rowsAlignedToComplianceMatrix} Section F row(s) aligned to Section E.`);
