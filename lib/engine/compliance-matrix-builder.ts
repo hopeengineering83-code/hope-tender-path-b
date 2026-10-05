@@ -80,6 +80,26 @@ function priorityRank(p?: string | null): number {
   return 4;
 }
 
+/**
+ * One phrase per kind of evidence. Two evidence rows of the same kind printed
+ * "from company document; from company document" and "from project reference
+ * (A, B); from project reference (A)" in a delivered matrix (2026-10-05).
+ */
+export function mergeEvidencePieces(pieces: readonly string[]): string {
+  const byKind = new Map<string, string[]>();
+  for (const piece of pieces) {
+    const m = piece.trim().match(/^(.*?)(?:\s*\((.*)\))?$/);
+    const kind = (m?.[1] ?? piece).trim();
+    if (!kind) continue;
+    const refs = byKind.get(kind) ?? [];
+    for (const ref of (m?.[2] ?? "").split(/,\s*/).map((r) => r.trim()).filter(Boolean)) {
+      if (!refs.includes(ref)) refs.push(ref);
+    }
+    byKind.set(kind, refs);
+  }
+  return [...byKind].map(([kind, refs]) => (refs.length > 0 ? `${kind} (${refs.join(", ")})` : kind)).join("; ");
+}
+
 export function inferProposalLocation(req: RequirementLite): string {
   const type = (req.requirementType ?? "").toUpperCase();
   const title = (req.title ?? "").toLowerCase();
@@ -310,7 +330,7 @@ export function buildComplianceMatrixSection(input: ComplianceMatrixBuilderInput
       const piece = clientSafeComplianceEvidence({ evidenceType: row.evidenceType, evidenceReference: row.evidenceReference });
       if (piece) evidenceParts.push(piece);
     }
-    let evidenceCell = evidenceParts.join("; ");
+    let evidenceCell = mergeEvidencePieces(evidenceParts);
     // A bidder declaration is met by the firm's own signed statement, not by a
     // vault document. 2026-09-30, a telecom-tower EOI: "Litigation History
     // Disclosure" printed an audit firm's name as its evidence at FULLY MET.

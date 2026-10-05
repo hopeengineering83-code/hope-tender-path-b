@@ -226,6 +226,17 @@ function traitsOf(item: ScopeItem): ScopeTraits {
     add(inputs, "Issued drawings and specifications");
   }
 
+  // The item's principal risk is its LATEST stage of work: "Renovation
+  // Planning and Implementation Oversight" is planning and supervision, and
+  // the risk it carries into the works is not a brief change (2026-10-05: the
+  // delivered plan gave it the design item's risk word for word). Work on an
+  // existing building carries the hidden-conditions risk above all.
+  if (/renovat|refurbish|retrofit|rehabilitat|adaptive\s+reuse/i.test(item.title) && (kinds.includes("designing") || kinds.includes("supervising"))) {
+    risk = "Hidden conditions in the existing building — a condition survey before the design is fixed, and anything found during the works is recorded and resolved with the client before work continues.";
+  } else if (kinds.includes("supervising") && kinds.length > 1) {
+    risk = "Works departing from the approved design — inspection hold points before work is covered, and non-conformances closed before the next stage.";
+  }
+
   return {
     roles: roles.length > 0 ? roles : ["team_leader"],
     inputs: inputs.length > 0 ? inputs : ["The tender brief and the outputs of the preceding scope item"],

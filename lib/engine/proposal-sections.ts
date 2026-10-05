@@ -1234,7 +1234,7 @@ export function buildSectionFallback(spec: ProposalSectionSpec, writerInput: AIB
         if (/energy|power|solar|wind|grid|generation|transmission|scada/.test(haystack)) return "energy";
         if (/agri|farm|irrigation|crop|yield|fao|value.?chain|livestock/.test(haystack)) return "agriculture";
         if (/urban|master plan|zoning|land.?use|municipal|gis/.test(haystack)) return "urban";
-        if (/mining|mineral|quarry|jorc|tailings|ore/.test(haystack)) return "mining";
+        if (/\bmining\b|mineral|quarry|jorc|tailings|\bore\b/.test(haystack)) return "\bmining\b";
         if (/building|architect|mep|hvac|bim|boq|facility/.test(haystack)) return "building";
         if (/oil|gas|petroleum|p&id|hazop|pipeline|wellhead/.test(haystack)) return "oil_gas";
         if (/\bport\b|harbor|harbour|maritime|berth|quay/.test(haystack)) return "port";

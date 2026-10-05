@@ -201,6 +201,14 @@ function risksForSector(primarySector: string): SectorRisk[] {
     { risk: "Bearing capacity lower than anticipated — foundations more expensive than estimated", impact: "High", likelihood: "Medium", mitigation: "Preliminary bearing capacity estimate provided with results of each borehole as drilling progresses; client notified immediately if results indicate a change in foundation type; options-analysis section in report." },
     { risk: "Report peer review identifies errors — resubmission required", impact: "Medium", likelihood: "Low", mitigation: "Internal technical review by senior geotechnical engineer before report issue; independent peer review checklist applied to bearing capacity and settlement calculations; one-pass revision cycle built into programme." },
   ];
+  // Building design with no supervision of works (see buildingSectorLabel).
+  if (/\bbuilding design\b|architectur/.test(sector)) return [
+    { risk: "Brief changes after concept approval causing redesign", impact: "High", likelihood: "Medium", mitigation: "The brief and accommodation schedule are frozen by client sign-off at concept stage; later changes are logged and agreed before design proceeds." },
+    { risk: "Clashes between architectural, structural and MEP drawings reaching site", impact: "High", likelihood: "Medium", mitigation: "Interdisciplinary coordination check at each design stage, with every clash recorded in the coordination log and closed before issue." },
+    { risk: "Permit approval delayed by an incomplete submission", impact: "High", likelihood: "Medium", mitigation: "The submission set is checked against the approving authority's requirements before lodging, and every authority comment is logged and closed." },
+    { risk: "Foundation design based on assumed ground conditions", impact: "High", likelihood: "Low", mitigation: "Foundation design assumptions are stated in the design basis and confirmed against site-specific ground information before detailed design." },
+    { risk: "Drawings, specifications and quantities out of step at issue", impact: "Medium", likelihood: "Medium", mitigation: "Quantity schedules are taken off the issued drawings and cross-checked against the specifications before the package is issued." },
+  ];
   return [
     { risk: "Scope misalignment with client expectations", impact: "High", likelihood: "Medium", mitigation: "Documented scope confirmation at inception; named sign-off authority; change-control protocol agreed at contract signature." },
     { risk: "Resource availability shortfall during peak phases", impact: "High", likelihood: "Medium", mitigation: "Permanent-staff team confirmed in this proposal; backup specialists on standby; phased delivery to balance load." },

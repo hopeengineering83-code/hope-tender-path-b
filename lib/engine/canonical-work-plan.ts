@@ -216,6 +216,20 @@ function sectorPhasingRows(sector: string): PhasingRow[] {
       { phase: "5. Report Issue", deliverables: "Geotechnical investigation report (executive summary, borehole logs, laboratory results, interpreted soil profile, foundation recommendations); peer-review sign-off certificate; drawing set (borehole location plan, soil profile sections)", duration: "Weeks 10–12", responsible: "Principal Geotechnical Engineer" },
     ];
   }
+  // Building DESIGN with no supervision of works asked for. The combined
+  // "Building Design & Construction Supervision" label is caught above by the
+  // supervision branch; a design-only tender used to be too (2026-10-05 matrix:
+  // a G+8 office design tender was planned as payment certificates and
+  // variation orders).
+  if (/\bbuilding design\b|architectur/i.test(s)) {
+    return [
+      { phase: "1. Inception & Brief Confirmation", deliverables: "Inception report; confirmed design brief and accommodation schedule; review of site and existing information; design programme", duration: "Weeks 1–2", responsible: "Project Principal" },
+      { phase: "2. Concept Design", deliverables: "Site analysis; concept options with zoning and massing; preferred-option report for client selection", duration: "Weeks 3–5", responsible: "Architect" },
+      { phase: "3. Preliminary Design", deliverables: "Preliminary architectural, structural and MEP drawings; outline specifications; design-basis report; authority pre-consultation record", duration: "Weeks 6–9", responsible: "Architect" },
+      { phase: "4. Detailed Design", deliverables: "Coordinated architectural, structural and MEP working drawings; technical specifications; quantity schedules; interdisciplinary coordination log", duration: "Weeks 10–15", responsible: "Lead Engineer" },
+      { phase: "5. Approvals & Design Issue", deliverables: "Permit submission set and authority comment-response log; issued-for-construction drawing set; design close-out report", duration: "Weeks 16–18", responsible: "Project Principal" },
+    ];
+  }
   // Generic
   return [
     { phase: "1. Inception", deliverables: "Inception report; ToR confirmation; data-collection plan; risk register baseline", duration: "Weeks 1–2", responsible: "Project Principal" },

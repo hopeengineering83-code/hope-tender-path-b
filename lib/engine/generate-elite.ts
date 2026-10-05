@@ -21,7 +21,7 @@ import { exactSelectionLimit, forbidsBranding, forbidsCoverPage, requiresSignatu
 import { finalizeClientReadyProposalMarkdown } from "./proposal-benchmark-guard";
 import { appendEvaluatorResponseMatrix } from "./proposal-evaluator-matrix";
 import { resolveSignatory, signOffLines } from "./signatory";
-import { orderTeamForPresentation } from "./team-order";
+import { orderTeamForPresentation, withoutUnassignedExperts } from "./team-order";
 import { composeCoverLetterBody, composeExecutiveSummary } from "./executive-summary-composer";
 import { corporateFactsFromProfile } from "./company-profile-facts";
 import { sourceGroundedEvaluationCriteria } from "./tender-evaluation-criteria";
@@ -1576,17 +1576,31 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
     return type === "PROJECT_EXPERIENCE" || type === "PROJECT";
   });
 
+  // The roles the tender names, so the owner is told what is missing. The
+  // message said "zero reviewed experts are available" to a firm holding six
+  // reviewed CVs, none of them for the role an ICT tender asked for
+  // (2026-10-05): the experts exist; none of them fits this tender.
+  const requiredRoleTitles = (type: "EXPERT" | "PROJECT") => mandatoryEvidenceRows
+    .filter((r) => {
+      const t = (r as { requirementType?: string }).requirementType ?? "";
+      return type === "EXPERT" ? t === "EXPERT" || t === "EXPERT_CV" : t === "PROJECT_EXPERIENCE" || t === "PROJECT";
+    })
+    .map((r) => String((r as { title?: string | null }).title ?? "").trim())
+    .filter(Boolean)
+    .slice(0, 5);
   if (tenderNeedsExperts && experts.length === 0) {
+    const roles = requiredRoleTitles("EXPERT");
     throw new Error(
-      "ZERO_REVIEWED_EXPERT_EVIDENCE: This tender requires expert personnel, but zero reviewed experts are available. " +
-      "Add and review at least one expert CV in the Company Vault before generating documents. " +
+      `ZERO_REVIEWED_EXPERT_EVIDENCE: This tender requires expert personnel${roles.length > 0 ? ` (${roles.join("; ")})` : ""}, and no reviewed expert in the Company Vault matches ${roles.length === 1 ? "that role" : "those roles"}. ` +
+      "Add and review a CV for the required role in the Company Vault (or a partner's CV) before generating documents. " +
       `Tender: "${tender.title ?? tender.id}", required experts: ${expertRequired > 0 ? expertRequired : "1+"}.`
     );
   }
   if (tenderNeedsProjects && projects.length === 0) {
+    const kinds = requiredRoleTitles("PROJECT");
     throw new Error(
-      "ZERO_REVIEWED_PROJECT_EVIDENCE: This tender requires project experience references, but zero reviewed projects are available. " +
-      "Add and review at least one comparable project reference in the Company Vault before generating documents. " +
+      `ZERO_REVIEWED_PROJECT_EVIDENCE: This tender requires project experience${kinds.length > 0 ? ` (${kinds.join("; ")})` : ""}, and no reviewed project in the Company Vault matches it. ` +
+      "Add and review a comparable project reference in the Company Vault before generating documents. " +
       `Tender: "${tender.title ?? tender.id}", required projects: ${projectRequired > 0 ? projectRequired : "1+"}.`
     );
   }
@@ -1968,6 +1982,19 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
   // Presented as the team is organised — principal, project manager, scope
   // leads in the tender's order — not in selection-score order (team-order.ts).
   experts = orderTeamForPresentation(experts, tenderText);
+  {
+    const personnelRequirementText = tender.requirements
+      .filter((r) => {
+        const t = (r as { requirementType?: string }).requirementType ?? "";
+        return t === "EXPERT" || t === "EXPERT_CV";
+      })
+      .map((r) => `${(r as { title?: string | null }).title ?? ""} ${(r as { description?: string | null }).description ?? ""}`);
+    const { team, dropped } = withoutUnassignedExperts(experts, tenderText, { personnelRequirementText, minimum: expertRequired });
+    if (dropped.length > 0) {
+      logger.info(`[generate-elite] Left ${dropped.length} expert(s) with no scope role off the proposed team: ${dropped.map((e) => `${e.fullName} (${e.title ?? "no title"})`).join(", ")}`);
+    }
+    experts = team;
+  }
 
   // Requirement lines for AI prompt context AND for downstream rendering.
   // formatRequirementLine handles three real-world content-quality issues:
@@ -4024,6 +4051,10 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
   workingMarkdown = workingMarkdown
     .replace(/\b(?:preliminary\s+)?cost\s+estimate(?:s)?\b/gi, "design quantity and resource schedule")
     .replace(/\b(?:bill of quantities|boq)\b/gi, "quantity schedules")
+    // "cost estimates, and BOQs" becomes both phrases side by side; one says it.
+    .replace(/,\s*design quantity and resource schedules?,?\s+and\s+quantity schedules\b/gi, ", and quantity schedules")
+    .replace(/\bdesign quantity and resource schedules?,?\s+(?:and\s+)?quantity schedules\b/gi, "quantity schedules")
+    .replace(/\bquantity schedules,?\s+(?:and\s+)?design quantity and resource schedules?\b/gi, "quantity schedules")
     .replace(/\s*\|\s*ref:\s*[0-9a-f]{8}-[0-9a-f-]{27,36}\b/gi, " | source-verified record")
     .replace(/^.*Confirm no unsupported claim,.*wrong file name remains in the final package\.?.*$/gim, "")
     .replace(/\bpending items\b/gi, "open items")

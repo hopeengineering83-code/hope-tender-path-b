@@ -121,7 +121,7 @@ const SECTOR_PATTERNS: PatternMap<SectorDomain> = {
   ICT_DIGITAL: [/ict/i, /digital/i, /software/i, /platform/i, /database/i, /erp/i, /mis/i, /information\s+system/i],
   LOGISTICS_WAREHOUSING: [/warehouse/i, /logistics/i, /cargo/i, /freight/i, /supply\s+chain/i, /storage/i],
   GENERAL_BUILDINGS: [/building/i, /facility/i, /office/i, /complex/i, /centre/i, /center/i],
-  MINING_EXTRACTIVE: [/mining/i, /\bjorc\b/i, /tailings/i, /ore\s+body/i, /mine\s+plan/i, /mineral\s+resource/i, /quarry/i, /extractive/i],
+  MINING_EXTRACTIVE: [/\bmining\b/i, /\bjorc\b/i, /tailings/i, /\bore\s+body\b/i, /\bmine\s+plan/i, /mineral\s+resource/i, /quarry/i, /extractive/i],
   PORT_MARITIME: [/\bport\b/i, /berth/i, /quay/i, /maritime/i, /dredging/i, /harbour/i, /\bisps\b/i, /nautical/i],
   OIL_GAS: [/\bhazop\b/i, /p&id/i, /pipeline\s+design/i, /oil\s+facilit/i, /gas\s+facilit/i, /petrochemical/i, /upstream\s+petroleum/i, /refinery/i],
   FINANCIAL_SERVICES: [/\bkyc\b/i, /\baml\b/i, /core\s+banking/i, /microfinance/i, /\bifrs\b/i, /\bbasel\b/i, /fintech/i, /payment\s+system/i, /prudential/i],

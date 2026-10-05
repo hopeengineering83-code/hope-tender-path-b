@@ -895,7 +895,7 @@ export function buildDerivedDraftPlan(tender: {
   }
 
   // Healthcare / hospital facility
-  if (/hospital|medical|health.?facilit/.test(combinedText)) {
+  if (/\bhospitals?\b|medical|health.?facilit/.test(combinedText)) {
     entries.push({
       name: "Healthcare Infrastructure Technical Proposal",
       documentType: "METHODOLOGY",

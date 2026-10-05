@@ -139,9 +139,19 @@ function relevanceParagraph(input: ExecutiveSummaryInput, items: ScopeItem[]): s
   const evidence = referenceEvidence(input, items);
   if (evidence.length === 0) return "";
   const sector = clean(input.primarySector).split(/\s*\/\s*/)[0].toLowerCase() || "comparable";
-  const sentences = evidence.map(({ project, services }) => services.length > 0
-    ? `On ${clean(project.name)}${projectDetail(project)}, the firm's recorded services included ${list(services)}.`
-    : `${clean(project.name)}${projectDetail(project)} is a further ${sector} reference.`);
+  // References with the same recorded services share one sentence: two
+  // projects printed the same sentence twice, word for word, apart from the
+  // name (2026-10-05).
+  const groups: Array<{ names: string[]; services: string[] }> = [];
+  for (const { project, services } of evidence) {
+    const name = `${clean(project.name)}${projectDetail(project)}`;
+    const same = services.length > 0 ? groups.find((g) => g.services.length > 0 && g.services.join("|") === services.join("|")) : undefined;
+    if (same) same.names.push(name);
+    else groups.push({ names: [name], services });
+  }
+  const sentences = groups.flatMap(({ names, services }) => services.length > 0
+    ? [`On ${list(names)}, the firm's recorded services included ${list(services)}.`]
+    : names.map((name) => `${name} is a further ${sector} reference.`));
   const covered = coveredItems(evidence);
   const lead = `${possessive(input.companyName)} closest references are ${evidence.length === 1 ? `one ${sector} project` : `${evidence.length} ${sector} projects`}.`;
   const coverage = covered.length >= 2 && items.length > 0

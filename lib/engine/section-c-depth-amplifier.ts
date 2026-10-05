@@ -49,7 +49,9 @@ import { recordedProjectServices } from "./project-fact-extractor";
 import type { ProjectRecord } from "./benchmark-tables";
 import { inlineEvidenceValue } from "./proposal-intelligence";
 import { resolveJurisdictionTokens } from "./jurisdiction-instruments";
-import { isHealthcareSector } from "./assignment-subject";
+import { isHealthcareSector, isSupervisionOnlyAssignment } from "./assignment-subject";
+import { canonicalWorkPlan } from "./canonical-work-plan";
+import { extractScopeItems } from "./scope-delivery-plan";
 
 // Canonical Section C sub-section structure. Each entry includes
 // the heading text + a deterministic depth-paragraph generator.
@@ -176,11 +178,17 @@ const ECHO_FILLER = new Set([
 // Sector-aware methodology vocabulary blocks. Each returns a paragraph
 // rich in sector-specific terminology — feeds the sectorVocabulary axis.
 function sectorMethodologyParagraph(sector: string, subSection: string, sourceText?: string): string {
-  return resolveJurisdictionTokens(sectorMethodologyParagraphRaw(sector, subSection), sourceText);
+  return resolveJurisdictionTokens(sectorMethodologyParagraphRaw(sector, subSection, sourceText), sourceText);
 }
 
-function sectorMethodologyParagraphRaw(sector: string, subSection: string): string {
+const ARCHITECTURAL_SECTOR = /architecture|architectural|interior.*design|space.*plan|fit.?out|office.*design|residential.*design|design.*build|building.*design/;
+const SUPERVISION_SECTOR = /supervis|contract.*admin|resident.*engineer|site.*supervis|construction.*management|site.*management/;
+
+function sectorMethodologyParagraphRaw(sector: string, subSection: string, sourceText?: string): string {
   const s = sector.toLowerCase();
+  // A label that names both building design and supervision is answered by
+  // what the tender asks for, not by whichever branch is tested first.
+  const supervisionOnly = SUPERVISION_SECTOR.test(s) && (!ARCHITECTURAL_SECTOR.test(s) || isSupervisionOnlyAssignment(sourceText));
   if (isTelecomTowerSector(sector)) {
     if (/understanding|C\.1/i.test(subSection)) return TELECOM_TOWER_METHODOLOGY.understanding;
     if (/methodology|C\.2/i.test(subSection)) return TELECOM_TOWER_METHODOLOGY.methodology;
@@ -194,7 +202,7 @@ function sectorMethodologyParagraphRaw(sector: string, subSection: string): stri
     if (/quality|QA|C\.4/i.test(subSection)) return "Quality gates at 30% Schematic, 60% Design Development, and 100% Pre-Issue. Each gate signed off by Project Principal + Senior Reviewer. Independent peer review at 100%.";
   }
   if (/water|borehole|hydraulic|sanitary/.test(s)) {
-    if (/understanding|C\.1/i.test(subSection)) return "Source-to-tap delivery requires verified yield, hydraulic-model-driven network sizing (EPANET / WaterCAD), pump-station design matched to demand projection, storage reservoir sized for daily peaks, and chlorination compliant with {{JURISDICTION:MATERIALS_TESTING_STANDARD}} standards.";
+    if (/understanding|C\.1/i.test(subSection)) return "Source-to-tap delivery requires verified yield, hydraulic-model-driven network sizing (EPANET / WaterCAD), pump-station design matched to demand projection, storage reservoir sized for daily peaks, and chlorination dosed to the drinking-water quality standard that applies at the project location.";
     if (/methodology|C\.2/i.test(subSection)) return "Methodology integrates source investigation (borehole siting, geophysical survey, yield test), demand projection, hydraulic modelling, pipe-network sizing, pump-station design (head, flow, power/solar), reservoir sizing, water-quality treatment design (chlorination, sedimentation, filtration), and sanitary protection zone delineation.";
     if (/work plan|C\.3/i.test(subSection)) return "Phased deliverables: source investigation → demand projection + hydraulic modelling → detailed design (network, pump station, treatment) → tender documents (BOQ, drawings, specifications) → construction supervision (pressure tests, commissioning) → handover with O&M manual + operator training.";
     if (/quality|QA|C\.4/i.test(subSection)) return "Quality controls at hydraulic-model verification, pre-tender design freeze, construction hold-points (pipe pressure tests, pump commissioning), and post-commissioning leakage check. Independent technical review of hydraulic model and BOQ.";
@@ -277,13 +285,13 @@ function sectorMethodologyParagraphRaw(sector: string, subSection: string): stri
     if (/work plan|C\.3/i.test(subSection)) return "Phased deliverables: brand-standard programming + spatial concept → schematic design (with operator review milestone) → design development + FF&E specifications → construction documents + BOQ → construction supervision → FF&E installation supervision → pre-opening commissioning (MEP, AV, IT) → handover with operator training support.";
     if (/quality|QA|C\.4/i.test(subSection)) return "Quality gates at: brand-operator concept approval, 60% design development review (operator + client), FF&E mock-up room sign-off before bulk procurement, construction hold-points (structural, MEP services, FF&E installation), pre-opening snagging inspection, and soft-opening operating-standards check before full commercial opening.";
   }
-  if (/architecture|architectural|interior.*design|space.*plan|fit.?out|office.*design|residential.*design|design.*build/.test(s)) {
+  if (ARCHITECTURAL_SECTOR.test(s) && !supervisionOnly) {
     if (/understanding|C\.1/i.test(subSection)) return "Architectural delivery begins with a client brief validation that aligns spatial requirements, budget envelope, programme, and regulatory approvals. Each space type is sized against functional adjacency diagrams before any design is committed. The design intent — form, materiality, daylighting, and sustainability target — is documented in a Design Intent Statement signed off at concept stage.";
     if (/methodology|C\.2/i.test(subSection)) return "Methodology progresses through concept design, schematic design, design development, and construction documentation stages with defined deliverables and sign-offs at each gate. BIM-coordinated drawings, interior specifications, finish schedules, and BOQ are produced at design-development stage. Interior design integrates furniture layout, material palette, lighting design, and FF&E schedule.";
     if (/work plan|C\.3/i.test(subSection)) return "Phased deliverables: brief validation → concept design (plans, elevations, mood boards) → schematic design (regulatory submission set) → design development (coordinated drawings, interior specs) → construction documents + BOQ → tender process support → construction supervision and site inspections → snagging and handover.";
     if (/quality|QA|C\.4/i.test(subSection)) return "Quality gates at: brief sign-off (before concept design commences), concept design client approval, regulatory submission pre-check (before formal lodging), 60% construction-document interdisciplinary check (architectural / structural / MEP), contractor tender assessment, and pre-handover snagging sign-off.";
   }
-  if (/supervis|contract.*admin|resident.*engineer|site.*supervis|construction.*management|site.*management/.test(s)) {
+  if (supervisionOnly) {
     if (/understanding|C\.1/i.test(subSection)) return "Construction supervision requires a contract-administration strategy confirming the FIDIC / NEC or local standard form, establishing site-supervision staffing levels proportionate to contract value, setting up the document-control system, defining progress-monitoring metrics (planned vs. actual S-curve, critical-path milestones), and issuing a Quality Management Plan to the contractor on commencement.";
     if (/methodology|C\.2/i.test(subSection)) return "Methodology covers site inspection regime (daily, weekly, hold-point), quality auditing against Inspection and Test Plan (ITP), variation-order assessment and certification within agreed timelines, interim-payment-certificate preparation against BOQ measurements, formal defect notification and close-out, and monthly progress reports to the client with updated S-curve and cash-flow forecast.";
     if (/work plan|C\.3/i.test(subSection)) return "Phased deliverables: site establishment + QMP issue → monthly progress reports + S-curve + payment certificates → quality audit reports + defect registers → variation-order register + assessment reports → substantial completion certificate + defects-liability period inspection schedule → final account + completion report.";
@@ -303,6 +311,22 @@ function sectorMethodologyParagraphRaw(sector: string, subSection: string): stri
   return "";
 }
 
+/**
+ * How the work is staged, from the same work plan the proposal prints. A
+ * methodology of one sentence listing sector topics scored as thin on every
+ * tender type in the 2026-10-05 matrix once the work-plan and QA paragraphs
+ * stopped landing under it; the stages and how each closes are the method.
+ */
+function stagedWorkParagraph(primarySector: string, sourceText?: string): string {
+  const phases = canonicalWorkPlan({ sector: primarySector, sourceText }).map((phase) => phase.title.replace(/^\d+\.\s*/, "").trim()).filter(Boolean);
+  if (phases.length < 2) return "";
+  const list = `${phases.slice(0, -1).join(", ")} and ${phases[phases.length - 1]}`;
+  const scope = extractScopeItems(sourceText).length >= 2
+    ? " Within the stages, each of the tender's scope items is delivered as the Scope-by-Scope Delivery Plan sets out, with a named lead, a quality check and the client's approval point."
+    : "";
+  return `The work runs in ${phases.length} stages — ${list} — and each stage closes on the client's written sign-off before the next begins, so a decision taken at one stage is not reopened at the next.${scope}`;
+}
+
 // The four canonical Section C sub-sections we ensure are present + deep.
 // More can be added later — the amplifier handles arbitrary numbered
 // sub-sections gracefully.
@@ -313,7 +337,7 @@ const CANONICAL_SUB_SECTIONS: SubSectionSpec[] = [
   {
     number: "C.1",
     heading: "C.1 Understanding of the Assignment",
-    matchPatterns: [/^##\s+C\.1\b/im, /^##\s+Understanding\s+of\s+the\s+Assignment/im],
+    matchPatterns: [/^##\s+C\.1\b/im, /^##\s+(?:C\.\d+\s+)?Understanding\s+of\s+the\s+Assignment/im],
     buildDepth: ({ primarySector, projects, anchored, sourceText }) => {
       const anchor = anchorOnce([projects[0]], anchored, "validated on")
         ?? "The team applies a structured inception process — site orientation, document review, and stakeholder mapping — in the opening week to confirm scope before any technical work begins.";
@@ -324,18 +348,18 @@ const CANONICAL_SUB_SECTIONS: SubSectionSpec[] = [
   {
     number: "C.2",
     heading: "C.2 Technical Methodology",
-    matchPatterns: [/^##\s+C\.2\b/im, /^##\s+Technical\s+Methodology/im, /^##\s+Methodology/im],
+    matchPatterns: [/^##\s+C\.2\b/im, /^##\s+(?:C\.\d+\s+)?Technical\s+Methodology/im, /^##\s+(?:C\.\d+\s+)?Methodology/im],
     buildDepth: ({ primarySector, projects, anchored, sourceText }) => {
       const anchor = anchorOnce([projects[1], projects[0]], anchored, "demonstrated on")
         ?? "The methodology is calibrated to the deliverable schedule, client reporting cadence, and stakeholder engagement requirements of this engagement.";
       const para = sectorMethodologyParagraph(primarySector, "C.2", sourceText);
-      return joinWithoutEcho(para, anchor);
+      return [joinWithoutEcho(para, anchor), stagedWorkParagraph(primarySector, sourceText)].filter(Boolean).join("\n\n");
     },
   },
   {
     number: "C.3",
     heading: "C.3 Work Plan and Deliverables",
-    matchPatterns: [/^##\s+C\.3\b/im, /^##\s+Work\s+Plan/im, /^##\s+Deliverables/im],
+    matchPatterns: [/^##\s+C\.3\b/im, /^##\s+(?:C\.\d+\s+)?Work\s+Plan/im, /^##\s+(?:C\.\d+\s+)?Deliverables/im],
     buildDepth: ({ primarySector, projects, anchored, sourceText }) => {
       const anchor = anchorOnce([projects[2], projects[1], projects[0]], anchored, "demonstrated on")
         ?? "Each phase produces a formal deliverable with client sign-off before the next phase commences, ensuring predictable progress milestones and no scope creep between stages.";
@@ -346,7 +370,7 @@ const CANONICAL_SUB_SECTIONS: SubSectionSpec[] = [
   {
     number: "C.4",
     heading: "C.4 Quality Assurance",
-    matchPatterns: [/^##\s+C\.4\b/im, /^##\s+Quality\s+Assurance/im, /^##\s+QA\b/im],
+    matchPatterns: [/^##\s+C\.4\b/im, /^##\s+(?:C\.\d+\s+)?Quality\s+Assurance/im, /^##\s+(?:C\.\d+\s+)?QA\b/im],
     buildDepth: ({ primarySector, projects, anchored, sourceText }) => {
       const anchor = anchorOnce([projects[3], projects[0]], anchored, "applied on")
         ?? "The three-gate quality framework (30% / 60% / 100%) is applied on every engagement. Each gate is signed off by Project Principal and Senior Reviewer before client submission; an independent peer reviewer — not a member of the delivery team — validates the 100% deliverable package.";
@@ -385,17 +409,24 @@ function locateSectionC(markdown: string): { startLine: number; endLine: number 
 function diagnoseSubSections(sectionLines: string[]): {
   presentNumbers: Set<string>;
   thinNumbers: Set<string>;
+  bodyEndByNumber: Map<string, number>;
 } {
   const presentNumbers = new Set<string>();
   const thinNumbers = new Set<string>();
+  const bodyEndByNumber = new Map<string, number>();
 
+  // A heading is found by its NAME first. The number alone is a fallback, and
+  // only for a heading that names no other canonical sub-section: Section C is
+  // renumbered upstream ("C.1 Tender Specifics", "C.2 Understanding", "C.3
+  // Technical Methodology", …), so "C.4" was the methodology heading and the
+  // Quality Assurance depth was judged against it (2026-10-05).
+  const namePatterns = (spec: SubSectionSpec) => spec.matchPatterns.slice(1);
+  const namesAnotherSpec = (line: string, spec: SubSectionSpec) =>
+    CANONICAL_SUB_SECTIONS.some((other) => other !== spec && namePatterns(other).some((p) => p.test(line)));
   for (const spec of CANONICAL_SUB_SECTIONS) {
-    let presentAtLine = -1;
-    for (let i = 0; i < sectionLines.length; i += 1) {
-      if (spec.matchPatterns.some((p) => p.test(sectionLines[i]))) {
-        presentAtLine = i;
-        break;
-      }
+    let presentAtLine = sectionLines.findIndex((line) => namePatterns(spec).some((p) => p.test(line)));
+    if (presentAtLine < 0) {
+      presentAtLine = sectionLines.findIndex((line) => spec.matchPatterns[0]!.test(line) && !namesAnotherSpec(line, spec));
     }
     if (presentAtLine < 0) continue; // missing
 
@@ -405,11 +436,12 @@ function diagnoseSubSections(sectionLines: string[]): {
     // the body
     let bodyEnd = sectionLines.length;
     for (let i = presentAtLine + 1; i < sectionLines.length; i += 1) {
-      if (/^##\s+/.test(sectionLines[i])) {
+      if (/^#{1,2}\s+/.test(sectionLines[i])) {
         bodyEnd = i;
         break;
       }
     }
+    bodyEndByNumber.set(spec.number, bodyEnd);
 
     const body = sectionLines.slice(presentAtLine + 1, bodyEnd).join("\n");
     const paragraphs = body.split(/\n{2,}/).map((p) => p.trim()).filter((p) =>
@@ -423,7 +455,7 @@ function diagnoseSubSections(sectionLines: string[]): {
     if (paragraphs.length < 2 || wordCount < 90) thinNumbers.add(spec.number);
   }
 
-  return { presentNumbers, thinNumbers };
+  return { presentNumbers, thinNumbers, bodyEndByNumber };
 }
 
 // Build the Section C addendum block — sub-sections that are missing,
@@ -438,8 +470,9 @@ function buildAddendum(opts: {
   companyName: string;
   evaluationCriteria?: string[];
   sourceText?: string;
-}): string {
+}): { added: string; deepened: Map<string, string> } {
   const blocks: string[] = [];
+  const deepened = new Map<string, string>();
   // One set for the whole Section C block, so a project cited under one
   // sub-section is not re-introduced as fresh proof under the next.
   const anchored = new Set<string>();
@@ -453,7 +486,11 @@ function buildAddendum(opts: {
     } else if (isThin) {
       const depth = spec.buildDepth({ primarySector: opts.primarySector, projects: opts.projects, companyName: opts.companyName, anchored, sourceText: opts.sourceText });
       if (depth.length === 0) continue;
-      blocks.push(`<!-- section-c-amplifier:${spec.number} -->`, depth);
+      // Depth for a thin sub-section belongs under THAT sub-section. Appended
+      // at the end of Section C it sat under whichever heading came last —
+      // the Quality Assurance paragraph was the whole of a delivered
+      // "Technical Methodology" (2026-10-05).
+      deepened.set(spec.number, [`<!-- section-c-amplifier:${spec.number} -->`, depth].join("\n\n"));
     }
   }
 
@@ -468,7 +505,7 @@ function buildAddendum(opts: {
   // project. Where each criterion is answered, and with what evidence, is
   // Section F's job.
 
-  return blocks.join("\n\n");
+  return { added: blocks.join("\n\n"), deepened };
 }
 
 /**
@@ -507,7 +544,7 @@ export function amplifySectionCDepth(
     alreadyAmplified.add(m[1]);
   }
 
-  const { presentNumbers, thinNumbers } = diagnoseSubSections(sectionLines);
+  const { presentNumbers, thinNumbers, bodyEndByNumber } = diagnoseSubSections(sectionLines);
 
   // Filter out sub-sections we've already amplified
   const addedNumbers = new Set<string>();
@@ -532,18 +569,24 @@ export function amplifySectionCDepth(
     sourceText: opts.sourceText,
   });
 
-  if (!addendum) return { markdown, injected: [] };
+  if (!addendum.added && addendum.deepened.size === 0) return { markdown, injected: [] };
 
-  // Splice the addendum into Section C — at the END of the section
-  // block (just before the next top-level heading or end of document).
-  const insertAt = sectionRange.endLine;
-  const out = [
-    ...lines.slice(0, insertAt),
-    "",
-    addendum,
-    "",
-    ...lines.slice(insertAt),
-  ];
+  // Each deepened sub-section gets its depth at the end of its own body; the
+  // sub-sections that were missing are added at the END of the section block
+  // (just before the next top-level heading or end of document). Insertions
+  // run bottom-up so earlier line numbers stay valid.
+  // At the same line, the added block is spliced first so the deepened text,
+  // spliced after it, lands above it — under its own sub-section's heading.
+  const insertions: Array<{ at: number; text: string; added: boolean }> = [];
+  for (const [number, text] of addendum.deepened) {
+    const bodyEnd = bodyEndByNumber.get(number);
+    insertions.push({ at: sectionRange.startLine + (bodyEnd ?? sectionLines.length), text, added: false });
+  }
+  if (addendum.added) insertions.push({ at: sectionRange.endLine, text: addendum.added, added: true });
+  const out = [...lines];
+  for (const { at, text } of insertions.sort((a, b) => (b.at - a.at) || (Number(b.added) - Number(a.added)))) {
+    out.splice(at, 0, "", text, "");
+  }
 
   const injected: { number: string; mode: "ADDED" | "DEEPENED" }[] = [
     ...[...addedNumbers].map((n) => ({ number: n, mode: "ADDED" as const })),

@@ -135,7 +135,7 @@ const SECTOR_KEYWORDS: Array<{ rx: RegExp; sector: string }> = [
   { rx: /master plan|urban|city planning/i, sector: "Urban Planning" },
   { rx: /energy|power plant|\bsolar\b|wind farm|substation|hydropower|electrification|grid.*connect/i, sector: "Energy & Power" },
   { rx: /irrigation|\bWUA\b|command area|FAO.*Penman|crop water|agri/i, sector: "Agriculture & Irrigation" },
-  { rx: /mining|\bJORC\b|tailings|ore body|mine plan|mineral resource/i, sector: "Mining & Extractive" },
+  { rx: /\bmining\b|\bJORC\b|tailings|\bore\s*body\b|\bmine\s+plan|mineral resource/i, sector: "Mining & Extractive" },
   { rx: /\bport\b|berth|quay|maritime|dredging|harbour|nautical/i, sector: "Port & Maritime" },
   { rx: /\bHAZOP\b|\bP&ID\b|pipeline design|oil facilit|gas facilit|petrochemical|upstream petroleum/i, sector: "Oil & Gas" },
   { rx: /\bKYC\b|\bAML\b|core banking|microfinance|\bIFRS\b|\bBasel\b|fintech|payment system/i, sector: "Financial Services" },

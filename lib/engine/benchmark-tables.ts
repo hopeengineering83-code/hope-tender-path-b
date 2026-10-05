@@ -263,6 +263,23 @@ export function withoutUpstreamTeamTables(markdown: string, replace: { team: boo
  * A.5 Team-to-Project Experience Mapping — table.
  * Demonstrates that each lead expert has performed the same role on a comparable previous project.
  */
+/** The project's recorded services that fall in the discipline a job title names. */
+function servicesInDiscipline(title: string | null | undefined, services: string[]): string[] {
+  const t = String(title ?? "");
+  const families: RegExp[] = [];
+  if (/architect|urban\s+plan|interior/i.test(t)) families.push(/architect|design\b|master\s*plan|urban|interior|modification|renovation/i);
+  if (/structural/i.test(t)) families.push(/structur|geotech|foundation/i);
+  if (/electrical|mechanical|sanitary|plumbing|\bMEP\b|electro/i.test(t)) families.push(/\bMEP\b|electrical|mechanical|sanitary|plumbing|services\s+design/i);
+  if (/quantity\s+survey|cost\s+engineer|estimator/i.test(t)) families.push(/quantit|tender\s+doc|contract\s+admin/i);
+  if (/highway|road|transport/i.test(t)) families.push(/road|highway|pavement|transport/i);
+  if (/water|hydraul/i.test(t)) families.push(/water|hydraul|borehole|sanitation/i);
+  if (/geotech|geolog/i.test(t)) families.push(/geotech|geolog|laboratory|soil/i);
+  if (/environment/i.test(t)) families.push(/environment|social|ESIA|EIA/i);
+  if (/resident\s+engineer|supervis|construction\s+manag|project\s+manag/i.test(t)) families.push(/supervis|contract\s+admin|construction\s+manag|project\s+manag/i);
+  if (families.length === 0) return [];
+  return services.filter((service) => families.some((re) => re.test(service)));
+}
+
 export function buildTeamToProjectMappingTable(experts: ExpertRecord[], projects: ProjectRecord[]): string {
   if (experts.length === 0 || projects.length === 0) return "";
 
@@ -306,9 +323,28 @@ export function buildTeamToProjectMappingTable(experts: ExpertRecord[], projects
       .replace(/\.\s*\.$/, ".")
       .replace(/[.\s]+$/, "")
       .trim();
-    const services = recordedProjectServices(matchedProject).map((v) => String(v ?? "").trim()).filter((v) => v.length > 2).slice(0, 5);
-    const contribution = truncateAtWordBoundary(prose, 200) ||
-      `${safeArr(expert.disciplines).join(", ") || "Discipline-led"} contribution covering ${services.join(", ") || safeArr(matchedProject.serviceAreas).join(", ") || matchedProject.sector || "scope-relevant works"}.`;
+    const services = recordedProjectServices(matchedProject).map((v) => String(v ?? "").trim()).filter((v) => v.length > 2);
+    // A summary that is only the project's header card — its name, place and
+    // area — says nothing the Project column does not: "G+6 General Hospital –
+    // Dr Abdul Seid / Gimba City, … (7,000 m²)" sat in this column beside the
+    // same project (2026-10-05). It describes work only when, past the name,
+    // it says what was done.
+    const nameStem = matchedProject.name.trim().slice(0, 12).toLowerCase();
+    const describesWork = prose.length > 0 && (
+      !prose.toLowerCase().startsWith(nameStem)
+      || /\b(?:design\w*|supervis\w*|prepar\w*|led|lead\w*|manag\w*|deliver\w*|assess\w*|investigat\w*|coordinat\w*|construct\w*|renovat\w*|plann\w*|survey\w*|review\w*)\b/i.test(prose.slice(matchedProject.name.trim().length))
+    );
+    const ownDiscipline = servicesInDiscipline(expert.title, services);
+    const listed = (items: string[]) => {
+      const cased = items.map((v, i) => (i === 0 || /^[A-Z]{2,}\b/.test(v) ? v : v.charAt(0).toLowerCase() + v.slice(1)));
+      return cased.length > 1 ? `${cased.slice(0, -1).join(", ")} and ${cased[cased.length - 1]}` : cased[0] ?? "";
+    };
+    const contribution = (describesWork ? truncateAtWordBoundary(prose, 200) : "")
+      || (ownDiscipline.length > 0 ? `${listed(ownDiscipline.slice(0, 4))}, the firm's recorded services on this project in this expert's discipline.` : "")
+      || (services.length > 0 ? `The firm's recorded services on this project: ${listed(services.slice(0, 5))}.` : "")
+      // With no services on record, the header card still states the scale.
+      || truncateAtWordBoundary(prose, 200)
+      || `${safeArr(expert.disciplines).join(", ") || "Discipline-led"} contribution covering ${safeArr(matchedProject.serviceAreas).join(", ") || matchedProject.sector || "scope-relevant works"}.`;
 
     return [`| ${escCell(`${expert.fullName}, ${expert.title || "Specialist"}`)} | ${escCell(previousRole)} | ${escCell(projectLabel)} | ${escCell(contribution)} |`];
   });

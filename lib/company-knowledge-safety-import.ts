@@ -103,7 +103,7 @@ function inferServices(text: string): string[] {
 
 function inferSectors(text: string): string[] {
   const sectors: string[] = [];
-  if (/hospital|health|clinic/i.test(text)) sectors.push("Healthcare");
+  if (/\bhospitals?\b|health|clinic/i.test(text)) sectors.push("Healthcare");
   if (/school|university|education/i.test(text)) sectors.push("Education");
   if (/government|ministry|municipal|city|public/i.test(text)) sectors.push("Government / Public Sector");
   if (/hotel|tourism|resort|lodge/i.test(text)) sectors.push("Hospitality and Tourism");

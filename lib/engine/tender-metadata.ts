@@ -299,7 +299,7 @@ function inferCountry(text: string): string | null {
 }
 
 function inferCategory(text: string): string {
-  if (/hospital|health|clinic|medical|patient|biomedical|pharma/i.test(text)) return "Healthcare";
+  if (/\bhospitals?\b|health\s*(?:care|facilit|cent)|clinic|medical|patient|biomedical|pharma/i.test(text)) return "Healthcare";
   if (/urban|master\s*plan/i.test(text)) return "Urban Planning";
   if (/road|bridge|infrastructure|transport/i.test(text)) return "Infrastructure";
   if (/school|education|university|campus|classroom/i.test(text)) return "Education";
@@ -307,7 +307,7 @@ function inferCategory(text: string): string {
   if (/water\s+supply|borehole|hydraulic|WASH/i.test(text)) return "Water";
   if (/energy|solar|wind\s+farm|substation|grid|power\s+plant|hydropower|electrification/i.test(text)) return "Energy";
   if (/agri|irrigation|\bWUA\b|command\s*area|crop\s+water/i.test(text)) return "Agriculture";
-  if (/mining|\bJORC\b|tailings|ore\s+body|mine\s+plan|mineral\s+resource/i.test(text)) return "Mining";
+  if (/\bmining\b|\bJORC\b|tailings|\bore\s+body\b|\bmine\s+plan|mineral\s+resource/i.test(text)) return "Mining";
   if (/\bport\b|berth|quay|maritime|dredging|harbour|nautical/i.test(text)) return "Port & Maritime";
   if (/\bHAZOP\b|\bP&ID\b|pipeline\s+design|oil\s+facilit|gas\s+facilit|petrochemical|upstream\s+petroleum/i.test(text)) return "Oil & Gas";
   if (/\bKYC\b|\bAML\b|core\s+banking|microfinance|\bIFRS\b|\bBasel\b|fintech|payment\s+system/i.test(text)) return "Financial Services";

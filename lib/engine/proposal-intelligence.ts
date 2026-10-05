@@ -4,7 +4,7 @@ import { extractProjectFacts, extractProjectAmounts, extractServicesProvided } f
 import { tidyTruncation, factualCardOrEmpty } from "./vault-prose";
 import { detectFinancialProposalRequiredFromText, buildTenderDocumentTypeAdvisory, type TenderDocumentTypeAdvisory } from "../document-generation/generation-integration";
 import { resolveJurisdictionTokens } from "./jurisdiction-instruments";
-import { assignmentSubjectText, HEALTHCARE_WORK, HOSPITALITY_WORK } from "./assignment-subject";
+import { assignmentSubjectText, buildingSectorLabel, HEALTHCARE_WORK, HOSPITALITY_WORK, isBuildingSectorLabel } from "./assignment-subject";
 
 export { assignmentSubjectText } from "./assignment-subject";
 export type TenderRequirementLite = { title: string; description: string; priority: string; requirementType: string };
@@ -128,9 +128,9 @@ export const PROPOSAL_THEMES: ProposalTheme[] = [
     // Health work, not the word "health" or "emergency": a health
     // ministry's name, a donor's mission, "emergency exits" and "emergency
     // contact" are in tenders for offices, roads and towers alike.
-    triggers: [/health\s*(?:care|facilit|cent(?:er|re)s?|posts?|stations?|services?|institution|infrastructure)/i, /hospital/i, /medical/i, /clinic/i, /pharmacy/i, /radiology/i, /(?:medical|clinical|diagnostic|hospital|pathology|public\s+health)\s+laborator/i, /in[- ]?patient/i, /out[- ]?patient/i, /emergency\s+(?:department|ward|unit|room|medicine|care|obstetric)/i, /specialty.*cent/i, /medical.*cent/i],
+    triggers: [/health\s*(?:care|facilit|cent(?:er|re)s?|posts?|stations?|services?|institution|infrastructure)/i, /\bhospitals?\b/i, /medical/i, /clinic/i, /pharmacy/i, /radiology/i, /(?:medical|clinical|diagnostic|hospital|pathology|public\s+health)\s+laborator/i, /in[- ]?patient/i, /out[- ]?patient/i, /emergency\s+(?:department|ward|unit|room|medicine|care|obstetric)/i, /specialty.*cent/i, /medical.*cent/i],
     // Word boundaries on ICU and OPD — 3-letter abbreviations.
-    proofTerms: [/hospital/i, /health/i, /medical/i, /clinic/i, /radiology/i, /laboratory/i, /pharmacy/i, /patient/i, /clinical/i, /ward/i, /\bICU\b/i, /\bOPD\b/i],
+    proofTerms: [/\bhospitals?\b/i, /health/i, /medical/i, /clinic/i, /radiology/i, /laboratory/i, /pharmacy/i, /patient/i, /clinical/i, /ward/i, /\bICU\b/i, /\bOPD\b/i],
     methodologyBullets: [
       "clinical zone segregation: Emergency, OPD, In-patient, Laboratory, Imaging/Radiology, and Pharmacy — with explicit patient/staff/supply flow separation",
       "IPC-compliant layout: clean/dirty flow segregation, airborne infection isolation, hand-hygiene point placement, and surface material specification",
@@ -146,9 +146,9 @@ export const PROPOSAL_THEMES: ProposalTheme[] = [
     triggers: [/facility identification/i, /shortlisted propert/i, /premises/i, /suitable.*space/i, /site.*selection/i, /assess.*suitability/i, /technical.*evaluation.*propert/i],
     proofTerms: [/assessment/i, /suitability/i, /structural.*adequacy/i, /feasibility/i, /premises/i, /property/i, /shortlist/i],
     methodologyBullets: [
-      "structured assessment matrix for each shortlisted property: structural adequacy, spatial flexibility, utility availability, accessibility, patient flow potential, safety, and expansion capacity",
+      "structured assessment matrix for each shortlisted property: structural adequacy, spatial flexibility, utility availability, accessibility, functional flow potential, safety, and expansion capacity",
       "technical due-diligence report for each shortlisted property with a clear recommended/not-recommended conclusion and supporting evidence",
-      "written technical recommendation report delivered to client before design commitment — avoids committing to a building that cannot serve the clinical function",
+      "written technical recommendation report delivered to client before design commitment — avoids committing to a site or building that cannot serve its intended function",
     ],
   },
   {
@@ -165,13 +165,28 @@ export const PROPOSAL_THEMES: ProposalTheme[] = [
   {
     code: "MEP_BIOMEDICAL",
     label: "MEP, biomedical engineering and equipment integration",
-    // Word boundaries on MEP / HVAC (3-4 char abbreviations).
-    triggers: [/\bMEP\b/i, /biomedical/i, /bio-medical/i, /medical gas/i, /electrical.*load/i, /\bIT system/i, /telehealth/i, /\bHVAC\b/i, /electromechanical/i, /building services/i],
+    // Health-facility services only. The generic triggers (MEP, HVAC,
+    // building services, electrical load) put medical gas, nurse-call and
+    // PACS cabling into an office building's proposal (2026-10-05); building
+    // services in general are MEP_BUILDING_SERVICES below.
+    triggers: [/biomedical/i, /bio-medical/i, /medical gas/i, /telehealth/i, /nurse.?call/i, /\bPACS\b/],
     proofTerms: [/\bMEP\b/i, /electrical/i, /sanitary/i, /mechanical/i, /medical gas/i, /\bHVAC\b/i, /power/i, /biomedical/i, /equipment/i],
     methodologyBullets: [
       "medical-grade electrical load schedule: equipment power demands, UPS sizing, generator capacity, and emergency power discrimination",
       "medical gas system: pipe sizing, outlet locations, alarm panels, and pressure testing protocol",
       "ICT infrastructure: nurse-call, PACS-ready data cabling, telehealth endpoints, BMS integration, and fire-alarm zoning",
+    ],
+  },
+  {
+    code: "MEP_BUILDING_SERVICES",
+    label: "Building services (MEP) design and coordination",
+    // Word boundaries on MEP / HVAC (3-4 char abbreviations).
+    triggers: [/\bMEP\b/i, /\bHVAC\b/i, /electromechanical/i, /building services/i, /electrical.*load/i, /plumbing/i, /fire\s+(?:fighting|suppression|protection)/i],
+    proofTerms: [/\bMEP\b/i, /electrical/i, /sanitary/i, /mechanical/i, /\bHVAC\b/i, /plumbing/i],
+    methodologyBullets: [
+      "electrical design: connected and diversified load schedule, transformer and standby generator sizing, UPS for critical loads, earthing and lightning protection",
+      "mechanical and plumbing design: heating, ventilation and cooling loads by occupancy, water supply and drainage, and fire-fighting or suppression where the building code requires it",
+      "services coordination: MEP routing coordinated with structure and ceilings, clash review before construction documents, and a commissioning plan for each system",
     ],
   },
   {
@@ -192,7 +207,7 @@ export const PROPOSAL_THEMES: ProposalTheme[] = [
     triggers: [/structural/i, /foundation/i, /geotechnical/i, /soil.*investigation/i, /borehole.*investigation/i, /seismic/i, /EBCS/i],
     proofTerms: [/structural/i, /foundation/i, /geotechnical/i, /soil/i, /ETABS/i, /SAP2000/i, /seismic/i, /EBCS/i],
     methodologyBullets: [
-      "geotechnical investigation: borehole drilling, soil sampling, laboratory testing ({{JURISDICTION:MATERIALS_TESTING_STANDARD}} compliant), and bearing capacity recommendation",
+      "geotechnical investigation: borehole drilling, soil sampling, laboratory testing to {{JURISDICTION:MATERIALS_TESTING_STANDARD}}, and a bearing capacity recommendation",
       "structural analysis using ETABS/SAP2000/SAFE: seismic detailing to {{JURISDICTION:SEISMIC_DESIGN_CODE}}, foundation engineering for site-specific soil conditions",
       "staged design review from schematic to working-drawing level with independent peer check before construction-document issue",
     ],
@@ -289,7 +304,11 @@ export const PROPOSAL_THEMES: ProposalTheme[] = [
   {
     code: "ENERGY_POWER",
     label: "Energy, power generation and grid infrastructure",
-    triggers: [/\benergy\b/i, /power.*plant/i, /\bsolar\b/i, /wind.*farm/i, /grid.*connect/i, /generation/i, /transmission.*line/i, /substation/i, /\bhydropower\b/i, /\belectrification\b/i, /renewable.*energy/i, /power.*system/i, /\bSCADA\b/i, /off.?grid/i],
+    // Energy WORK, not the words a building's services carry: "energy-efficient
+    // design", "emergency power systems", "next-generation" and "solar water
+    // heaters" are in hospital, hotel and office tenders, and a hospital
+    // proposal offered load-flow studies and SCADA architecture (2026-10-05).
+    triggers: [/\benergy\s+(?:sector|project|infrastructure|access|supply|audit|master\s*plan|polic\w*|generation|storage)\b/i, /power.*plant/i, /\bsolar\s+(?:pv|power|farm|plant|park|mini.?grid|home\s+system)/i, /wind.*farm/i, /grid.*connect/i, /\b(?:power|electricity|energy)\s+generation\b/i, /transmission.*line/i, /substation/i, /\bhydropower\b/i, /\belectrification\b/i, /renewable.*energy/i, /\bpower\s+systems?\s+(?:study|studies|analysis|planning|design|engineering)\b/i, /\bSCADA\b/i, /off.?grid/i],
     proofTerms: [/energy/i, /solar/i, /wind/i, /hydropower/i, /substation/i, /transmission/i, /grid/i, /generation/i, /SCADA/i, /electrification/i, /renewable/i, /load.*flow/i, /ETAP/i, /SKM/i],
     methodologyBullets: [
       "load forecast and demand analysis: load-growth scenario modelling using minimum 5-year consumption data set, P50/P90 yield estimates (solar/wind), and grid-code compliance review",
@@ -311,8 +330,8 @@ export const PROPOSAL_THEMES: ProposalTheme[] = [
   {
     code: "MINING_EXTRACTIVE",
     label: "Mining, mineral resource assessment and extractive industries",
-    triggers: [/mining/i, /mineral.*resource/i, /\bJORC\b/i, /tailings/i, /ore.*body/i, /pit.*design/i, /slope.*stability/i, /mine.*plan/i, /quarry.*design/i, /blast.*design/i, /geotechnical.*mine/i, /mine.*feasibility/i],
-    proofTerms: [/mining/i, /JORC/i, /tailings/i, /ore/i, /mineral/i, /pit/i, /geotechnical/i, /resource.*estimate/i, /slope/i, /TSF/i, /ANCOLD/i, /MAC/i, /closure/i],
+    triggers: [/\bmining\b/i, /mineral.*resource/i, /\bJORC\b/i, /tailings/i, /\bore\s*body\b/i, /\b(?:open[- ]?)?pit\s+(?:design|optimi[sz]ation|slope)/i, /slope.*stability/i, /\bmine\s+plan/i, /quarry.*design/i, /blast.*design/i, /geotechnical.*\bmines?\b/i, /\bmine\s+feasibility/i],
+    proofTerms: [/\bmining\b/i, /JORC/i, /tailings/i, /\bore\b/i, /mineral/i, /\bpits?\b/i, /geotechnical/i, /resource.*estimate/i, /slope/i, /TSF/i, /ANCOLD/i, /\bMAC\b/, /closure/i],
     methodologyBullets: [
       "resource assessment and regulatory setup: geological mapping, block-model resource estimation with independent competent-person review (JORC compliant), geotechnical investigation, environmental baseline, and community engagement plan",
       "mine plan and infrastructure design: pit design or underground plan, production schedule, tailings storage facility (TSF) per MAC/ANCOLD guidelines, slope-stability analysis (three methods), and environmental and social management plan",
@@ -478,7 +497,7 @@ function projectScore(project: ProjectLite, themes: ProposalTheme[], tenderText:
   let score = 0;
   for (const t of themes) score += scoreTextAgainstTheme(text, t);
   // Sector-match bonuses — direct sector overlap is the strongest relevance signal
-  if (/hospital|health|medical|clinic/i.test(text) && /hospital|health|medical|clinic/i.test(tenderText)) score += 15;
+  if (/\bhospitals?\b|health|medical|clinic/i.test(text) && /\bhospitals?\b|health|medical|clinic/i.test(tenderText)) score += 15;
   if (/renovation|modification|retrofit|existing/i.test(text) && /renovation|premises|existing|assessment/i.test(tenderText)) score += 8;
   // Word boundaries on WASH (4-char abbreviation; matches "Washington" /
   // "washable" / "wash-up" without \b). Same fix for ICT / MIS / ERP /
@@ -495,7 +514,7 @@ function projectScore(project: ProjectLite, themes: ProposalTheme[], tenderText:
   if (/World Bank|UNDP|donor.*fund/i.test(text) && /World Bank|UNDP|donor.*fund/i.test(tenderText)) score += 6;
   if (/energy|solar|hydropower|substation|transmission|generation|electrification|SCADA/i.test(text) && /energy|solar|hydropower|substation|transmission|generation|electrification|SCADA/i.test(tenderText)) score += 12;
   if (/irrigation.*scheme|agri|WUA|command.*area|crop.*water|rural.*develop.*agri/i.test(text) && /irrigation|agri|WUA|command.*area|rural.*develop/i.test(tenderText)) score += 12;
-  if (/mining|mineral.*resource|JORC|tailings|ore|mine.*plan|pit.*design/i.test(text) && /mining|mineral.*resource|JORC|tailings|ore/i.test(tenderText)) score += 12;
+  if (/\bmining\b|mineral.*resource|JORC|tailings|\bore\b|\bmine\s+plan|\b(?:open[- ]?)?pit\s+(?:design|optimi[sz]ation|slope)/i.test(text) && /\bmining\b|mineral.*resource|JORC|tailings|\bore\b/i.test(tenderText)) score += 12;
   if (/port|berth|quay|dredging|maritime|ISPS|harbour/i.test(text) && /port|berth|quay|dredging|maritime|ISPS|harbour/i.test(tenderText)) score += 12;
   if (/HAZOP|P&ID|pipeline.*design|oil.*facilit|gas.*facilit|refinery|petrochemical/i.test(text) && /HAZOP|P&ID|pipeline.*design|oil.*facilit|gas.*facilit|refinery|petrochemical/i.test(tenderText)) score += 12;
   if (/KYC|AML|core.*banking|microfinance|IFRS|Basel|prudential.*regul|fintech/i.test(text) && /KYC|AML|core.*banking|microfinance|IFRS|Basel|prudential.*regul|fintech/i.test(tenderText)) score += 12;
@@ -536,7 +555,7 @@ function expertScore(expert: ExpertLite, themes: ProposalTheme[], tenderText: st
   if (/education.*specialist|school.*designer|campus.*architect/i.test(text) && /school|university|campus|education/i.test(tenderText)) score += 8;
   if (/power.*engineer|electrical.*engineer|energy.*engineer|renewable.*engineer|SCADA.*engineer|substation.*engineer/i.test(text) && /energy|solar|hydropower|substation|transmission|generation|electrification/i.test(tenderText)) score += 10;
   if (/irrigation.*engineer|agri.*specialist|agronomi|WUA.*specialist|rural.*develop.*specialist/i.test(text) && /irrigation|agri|WUA|command.*area|rural.*develop/i.test(tenderText)) score += 10;
-  if (/mining.*engineer|geological.*engineer|geolog|mine.*design|resource.*geolog/i.test(text) && /mining|mineral.*resource|JORC|tailings|ore/i.test(tenderText)) score += 10;
+  if (/\bmining\b.*engineer|geological.*engineer|geolog|mine.*design|resource.*geolog/i.test(text) && /\bmining\b|mineral.*resource|JORC|tailings|\bore\b/i.test(tenderText)) score += 10;
   if (/port.*engineer|maritime.*engineer|coastal.*engineer|harbour.*engineer|marine.*engineer/i.test(text) && /port|berth|quay|dredging|maritime/i.test(tenderText)) score += 10;
   if (/process.*engineer|pipeline.*engineer|HAZOP.*facilitator|oil.*gas.*engineer|petroleum.*engineer/i.test(text) && /HAZOP|P&ID|pipeline.*design|oil.*facilit|gas.*facilit|refinery/i.test(tenderText)) score += 10;
   if (/compliance.*officer|risk.*analyst|financial.*specialist|banking.*specialist|fintech.*specialist/i.test(text) && /KYC|AML|core.*banking|microfinance|IFRS|Basel|prudential/i.test(tenderText)) score += 10;
@@ -804,6 +823,9 @@ export function inferSector(rawTenderText: string, opts?: { title?: string | nul
   const title = opts?.title?.trim();
   if (title) {
     const fromTitle = inferSectorFromSubject(assignmentSubjectText(title));
+    // A title says the work is building work; whether that work is design,
+    // supervision or both is often only in the body ("… and supervise the works").
+    if (isBuildingSectorLabel(fromTitle)) return buildingSectorLabel(`${title}\n${rawTenderText}`);
     if (fromTitle !== GENERAL_SECTOR) return fromTitle;
   }
   return inferSectorFromSubject(assignmentSubjectText(rawTenderText));
@@ -859,16 +881,16 @@ function inferSectorFromSubject(tenderText: string): string {
   if (/geotechnical|soil.*investigation|foundation.*design|seismic/i.test(tenderText)) return "Geotechnical & Structural Engineering";
   if (/renovation|modification|retrofit|existing building/i.test(tenderText)) return "Building Renovation & Adaptation";
   if (/agri|irrigation.*scheme|crop.*yield|farm.*develop|value.?chain.*agri|livestock.*develop/i.test(tenderText)) return "Agriculture & Rural Development";
-  if (/mining|mineral.*extract|quarry.*design|pit.*design|tailings|ore.*body|blast.*design/i.test(tenderText)) return "Mining & Extractive Industries";
+  if (/\bmining\b|mineral.*extract|quarry.*design|\b(?:open[- ]?)?pit\s+(?:design|optimi[sz]ation|slope)|tailings|\bore\s*body\b|blast.*design/i.test(tenderText)) return "Mining & Extractive Industries";
   if (/\bport.*design|\bport.*master.*plan|berth.*design|quay.*design|harbour.*develop|dredging.*scheme|container.*terminal/i.test(tenderText)) return "Port / Maritime Infrastructure";
   if (/pipeline.*design|oil.*facilit|gas.*facilit|upstream.*petroleum|HAZOP|P&ID|refinery|petrochemical/i.test(tenderText)) return "Oil & Gas / Petroleum";
   if (/KYC|AML.*framework|core.*banking|microfinance.*system|credit.*risk.*model|IFRS.*implement|Basel|prudential.*regul/i.test(tenderText)) return "Financial Services / Banking";
   if (/spectrum.*licen|base.*station.*design|backhaul.*design|last.?mile.*access|broadband.*network|telecoms.*infra|LTE.*deploy|5G.*rollout/i.test(tenderText)) return "Telecoms / Broadband Infrastructure";
   if (INTERIOR_WORK.test(tenderText)) return INTERIOR_FIT_OUT_SECTOR;
-  if (/architecture|architectural\s+(?:design|services|drawings)|building.*design|design\s+of\s+(?:[\w+-]+\s+){0,4}(?:building|headquarters)|construction.*supervision|structural.*design/i.test(tenderText)) return "Building Design & Construction Supervision";
+  if (/architecture|architectural\s+(?:design|services|drawings)|building.*design|design\s+of\s+(?:[\w+-]+\s+){0,4}(?:building|headquarters)|construction.*supervision|structural.*design/i.test(tenderText)) return buildingSectorLabel(tenderText);
   if (/\benergy\b|power.*plant|\bsolar\b|wind.*farm|grid.*connect|generation|transmission.*line|substation|\bhydropower\b|\belectrification\b|renewable.*energy|power.*system|\bSCADA\b/i.test(tenderText)) return "Energy & Power Infrastructure";
   if (/irrigation.*scheme|command.*area|\bWUA\b|agri.*develop|\bagricultural\b|crop.*water|rural.*develop.*agri|livestock.*develop/i.test(tenderText)) return "Agriculture, Irrigation & Rural Development";
-  if (/\bJORC\b|mine.*plan|pit.*design|tailings|ore.*body|blast.*design|geotechnical.*mine|mine.*feasibility|mining.*project/i.test(tenderText)) return "Mining & Extractive Industries";
+  if (/\bJORC\b|\bmine\s+plan|\b(?:open[- ]?)?pit\s+(?:design|optimi[sz]ation|slope)|tailings|\bore\s*body\b|blast.*design|geotechnical.*\bmines?\b|\bmine\s+feasibility|\bmining\b.*project/i.test(tenderText)) return "Mining & Extractive Industries";
   if (/\bport\b.*\b(design|master.*plan|infrastructure|facilit|terminal|study)\b|berth.*design|quay.*design|harbour.*develop|dredging|container.*terminal|\bISPS\b/i.test(tenderText)) return "Port & Maritime Infrastructure";
   if (/pipeline.*design|oil.*facilit|gas.*facilit|\bHAZOP\b|\bP&ID\b|refinery|petrochemical|upstream.*petroleum|\bLNG\b|\bFEED\b.*\b(oil|gas|process)\b/i.test(tenderText)) return "Oil & Gas / Petroleum Engineering";
   if (/\bKYC\b|\bAML\b|core.*banking|microfinance.*(?:system|platform)|credit.*risk.*model|\bIFRS\b.*implement|\bBasel\b|prudential.*regul|capital.*adequacy/i.test(tenderText)) return "Financial Services & Banking";
@@ -950,7 +972,7 @@ function makeDifferentiators(
 
   // Healthcare positioning — claim, not instruction.
   if (themes.some((t) => t.code === "HEALTHCARE")) {
-    if (/hospital|health.*facilit|medical.*cent/i.test(allProjectText)) {
+    if (/\bhospitals?\b|health.*facilit|medical.*cent/i.test(allProjectText)) {
       items.push("Reviewed hospital and medical-centre records inform the healthcare-specific delivery approach described in this proposal.");
     }
     items.push("Healthcare-specific methodology addresses IPC, clinical zone segregation and medical-gas coordination; radiation shielding and licensing activities are included only where the confirmed equipment brief and applicable authority require them.");
@@ -1026,7 +1048,7 @@ function makeDifferentiators(
 
   // Mining / Extractive
   if (themes.some((t) => t.code === "MINING_EXTRACTIVE")) {
-    if (/mining|JORC|tailings|ore|mine.*plan/i.test(allProjectText)) {
+    if (/\bmining\b|JORC|tailings|\bore\b|\bmine\s+plan/i.test(allProjectText)) {
       items.push("JORC-compliant resource reporting experience with competent-person credentials: independent peer review and regulatory submission capability built into the project workflow.");
     }
     items.push("Integrated geotechnical and mine-design capability: slope-stability analysis, TSF design per MAC/ANCOLD guidelines, and closure-cost estimation under one technical team.");
@@ -1072,7 +1094,7 @@ function makeDifferentiators(
 function detectGaps(themes: ProposalTheme[], topProjects: ProjectLite[], topExperts: ExpertLite[], tenderText: string): string[] {
   const gaps: string[] = [];
 
-  if (themes.some((t) => t.code === "HEALTHCARE") && !topProjects.some((p) => /hospital|health|medical|clinic/i.test(textOf(p.name, p.summary, p.sector, p.clientName)))) {
+  if (themes.some((t) => t.code === "HEALTHCARE") && !topProjects.some((p) => /\bhospitals?\b|health|medical|clinic/i.test(textOf(p.name, p.summary, p.sector, p.clientName)))) {
     gaps.push("Healthcare tender detected but no clearly healthcare-specific reviewed project is selected. Use the closest renovation/MEP/hospital-adjacent project and explicitly flag the evidence gap as a senior bid-review action.");
   }
 
@@ -1340,11 +1362,11 @@ export function buildProposalIntelligence(params: {
     // social.*develop | advisory.*service | institutional.*strength | capacity.*build | community.*develop
     { label: /Social Advisory|Community/, keywords: /social.*advisor|advisory.*service|institutional.*strength|capacity.*build|community.*develop|social.*develop|livelihoods|social.*mobiliz|community.*mobiliz|resettlement.*action|poverty|civil.*society|participatory.*develop/i },
     // Kept in sync with inferSector() triggers: architecture|building.*design|construction.*supervision|structural.*design
-    { label: /Building Design/, keywords: /architectural.*design|building.*design|construction.*supervision|residential.*develop|commercial.*develop|architectural.*supervision|\barchitecture\b|structural.*design/i },
+    { label: /Building Design|Building Construction Supervision/, keywords: /architectural.*design|building.*design|construction.*supervision|residential.*develop|commercial.*develop|architectural.*supervision|\barchitecture\b|structural.*design/i },
     // New 7 sectors — kept in sync with inferSector() additions above
     { label: /Energy|Power/, keywords: /\benergy\b|power.*plant|\bsolar\b|wind.*farm|grid.*connect|generation|transmission.*line|substation|\bhydropower\b|\belectrification\b|renewable.*energy|\bSCADA\b/i },
     { label: /Agriculture|Irrigation/, keywords: /irrigation.*scheme|command.*area|\bWUA\b|agri.*develop|\bagricultural\b|crop.*water|rural.*develop.*agri|livestock.*develop|\bagronomic\b/i },
-    { label: /Mining|Extractive/, keywords: /\bJORC\b|mine.*plan|pit.*design|tailings|ore.*body|blast.*design|geotechnical.*mine|mine.*feasibility|mining.*project|\bquarry\b/i },
+    { label: /Mining|Extractive/, keywords: /\bJORC\b|\bmine\s+plan|\b(?:open[- ]?)?pit\s+(?:design|optimi[sz]ation|slope)|tailings|\bore\s*body\b|blast.*design|geotechnical.*\bmines?\b|\bmine\s+feasibility|\bmining\b.*project|\bquarry\b/i },
     { label: /Port|Maritime/, keywords: /\bport\b.*\b(design|master.*plan|infrastructure|facilit|terminal|study)\b|berth.*design|quay.*design|harbour.*develop|dredging|container.*terminal|\bISPS\b/i },
     { label: /Oil|Gas|Petroleum/, keywords: /pipeline.*design|oil.*facilit|gas.*facilit|\bHAZOP\b|\bP&ID\b|refinery|petrochemical|upstream.*petroleum|\bLNG\b|\bFEED\b.*\b(oil|gas|process)\b/i },
     { label: /Financial|Banking/, keywords: /\bKYC\b|\bAML\b|core.*banking|microfinance.*(?:system|platform)|credit.*risk.*model|\bIFRS\b|\bBasel\b|prudential.*regul|capital.*adequacy|\bfintech\b/i },

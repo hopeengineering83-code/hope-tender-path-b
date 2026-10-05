@@ -57,6 +57,13 @@ export function titleStatesRole(title: string | null | undefined, keyword: strin
   return new RegExp(`(^|[^a-z])${escaped}`, "i").test(String(title ?? ""));
 }
 
+/** The role families a requirement's own wording asks for (see ROLE_PATTERNS). */
+export function requirementRoleFamilies(text: string | null | undefined): string[] {
+  const value = String(text ?? "");
+  if (!value.trim()) return [];
+  return ROLE_PATTERNS.filter((entry) => entry.pattern.test(value)).map((entry) => entry.role);
+}
+
 /** The role families a person's own job title names (see ROLE_PATTERNS). */
 export function expertTitleRoles(title: string | null | undefined): string[] {
   const text = String(title ?? "");
@@ -98,10 +105,26 @@ export function deriveRequirementConstraintProfile(requirements: RequirementDraf
   const domainText = domainScopedText.trim().length > 0 ? domainScopedText : text;
   const roleSignals = ROLE_PATTERNS.filter((entry) => entry.pattern.test(text)).map((entry) => entry.role);
 
-  const expertFromQty = requirements
-    .filter((r) => normalizeRequirementType(r.requirementType) === "EXPERT")
+  // A quantity on a row that names ONE role ("A registered architect", "Team
+  // Leader") is how many of that role, not the size of the team. Read as the
+  // team size it capped selection at one person: a five-item clinic scope was
+  // staffed by its architect alone, with the MEP item led by nobody, from a
+  // vault holding an MEP engineer (2026-10-05 tender-type matrix). Such
+  // quantities add up to a floor instead; a personnel row with no single role
+  // ("Personnel: provide key staff", quantity 3) is still the head count.
+  const expertRows = requirements.filter((r) => normalizeRequirementType(r.requirementType) === "EXPERT");
+  const namesOneRole = (r: RequirementDraft) => {
+    const rowText = `${r.title} ${r.description}`;
+    if (/\b\d{1,2}\s+(?:key\s+)?(?:experts?|specialists?|personnel|staff|professionals)\b|\b(?:minimum|at\s+least|not\s+less\s+than)\s+(?:of\s+)?\d{1,2}\b/i.test(rowText)) return false;
+    return ROLE_PATTERNS.some((entry) => entry.pattern.test(rowText));
+  };
+  const expertFromQty = expertRows
+    .filter((r) => !namesOneRole(r))
     .map((r) => r.requiredQuantity ?? 0)
     .filter((n) => n > 0);
+  const perRoleFloor = expertRows
+    .filter(namesOneRole)
+    .reduce((sum, r) => sum + Math.max(0, Math.min(r.requiredQuantity ?? 0, 5)), 0);
   const projectFromQty = requirements
     .filter((r) => normalizeRequirementType(r.requirementType) === "PROJECT_EXPERIENCE")
     .map((r) => r.requiredQuantity ?? 0)
@@ -115,7 +138,7 @@ export function deriveRequirementConstraintProfile(requirements: RequirementDraf
   // biomedical engineer, MEP experts and other relevant specialists" names
   // three families and asks for more than three people; reading it as exactly
   // three fielded a three-person team from a 28-expert vault.
-  const expertCount = Math.max(explicitExpertCount, roleSignals.length);
+  const expertCount = Math.max(explicitExpertCount, roleSignals.length, perRoleFloor);
   const projectCount = Math.max(projectFromText, projectFromQty.length > 0 ? Math.max(...projectFromQty) : 0);
 
   // Domain signals live in ./domain-signals so this derivation and the matcher
