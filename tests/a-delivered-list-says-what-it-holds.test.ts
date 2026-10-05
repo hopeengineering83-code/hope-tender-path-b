@@ -130,6 +130,14 @@ describe("the final DOCX is rendered from the repaired markdown", () => {
     assert.match(source, /const finalDoc = rerender\s*\n?\s*\?/);
   });
 
+  it("the PDF cover prints the subject with the bidder's name filled in, for every caller", () => {
+    // Hands-off run 37336342077: the DOCX was fixed and the app's PDF cover
+    // still read "Subject: [RFQ#2026-024 Your Company Name]".
+    const pdf = readFileSync("lib/engine/proposal-pdf.ts", "utf8");
+    assert.match(pdf, /submissionEmailSubject: withBidderName\(opts\.submissionEmailSubject, opts\.companyName\)/);
+    assert.doesNotMatch(pdf, /submissionEmailSubject: opts\.submissionEmailSubject \?\? null/);
+  });
+
   it("fills the bidder name into every subject line the writer and fallback use", () => {
     const subjectSites = source.match(/exactSubjectLine:\s*withBidderName\(/g) ?? [];
     assert.ok(subjectSites.length >= 2, `expected both writer subject sites wrapped, saw ${subjectSites.length}`);

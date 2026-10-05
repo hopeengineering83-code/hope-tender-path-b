@@ -19,6 +19,8 @@ export type EvaluatorMatrixInput = {
   projectEvidenceLines: string[];
   complianceLines: string[];
   differentiators: string[];
+  /** Each requirement's stated priority, so Section F does not guess it from wording. */
+  requirementPriorities?: ReadonlyArray<{ title: string; priority: string | null }>;
 };
 
 type EvidencePick = {

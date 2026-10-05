@@ -66,6 +66,17 @@ function sectionE(input: EvaluatorMatrixInput): string {
   ].join("\n\n");
 }
 
+function requirementTitleKey(text: string): string {
+  return text.split(/\s+[—–]\s+/)[0]!.replace(/\[p\.\s*\d+[^\]]*\]/gi, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function priorityOf(requirement: string, stated: EvaluatorMatrixInput["requirementPriorities"]): string | null {
+  if (!stated?.length) return null;
+  const key = requirementTitleKey(withoutProvenanceTags(clean(requirement)));
+  const match = stated.find((r) => r.title && requirementTitleKey(r.title) === key);
+  return match?.priority ?? null;
+}
+
 function sectionF(input: EvaluatorMatrixInput): string {
   const blueprint = buildTenderResponseBlueprint(input).slice(0, 12);
   const rows = [
@@ -80,9 +91,16 @@ function sectionF(input: EvaluatorMatrixInput): string {
     // "65%", weights the tender never stated. An invented weight in the column
     // an evaluator uses to check their own scoring is a fabricated fact, so
     // where the tender states no weight this now says so.
-    const priority = /mandatory|shall|must|required|eligib/i.test(item.requirement)
-      ? "Mandatory / pass-fail"
-      : "Scored criterion (no weight stated in tender)";
+    //
+    // The requirement's own priority decides when it is known: "No prices
+    // should be provided" is MANDATORY, and the wording guess called it a
+    // scored criterion beside Section E's mandatory count (2026-10-05).
+    const statedPriority = priorityOf(item.requirement, input.requirementPriorities);
+    const priority = statedPriority
+      ? (/MANDATORY|CRITICAL/i.test(statedPriority) ? "Mandatory / pass-fail" : "Scored criterion (no weight stated in tender)")
+      : /mandatory|shall|must|required|eligib/i.test(item.requirement)
+        ? "Mandatory / pass-fail"
+        : "Scored criterion (no weight stated in tender)";
     // "TRB-1" was an internal trace label with no meaning to the reader.
     // Located by the same rule as Section E. responseSection() named
     // sections no proposal has ("Section Compliance Forms and Eligibility

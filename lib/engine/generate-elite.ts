@@ -30,7 +30,7 @@ import { canUseVaultRecord, sourceVerifiedListElements } from "../vault-review-p
 import { buildClientProposalStrengtheningSections } from "./proposal-strengthening-sections";
 import { benchmarkAuditSummary } from "./proposal-benchmark-audit";
 import { polishBenchmarkOutput } from "./benchmark-output-polisher";
-import { formatRequirementLine, withBidderName } from "./proposal-labels";
+import { descriptionAfterOwnName, formatRequirementLine, withBidderName } from "./proposal-labels";
 import {
   buildBenchmarkTablesBlock,
   buildClientReferencesTable,
@@ -130,6 +130,7 @@ export const VAT_RATE_MENTION = /\bvat\b(?=[^\n]{0,12}\d)(?![\s:|—–-]*(?:reg
 import { isCurrentRecordStatus } from "./record-status";
 import { possessive } from "./possessive";
 import { isHealthcareSector } from "./assignment-subject";
+import { reconcileSectionPointers } from "./section-pointer-reconciliation";
 export { isCurrentRecordStatus };
 
 /** Rename the document's references to itself when it is not a Technical Proposal. */
@@ -656,16 +657,23 @@ type OpeningParams = {
   companyComplianceRecords?: Array<{ title: string; complianceType?: string | null; status?: string | null; referenceNumber?: string | null }>;
 };
 
-/** The records the Cover Letter and Executive Summary are composed from; null when the tender's scope could not be read. */
+/**
+ * The records the Cover Letter and Executive Summary are composed from.
+ *
+ * Composed even when the tender's scope items could not be read: the need,
+ * the references and their recorded services, the named team and the firm's
+ * standing are all records. Returning nothing there sent a hosted office-design
+ * EOI (2026-10-05) to the two-sentence fallback letter and a one-sentence
+ * Executive Summary.
+ */
 function openingSummaryInput(params: OpeningParams): Parameters<typeof composeExecutiveSummary>[0] | null {
-  if (!params.scopePlan || params.scopePlan.length === 0) return null;
   return {
     companyName: params.companyName,
     clientName: params.clientName,
     tenderTitle: params.tenderTitle,
     primarySector: params.primarySector,
     location: params.location ?? null,
-    scopePlan: params.scopePlan,
+    scopePlan: params.scopePlan ?? [],
     projects: params.projects ?? [],
     experts: params.experts ?? [],
     evaluationCriteriaCount: (params.evaluationCriteria ?? []).length,
@@ -731,6 +739,7 @@ function fallbackProposalMarkdown(params: {
   companyVAT?: string | null;
   companyGM?: string | null;
   companyGMLicense?: string | null;
+  companyGMTitle?: string | null;
   primarySector: string;
   requirements: string[];
   differentiators: string[];
@@ -841,7 +850,7 @@ function fallbackProposalMarkdown(params: {
   lines.push("We trust this proposal demonstrates our capacity, commitment, and technical depth.");
   }
   // The signatory is taken from the firm's own records (lib/engine/signatory.ts).
-  const signatory = resolveSignatory({ gmName: params.companyGM, gmLicense: params.companyGMLicense, experts: reviewedExperts });
+  const signatory = resolveSignatory({ gmName: params.companyGM, gmTitle: params.companyGMTitle, gmLicense: params.companyGMLicense, experts: reviewedExperts });
   lines.push(signOffLines(params.companyName, signatory).join("\n"));
 
   // No markdown cover page here. The rendered document builds its own cover
@@ -940,9 +949,20 @@ function fallbackProposalMarkdown(params: {
   // technical consultancy services ... combining sector-specialist expertise
   // with evidence-anchored project delivery".
   const ownDescription = (params.companyDescription ?? "").replace(/\s+/g, " ").trim().replace(/\.$/, "");
+  // A description that names the firm as its own subject ("Meridian Design
+  // Consultants PLC is an architectural … consultancy") is used from its
+  // predicate on; spliced in whole it read "… is a meridian Design
+  // Consultants PLC is an architectural … consultancy" (2026-10-05).
+  const ownSubject = descriptionAfterOwnName(ownDescription, [params.companyLegalName, params.companyName]);
   if (ownDescription && !/\b(?:AI[-\s]ready|prompt|use\s+this\s+summary)\b/i.test(ownDescription)) {
-    const lowered = /^[A-Z][a-z]/.test(ownDescription) ? ownDescription.charAt(0).toLowerCase() + ownDescription.slice(1) : ownDescription;
-    lines.push(`**${params.companyName}**${legalNamePart} is ${/^[aeiou]/i.test(lowered) ? "an" : "a"} ${lowered}${licenseGradePart}${headcountPart}.`);
+    if (ownSubject?.predicate) {
+      lines.push(`**${params.companyName}**${legalNamePart} is ${ownSubject.predicate}${licenseGradePart}${headcountPart}.`);
+    } else if (ownSubject) {
+      lines.push(`${ownDescription}.`);
+    } else {
+      const lowered = /^[A-Z][a-z]/.test(ownDescription) ? ownDescription.charAt(0).toLowerCase() + ownDescription.slice(1) : ownDescription;
+      lines.push(`**${params.companyName}**${legalNamePart} is ${/^[aeiou]/i.test(lowered) ? "an" : "a"} ${lowered}${licenseGradePart}${headcountPart}.`);
+    }
   } else {
     lines.push(`**${params.companyName}**${legalNamePart} is a professional consultancy${licenseGradePart}${headcountPart}.`);
   }
@@ -957,7 +977,7 @@ function fallbackProposalMarkdown(params: {
     if (params.companyAddress) infoItems.push(`Address: ${params.companyAddress}`);
     if (params.companyTIN) infoItems.push(`TIN: ${params.companyTIN}`);
     if (params.companyVAT) infoItems.push(`VAT: ${params.companyVAT}`);
-    if (params.companyGM) infoItems.push(`General Manager: ${params.companyGM}${params.companyGMLicense ? ` (Lic. ${params.companyGMLicense})` : ""}`);
+    if (params.companyGM) infoItems.push(`${params.companyGMTitle?.trim() || "General Manager"}: ${params.companyGM}${params.companyGMLicense ? ` (Lic. ${params.companyGMLicense})` : ""}`);
     lines.push(infoItems.join(" | "));
   }
   lines.push("## A.2 Service Lines & Sectors");
@@ -2097,7 +2117,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
   ];
 
   const guardInput = { tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, companyName: company.name, submissionNotes, expertCount: expertLines.length, projectCount: projectLines.length, complianceLines, primarySector: intelligence.primarySector, topProjectNames: intelligence.topProjects.slice(0, 3).map((p) => p.name).filter(Boolean), topExpertName: intelligence.topExperts[0]?.fullName ?? undefined };
-  const evaluatorMatrixInput = { tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, requirements: requirementLines, expertLines, projectLines, companyEvidenceLines, projectEvidenceLines, complianceLines, differentiators: intelligence.differentiators };
+  const evaluatorMatrixInput = { tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, requirements: requirementLines, expertLines, projectLines, companyEvidenceLines, projectEvidenceLines, complianceLines, differentiators: intelligence.differentiators, requirementPriorities: tender.requirements.map((r) => ({ title: r.title ?? "", priority: r.priority ?? null })) };
 
   let sourceMarkdown: string;
   // The same assignment of leads and risks Section C prints, for the
@@ -2327,7 +2347,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
           subject: withBidderName(intelligence.exactSubjectLine, company.legalName || company.name) ?? `${submissionDocumentLabel} for ${cleanedTenderTitle}`,
           technicalOnly: Boolean(intelligence.noFinancialProposal),
           salutation: writerTender.clientContactName ? `Dear ${writerTender.clientContactName},` : "Dear Evaluation Committee,",
-          signOff: signOffLines(company.name, resolveSignatory({ gmName: company.gmName, gmLicense: company.gmLicense, experts: experts as ExpertRecord[] })),
+          signOff: signOffLines(company.name, resolveSignatory({ gmName: company.gmName, gmTitle: company.gmTitle, gmLicense: company.gmLicense, experts: experts as ExpertRecord[] })),
         }),
         tenderText: [BENCHMARK_CONTEXT_LINES.join("\n"), tenderText].join("\n\n"),
         analysisSummary: clean(tender.analysisSummary) || intelligence.tenderText.slice(0, 2000),
@@ -2635,11 +2655,11 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
       mode = `${provider === "claude" ? "Claude" : provider === "gemini" ? "Gemini" : provider === "openai" ? "GPT-4o" : "AI"} ${pathLabel}${mixedLabel} bid-writer + evaluator response matrix + full evidence library + client-ready benchmark finalizer + professional DOCX polish`;
     } catch (error) {
       aiError = error instanceof Error ? error.message : String(error);
-      sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, clientContactName: writerTender.clientContactName, companyName: company.name, companyLegalName: company.legalName, companyAddress: company.address, companyTIN: company.tin, companyVAT: company.vat, companyGM: company.gmName, companyGMLicense: company.gmLicense, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, experts: experts as ExpertRecord[], projects: projects as ProjectRecord[], reviewedExpertCount: experts.length, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired, themes: intelligence.themes, evaluationCriteria: intelligence.evaluationCriteria, appendixList: intelligence.appendixList, noFinancialProposal: intelligence.noFinancialProposal, exactEmails: intelligence.exactEmails, exactSubjectLine: intelligence.exactSubjectLine, gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative, requiredSections: intelligence.requiredSections, tenderDeadline: writerTender.deadline, tenderDeadlineSourceQuote: deadlineQuoteForDisplay, companyLicenseGrade: company.licenseGrade, companyHeadcount: company.headcount, companyServiceLines: safeParseArr(company.serviceLines), companySectors: safeParseArr(company.sectors), companyProfileSummary: company.profileSummary ?? company.description, companyLegalRecords: company.legalRecords ?? [], companyComplianceRecords: company.complianceRecords ?? [], serviceStreams: detectedServiceStreams, scopePlan: fallbackScopePlan, location: tenderFacts.locations[0] ?? null, companyDescription: company.description });
+      sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, clientContactName: writerTender.clientContactName, companyName: company.name, companyLegalName: company.legalName, companyAddress: company.address, companyTIN: company.tin, companyVAT: company.vat, companyGM: company.gmName, companyGMLicense: company.gmLicense, companyGMTitle: company.gmTitle, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, experts: experts as ExpertRecord[], projects: projects as ProjectRecord[], reviewedExpertCount: experts.length, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired, themes: intelligence.themes, evaluationCriteria: intelligence.evaluationCriteria, appendixList: intelligence.appendixList, noFinancialProposal: intelligence.noFinancialProposal, exactEmails: intelligence.exactEmails, exactSubjectLine: intelligence.exactSubjectLine, gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative, requiredSections: intelligence.requiredSections, tenderDeadline: writerTender.deadline, tenderDeadlineSourceQuote: deadlineQuoteForDisplay, companyLicenseGrade: company.licenseGrade, companyHeadcount: company.headcount, companyServiceLines: safeParseArr(company.serviceLines), companySectors: safeParseArr(company.sectors), companyProfileSummary: company.profileSummary ?? company.description, companyLegalRecords: company.legalRecords ?? [], companyComplianceRecords: company.complianceRecords ?? [], serviceStreams: detectedServiceStreams, scopePlan: fallbackScopePlan, location: tenderFacts.locations[0] ?? null, companyDescription: company.description });
       mode = "deterministic benchmark fallback + evaluator response matrix + client-ready benchmark finalizer + professional DOCX polish";
     }
   } else {
-    sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, clientContactName: writerTender.clientContactName, companyName: company.name, companyLegalName: company.legalName, companyAddress: company.address, companyTIN: company.tin, companyVAT: company.vat, companyGM: company.gmName, companyGMLicense: company.gmLicense, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, experts: experts as ExpertRecord[], projects: projects as ProjectRecord[], reviewedExpertCount: experts.length, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired, themes: intelligence.themes, evaluationCriteria: intelligence.evaluationCriteria, appendixList: intelligence.appendixList, noFinancialProposal: intelligence.noFinancialProposal, exactEmails: intelligence.exactEmails, exactSubjectLine: intelligence.exactSubjectLine, gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative, requiredSections: intelligence.requiredSections, tenderDeadline: writerTender.deadline, tenderDeadlineSourceQuote: deadlineQuoteForDisplay, companyLicenseGrade: company.licenseGrade, companyHeadcount: company.headcount, companyServiceLines: safeParseArr(company.serviceLines), companySectors: safeParseArr(company.sectors), companyProfileSummary: company.profileSummary ?? company.description, companyLegalRecords: company.legalRecords ?? [], companyComplianceRecords: company.complianceRecords ?? [], serviceStreams: detectedServiceStreams, scopePlan: fallbackScopePlan, location: tenderFacts.locations[0] ?? null, companyDescription: company.description });
+    sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, clientContactName: writerTender.clientContactName, companyName: company.name, companyLegalName: company.legalName, companyAddress: company.address, companyTIN: company.tin, companyVAT: company.vat, companyGM: company.gmName, companyGMLicense: company.gmLicense, companyGMTitle: company.gmTitle, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, experts: experts as ExpertRecord[], projects: projects as ProjectRecord[], reviewedExpertCount: experts.length, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired, themes: intelligence.themes, evaluationCriteria: intelligence.evaluationCriteria, appendixList: intelligence.appendixList, noFinancialProposal: intelligence.noFinancialProposal, exactEmails: intelligence.exactEmails, exactSubjectLine: intelligence.exactSubjectLine, gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative, requiredSections: intelligence.requiredSections, tenderDeadline: writerTender.deadline, tenderDeadlineSourceQuote: deadlineQuoteForDisplay, companyLicenseGrade: company.licenseGrade, companyHeadcount: company.headcount, companyServiceLines: safeParseArr(company.serviceLines), companySectors: safeParseArr(company.sectors), companyProfileSummary: company.profileSummary ?? company.description, companyLegalRecords: company.legalRecords ?? [], companyComplianceRecords: company.complianceRecords ?? [], serviceStreams: detectedServiceStreams, scopePlan: fallbackScopePlan, location: tenderFacts.locations[0] ?? null, companyDescription: company.description });
   }
 
   // PR NN: Strip any AI-produced Section H (Proposal Self-Score) from the raw AI
@@ -2712,6 +2732,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
       // user has populated them, the declaration carries a real signature
       // line; otherwise it falls back to the generic "General Manager" line.
       companyGM: company.gmName ?? null,
+      companyGMTitle: company.gmTitle ?? null,
       companyGMLicense: company.gmLicense ?? null,
     }));
   }
@@ -4125,6 +4146,14 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
   const sealedOrder = reorderSectionsAndRebuildToc(workingMarkdown);
   logger.info(`[generate-elite] Contents page rebuilt from the sealed body: ${sealedOrder.tocEntries} entries.`);
   workingMarkdown = sealedOrder.markdown;
+
+  // Every "where answered" pointer names a heading this document has, and
+  // Section F states what Section E states for the same requirement.
+  const pointers = reconcileSectionPointers(workingMarkdown);
+  if (pointers.pointersRewritten > 0 || pointers.rowsAlignedToComplianceMatrix > 0) {
+    logger.info(`[generate-elite] Section pointers: ${pointers.pointersRewritten} rewritten to real headings; ${pointers.rowsAlignedToComplianceMatrix} Section F row(s) aligned to Section E.`);
+    workingMarkdown = pointers.markdown;
+  }
 
   // Producer-side net for machine-writing failures, applied to the exact
   // markdown that will be rendered. A refinement pass can truncate a sentence

@@ -1,6 +1,7 @@
 import { PDFDocument, PDFHexString, rgb, type PDFPage } from "pdf-lib";
 import { createHash } from "node:crypto";
 import { createPdfFontSetFor, sanitizePdfText, type PdfFontSet, type PdfFontStyle } from "./pdf-unicode-fonts";
+import { withBidderName } from "./proposal-labels";
 
 const PAGE_MARGIN = 56; // points (approx 20mm)
 const PAGE_WIDTH = 595.28; // A4
@@ -1042,7 +1043,7 @@ export async function generateProposalPdf(opts: {
     opts.companyName ?? "",
     opts.companyAddress ?? "",
     opts.companyContact ?? "",
-    opts.submissionEmailSubject ?? "",
+    withBidderName(opts.submissionEmailSubject, opts.companyName) ?? "",
     ...(opts.coverDetails ?? []),
     opts.markdown,
   ].join("\n"));
@@ -1079,7 +1080,9 @@ export async function generateProposalPdf(opts: {
     companyName: opts.companyName ?? null,
     companyAddress: opts.companyAddress ?? null,
     companyContact: opts.companyContact ?? null,
-    submissionEmailSubject: opts.submissionEmailSubject ?? null,
+    // The tender's subject is often a template the bidder completes
+    // ("[RFQ#… Your Company Name]"); the cover prints it completed.
+    submissionEmailSubject: withBidderName(opts.submissionEmailSubject, opts.companyName),
     coverDetails: opts.coverDetails ?? [],
   });
 

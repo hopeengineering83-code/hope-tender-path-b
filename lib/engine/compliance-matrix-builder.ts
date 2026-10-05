@@ -320,24 +320,15 @@ export function buildComplianceMatrixSection(input: ComplianceMatrixBuilderInput
     if (isBidderDeclaration(req)) {
       evidenceCell = "The company's signed declaration, submitted as a separate document in this package";
     }
-    // If NOT MET / PARTIALLY MET, append mitigation from gaps.
-    if (status !== "FULLY MET") {
-      const matchingGaps = (reqId && gapsByReqId.get(reqId)) || [];
-      const mitigation = matchingGaps
-        .map((g) => g.mitigationPlan || g.description)
-        .filter((s): s is string => Boolean(s && s.trim()))
-        .slice(0, 1)
-        .join(" — ");
-      if (mitigation) {
-        evidenceCell = evidenceCell
-          ? `${evidenceCell}. Mitigation: ${mitigation}`
-          : `Mitigation: ${mitigation}`;
-      }
-      // Counted so the introduction only promises a mitigation every such row
-      // carries. The "Bid-Team Action: confirm evidence" text that stood here
-      // was deleted with its whole row by the final bid-team sweep.
-      if (!mitigation) rowsWithoutMitigation += 1;
-    }
+    // No gap mitigation in the client's matrix. Every mitigation the engine
+    // writes is an instruction to the owner — "Upload evidence, review
+    // matching candidates, or confirm manual proposal coverage before export",
+    // "Review candidate evidence and mark final records as selected/reviewed"
+    // — and on 2026-10-05 that text sat in a delivered row until the
+    // client-language sweep deleted the whole row, leaving rows numbered 1, 3,
+    // 4 under a summary that still counted the deleted one. The status column
+    // states the coverage; the owner sees the gap in the app.
+    if (status !== "FULLY MET") rowsWithoutMitigation += 1;
     if (!evidenceCell) evidenceCell = "Cross-referenced in proposal narrative";
 
     if ((req.priority ?? "").toUpperCase() === "MANDATORY") {

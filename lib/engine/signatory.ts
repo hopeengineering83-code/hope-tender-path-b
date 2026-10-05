@@ -89,7 +89,11 @@ export function resolveSignatory(opts: {
 }): Signatory | null {
   const gm = clean(opts.gmName);
   if (gm) {
-    return { name: gm, title: clean(opts.gmTitle) || "General Manager", registration: clean(opts.gmLicense) || null };
+    // The title the firm's record gives, else the same person's title on the
+    // proposed team: a Managing Director was signed "General Manager" because
+    // the record's title was not passed and the default filled it (2026-10-05).
+    const onTeam = (opts.experts ?? []).find((e) => clean(e?.fullName).toLowerCase() === gm.toLowerCase());
+    return { name: gm, title: clean(opts.gmTitle) || clean(onTeam?.title) || "General Manager", registration: clean(opts.gmLicense) || null };
   }
   const holders = (opts.experts ?? []).filter((e) => clean(e?.fullName) && holdsExecutiveOffice(clean(e?.title)));
   const distinct = new Map(holders.map((e) => [clean(e.fullName).toLowerCase(), e]));

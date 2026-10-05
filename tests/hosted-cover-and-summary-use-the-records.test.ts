@@ -94,12 +94,19 @@ describe("record-based Cover Letter and Executive Summary", () => {
     assert.doesNotMatch(md, /\b(?:ISO|years of experience|award|leading|best-in-class|USD|ETB)\b/i);
   });
 
-  it("is empty when the tender's scope could not be read, so the caller keeps its own text", () => {
-    const empty = recordBasedOpeningSections({
-      companyName: "X", clientName: "Y", tenderTitle: "Z", primarySector: "S", scopePlan: [],
-      recipients: "r", subject: "s", technicalOnly: false, salutation: "Dear,", signOff: [],
+  // Changed 2026-10-05: returning "" here sent a hosted office-design EOI,
+  // whose scope items the plan could not read, to the two-sentence fallback
+  // letter and a one-sentence Executive Summary. The need, the references'
+  // recorded services and the named team are records with or without a scope
+  // plan, so the openers are composed from them.
+  it("is composed from the records even when the tender's scope could not be read", () => {
+    const composed = recordBasedOpeningSections({
+      companyName: "Northgate Schools Design", clientName: "Ministry of Education", tenderTitle: "Design of Six Classrooms", primarySector: "Education", scopePlan: [],
+      recipients: "r", subject: "s", technicalOnly: false, salutation: "Dear Evaluation Committee,", signOff: ["Sincerely,"],
     });
-    assert.equal(empty, "");
+    assert.match(composed, /# Cover Letter/);
+    assert.match(composed, /Northgate Schools Design is pleased to submit this Technical Proposal for Design of Six Classrooms/);
+    assert.match(composed, /# Executive Summary\n\nMinistry of Education has invited proposals for Design of Six Classrooms\./);
   });
 });
 

@@ -343,3 +343,26 @@ export function withBidderName(text: string | null | undefined, companyName: str
   if (!name) return text;
   return text.replace(BIDDER_NAME_PLACEHOLDER, name);
 }
+
+/**
+ * A company description that opens with the firm's own name: the predicate
+ * after "is"/"are" ("an architectural consultancy"), or `predicate: null`
+ * when the description goes on some other way ("… was founded in 2019").
+ * Null when the description does not open with the firm's name.
+ */
+export function descriptionAfterOwnName(description: string, names: ReadonlyArray<string | null | undefined>): { predicate: string | null } | null {
+  const text = description.trim();
+  const lower = text.toLowerCase();
+  const ordered = names.map((n) => (n ?? "").trim()).filter((n) => n.length >= 3).sort((a, b) => b.length - a.length);
+  for (const name of ordered) {
+    if (!lower.startsWith(name.toLowerCase())) continue;
+    const rest = text.slice(name.length)
+      .replace(/^\s*\([^)]*\)/, "")
+      .replace(/^[\s,]+/, "")
+      // The legal form the shorter display name leaves behind.
+      .replace(/^(?:P\.?L\.?C\.?|Ltd\.?|Limited|LLC|Inc\.?|S\.?C\.?|Share\s+Company|Co\.?|Corporation|GmbH|S\.?A\.?)(?=\s|,|$)\.?[\s,]*/i, "");
+    const m = rest.match(/^(?:is|are)\s+(.+)$/i);
+    return { predicate: m ? m[1]!.trim() : null };
+  }
+  return null;
+}

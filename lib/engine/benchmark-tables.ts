@@ -338,7 +338,7 @@ export function buildProjectPortfolioCards(projects: ProjectRecord[], tenderTitl
   const cards: string[] = ["## B.2 Project Portfolio"];
   cards.push(
     `${projects.length} reviewed project reference${projects.length === 1 ? " directly relevant to " + tenderTitle + " is" : "s directly relevant to " + tenderTitle + " are"} presented below. ` +
-    `Each card maps the project's specific transferable technical competencies to a ${primarySector || "tender-specific"} requirement of this assignment. ` +
+    `Each card maps the project's specific transferable technical competencies to ${/^[aeiou]/i.test(primarySector || "tender-specific") ? "an" : "a"} ${primarySector || "tender-specific"} requirement of this assignment. ` +
     "Original testimony letters, signed contracts and completion evidence can be provided on request.",
   );
 
@@ -1293,10 +1293,11 @@ export function buildDeclaration(opts: {
   clientName: string;
   tenderTitle: string;
   companyGM?: string | null;
+  companyGMTitle?: string | null;
   companyGMLicense?: string | null;
 }): string {
   const signatureLine = opts.companyGM
-    ? `Signed: ${opts.companyGM}${opts.companyGMLicense ? `, License ${opts.companyGMLicense}` : ""}, on behalf of ${opts.companyName}.`
+    ? `Signed: ${opts.companyGM}${opts.companyGMTitle ? `, ${opts.companyGMTitle}` : ""}${opts.companyGMLicense ? `, License ${opts.companyGMLicense}` : ""}, on behalf of ${opts.companyName}.`
     : `Signed: General Manager, on behalf of ${opts.companyName}.`;
 
   return [

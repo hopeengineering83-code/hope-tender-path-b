@@ -32,6 +32,7 @@ import { holdsExecutiveOffice } from "./signatory";
 import { titleStatesRole } from "./requirement-constraints";
 import { possessive } from "./possessive";
 import { formatPersonWithCredential, formatRegistration } from "./credential-format";
+import { descriptionAfterOwnName } from "./proposal-labels";
 
 export interface ExecutiveSummaryInput {
   companyName: string;
@@ -108,6 +109,11 @@ interface ReferenceEvidence {
 /** The references whose recorded services answer at least one scope item, strongest first. */
 function referenceEvidence(input: ExecutiveSummaryInput, items: ScopeItem[]): ReferenceEvidence[] {
   return input.projects.slice(0, 3).map((project) => {
+    // No scope items to match against: the services the record states.
+    if (items.length === 0) {
+      const recorded = [...new Set(recordedProjectServices(project).map((s) => clean(String(s ?? ""))).filter((s) => s.length > 2))];
+      return { project, services: recorded.slice(0, 5).map(lowerFirst), items: [] };
+    }
     const matches = scopeItemsAnsweredByProject(recordedProjectServices(project), items);
     return {
       project,
@@ -150,14 +156,14 @@ function teamParagraph(input: ExecutiveSummaryInput): string {
   const executives = team.filter((e) => holdsExecutiveOffice(e.title ?? ""));
   const principal = executives.length === 1 ? executives[0] : team[0];
   const pm = team.find((e) => e !== principal && titleStatesRole(e.title, "project manager"));
-  const out: string[] = [`The proposed team of ${team.length} named experts is led by ${person(principal)}.`];
+  const out: string[] = [team.length === 1 ? `The proposed team is led by ${person(principal)}.` : `The proposed team of ${team.length} named experts is led by ${person(principal)}.`];
   if (pm) out.push(`${person(pm)} is proposed as Project Manager.`);
   const leads = input.scopePlan
     .filter((p) => p.lead && p.lead !== principal && p.lead !== pm)
     .map((p) => `${clean(p.lead!.fullName)} leads ${midSentence(p.item.title)}`);
   if (leads.length > 0) out.push(`${list(leads)}.`);
   const registered = team.filter((e) => registration(e)).length;
-  if (registered > 0) out.push(`${registered} of the ${team.length} hold a professional registration stated in their own CV.`);
+  if (registered > 0 && team.length > 1) out.push(`${registered} of the ${team.length} hold a professional registration stated in their own CV.`);
   // Past experience, as the CVs state it — kept apart from the proposed roles.
   for (const project of input.projects.slice(0, 3)) {
     const naming = team.filter((e) => projectsNamedInCv(e.profile, [project]).length > 0).map((e) => clean(e.fullName));
@@ -177,8 +183,15 @@ function standingParagraph(input: ExecutiveSummaryInput): string {
   const out: string[] = [];
   const description = clean(input.companyDescription).replace(/\.$/, "");
   if (description && !/\b(?:AI|prompt|summary|use this)\b/i.test(description)) {
-    const article = /^[aeiou]/i.test(description) ? "an" : "a";
-    out.push(`${input.companyName} is ${article} ${lowerFirst(description)}.`);
+    // "Meridian Design Consultants PLC is an architectural consultancy" as the
+    // record states it, not spliced after "<firm> is a".
+    const own = descriptionAfterOwnName(description, [input.companyName]);
+    if (own?.predicate) out.push(`${input.companyName} is ${own.predicate}.`);
+    else if (own) out.push(`${description}.`);
+    else {
+      const article = /^[aeiou]/i.test(description) ? "an" : "a";
+      out.push(`${input.companyName} is ${article} ${lowerFirst(description)}.`);
+    }
   }
   const quality = (input.qualityRecords ?? [])
     .filter((r) => clean(r.title) && clean(r.referenceNumber))
@@ -251,7 +264,9 @@ export function composeCoverLetterBody(input: ExecutiveSummaryInput): string {
     const executives = team.filter((e) => holdsExecutiveOffice(e.title ?? ""));
     const principal = executives.length === 1 ? executives[0] : team[0];
     const registered = team.filter((e) => registration(e)).length;
-    points.push(`**A named, registered team.** ${team.length} experts led by ${person(principal)}${registered > 0 ? `; ${registered} of them hold a professional registration stated in their own CV` : ""}.`);
+    points.push(team.length === 1
+      ? `**A named${registered > 0 ? ", registered" : ""} lead.** ${person(principal)}.`
+      : `**A named${registered > 0 ? ", registered" : ""} team.** ${team.length} experts led by ${person(principal)}${registered > 0 ? `; ${registered} of them hold a professional registration stated in their own CV` : ""}.`);
   }
   const quality = (input.qualityRecords ?? [])
     .filter((r) => clean(r.title) && clean(r.referenceNumber))
