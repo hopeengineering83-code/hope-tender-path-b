@@ -32,8 +32,11 @@ on:
           derived from each record's own reference text, and a country column
           that actually holds a country. It DRY-RUNS by default and prints the
           full before/after census; it writes only when apply_enrichment is
-          "yes". Any other value (including blank) runs only the ordinary
-          lockfile-refresh job.
+          "yes". Type "handsoff" to run "accept" as the owner would: it clicks
+          AI Analyze and Run Engine and then only WATCHES, never calling the
+          worker itself, so a green run proves the app reaches the ZIP with
+          no outside help. Any other value (including blank) runs only the
+          ordinary lockfile-refresh job.
         required: false
         default: ""
       expected_fingerprint:
@@ -155,7 +158,7 @@ jobs:
   temporary-preview-hosted-acceptance:
     if: >-
       github.event_name == 'workflow_dispatch'
-      && (inputs.confirm == 'accept' || inputs.confirm == 'export')
+      && (inputs.confirm == 'accept' || inputs.confirm == 'handsoff' || inputs.confirm == 'export')
     runs-on: ubuntu-latest
     timeout-minutes: 55
     permissions:
@@ -288,7 +291,7 @@ jobs:
           echo "Session verified against tender $TENDER_ID."
 
       - name: Trigger AI Analyze (manual, owner-authorized)
-        if: inputs.confirm == 'accept'
+        if: inputs.confirm == 'accept' || inputs.confirm == 'handsoff'
         run: |
           resp=$(curl -sS --connect-timeout 15 --max-time 60 -X POST -w "\n---STATUS:%{http_code}---" \
             -H "Cookie: hope_session=$SESSION_COOKIE" -H "Origin: $BASE_URL" \
@@ -308,17 +311,19 @@ jobs:
           echo "this run is waiting on AI_ANALYZE id=$(cat /tmp/ai-analyze-job-id.txt 2>/dev/null || echo '(not returned)')"
 
       - name: Wait for AI Analyze to reach a terminal state
-        if: inputs.confirm == 'accept'
+        if: inputs.confirm == 'accept' || inputs.confirm == 'handsoff'
+        env:
+          HANDS_OFF: ${{ inputs.confirm == 'handsoff' && '1' || '' }}
         run: bash scripts/tmp-await-tender-jobs.sh 40
 
       - name: Snapshot readiness after AI Analyze
-        if: inputs.confirm == 'accept'
+        if: inputs.confirm == 'accept' || inputs.confirm == 'handsoff'
         run: |
           curl -sS --connect-timeout 15 --max-time 30 -H "Cookie: hope_session=$SESSION_COOKIE" \
             "$BASE_URL/api/tenders/$TENDER_ID/workflow-center" | tee /tmp/workflow-center-after-analyze.json
 
       - name: Require AI Analyze to be release-ready before Run Engine
-        if: inputs.confirm == 'accept'
+        if: inputs.confirm == 'accept' || inputs.confirm == 'handsoff'
         run: |
           # The wait above settles on TERMINALITY, and FAILED is terminal. So on
           # run 34978972693 that step passed, readiness was snapshotted, a
@@ -389,7 +394,7 @@ jobs:
           PYEOF
 
       - name: Record the artifact this run starts from
-        if: inputs.confirm == 'accept'
+        if: inputs.confirm == 'accept' || inputs.confirm == 'handsoff'
         run: |
           # Run 33996268451 passed every gate below while regenerating nothing:
           # it delivered a ZIP whose contentSha256, byte size and defect counts
@@ -414,7 +419,7 @@ jobs:
           PYEOF
 
       - name: Trigger Run Engine (manual, owner-authorized)
-        if: inputs.confirm == 'accept'
+        if: inputs.confirm == 'accept' || inputs.confirm == 'handsoff'
         run: |
           resp=$(curl -sS --connect-timeout 15 --max-time 60 -X POST -w "\n---STATUS:%{http_code}---" \
             -H "Cookie: hope_session=$SESSION_COOKIE" -H "Origin: $BASE_URL" -H "Content-Type: application/json" \
@@ -433,11 +438,13 @@ jobs:
           echo "$resp" | grep -oE '"(jobId|reusedActiveJob|sourceRevision)":[^,}]*' || true
 
       - name: Wait for ENGINE_RUN -> PROPOSAL_GENERATION -> AUTO_FINALIZE to settle
-        if: inputs.confirm == 'accept'
+        if: inputs.confirm == 'accept' || inputs.confirm == 'handsoff'
+        env:
+          HANDS_OFF: ${{ inputs.confirm == 'handsoff' && '1' || '' }}
         run: bash scripts/tmp-await-tender-jobs.sh 120
 
       - name: Fail if any job in this run's chain failed
-        if: inputs.confirm == 'accept'
+        if: inputs.confirm == 'accept' || inputs.confirm == 'handsoff'
         run: |
           # The settle loop exits when nothing is QUEUED or RUNNING. A FAILED
           # job is terminal, so it satisfies that condition perfectly — and the
@@ -487,7 +494,7 @@ jobs:
           PYEOF
 
       - name: Read what letterhead actually did on this run
-        if: inputs.confirm == 'accept'
+        if: inputs.confirm == 'accept' || inputs.confirm == 'handsoff'
         run: |
           # Live proof for the storage-backed-letterhead fix (3e41c502), and it
           # has to sit HERE rather than with the PDF audit further down.
@@ -630,7 +637,7 @@ jobs:
       # demanding a changed hash would fail by design. The export-mode
       # equivalent is the step after it.
       - name: Prove this run actually regenerated the artifact
-        if: inputs.confirm == 'accept'
+        if: inputs.confirm == 'accept' || inputs.confirm == 'handsoff'
         run: |
           # Guards the trap described in "Record the artifact this run starts
           # from". If the hash has not moved, the pipeline handed back the

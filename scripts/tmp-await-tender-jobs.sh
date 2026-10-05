@@ -28,7 +28,10 @@ SLEEP_SECONDS="${2:-10}"
 : "${BASE_URL:?BASE_URL is required}"
 : "${TENDER_ID:?TENDER_ID is required}"
 : "${SESSION_COOKIE:?SESSION_COOKIE is required}"
-: "${WORKER_SECRET:?WORKER_SECRET is required}"
+if [ "${HANDS_OFF:-}" != "1" ]; then
+  : "${WORKER_SECRET:?WORKER_SECRET is required}"
+fi
+echo "mode: $([ "${HANDS_OFF:-}" = "1" ] && echo 'HANDS-OFF (watch only; the worker is never called from here)' || echo 'accept (run-next safety net on every tick)')"
 
 SUMMARIZE="$(dirname "$0")/tmp-summarize-tender-jobs.py"
 idle_ticks=0
@@ -56,6 +59,14 @@ for tick in $(seq 1 "$MAX_TICKS"); do
     fi
   else
     idle_ticks=0
+  fi
+
+  # HANDS_OFF=1 (confirm=handsoff): watch only. The owner's browser does not
+  # drive the worker, so neither may this run; a chain that settles here
+  # settled on the app's own wakes and continuations, with no outside help.
+  if [ "${HANDS_OFF:-}" = "1" ]; then
+    sleep "$SLEEP_SECONDS"
+    continue
   fi
 
   # Safety net only: claims a job that no request-scoped wake picked up. The
