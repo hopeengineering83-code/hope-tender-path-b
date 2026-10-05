@@ -209,7 +209,9 @@ function detectObstacles(tenderText: string, clientName?: string | null): Obstac
     out.push({
       category: "Site visit logistics",
       obstacle: "Site visit / pre-bid meeting requirement creates a logistic constraint — missing it can disqualify the bid or generate avoidable design assumptions.",
-      mitigation: "Site visit attendance confirmed at tender intake. Visit notes filed in the bid archive. All on-site measurements cross-checked against tender drawings; any discrepancy raised in writing through the clarification window.",
+      // A plan, not a report: the app cannot know a visit took place, and
+      // "Site visit attendance confirmed at tender intake" stated that it had.
+      mitigation: "The site visit is attended within the window the tender sets and its notes are kept with the design brief. On-site measurements are cross-checked against the tender drawings; any discrepancy is raised in writing through the clarification window.",
     });
   }
 

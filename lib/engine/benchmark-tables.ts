@@ -289,8 +289,26 @@ export function buildTeamToProjectMappingTable(experts: ExpertRecord[], projects
     // General Hospital – …"); the number is the source list's, not the project's.
     const summary = withoutSourceProvenance(matchedProject.summary).replace(/^\s*\d{1,3}[.)]?\s+(?=\S)/, (lead, offset, whole: string) =>
       whole.slice(lead.length).startsWith(matchedProject.name.trim().slice(0, 12)) ? "" : lead);
-    const contribution = truncateAtWordBoundary(summary, 200) ||
-      `${safeArr(expert.disciplines).join(", ") || "Discipline-led"} contribution covering ${safeArr(matchedProject.serviceAreas).join(", ") || matchedProject.sector || "scope-relevant works"}.`;
+    // No sentence that carries a cost, fee or amount, and no "Testimony N"
+    // bookkeeping. A stored summary that is a reference letter's
+    // header card printed "Dessie Museum … / Ethiopian Heritage Trust / …
+    // Testimony 1", and another printed "Construction Cost: 253,000,000.00.
+    // Geotechnical & New Design Cost: 800,000.…" — the firm's own fee, in a
+    // technical envelope, cut mid-figure (2026-10-05).
+    const prose = summary
+      // The bookkeeping ends what came before it, so it leaves a sentence break.
+      .replace(/\s*\b(?:From\s+)?Testimony(?:\s+Letter)?\s*\d*\.?\s*/gi, ". ")
+      .replace(/^[.\s]+/, "")
+      .split(/(?<=[.!?])\s+/)
+      .filter((sentence) => !/\b(?:cost|fee|price|budget|amount|payment)\b|\d{1,3}(?:,\d{3})+(?:\.\d+)?(?!\s*(?:m²|m2|sqm|sq\.?\s*m|square|hectares?|ha\b|km|m\b|units?|beds?|rooms?|seats?))|\b(?:ETB|USD|EUR|GBP|Birr|KES)\b/i.test(sentence))
+      .join(" ")
+      .replace(/\s{2,}/g, " ")
+      .replace(/\.\s*\.$/, ".")
+      .replace(/[.\s]+$/, "")
+      .trim();
+    const services = recordedProjectServices(matchedProject).map((v) => String(v ?? "").trim()).filter((v) => v.length > 2).slice(0, 5);
+    const contribution = truncateAtWordBoundary(prose, 200) ||
+      `${safeArr(expert.disciplines).join(", ") || "Discipline-led"} contribution covering ${services.join(", ") || safeArr(matchedProject.serviceAreas).join(", ") || matchedProject.sector || "scope-relevant works"}.`;
 
     return [`| ${escCell(`${expert.fullName}, ${expert.title || "Specialist"}`)} | ${escCell(previousRole)} | ${escCell(projectLabel)} | ${escCell(contribution)} |`];
   });

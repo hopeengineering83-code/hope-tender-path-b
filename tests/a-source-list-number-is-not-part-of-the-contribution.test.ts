@@ -21,3 +21,14 @@ describe("a source list number is not part of the contribution", () => {
     assert.match(md, /12 storey outpatient block/);
   });
 });
+
+// 2026-10-05: a summary that ran into the reference letter's figures printed
+// "Construction Cost: 253,000,000.00. Geotechnical & New Design Cost: 800,000.…"
+// — the firm's own fee, in a technical envelope.
+describe("a contribution carries no cost, fee or amount", () => {
+  it("drops the money sentences and the testimony bookkeeping", () => {
+    const md = buildTeamToProjectMappingTable([expert], [project("District Clinic Block B (2,500 m²) From Testimony Letter 1. Construction Cost: 253,000,000.00. Design Cost: 800,000.00.")]);
+    assert.doesNotMatch(md, /Cost|253,000,000|800,000|Testimony/);
+    assert.match(md, /2,500 m²/);
+  });
+});

@@ -361,9 +361,13 @@ export function extractTenderFacts(
     }
     if (quantities.length >= 12) break;
   }
+  // One quote per value, and no submission-process period: the bid's own
+  // validity already has its row, and a delivered table printed "remain valid
+  // for at least 90 days" twice beside it (2026-10-05).
   const seenQty = new Set<string>();
   const dedupedQuantities = quantities.filter((q) => {
-    const k = `${q.value}::${q.context}`.toLowerCase();
+    if (/\b(?:valid(?:ity)?|deadline|clarification|bid\s+security|tender\s+security|submission)\b/i.test(q.context)) return false;
+    const k = q.value.toLowerCase().replace(/\s+/g, " ");
     if (seenQty.has(k)) return false;
     seenQty.add(k);
     return true;

@@ -62,6 +62,8 @@ interface HeadingNode {
   sectionLetter: string | null;
   /** Non-blank body lines belonging to this heading alone (excludes descendants). */
   ownContentLines: number;
+  /** "Responsible expert: …" / "Quality Gate: …" lines: attribution, not content. */
+  attributionLines: number[];
   /** Indexes of the direct descendants, in document order. */
   descendants: number[];
 }
@@ -102,6 +104,15 @@ export function sectionCHeadingsOf(markdown: string): string[] {
   return out;
 }
 
+/**
+ * A line that only says who is responsible or which gate applies. The writer
+ * closes every methodology sub-section with "Responsible expert: … Quality
+ * Gate: …"; when a later pass removed the body, that line alone kept the
+ * heading alive, and a delivered office-design EOI (2026-10-05) printed four
+ * C.3 sub-sections that were a heading and a name and nothing else.
+ */
+const ATTRIBUTION_ONLY_RX = /^\s*(?:[-*]\s*)?(?:\*\*|_)?(?:Responsible\s+(?:expert|lead)|Quality\s+Gate|Phase\s+lead|Accountable\s+role)\s*:/i;
+
 /** Build the heading tree for one pass over the document. */
 function readHeadings(lines: string[]): HeadingNode[] {
   const nodes: HeadingNode[] = [];
@@ -117,7 +128,11 @@ function readHeadings(lines: string[]): HeadingNode[] {
     }
     const sub = line.match(SUB_HEADING_RX);
     if (!sub) {
-      if (line.trim() && stack.length > 0) nodes[stack[stack.length - 1]].ownContentLines += 1;
+      if (line.trim() && stack.length > 0) {
+        const owner = nodes[stack[stack.length - 1]];
+        if (ATTRIBUTION_ONLY_RX.test(line)) owner.attributionLines.push(lineIndex);
+        else owner.ownContentLines += 1;
+      }
       return;
     }
     const level = sub[1].length;
@@ -130,6 +145,7 @@ function readHeadings(lines: string[]): HeadingNode[] {
       text: sub[2].trim(),
       sectionLetter,
       ownContentLines: 0,
+      attributionLines: [],
       descendants: [],
     });
     stack.push(index);
@@ -192,6 +208,7 @@ export function sealDocumentStructure(
     if (carriesContent(nodes, index)) return;
     droppedEmpty.push(node.text);
     dropLines.add(node.lineIndex);
+    for (const line of node.attributionLines) dropLines.add(line);
   });
   if (dropLines.size > 0) {
     lines = lines.filter((_, index) => !dropLines.has(index));

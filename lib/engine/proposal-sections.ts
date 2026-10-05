@@ -1332,6 +1332,21 @@ function vaultList(values: string[] | null | undefined, label: string): string {
   return values.filter((v) => v && v.trim().length > 0).join(", ") || `Bid-Team Action: confirm ${label}`;
 }
 
+/** The firm's service line sharing the most words with the tender's title; null when none does. */
+export function serviceLineForTender(serviceLines: readonly string[], tenderTitle: string): string | null {
+  const words = (text: string) => new Set(text.toLowerCase().match(/[a-z]{4,}/g) ?? []);
+  const wanted = words(tenderTitle);
+  let best: string | null = null;
+  let bestScore = 0;
+  for (const line of serviceLines) {
+    const score = [...words(line)].filter((w) => wanted.has(w) || wanted.has(w.replace(/al$/, "")) || wanted.has(`${w}al`)).length;
+    if (score > bestScore) { best = line.trim(); bestScore = score; }
+  }
+  if (!best || bestScore === 0) return null;
+  // "Architectural design" mid-sentence; "MEP design" keeps its acronym.
+  return /^[A-Z][a-z]/.test(best) ? best.charAt(0).toLowerCase() + best.slice(1) : best;
+}
+
 function buildCoverAndSummaryFallback(input: AIBidWriterInput): string {
   // The record-based letter and summary, when the caller composed them from
   // the scope plan, references and team (generate-elite.ts). What follows is
@@ -1628,18 +1643,20 @@ function buildAdditionalAndDeclarationFallback(input: AIBidWriterInput): string 
   // These were written into every proposal. A tender that asks for none of
   // them got an ESG policy, a site H&S plan and an innovation pitch "deployed
   // at no additional cost" in a technical-only envelope.
-  const hasServiceLines = v.serviceLines && v.serviceLines.length > 0;
-  const primaryService = hasServiceLines ? v.serviceLines![0] : "the captioned services";
+  // The firm's service line this tender asks for, not simply its first one:
+  // an office-design EOI read "integrates environmental and social
+  // considerations into Feasibility studies delivery" (2026-10-05).
+  const tenderService = serviceLineForTender(v.serviceLines ?? [], `${input.tenderTitle ?? ""}`);
   const tenderText = input.tenderText ?? "";
   const d2Parts = [
     tenderAsksFor("sustainability", tenderText)
-      ? `### Environmental and Social Governance\n${companyName} integrates environmental and social considerations into ${primaryService} delivery: site disturbance, waste and water use on the environmental side, and community engagement on the social side, each planned from inception.`
+      ? `### Environmental and Social Governance\n${companyName} integrates environmental and social considerations into ${tenderService ? `${tenderService} delivery` : "the delivery of this assignment"}: site disturbance, waste and water use on the environmental side, and community engagement on the social side, each planned from inception.`
       : "",
     tenderAsksFor("health-safety", tenderText)
       ? `### Health and Safety\nSite activities follow the firm's health and safety procedures and the applicable local regulations: site inductions, PPE, incident reporting and emergency response apply to all personnel.`
       : "",
     tenderAsksFor("innovation", tenderText)
-      ? `### Innovation\n${companyName} applies current methods to ${primaryService} where they shorten the schedule or improve deliverable quality, such as coordinated digital design models and GIS-based spatial analysis.`
+      ? `### Innovation\n${companyName} applies current methods to ${tenderService ?? "this assignment"} where they shorten the schedule or improve deliverable quality, such as coordinated digital design models${/\b(?:GIS|spatial|mapping|master\s+plan|urban|land[- ]use)\b/i.test(tenderText) ? " and GIS-based spatial analysis" : ""}.`
       : "",
   ].filter(Boolean);
   const d2Body = d2Parts.join("\n\n");

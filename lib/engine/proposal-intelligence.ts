@@ -962,14 +962,31 @@ function makeDifferentiators(
     items.push("Structured property assessment methodology covering structural adequacy, spatial feasibility, utility availability, accessibility, and expansion potential, backed by in-house geotechnical capability for due-diligence speed.");
   }
 
+  // Claims below are true of the firm; each is printed only when the tender
+  // is about the kind of work it helps with. Chosen from the firm's profile
+  // alone, an architectural office-space EOI was told about drilling rigs and
+  // World Bank ESF records (2026-10-05).
+  const tenderIs = (...codes: string[]) => themes.some((t) => codes.includes(t.code));
+
   // Donor compliance — claim, not instruction.
-  if (/World Bank|ESF|UNDP|British Council/i.test(companyText + allProjectText)) {
+  if (tenderIs("DONOR_COMPLIANCE", "ENVIRONMENTAL_SOCIAL") && /World Bank|ESF|UNDP|British Council/i.test(companyText + allProjectText)) {
     items.push("Reviewed World Bank ESF and British Council records inform the proposal's documentation and review controls; each applicable standard remains subject to the tender and authority requirements.");
   }
 
-  // In-house geotechnical — claim.
-  if (/geotechnical|drilling rig|soil.*machine|laboratory/i.test(companyText)) {
-    items.push("In-house geotechnical capability (drilling rigs, soil testing laboratory) removes sub-contractor coordination from the site-assessment phase and protects acquisition timelines.");
+  // In-house geotechnical — claim, for work that depends on the ground, and
+  // naming only the equipment the firm's own profile names.
+  if (
+    tenderIs("STRUCTURAL_GEOTECHNICAL", "FACILITY_ASSESSMENT", "ROAD_TRANSPORT", "WATER_INFRASTRUCTURE", "HIGH_RISE_BUILDINGS", "MINING_EXTRACTIVE", "PORT_MARITIME", "INDUSTRIAL_MANUFACTURING", "ENERGY_POWER")
+    && /geotechnical|drilling rig|soil.*machine|laboratory/i.test(companyText)
+  ) {
+    const equipment = [
+      /drilling\s+rigs?/i.test(companyText) ? "drilling rigs" : "",
+      /soil[^.]{0,30}laborator|laborator[^.]{0,30}soil|soil\s+testing/i.test(companyText) ? "soil testing laboratory" : "",
+    ].filter(Boolean);
+    const outcome = tenderIs("FACILITY_ASSESSMENT")
+      ? "removes sub-contractor coordination from the site-assessment phase and protects acquisition timelines"
+      : "keeps site investigation within the firm, without sub-contractor coordination";
+    items.push(`In-house geotechnical capability${equipment.length > 0 ? ` (${equipment.join(", ")})` : ""} ${outcome}.`);
   }
 
   // MEP in-house — claim. Word boundary on MEP (3-char abbreviation).

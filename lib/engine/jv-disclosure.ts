@@ -91,8 +91,9 @@ function buildJvTable(opts: JvDisclosureOpts): string {
     framing,
     "",
     ...rows,
-    "",
-    "_If the teaming structure changes before submission, update this section and re-attach the consortium agreement._",
+    // No "_If the teaming structure changes before submission, update this
+    // section and re-attach the consortium agreement._": an instruction to the
+    // bidder, printed in the client's copy (2026-10-05).
     "",
   ].join("\n");
 }
