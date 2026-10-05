@@ -25,6 +25,15 @@ import { publicJobFailureMessage } from "../../../../lib/prisma-schema-compatibi
 // persistence reserve below it and continue to pass an absolute deadline into
 // every claimed handler.
 export const maxDuration = 300;
+
+/** Working time a retried stage needs after its back-off for the wait to be worth it. */
+const RETRY_MIN_WORK_AFTER_WAIT_MS = 60_000;
+const RETRY_WAIT_MARGIN_MS = 500;
+
+/** True when an in-invocation wait for a re-armed job still leaves a working window. */
+function shouldWaitOutRetry(retryWaitMs: number, remainingMs: number): boolean {
+  return retryWaitMs > 0 && remainingMs - retryWaitMs - RETRY_WAIT_MARGIN_MS >= RETRY_MIN_WORK_AFTER_WAIT_MS;
+}
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
@@ -151,6 +160,10 @@ export async function POST(req: Request) {
       logger.info(`[run-next] Stopping claim loop — only ${remainingMs}ms remaining (minimum ${MINIMUM_REMAINING_BUDGET_MS}ms required)`);
       break;
     }
+
+    // Set when this iteration re-arms the job it ran for a short retry; read
+    // at the end of the iteration to decide whether to wait it out here.
+    let retryWaitMs: number | null = null;
 
     const claimed = await claimJobForCaller({
       jobType: activeJobType,
@@ -313,6 +326,7 @@ export async function POST(req: Request) {
             // attempt 1 → 2s, 2 → 4s, 3 → 8s, 4 → 16s, 5 → 32s, 6 → 60s, 7 → 60s, 8 → 60s.
             const backoffSeconds = Math.min(60, Math.pow(2, currentRetries));
             const nextAttemptAt = new Date(Date.now() + backoffSeconds * 1000);
+            retryWaitMs = backoffSeconds * 1000;
             await prisma.aiJob.update({
               where: { id: claimed.id },
               data: {
@@ -533,6 +547,7 @@ export async function POST(req: Request) {
             errorMessage: publicFailure,
             delayMs: decision.delayMs,
           });
+          if (retryScheduled) retryWaitMs = decision.delayMs;
         }
       }
 
@@ -595,6 +610,23 @@ export async function POST(req: Request) {
           remainingMs: absoluteDeadline - Date.now(),
         });
         activeJobType = continuation;
+        continue;
+      }
+      // Wait out a short retry here rather than leave it to "the next worker
+      // invocation". With no browser open, the next invocation is the
+      // scheduled drain, which GitHub ran every 3-7 hours in practice
+      // (2026-10-05), so a 30-second provider back-off became an afternoon.
+      // Only the job this iteration just re-armed, only when the wait still
+      // leaves a working window, and the transactional claim still decides
+      // who runs it.
+      if (retryWaitMs !== null && shouldWaitOutRetry(retryWaitMs, absoluteDeadline - Date.now())) {
+        logger.info("[run-next] Waiting out a short retry back-off in this invocation", {
+          jobType: claimed.jobType,
+          retryWaitMs,
+          remainingMs: absoluteDeadline - Date.now(),
+        });
+        await new Promise((resolve) => setTimeout(resolve, retryWaitMs! + RETRY_WAIT_MARGIN_MS));
+        activeJobType = claimed.jobType as typeof activeJobType;
         continue;
       }
       break;
