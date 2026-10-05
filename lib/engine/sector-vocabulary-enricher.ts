@@ -14,6 +14,7 @@
  */
 
 import { resolveJurisdictionTokens, sourceNamesInstrument, type JurisdictionEvidenceKey } from "./jurisdiction-instruments";
+import { isHealthcareSector } from "./assignment-subject";
 
 type VocabularyEntry = {
   term: string;
@@ -135,7 +136,7 @@ const SECTOR_VOCABULARY: Record<string, VocabularyEntry[]> = {
 
 function detectVocabulary(primarySector: string): VocabularyEntry[] {
   const sector = primarySector.toLowerCase();
-  if (/health|hospital|medical|clinic/.test(sector)) return SECTOR_VOCABULARY.healthcare;
+  if (isHealthcareSector(sector)) return SECTOR_VOCABULARY.healthcare;
   if (/water|borehole|hydraulic|sanitary/.test(sector)) return SECTOR_VOCABULARY.water;
   if (/road|bridge|highway|pavement/.test(sector)) return SECTOR_VOCABULARY.road;
   if (/urban|master.?plan|municipal/.test(sector)) return SECTOR_VOCABULARY.urban;

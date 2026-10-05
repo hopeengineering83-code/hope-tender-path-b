@@ -329,3 +329,17 @@ export function withoutProvenanceTags(value: string): string {
     .replace(/[\s,;:]+$/, "")
     .trim();
 }
+
+// A tender's required subject line is often a template the bidder completes:
+// "[RFQ#2026-024 Your Company Name]". Copied as-is, the delivered cover page
+// read "Subject: [RFQ#2026-024 Your Company Name]" (PATH Ethiopia, inspect
+// run 37331125113, 2026-10-05). The placeholder is the bidder's name.
+const BIDDER_NAME_PLACEHOLDER = /(?:<\s*)?\b(?:your\s+(?:company|firm|organi[sz]ation)(?:'s)?\s+name|(?:the\s+)?(?:company|firm|bidder|consultant|supplier|applicant|organi[sz]ation)(?:'s)?\s+name|name\s+of\s+(?:the\s+)?(?:company|firm|bidder|consultant|supplier|applicant|organi[sz]ation))\b(?:\s*>)?/gi;
+
+/** Fill a tender template's bidder-name placeholder with the firm's own name. */
+export function withBidderName(text: string | null | undefined, companyName: string | null | undefined): string | null {
+  if (!text) return text ?? null;
+  const name = (companyName ?? "").trim();
+  if (!name) return text;
+  return text.replace(BIDDER_NAME_PLACEHOLDER, name);
+}

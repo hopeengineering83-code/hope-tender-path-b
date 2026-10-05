@@ -333,7 +333,7 @@ export async function runTenderEngine(
       analysis.summary ?? "",
       ...analysis.requirements.slice(0, 8).map((requirement) => `${requirement.title} ${requirement.description}`),
     ].join("\n");
-    const inferredSector = inferSector(sectorSignalText);
+    const inferredSector = inferSector(sectorSignalText, { title: tender.title });
     const sectorForMatching = inferredSector !== "General Consultancy / Engineering"
       ? inferredSector
       : (tender.category || null);

@@ -55,6 +55,7 @@
 
 import { resolveJurisdictionTokens } from "./jurisdiction-instruments";
 import { tenderAsksFor } from "./tender-asks-for";
+import { isHealthcareSector } from "./assignment-subject";
 
 const MARKER_REGEX = /<!--\s+beyond-spec-table:([a-z-]+)\s+-->/gi;
 
@@ -123,7 +124,7 @@ function sustainabilityRows(sector: string, sourceText?: string): Sustainability
     { pillar: "Anti-Corruption & Ethics", commitment: "Apply firm-wide anti-corruption code; gift-and-hospitality register; whistleblowing channel; named integrity officer", kpi: "Zero confirmed integrity incidents; integrity declaration signed by every team member", evidenceMechanism: "Integrity register; whistleblowing log; quarterly review" },
   ];
 
-  if (/health|hospital|medical/.test(s)) {
+  if (isHealthcareSector(s)) {
     return [
       ...generic,
       { pillar: "Climate-Resilient Healthcare", commitment: "Hospital design accounts for projected heat-stress, flood risk, and energy reliability over 50-year service life", kpi: "Backup power for ≥ 72 hours; passive cooling design for outpatient zones; flood-elevation per IPCC RCP 4.5", evidenceMechanism: "Climate-resilience memo at concept design; backup-power schedule at 100% gate" },
@@ -300,7 +301,7 @@ function innovationRows(sector: string): InnovationRow[] {
     { proposal: "Lessons-learned capture session at engagement close + written memo handed to client", clientValue: "Client retains organisational knowledge for the next phase, shortening ramp-up on follow-on engagements", effort: "Low", optInOptOut: "Included" },
     { proposal: "Post-handover advisory call (60 min, within 6 months of close-out), included in the proposed scope", clientValue: "Client gets continuity support during early implementation without re-engaging the designer for clarifications", effort: "Low", optInOptOut: "Included" },
   ];
-  if (/health|hospital|medical/.test(s)) {
+  if (isHealthcareSector(s)) {
     return [
       ...generic,
       { proposal: "BIM-coordinated MEP + medical-equipment model with clash-detection report at 60% gate", clientValue: "Eliminates 30-50% of construction-stage variations historically caused by mis-coordination of clinical equipment with services", effort: "Medium", optInOptOut: "Optional" },

@@ -49,6 +49,7 @@
 import type { ProjectRecord } from "./benchmark-tables";
 import { truncateAtWordBoundary } from "./proposal-intelligence";
 import { CLIENT_FACING_SECTION_G_HEADING } from "./client-facing-section-titles";
+import { isHealthcareSector } from "./assignment-subject";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
 
@@ -134,7 +135,7 @@ function defaultRows(sector: string): ThemeRow[] {
     },
   ];
 
-  if (/health|hospital|medical/.test(s)) {
+  if (isHealthcareSector(s)) {
     return [
       {
         pain: "Late changes to clinical brief invalidating IPC zoning",

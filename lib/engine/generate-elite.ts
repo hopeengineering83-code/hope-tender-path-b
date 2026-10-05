@@ -30,7 +30,7 @@ import { canUseVaultRecord, sourceVerifiedListElements } from "../vault-review-p
 import { buildClientProposalStrengtheningSections } from "./proposal-strengthening-sections";
 import { benchmarkAuditSummary } from "./proposal-benchmark-audit";
 import { polishBenchmarkOutput } from "./benchmark-output-polisher";
-import { formatRequirementLine } from "./proposal-labels";
+import { formatRequirementLine, withBidderName } from "./proposal-labels";
 import {
   buildBenchmarkTablesBlock,
   buildClientReferencesTable,
@@ -108,7 +108,7 @@ import { enforceTechnicalPriceSeparation } from "./proposal-price-leakage-guard"
 import type { TenderSourceDocument } from "./source-grounded-requirement-map";
 import { getTenderDomainInstructions } from "./tender-domain-instructions";
 import { classifyTender } from "./tender-classification";
-import { repairClientTextHygiene } from "./client-text-hygiene";
+import { repairClientTextHygiene, repairListIntegrity } from "./client-text-hygiene";
 
 const BRAND_BLUE = "1F4E79";
 const BRAND_GRAY = "595959";
@@ -129,6 +129,7 @@ export const VAT_RATE_MENTION = /\bvat\b(?=[^\n]{0,12}\d)(?![\s:|—–-]*(?:reg
 
 import { isCurrentRecordStatus } from "./record-status";
 import { possessive } from "./possessive";
+import { isHealthcareSector } from "./assignment-subject";
 export { isCurrentRecordStatus };
 
 /** Rename the document's references to itself when it is not a Technical Proposal. */
@@ -782,7 +783,7 @@ function fallbackProposalMarkdown(params: {
   const evalCriteria = params.evaluationCriteria ?? [];
   const appendixList = params.appendixList ?? [];
   const sections = params.requiredSections ?? [];
-  const exactSubject = params.exactSubjectLine ?? `Technical Proposal for ${params.tenderTitle}`;
+  const exactSubject = withBidderName(params.exactSubjectLine, params.companyLegalName || params.companyName) ?? `Technical Proposal for ${params.tenderTitle}`;
   const toRecipient = params.exactEmails?.length
     ? params.exactEmails.join("; ")
     : params.clientContactName
@@ -2323,7 +2324,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
             : writerTender.clientContactName
               ? `${writerTender.clientContactName}, ${intelligence.clientName}`
               : intelligence.clientName,
-          subject: intelligence.exactSubjectLine ?? `${submissionDocumentLabel} for ${cleanedTenderTitle}`,
+          subject: withBidderName(intelligence.exactSubjectLine, company.legalName || company.name) ?? `${submissionDocumentLabel} for ${cleanedTenderTitle}`,
           technicalOnly: Boolean(intelligence.noFinancialProposal),
           salutation: writerTender.clientContactName ? `Dear ${writerTender.clientContactName},` : "Dear Evaluation Committee,",
           signOff: signOffLines(company.name, resolveSignatory({ gmName: company.gmName, gmLicense: company.gmLicense, experts: experts as ExpertRecord[] })),
@@ -2657,7 +2658,10 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
   });
   // Section E is always the canonical builder's (stripComplianceMatrixSections).
   const matrixMarkdown = stripComplianceMatrixSections(stripInternalReviewSections(appendEvaluatorResponseMatrix(upstreamWithoutTeamTables, evaluatorMatrixInput)).markdown);
-  const isHealthcare = /health|hospital|medical|clinic|radiology|laboratory|pharmacy|patient|specialty|OPD|in-patient|emergency/i.test(`${intelligence.primarySector}\n${intelligence.tenderText}`);
+  // The sector inferSector() read from what the assignment is. Testing the
+  // raw tender text made an office tender "healthcare" on a donor's mission
+  // statement or a "health and safety plan".
+  const isHealthcare = isHealthcareSector(intelligence.primarySector);
   const strengtheningMarkdown = buildClientProposalStrengtheningSections({ clientName: intelligence.clientName, tenderTitle: cleanedTenderTitle, companyName: company.name, projectLines, expertLines, companyEvidenceLines, projectEvidenceLines, isHealthcare, existingMarkdown: matrixMarkdown });
 
   // Inject benchmark-quality tabular sections (Proposed Team, Team-to-Project Mapping,
@@ -3455,7 +3459,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
     tenderTitle: cleanedTenderTitle,
     clientName: intelligence.clientName,
     reference: writerTender.reference,
-    exactSubjectLine: writerTender.submissionEmailSubject ?? intelligence.exactSubjectLine,
+    exactSubjectLine: withBidderName(writerTender.submissionEmailSubject ?? intelligence.exactSubjectLine, company.legalName || company.name),
     submissionDate: null,
     proposalValidityDays: intelligence.commercialTerms?.bidValidityDays
       ? Number(String(intelligence.commercialTerms.bidValidityDays).match(/\d+/)?.[0] ?? "") || null
@@ -3639,7 +3643,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
     proposalValidityDays: intelligence.commercialTerms?.bidValidityDays
       ? Number(String(intelligence.commercialTerms.bidValidityDays).match(/\d+/)?.[0] ?? "")
       : null,
-    exactSubjectLine: writerTender.submissionEmailSubject ?? intelligence.exactSubjectLine,
+    exactSubjectLine: withBidderName(writerTender.submissionEmailSubject ?? intelligence.exactSubjectLine, company.legalName || company.name),
   };
 
   const doc = buildProfessionalDocument({
@@ -4165,15 +4169,27 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
   // Proposal for …" and "This is a TECHNICAL PROPOSAL ONLY").
   workingMarkdown = withSubmissionDocumentLabel(workingMarkdown, submissionDocumentLabel);
 
+  const listIntegrity = repairListIntegrity(workingMarkdown);
+  if (listIntegrity.renumberedLists > 0 || listIntegrity.droppedLeadIns > 0) {
+    logger.info(`[generate-elite] List integrity: renumbered ${listIntegrity.renumberedLists} list(s), dropped ${listIntegrity.droppedLeadIns} lead-in(s) left with no list.`);
+    workingMarkdown = listIntegrity.text;
+  }
+
   const proseHygiene = repairClientTextHygiene(workingMarkdown);
   if (proseHygiene.removedLines > 0) {
     logger.warn(`[generate-elite] Client-text hygiene removed ${proseHygiene.removedLines} unfinished line(s) before render.`);
     workingMarkdown = proseHygiene.text;
   }
 
-  // Re-render the DOCX from the (possibly refined) markdown.
-  const finalChildren = (refinementApplied || repairAddendaApplied) ? markdownToDocx(workingMarkdown) : children;
-  const finalDoc = (refinementApplied || repairAddendaApplied)
+  // Re-render the DOCX whenever the markdown changed after the first render.
+  // Keying this on refinement/addenda alone dropped every later pass — the
+  // sealed contents page, portfolio-card repair, client register, list
+  // integrity and prose hygiene — whenever no AI refinement ran and no
+  // addendum was needed, so the shipped DOCX was the unrepaired first draft.
+  const markdownChangedSinceFirstRender = workingMarkdown !== humanizedMarkdown;
+  const rerender = refinementApplied || repairAddendaApplied || markdownChangedSinceFirstRender;
+  const finalChildren = rerender ? markdownToDocx(workingMarkdown) : children;
+  const finalDoc = rerender
     ? buildProfessionalDocument({
         tenderTitle: cleanedTenderTitle,
         clientName: intelligence.clientName,

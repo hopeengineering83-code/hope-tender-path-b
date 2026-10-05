@@ -222,3 +222,135 @@ export function repairClientTextHygiene(markdown: string): ClientTextRepairResul
     repairedHeadings,
   };
 }
+
+// ─── List integrity after every removal pass ─────────────────────────────────
+//
+// Later passes remove sentences and list items (pricing, unsupported claims,
+// placeholders) after a list was written, and never renumber what is left. A
+// delivered proposal read "Five reasons grounded in reviewed evidence:" over
+// items 2, 4 and 5, and "Key differentiators that make us well-placed to serve
+// this assignment:" over nothing but the closing sentence (2026-10-05).
+
+const ORDERED_ITEM = /^(\s*)(\d{1,2})\.\s+(\S.*)$/;
+const HEADING = /^\s*#{1,6}\s/;
+const FENCE = /^\s*```/;
+const LIST_OR_TABLE = /^\s*(?:[-*•+]\s|\d{1,2}[.)]\s|\(?[a-z]\)\s|\||>)/i;
+const COUNT_WORDS = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten"];
+const COUNTED_LEAD = /^(\s*(?:\*\*)?)(One|Two|Three|Four|Five|Six|Seven|Eight|Nine|Ten|\d{1,2})(\s+(?:key\s+)?(?:reasons|differentiators|points|commitments|advantages|strengths)\b.*:\s*(?:\*\*)?\s*)$/i;
+
+export interface ListIntegrityResult {
+  readonly text: string;
+  readonly renumberedLists: number;
+  readonly droppedLeadIns: number;
+}
+
+function indentOf(line: string): number {
+  return line.length - line.trimStart().length;
+}
+
+/** A finished prose sentence: what a dangling lead-in is left sitting on. */
+function isProseSentence(line: string): boolean {
+  const t = line.trim();
+  if (!t || LIST_OR_TABLE.test(line) || HEADING.test(line) || /^(?:\*\*|__|["“'])/.test(t)) return false;
+  return /^[A-Z]/.test(t) && /[.!?]["”)]?$/.test(t) && t.split(/\s+/).length >= 8;
+}
+
+/**
+ * Renumber ordered lists whose items were removed, restate a counted lead-in
+ * ("Five reasons …:") as the list's real length, and drop a lead-in sentence
+ * left introducing nothing. Removes no list item and adds no claim.
+ */
+export function repairListIntegrity(markdown: string): ListIntegrityResult {
+  const lines = markdown.replace(/\r/g, "").split("\n");
+  let renumberedLists = 0;
+  let droppedLeadIns = 0;
+  let inFence = false;
+  // Last number of the previous top-level list in this section, so a list
+  // deliberately continued after a paragraph ("1. … 2. … <para> 3. …") keeps
+  // continuing instead of restarting at 1.
+  let previousLast: number | null = null;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (FENCE.test(line)) { inFence = !inFence; continue; }
+    if (inFence) continue;
+    if (HEADING.test(line)) { previousLast = null; continue; }
+    const first = line.match(ORDERED_ITEM);
+    if (!first) continue;
+
+    const indent = first[1]!.length;
+    const run: number[] = [];
+    let j = i;
+    while (j < lines.length) {
+      const current = lines[j]!;
+      const item = current.match(ORDERED_ITEM);
+      if (item && item[1]!.length === indent) { run.push(j); j++; continue; }
+      if (current.trim() && indentOf(current) > indent) { j++; continue; }
+      if (!current.trim()) {
+        let k = j + 1;
+        while (k < lines.length && !lines[k]!.trim()) k++;
+        const next = lines[k] ?? "";
+        const nextItem = next.match(ORDERED_ITEM);
+        if ((nextItem && nextItem[1]!.length === indent) || (next.trim() && indentOf(next) > indent)) { j = k; continue; }
+      }
+      break;
+    }
+
+    const numbers = run.map((index) => Number(lines[index]!.match(ORDERED_ITEM)![2]));
+    const start: number = numbers[0] === 1
+      ? 1
+      : previousLast !== null && numbers[0]! > previousLast ? previousLast + 1 : 1;
+    let changed = false;
+    run.forEach((index, n) => {
+      const m = lines[index]!.match(ORDERED_ITEM)!;
+      if (numbers[n] !== start + n) {
+        changed = true;
+        lines[index] = `${m[1]}${start + n}. ${m[3]}`;
+      }
+    });
+    if (changed) renumberedLists += 1;
+    previousLast = start + run.length - 1;
+
+    // A counted lead-in directly above a list states that list's length.
+    if (start === 1) {
+      let k = i - 1;
+      while (k >= 0 && !lines[k]!.trim()) k--;
+      const lead = k >= 0 ? lines[k]!.match(COUNTED_LEAD) : null;
+      if (lead) {
+        const word = /^\d+$/.test(lead[2]!) ? String(run.length) : (COUNT_WORDS[run.length] ?? String(run.length));
+        const restated = `${lead[1]}${word}${lead[3]}`;
+        if (restated !== lines[k]) lines[k] = restated;
+      }
+    }
+    i = j - 1;
+  }
+
+  // A lead-in sentence ending in ":" left with nothing under it — the next
+  // line is a heading, the end, or an unrelated finished sentence. Form-field
+  // labels ("Name of authorised signatory:") are followed by other labels or
+  // blanks, never a finished sentence, so they stay.
+  const out: string[] = [];
+  inFence = false;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (FENCE.test(line)) inFence = !inFence;
+    const trimmed = line.trim().replace(/(?:\*\*|__)$/, "").trim();
+    const isLeadIn = !inFence
+      && /:$/.test(trimmed)
+      && !HEADING.test(line)
+      && !LIST_OR_TABLE.test(line)
+      && !/_{2,}|\[|\]/.test(trimmed)
+      && trimmed.split(/\s+/).length >= 5;
+    if (isLeadIn) {
+      let k = i + 1;
+      while (k < lines.length && !lines[k]!.trim()) k++;
+      const next = lines[k];
+      if (next === undefined || HEADING.test(next) || isProseSentence(next)) {
+        droppedLeadIns += 1;
+        continue;
+      }
+    }
+    out.push(line);
+  }
+  return { text: out.join("\n"), renumberedLists, droppedLeadIns };
+}

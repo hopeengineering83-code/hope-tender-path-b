@@ -85,7 +85,11 @@ const VALIDITY_PATTERNS: RegExp[] = [
 
 const QUANTITY_CONTEXT_PATTERNS: RegExp[] = [
   // "25 workstations", "40-PAX meeting room", "3 private offices"
-  /\b(\d{1,4})[-\s]?(?:PAX|pax|workstations?|persons?|seats?|offices?|rooms?|m2|sqm|sq\.?\s*m|square\s+metres?|square\s+meters?|hectares?|kilometres?|kilometers?|km|metres?|meters?|m\b)([^.\n]{0,60})/gi,
+  // The value is the number and its unit only; what it describes is read
+  // from the surrounding words by quantityContext(). The trailing 60 chars
+  // this pattern used to swallow became part of the "value" and, cut
+  // mid-word, rendered as "454 sqm) in Addis Ababa (ce space (".
+  /(?<![\d,.])\b(\d{1,3}(?:,\d{3})+|\d{1,4})[-\s]?(?:PAX|pax|workstations?|persons?|seats?|offices?|rooms?|m2|sqm|sq\.?\s*m|square\s+metres?|square\s+meters?|hectares?|kilometres?|kilometers?|km|metres?|meters?|m\b)/gi,
   // "8 deliverables", "9 phases", "5 reports"
   /\b(\d{1,3})\s+(?:deliverables?|phases?|reports?|outputs?|milestones?|stages?|tasks?|activities?)\b/gi,
   // "ETB 7,500,000" or "USD 100,000"
@@ -126,6 +130,73 @@ const LOCATION_HINTS = [
 const NOT_A_PLACE_NAME = /^(?:the|this|that|a|an|each|every|any|all|new|existing|main|head|office|control|telecom|telecommunications?|communications?|mobile|radio|cell|lattice|water|steel|concrete|previous|tender|project|site|access|service|services|regional|district|national|federal|and|or|of|for|in|at|to|by|with|from)\b/i;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
+
+/** Alphanumeric tokens of a reference: "RFQ# 2026-024" → [rfq, 2026, 024]. */
+function referenceTokens(value: string): string[] {
+  return value.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+}
+
+/**
+ * True when `shorter` is `longer` with some of its tokens dropped from either
+ * end — the same reference without its label or prefix. Token-wise, so
+ * "2026-02" is not taken for "2026-024".
+ */
+function isReferenceRestatedBy(shorter: string, longer: string): boolean {
+  const a = referenceTokens(shorter);
+  const b = referenceTokens(longer);
+  if (a.length === 0 || a.length >= b.length) return false;
+  for (let offset = 0; offset + a.length <= b.length; offset++) {
+    if (a.every((token, i) => token === b[offset + i])) return true;
+  }
+  return false;
+}
+
+const CONTEXT_BOUNDARY = /[.;:!?\n]/;
+const CONTEXT_WORDS = 5;
+const LEADING_JOINER = /^(?:and|or|but|while|whereas)$/i;
+const TRAILING_JOINER = /^(?:and|or|but|of|the|a|an|to|for|with|in|on|at|by|from)$/i;
+
+function contextWords(value: string): string[] {
+  return value
+    .replace(/[()[\]{}<>|"“”]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .filter((word) => /[\p{L}\p{N}]/u.test(word));
+}
+
+/**
+ * The words a quantity sits in, quoted from its own clause: up to five whole
+ * words either side, stopping at a neighbouring number and dropping brackets
+ * the cut would leave unbalanced. "office space (454 sqm) in Addis Ababa"
+ * gives "office space 454 sqm in Addis Ababa".
+ */
+function quantityContext(text: string, start: number, end: number): string {
+  let before = text.slice(Math.max(0, start - 90), start);
+  const lastBoundary = Math.max(-1, ...[...before].map((ch, i) => (CONTEXT_BOUNDARY.test(ch) ? i : -1)));
+  if (lastBoundary >= 0) before = before.slice(lastBoundary + 1);
+  else if (start > 90) before = before.replace(/^\S*\s/, "");
+  let after = text.slice(end, end + 90);
+  const firstBoundary = after.search(CONTEXT_BOUNDARY);
+  if (firstBoundary >= 0) after = after.slice(0, firstBoundary);
+  else if (end + 90 < text.length) after = after.replace(/\s\S*$/, "");
+
+  const lead: string[] = [];
+  for (const word of contextWords(before).reverse()) {
+    if (/\d/.test(word) || lead.length >= CONTEXT_WORDS) break;
+    lead.unshift(word);
+  }
+  const tail: string[] = [];
+  for (const word of contextWords(after)) {
+    if (/\d/.test(word) || tail.length >= CONTEXT_WORDS) break;
+    tail.push(word);
+  }
+  while (lead.length > 0 && LEADING_JOINER.test(lead[0]!)) lead.shift();
+  while (tail.length > 0 && TRAILING_JOINER.test(tail[tail.length - 1]!)) tail.pop();
+  if (lead.length === 0 && tail.length === 0) return "";
+  const value = contextWords(text.slice(start, end)).join(" ");
+  return [...lead, value, ...tail].join(" ").replace(/[,;]+$/, "");
+}
 
 function uniq(arr: string[]): string[] {
   const seen = new Set<string>();
@@ -239,6 +310,9 @@ export function extractTenderFacts(
       // references" while retaining ordinary RFP/2026/014-style identifiers.
       && /\d/.test(value),
     )
+    // "2026-024" is the same reference as the grounded "RFQ# 2026-024"
+    // without its label; listed together they read as two references.
+    .filter((value, _index, all) => !all.some((other) => other !== value && isReferenceRestatedBy(value, other)))
     .slice(0, 3);
   const deadlines = uniq([...canonicalDeadlines, ...extractAll(tenderText, DEADLINE_PATTERNS)]).slice(0, 3);
   const validityPeriods = extractAll(tenderText, VALIDITY_PATTERNS).slice(0, 2);
@@ -278,12 +352,10 @@ export function extractTenderFacts(
   for (const re of QUANTITY_CONTEXT_PATTERNS) {
     re.lastIndex = 0;
     for (const m of tenderText.matchAll(re)) {
-      const start = Math.max(0, (m.index ?? 0) - 10);
-      const end = Math.min(tenderText.length, (m.index ?? 0) + (m[0]?.length ?? 0) + 60);
-      const window = tenderText.slice(start, end).replace(/\s+/g, " ").trim();
-      const value = m[0]?.replace(/^\W+/, "").replace(/\W+$/, "").trim() ?? "";
-      const context = window.replace(value, "").replace(/^\W+/, "").trim().slice(0, 70);
+      const value = m[0]?.replace(/^\W+/, "").replace(/\W+$/, "").replace(/\s+/g, " ").trim() ?? "";
       if (!value) continue;
+      const at = m.index ?? 0;
+      const context = quantityContext(tenderText, at, at + (m[0]?.length ?? 0));
       quantities.push({ value, context });
       if (quantities.length >= 12) break;
     }
@@ -337,7 +409,7 @@ export function formatFactsForPrompt(facts: TenderFacts): string {
   if (facts.quantities.length > 0) {
     lines.push(`- Distinctive quantities (echo at least 3-5 of these in C.1):`);
     for (const q of facts.quantities.slice(0, 8)) {
-      const ctx = q.context ? ` — ${q.context}` : "";
+      const ctx = q.context ? ` — "${q.context}"` : "";
       lines.push(`  • ${q.value}${ctx}`);
     }
   }
@@ -364,7 +436,8 @@ export function buildTenderSpecificsBlock(facts: TenderFacts): string {
   if (facts.fileFormats.length > 0) rows.push({ field: "Required File Formats / Software", value: facts.fileFormats.join(", ") });
   if (facts.brandsOrWebsites.length > 0) rows.push({ field: "Client Brand / Website", value: facts.brandsOrWebsites.join(" ; ") });
   if (facts.quantities.length > 0) {
-    const top5 = facts.quantities.slice(0, 5).map((q) => q.context ? `${q.value} (${q.context})` : q.value);
+    // The context already quotes the value in its own words.
+    const top5 = facts.quantities.slice(0, 5).map((q) => q.context ? `“${q.context}”` : q.value);
     rows.push({ field: "Distinctive Tender Quantities", value: top5.join(" ; ") });
   }
 

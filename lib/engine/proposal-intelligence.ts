@@ -4,6 +4,9 @@ import { extractProjectFacts, extractProjectAmounts, extractServicesProvided } f
 import { tidyTruncation, factualCardOrEmpty } from "./vault-prose";
 import { detectFinancialProposalRequiredFromText, buildTenderDocumentTypeAdvisory, type TenderDocumentTypeAdvisory } from "../document-generation/generation-integration";
 import { resolveJurisdictionTokens } from "./jurisdiction-instruments";
+import { assignmentSubjectText, HEALTHCARE_WORK, HOSPITALITY_WORK } from "./assignment-subject";
+
+export { assignmentSubjectText } from "./assignment-subject";
 export type TenderRequirementLite = { title: string; description: string; priority: string; requirementType: string };
 export type TenderLite = { title: string; reference?: string | null; clientName?: string | null; procuringEntityName?: string | null; country?: string | null; description?: string | null; intakeSummary?: string | null; analysisSummary?: string | null; evaluationMethodology?: string | null; deadline?: Date | string | null; submissionMethod?: string | null; submissionAddress?: string | null; clientContactName?: string | null };
 export type CompanyLite = { name: string; legalName?: string | null; description?: string | null; profileSummary?: string | null; serviceLines: string; sectors: string; email?: string | null; phone?: string | null; website?: string | null; address?: string | null };
@@ -122,7 +125,10 @@ export const PROPOSAL_THEMES: ProposalTheme[] = [
   {
     code: "HEALTHCARE",
     label: "Healthcare facility design and clinical workflow",
-    triggers: [/health/i, /hospital/i, /medical/i, /clinic/i, /pharmacy/i, /radiology/i, /laboratory/i, /in[- ]?patient/i, /out[- ]?patient/i, /emergency/i, /specialty.*cent/i, /medical.*cent/i],
+    // Health work, not the word "health" or "emergency": a health
+    // ministry's name, a donor's mission, "emergency exits" and "emergency
+    // contact" are in tenders for offices, roads and towers alike.
+    triggers: [/health\s*(?:care|facilit|cent(?:er|re)s?|posts?|stations?|services?|institution|infrastructure)/i, /hospital/i, /medical/i, /clinic/i, /pharmacy/i, /radiology/i, /(?:medical|clinical|diagnostic|hospital|pathology|public\s+health)\s+laborator/i, /in[- ]?patient/i, /out[- ]?patient/i, /emergency\s+(?:department|ward|unit|room|medicine|care|obstetric)/i, /specialty.*cent/i, /medical.*cent/i],
     // Word boundaries on ICU and OPD — 3-letter abbreviations.
     proofTerms: [/hospital/i, /health/i, /medical/i, /clinic/i, /radiology/i, /laboratory/i, /pharmacy/i, /patient/i, /clinical/i, /ward/i, /\bICU\b/i, /\bOPD\b/i],
     methodologyBullets: [
@@ -445,7 +451,8 @@ export const PROPOSAL_THEMES: ProposalTheme[] = [
   {
     code: "HOSPITALITY_TOURISM",
     label: "Hospitality & Tourism Facilities",
-    triggers: [/hotel/i, /hospitality/i, /resort/i, /lodge/i, /guesthouse/i, /five.star/i, /luxury.*accommodat/i, /tourism.*facilit/i],
+    // "lodge" alone is the verb ("bids lodged", "lodge a complaint").
+    triggers: [/\bhotels?\b/i, /\bhospitality\s+(?:facilit|sector|industry|project|development|design|building)/i, /\bresorts?\b/i, /\b(?:eco|safari|game|tourist|mountain)[- ]?lodges?\b/i, /guest\s*house/i, /five.star/i, /luxury.*accommodat/i, /tourism.*facilit/i],
     proofTerms: [/FF&E/i, /brand standard/i, /RevPAR/i, /guestroom/i, /back.of.house/i, /BOH/i, /mock.*room/i, /pre.opening/i, /GSTC/i, /Green Globe/i],
     methodologyBullets: [
       "Feasibility and development programme: room mix, F&B concept, BOH efficiency analysis, RevPAR market benchmarking, preliminary BOQ",
@@ -758,7 +765,8 @@ function detectSubmissionRules(tender: TenderLite, tenderText: string): string[]
  * the only place a theme is selected, and the only place its bullets resolve.
  */
 export function detectThemes(tenderText: string): ProposalTheme[] {
-  const scored = PROPOSAL_THEMES.map((t) => ({ theme: t, score: t.triggers.filter((p) => p.test(tenderText)).length }))
+  const subject = assignmentSubjectText(tenderText);
+  const scored = PROPOSAL_THEMES.map((t) => ({ theme: t, score: t.triggers.filter((p) => p.test(subject)).length }))
     .filter((s) => s.score >= (s.theme.minScore ?? 1))
     .sort((a, b) => b.score - a.score);
   // Return only matched themes. An empty array is correct when no themes
@@ -777,11 +785,36 @@ export function detectThemes(tenderText: string): ProposalTheme[] {
   }));
 }
 
-export function inferSector(tenderText: string): string {
+export const INTERIOR_FIT_OUT_SECTOR = "Interior Design / Fit-Out & Space Planning";
+// Interior and office-space work. "office space" alone is in every works
+// contract ("office space for the Engineer"), so it counts only as the object
+// of design, layout, planning or modelling.
+const INTERIOR_WORK = /interior\s+(?:design|architect|layout|fit)|fit[-\s]?out\b|space\s+planning|workplace\s+design|(?:design|layout|floor\s+plans?|modell?ing|planning|refurbishment|renovation)\s+(?:\w+\s+){0,4}office\s+(?:space|premises|interior|floors?)|office\s+(?:space|premises|interior)\s+(?:design|layout|planning|fit)/i;
+
+/**
+ * The assignment's sector. The tender title is read first: it is the one line
+ * that states what is being bought, where the body also carries the client's
+ * mission, addresses and boilerplate. An office-space design for a health
+ * ministry is building work; the body alone made it a hospital.
+ */
+export function inferSector(rawTenderText: string, opts?: { title?: string | null }): string {
   // First: a tower tender mentions health and safety, structures and
   // telecoms, and every later pattern would claim it for the wrong work.
-  if (describesTelecomTowerWork(tenderText)) return TELECOM_TOWER_SECTOR;
-  if (/health|hospital|medical|clinic|specialty.*cent/i.test(tenderText)) return "Healthcare / Medical Facility Design";
+  if (describesTelecomTowerWork(rawTenderText)) return TELECOM_TOWER_SECTOR;
+  const title = opts?.title?.trim();
+  if (title) {
+    const fromTitle = inferSectorFromSubject(assignmentSubjectText(title));
+    if (fromTitle !== GENERAL_SECTOR) return fromTitle;
+  }
+  return inferSectorFromSubject(assignmentSubjectText(rawTenderText));
+}
+
+const GENERAL_SECTOR = "General Consultancy / Engineering";
+
+function inferSectorFromSubject(tenderText: string): string {
+  // Health WORK, not the word: bare "health" is in a health ministry's name,
+  // a donor's mission and every "health and safety plan".
+  if (HEALTHCARE_WORK.test(tenderText)) return "Healthcare / Medical Facility Design";
   // ─── Agriculture BEFORE water ──────────────────────────────────────
   // "irrigation scheme" + "crop production" = agriculture; the water
   // pattern below also has "irrigation" but a pure agriculture tender
@@ -819,9 +852,9 @@ export function inferSector(tenderText: string): string {
   if (/financial\s+advisory|economic\s+analysis|due\s+diligence|\bvaluation\b|audit\s+services|tax\s+consult/i.test(tenderText)) return "Financial / Audit Advisory";
   if (/supply\s+of|procurement\s+of\s+(goods|equipment|materials)|equipment\s+supply|goods\s+procurement/i.test(tenderText)) return "Supply / Goods Procurement";
   if (/capacity\s+build|training\s+services|institutional\s+strength|technical\s+assistance|trainer.of.trainers/i.test(tenderText)) return "Capacity Building / Advisory";
-  if (/solar\s+(power|farm|pv)|wind\s+(power|farm)|hydropower|grid\s+(connect|extension)|renewable\s+energy|power\s+(generation|transmission|distribution)|energy|power.*plant|grid.*connect|generation.*capacity|transmission.*line|substation.*design/i.test(tenderText)) return "Energy / Power Infrastructure";
+  if (/solar\s+(power|farm|pv)|wind\s+(power|farm)|hydropower|grid\s+(connect|extension)|renewable\s+energy|power\s+(generation|transmission|distribution)|\benergy\s+(?:sector|project|infrastructure|access|supply|audit|master\s*plan|polic)|power.*plant|grid.*connect|generation.*capacity|transmission.*line|substation.*design/i.test(tenderText)) return "Energy / Power Infrastructure";
   if (/social.*develop|advisory.*service|institutional.*strength|capacity.*build|community.*develop/i.test(tenderText)) return "Social Development & Advisory";
-  if (/hotel|hospitality|resort/i.test(tenderText)) return "Hospitality & Tourism";
+  if (HOSPITALITY_WORK.test(tenderText)) return "Hospitality & Tourism";
   if (/factory|industrial|manufacturing/i.test(tenderText)) return "Industrial / Manufacturing";
   if (/geotechnical|soil.*investigation|foundation.*design|seismic/i.test(tenderText)) return "Geotechnical & Structural Engineering";
   if (/renovation|modification|retrofit|existing building/i.test(tenderText)) return "Building Renovation & Adaptation";
@@ -831,7 +864,8 @@ export function inferSector(tenderText: string): string {
   if (/pipeline.*design|oil.*facilit|gas.*facilit|upstream.*petroleum|HAZOP|P&ID|refinery|petrochemical/i.test(tenderText)) return "Oil & Gas / Petroleum";
   if (/KYC|AML.*framework|core.*banking|microfinance.*system|credit.*risk.*model|IFRS.*implement|Basel|prudential.*regul/i.test(tenderText)) return "Financial Services / Banking";
   if (/spectrum.*licen|base.*station.*design|backhaul.*design|last.?mile.*access|broadband.*network|telecoms.*infra|LTE.*deploy|5G.*rollout/i.test(tenderText)) return "Telecoms / Broadband Infrastructure";
-  if (/architecture|building.*design|construction.*supervision|structural.*design/i.test(tenderText)) return "Building Design & Construction Supervision";
+  if (INTERIOR_WORK.test(tenderText)) return INTERIOR_FIT_OUT_SECTOR;
+  if (/architecture|architectural\s+(?:design|services|drawings)|building.*design|design\s+of\s+(?:[\w+-]+\s+){0,4}(?:building|headquarters)|construction.*supervision|structural.*design/i.test(tenderText)) return "Building Design & Construction Supervision";
   if (/\benergy\b|power.*plant|\bsolar\b|wind.*farm|grid.*connect|generation|transmission.*line|substation|\bhydropower\b|\belectrification\b|renewable.*energy|power.*system|\bSCADA\b/i.test(tenderText)) return "Energy & Power Infrastructure";
   if (/irrigation.*scheme|command.*area|\bWUA\b|agri.*develop|\bagricultural\b|crop.*water|rural.*develop.*agri|livestock.*develop/i.test(tenderText)) return "Agriculture, Irrigation & Rural Development";
   if (/\bJORC\b|mine.*plan|pit.*design|tailings|ore.*body|blast.*design|geotechnical.*mine|mine.*feasibility|mining.*project/i.test(tenderText)) return "Mining & Extractive Industries";
@@ -839,7 +873,7 @@ export function inferSector(tenderText: string): string {
   if (/pipeline.*design|oil.*facilit|gas.*facilit|\bHAZOP\b|\bP&ID\b|refinery|petrochemical|upstream.*petroleum|\bLNG\b|\bFEED\b.*\b(oil|gas|process)\b/i.test(tenderText)) return "Oil & Gas / Petroleum Engineering";
   if (/\bKYC\b|\bAML\b|core.*banking|microfinance.*(?:system|platform)|credit.*risk.*model|\bIFRS\b.*implement|\bBasel\b|prudential.*regul|capital.*adequacy/i.test(tenderText)) return "Financial Services & Banking";
   if (/spectrum.*licen|spectrum.*plan|broadband.*infrastruc|base.*station.*design|\bLTE\b|\b5G\b|mobile.*network.*rollout|broadband.*rollout|backhaul.*network/i.test(tenderText)) return "Telecoms & Broadband";
-  return "General Consultancy / Engineering";
+  return GENERAL_SECTOR;
 }
 
 function detectAppendixList(tenderText: string): string[] {
@@ -1299,7 +1333,7 @@ export function buildProposalIntelligence(params: {
     { label: /Financial|Banking/, keywords: /\bKYC\b|\bAML\b|core.*banking|microfinance.*(?:system|platform)|credit.*risk.*model|\bIFRS\b|\bBasel\b|prudential.*regul|capital.*adequacy|\bfintech\b/i },
     { label: /Telecoms|Broadband/, keywords: /spectrum.*licen|spectrum.*plan|broadband.*infrastruc|base.*station.*design|\bLTE\b|\b5G\b|mobile.*network|broadband.*rollout|backhaul.*network/i },
   ];
-  const detectedSector = inferSector(tenderText);
+  const detectedSector = inferSector(tenderText, { title: tender.title });
   // Multi-sector fix: collect ALL sector keyword sets triggered by the tender
   // text. A hospital-water project, for example, triggers both the Healthcare
   // and Water keyword sets. When the tender also mentions water supply (e.g.,
@@ -1307,7 +1341,8 @@ export function buildProposalIntelligence(params: {
   // passes the filter because it matches the Water set — even though the
   // PRIMARY sector is Healthcare. Previously inferSector() returned only one
   // sector, silently excluding cross-sector relevant projects.
-  const activeTenderKeywords = SECTOR_PATTERNS.filter(({ keywords }) => keywords.test(tenderText)).map(({ keywords }) => keywords);
+  const subjectText = assignmentSubjectText(tenderText);
+  const activeTenderKeywords = SECTOR_PATTERNS.filter(({ keywords }) => keywords.test(subjectText)).map(({ keywords }) => keywords);
 
   const sectorFilter = (text: string): boolean => {
     if (detectedSector === "General Consultancy / Engineering") return true; // no filter
@@ -1432,7 +1467,7 @@ export function buildProposalIntelligence(params: {
     clientName: finalClientName,
     clientContactName: tender.clientContactName ?? null,
     assignmentName: finalAssignmentName,
-    primarySector: inferSector(tenderText),
+    primarySector: inferSector(tenderText, { title: tender.title }),
     requiredSections: detectRequiredSections(tenderText),
     evaluationCriteria: detectedCriteria.map((entry) => splitEvaluationCriterion(entry).label),
     evaluationCriteriaWriterNotes: detectedCriteria,

@@ -10,6 +10,7 @@ import { resolveJurisdictionTokens } from "./jurisdiction-instruments";
 import { projectsNamedInCv, licencesNamedInCv } from "./cv-grounding";
 import { possessive } from "./possessive";
 import { formatRegistration } from "./credential-format";
+import { isHealthcareSector } from "./assignment-subject";
 
 /**
  * Benchmark-quality tabular sections built deterministically from the
@@ -566,7 +567,7 @@ export function buildThreeStageReviewTable(companyName: string, primarySector: s
   const s = primarySector.toLowerCase();
   const isWaterTender = /water|borehole|hydraulic|sanitary|irrigation|sewage/.test(s);
   const isRoadTender = /road|bridge|highway|pavement|transport(?!ation planning)/.test(s);
-  const isHealthcareTender = /health|hospital|medical|clinic|radiology|pharmacy|biomedical/.test(s);
+  const isHealthcareTender = isHealthcareSector(s);
   const isICTTender = /ict|software|digital|database|system|platform|app(?:lication)?/.test(s);
   const isEnvTender = /environment|esia|esmp|safeguard|ecology|climate|biodiversity/.test(s);
   const isUrbanTender = /urban|master plan|land use|spatial|municipal|city/.test(s);
@@ -692,7 +693,7 @@ export function buildAssessmentMatrix(opts: { tenderTitle: string; primarySector
   if (!wantsAssessment) return null;
 
   const sector = opts.primarySector || "Project";
-  const isHealthcare = /health|hospital|medical|clinic/i.test(sector);
+  const isHealthcare = isHealthcareSector(sector);
   const isWater = /water|borehole|hydraulic|sanitary/i.test(sector);
 
   const criteria = isHealthcare
@@ -859,7 +860,7 @@ function referenceValue(project: ProjectRecord): string {
 type ValueFrameworkPillar = { pillar: string; clientGains: string };
 
 function valueFrameworkPillars(primarySector: string, clientName: string, sourceText?: string): ValueFrameworkPillar[] {
-  const isHealthcare = /health|hospital|medical|clinic/i.test(primarySector);
+  const isHealthcare = isHealthcareSector(primarySector);
   const isWater = /water|borehole|hydraulic|sanitary/i.test(primarySector);
   const isRoad = /road|bridge|highway|pavement|transport/i.test(primarySector);
   const isUrban = /urban|master plan|municipal/i.test(primarySector);

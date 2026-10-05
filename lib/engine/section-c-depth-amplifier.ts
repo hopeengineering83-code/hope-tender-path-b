@@ -49,6 +49,7 @@ import { recordedProjectServices } from "./project-fact-extractor";
 import type { ProjectRecord } from "./benchmark-tables";
 import { inlineEvidenceValue } from "./proposal-intelligence";
 import { resolveJurisdictionTokens } from "./jurisdiction-instruments";
+import { isHealthcareSector } from "./assignment-subject";
 
 // Canonical Section C sub-section structure. Each entry includes
 // the heading text + a deterministic depth-paragraph generator.
@@ -186,7 +187,7 @@ function sectorMethodologyParagraphRaw(sector: string, subSection: string): stri
     if (/work plan|C\.3/i.test(subSection)) return TELECOM_TOWER_METHODOLOGY.workplan;
     if (/quality|QA|C\.4/i.test(subSection)) return TELECOM_TOWER_METHODOLOGY.quality;
   }
-  if (/health|hospital|medical|clinic/.test(s)) {
+  if (isHealthcareSector(s)) {
     if (/understanding|C\.1/i.test(subSection)) return "The clinical brief drives every downstream decision: zone segregation between Emergency, Outpatient, In-patient, Imaging, Pharmacy, and Laboratory; Infection Prevention and Control (IPC) compliant flow patterns; medical-gas distribution coordinated with structural and MEP grids; radiation-shielding loads accounted for at structural sizing.";
     if (/methodology|C\.2/i.test(subSection)) return "Methodology works from a functional programme of the clinical brief: clinical-zone capacity sizing, IPC-compliant patient/staff/supply flow, biomedical equipment integration (data cabling for imaging and, where the confirmed equipment brief requires it, radiation shielding), and ventilation and filtration matched to the clinical risk of each area.";
     if (/work plan|C\.3/i.test(subSection)) return "Phased deliverables: site assessment with weighted matrix → conceptual design with clinical zoning → detailed design with MEP coordination → working drawings + BOQ → construction supervision with three IPC hold-points → close-out with as-built records and the licensing pack for {{JURISDICTION:HEALTH_FACILITY_REGULATOR}}.";

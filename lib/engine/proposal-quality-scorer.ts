@@ -39,6 +39,7 @@
 
 import type { ProjectRecord } from "./benchmark-tables";
 import { SECTION_F_HEADING_RX, SECTION_G_HEADING_RX } from "./client-facing-section-titles";
+import { isHealthcareSector } from "./assignment-subject";
 
 export type QualityScore = {
   total: number; // 0–100
@@ -198,7 +199,7 @@ const FORBIDDEN_PHRASES = [
 
 function detectSector(primarySector: string): string {
   const s = primarySector.toLowerCase();
-  if (/health|hospital|medical|clinic/.test(s)) return "healthcare";
+  if (isHealthcareSector(s)) return "healthcare";
   if (/water|borehole|hydraulic|sanitary/.test(s)) return "water";
   if (/road|bridge|highway|pavement/.test(s)) return "road";
   if (/urban|master plan|municipal/.test(s)) return "urban";

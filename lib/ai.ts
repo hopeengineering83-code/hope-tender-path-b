@@ -15,6 +15,7 @@ import { modelSectionFabrication, scrubLegalHistoryAssertions, scrubUngroundedCo
 import { containsPricingLeakage } from "./engine/pricing-hygiene";
 import { CURRENCY_TOKEN_ALTERNATION } from "./engine/currency-reference";
 import { withoutAIWriterContractPrompt } from "./engine/ai-writer-contract-prompt";
+import { assignmentSubjectText, HEALTHCARE_WORK } from "./engine/assignment-subject";
 
 const apiKey = process.env.GEMINI_API_KEY;
 // Anthropic key is read at request time via getAnthropicApiKey() — never cached
@@ -4460,7 +4461,10 @@ export async function generateBenchmarkProposalWithAI(params: AIBidWriterInput):
     sourceNames(pattern) ? specific : generic;
 
   // Universal sector detection — multiple sectors can be active simultaneously
-  const isHealthcare = /health|hospital|medical|clinic|pharma|radiology|laboratory|biomedical/i.test(allText);
+  // Health work in the assignment's own words — not a donor's mission, an
+  // address landmark or a "health and safety" requirement.
+  const subjectText = assignmentSubjectText(allText);
+  const isHealthcare = HEALTHCARE_WORK.test(subjectText) || /biomedical|radiology/i.test(subjectText);
   const isFacilityAssessment = /facility identification|shortlisted propert|site assessment|suitable.*propert|premises|renovation.*exist/i.test(params.tenderText);
   const isWater = /water supply|borehole.*water|pump.*station|hydraulic.*design|irrigation.*scheme|WASH|sanitation.*project|water.*scheme|water.*network|reservoir.*design|water.*treatment|wastewater/i.test(allText);
   const isRoadBridge = /road.*design|road.*rehab|bridge.*design|highway.*design|pavement.*design|transport.*infrastructure|culvert|road.*supervision|road.*project|road.*construction/i.test(allText);

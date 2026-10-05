@@ -14,6 +14,7 @@ import { recordTypeForDisplay } from "./vault-prose";
  */
 
 import type { ExpertRecord } from "./benchmark-tables";
+import { isHealthcareSector } from "./assignment-subject";
 
 function safeArr(value: unknown): string[] {
   if (Array.isArray(value)) return value.map(String).filter(Boolean);
@@ -42,7 +43,7 @@ export function buildUnderstandingSection(opts: {
   const sector = opts.primarySector.toLowerCase();
   let sectorParagraph: string;
 
-  if (/health|hospital|medical|clinic/.test(sector)) {
+  if (isHealthcareSector(sector)) {
     sectorParagraph =
       `${opts.clientName} requires an end-to-end consultancy partner who brings not only design capability but strategic healthcare thinking: advising on suitable premises before a building is selected, designing a complete facility to Health Authority standards and international quality benchmarks, coordinating all MEP disciplines including medical gas and radiation safety, managing regulatory approvals, and supervising works through to operational readiness. The clinical departments each carry specific spatial, MEP, IPC, and regulatory requirements; a generic building consultancy is not sufficient.`;
   } else if (/water|borehole|hydraulic|sanitary/.test(sector)) {
@@ -107,7 +108,7 @@ export function buildValueAddedServices(opts: { primarySector: string; companyNa
   const sector = opts.primarySector.toLowerCase();
   let bullets: string[];
 
-  if (/health|hospital|medical|clinic/.test(sector)) bullets = [
+  if (isHealthcareSector(sector)) bullets = [
     `**Clinical workflow audit** — patient, staff, supply, and waste flow mapping with bottleneck analysis. Carried into the facility design as an input.`,
     `**Medical equipment readiness review** — coordination with biomedical specialist on equipment-power, shielding, and gas requirements before procurement decisions are taken, reducing late-stage retrofit costs.`,
     // The words "internal review" made a later client-text pass cut this line

@@ -31,6 +31,7 @@
 
 import { isTelecomTowerSector, TELECOM_TOWER_PHASES } from "./telecom-tower-sector";
 import { resolveJurisdictionTokens } from "./jurisdiction-instruments";
+import { isHealthcareSector } from "./assignment-subject";
 
 interface PhasingRow {
   phase: string;
@@ -44,7 +45,7 @@ function sectorPhasingRows(sector: string): PhasingRow[] {
 
   if (isTelecomTowerSector(sector)) return TELECOM_TOWER_PHASES.map((row) => ({ ...row }));
 
-  if (/health|hospital|medical|clinic/.test(s)) {
+  if (isHealthcareSector(s)) {
     return [
       { phase: "1. Inception", deliverables: "Inception report; clinical-brief confirmation; stakeholder map; site reconnaissance memo", duration: "Weeks 1–2", responsible: "Project Principal" },
       { phase: "2. Conceptual Design", deliverables: "Functional zoning diagram; clinical adjacency matrix; preliminary IPC flow study; concept drawings; cost order-of-magnitude", duration: "Weeks 3–6", responsible: "Architect" },

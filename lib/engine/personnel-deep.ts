@@ -44,6 +44,7 @@ import { titleStatesRole } from "./requirement-constraints";
 import { licencesNamedInCv, projectsNamedInCv, softwareNamedInCv } from "./cv-grounding";
 import { holdsExecutiveOffice } from "./signatory";
 import { formatPersonWithCredential, formatRegistration } from "./credential-format";
+import { isHealthcareSector } from "./assignment-subject";
 
 const MARKER_LOADING = "<!-- personnel:per-01-loading -->";
 const MARKER_PROFILES = "<!-- personnel:per-02-profiles -->";
@@ -106,7 +107,7 @@ function rolesForSector(sector: string, expertCount: number): { role: string; pi
   const s = (sector || "").toLowerCase();
   // daysShare values are RELATIVE — they get normalised against the
   // engagement total later.
-  if (/health|hospital|medical|clinic/.test(s)) {
+  if (isHealthcareSector(s)) {
     return [
       { role: "Project Principal", pickKeywords: ["principal", "director", "manager"], daysShare: 12 },
       { role: "Lead Architect", pickKeywords: ["architect"], daysShare: 22 },
@@ -475,7 +476,7 @@ interface OrganogramStream {
 
 function streamsForSector(sector: string): OrganogramStream[] {
   const s = (sector || "").toLowerCase();
-  if (/health|hospital|medical/.test(s)) {
+  if (isHealthcareSector(s)) {
     return [
       { name: "Architecture Stream", pickKeywords: ["architect"], members: 3 },
       { name: "Engineering (MEP + Structural) Stream", pickKeywords: ["mep", "structural", "engineer"], members: 3 },

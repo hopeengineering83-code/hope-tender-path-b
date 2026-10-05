@@ -15,6 +15,7 @@
 import { isTelecomTowerSector, TELECOM_TOWER_RISKS } from "./telecom-tower-sector";
 import { resolveJurisdictionTokens } from "./jurisdiction-instruments";
 import { possessive } from "./possessive";
+import { isHealthcareSector } from "./assignment-subject";
 
 type SectorRisk = { risk: string; impact: "High" | "Medium" | "Low"; likelihood: "High" | "Medium" | "Low"; mitigation: string };
 
@@ -25,7 +26,7 @@ function escCell(text: string): string {
 function risksForSector(primarySector: string): SectorRisk[] {
   const sector = primarySector.toLowerCase();
   if (isTelecomTowerSector(primarySector)) return TELECOM_TOWER_RISKS;
-  if (/health|hospital|medical|clinic/.test(sector)) return [
+  if (isHealthcareSector(sector)) return [
     // No donor framework ("World Bank ESF") for a tender that names none, and
     // no "internal review" wording: a later pass cut both mitigations at it.
     { risk: "Licensing approval delay due to documentation gaps", impact: "High", likelihood: "Medium", mitigation: "Each approval package is checked against the licensing authority's checklist before submission, and every authority comment is logged and closed." },

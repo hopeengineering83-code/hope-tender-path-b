@@ -55,6 +55,7 @@ import type { ExpertRecord, ProjectRecord } from "./benchmark-tables";
 import { canonicalWorkPlan } from "./canonical-work-plan";
 import { resolveJurisdictionTokens } from "./jurisdiction-instruments";
 import { titleStatesRole } from "./requirement-constraints";
+import { isHealthcareSector } from "./assignment-subject";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
 
@@ -175,7 +176,7 @@ function sectorRiskRows(sector: string): RiskRow[] {
       ...TELECOM_TOWER_RISKS.map((row) => ({ category: "Tower", ...row, owner: "Senior Structural Engineer" })),
     ];
   }
-  if (/health|hospital|medical/.test(s)) {
+  if (isHealthcareSector(s)) {
     return [
       ...generic,
       { category: "Clinical", risk: "Late changes to clinical brief invalidate IPC zoning", likelihood: "Medium", impact: "High", mitigation: "Clinical-brief sign-off freeze at 30% gate; any change after freeze triggers a written variation order with cost/time impact", owner: "Architect" },
@@ -336,7 +337,7 @@ function sectorQARows(sector: string): QAItpRow[] {
     { checkpoint: "Client Comment Resolution", criterion: "All client comments addressed in writing", method: "Comment-resolution register with response per comment", frequency: "After each review cycle", responsible: "Project Principal", type: "Review" },
   ];
   if (isTelecomTowerSector(sector)) return TELECOM_TOWER_QA;
-  if (/health|hospital|medical/.test(s)) {
+  if (isHealthcareSector(s)) {
     return [
       ...generic,
       { checkpoint: "IPC Flow Audit", criterion: "Patient/staff/supply flows comply with IPC standard", method: "Flow-pattern walk-through against IPC checklist", frequency: "30% and 100%", responsible: "Architect", type: "Hold" },

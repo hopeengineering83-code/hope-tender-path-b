@@ -30,6 +30,7 @@
 
 import type { ExpertRecord } from "./benchmark-tables";
 import { resolveJurisdictionTokens } from "./jurisdiction-instruments";
+import { isHealthcareSector } from "./assignment-subject";
 
 export interface DeliverableQaChecklistOpts {
   tenderText: string;
@@ -75,7 +76,7 @@ function sectorChecklistRows(sector: string, experts: ExpertRecord[], dCodes: st
   const all = dCodes.length > 0 ? dCodes.join(", ") : "All deliverables";
   const sub = (n: number[]) => dCodes.length > 0 ? n.map((i) => dCodes[i - 1] ?? `D${i}`).filter(Boolean).join(", ") : `Deliverables ${n.join(", ")}`;
 
-  if (/health|hospital|medical|clinic/.test(s)) {
+  if (isHealthcareSector(s)) {
     return [
       { check: "All programme rooms present (clinical, support, public, MEP zones) and labelled per the brief", responsibleRole: rolesByKeyword(experts, ["architect"]), deliverables: sub([1, 2, 4]), acceptance: "Zero missing rooms; every clinical zone labelled" },
       { check: "Room dimensions cross-checked against equipment + furniture footprints with clearances", responsibleRole: rolesByKeyword(experts, ["architect"]), deliverables: sub([2, 6]), acceptance: "All clearances ≥ 1.2 m; no equipment-clash flags" },

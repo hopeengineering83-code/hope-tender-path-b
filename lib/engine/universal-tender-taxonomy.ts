@@ -1,3 +1,5 @@
+import { HEALTHCARE_WORK } from "./assignment-subject";
+
 export type ServiceCapability =
   | "ARCHITECTURAL_DESIGN"
   | "INTERIOR_DESIGN"
@@ -104,7 +106,9 @@ const TENDER_FORM_PATTERNS: PatternMap<TenderForm> = {
 };
 
 const SECTOR_PATTERNS: PatternMap<SectorDomain> = {
-  HEALTHCARE: [/health/i, /hospital/i, /medical/i, /clinic/i, /patient/i, /pharmacy/i, /laboratory/i, /biomedical/i],
+  // Health work, not the word: "Health and Safety Plan" is a requirement in
+  // tenders for offices, roads and towers alike.
+  HEALTHCARE: [HEALTHCARE_WORK, /biomedical/i, /(?:medical|clinical|diagnostic|hospital|pathology|public\s+health)\s+laborator/i],
   EDUCATION: [/school/i, /university/i, /college/i, /education/i, /classroom/i, /campus/i],
   COMMERCIAL_INDUSTRIAL: [/commercial/i, /industrial/i, /factory/i, /manufactur/i, /retail/i, /mall/i, /hotel/i],
   RESIDENTIAL_HOUSING: [/residential/i, /housing/i, /apartment/i, /condominium/i, /real\s+estate/i],
