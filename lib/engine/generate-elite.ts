@@ -130,7 +130,6 @@ type CompanyLogo = {
 export const VAT_RATE_MENTION = /\bvat\b(?=[^\n]{0,12}\d)(?![\s:|—–-]*(?:reg(?:istration)?\.?[\s:|—–-]*(?:no\.?|number|#)?[\s:|—–-]*)?\d{7,})/gi;
 
 import { isCurrentRecordStatus } from "./record-status";
-import { possessive } from "./possessive";
 import { isHealthcareSector } from "./assignment-subject";
 import { reconcileSectionPointers } from "./section-pointer-reconciliation";
 export { isCurrentRecordStatus };
@@ -598,43 +597,6 @@ export function markdownToDocx(markdown: string): (Paragraph | Table | TableOfCo
   if (tableBuffer.length > 0) flushTable();
 
   return out.length > 0 ? out : [para("No proposal content was generated.")];
-}
-
-// Post-generation repair: if Section C.2 has fewer than 6 sub-sections,
-// inject missing ones before C.3 so the benchmark quality scorer passes.
-function repairSectionC2SubSections(markdown: string, requirements: string, tenderTitle: string, clientName: string): string {
-  const existing = (markdown.match(/^###\s+C\.2\.\d+/gm) ?? []).length;
-  if (existing >= 6) return markdown;
-
-  const reqLines = requirements
-    .split("\n")
-    .map((l) => l.replace(/^[-*•]\s*/, "").replace(/^(MANDATORY|SCORED|INFORMATIONAL):?\s*/i, "").trim())
-    .filter((l) => l.length > 15 && !/\bBENCHMARK\b|\bRULE:\s/i.test(l.slice(0, 60)));
-  const pool = [
-    ...reqLines.slice(existing),
-    "Quality Assurance and Review Gates", "Risk Management and Issue Tracking",
-    "Client Communication and Approvals", "Documentation and Reporting",
-    "Knowledge Transfer and Handover", "Post-Completion Advisory Support",
-  ];
-
-  const client = clientName || "the Client";
-  const extras: string[] = [];
-  for (let n = existing + 1; n <= 6; n++) {
-    const topic = pool[n - existing - 1] ?? `Phase ${n} Delivery`;
-    extras.push(
-      `### C.2.${n} ${topic.slice(0, 80)}\n\n` +
-      `The ${topic.toLowerCase()} phase ensures that all deliverables for ${tenderTitle || "this assignment"} meet ${possessive(client)} stated requirements and applicable technical standards. ` +
-      `The assigned expert leads this scope item, applying the firm's staged-delivery methodology with formal quality-review gates at 30%, 60%, and 100% completion. ` +
-      `Each deliverable undergoes peer review by a second engineer before submission to ${client} for approval, and no stage progresses until the prior deliverable has been formally accepted.\n\n` +
-      `**The assigned technical lead will oversee this sub-task and is responsible for the final deliverable.**`,
-    );
-  }
-
-  if (extras.length === 0) return markdown;
-  // Insert before ## C.3 / ## C.4 or any following # Section heading
-  const injected = extras.join("\n\n") + "\n\n";
-  const repaired = markdown.replace(/^(#{1,2}\s+C\.[3-9][\s:]|^#\s+(?!Section C))/m, `${injected}$1`);
-  return repaired !== markdown ? repaired : markdown + "\n\n" + injected.trimEnd();
 }
 
 /**
@@ -2654,14 +2616,10 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
       if (!sourceMarkdown || sourceMarkdown.trim().length < 2500) {
         throw new Error(`AI proposal too short (${sourceMarkdown?.trim().length ?? 0} chars) — using deterministic fallback`);
       }
-      // Repair: if the AI produced Section C.2 but fewer than 6 sub-sections,
-      // inject the missing sub-sections before C.3 so the quality scorer passes.
-      {
-        const c2Count = (sourceMarkdown.match(/^###\s+C\.2\.\d+/gm) ?? []).length;
-        if (c2Count > 0 && c2Count < 6) {
-          sourceMarkdown = repairSectionC2SubSections(sourceMarkdown, aiInput.requirements, aiInput.tenderTitle, aiInput.clientName);
-        }
-      }
+      // Section C.2 is never padded to a sub-section count. Padding drew its
+      // topics from prompt lines (one run printed "Section writing plan:" as a
+      // heading) and filled each with the same boilerplate; a thin C.2 is left
+      // for the quality scorer to report honestly.
       // Log which of the four mandatory scored sections were absent in the raw AI output.
       // Deterministic builders always inject E/F/G/H regardless, but this gives
       // observability into AI model quality — if sections are routinely missing,

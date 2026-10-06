@@ -324,7 +324,12 @@ export function buildComplianceMatrixSection(input: ComplianceMatrixBuilderInput
     // answered by the proposal alone, at a concrete destination, with no gap.
     const answeredByThisProposal = matchingRows.length > 0
       && matchingRows.every((r) => String(r.evidenceType ?? "").toUpperCase() === "PROPOSAL_RESPONSE");
+    // The Annex Schedule only lists the documents the owner attaches; listing
+    // them does not meet a requirement to submit them (2026-10-06, a real run
+    // printed "Annexes / Supporting Documents … FULLY MET" for a one-file
+    // package). That row keeps the engine's rating.
     if (status === "PARTIALLY MET" && answeredByThisProposal && proposalLocation !== "Sections A–D"
+      && proposalLocation !== "Annex Schedule"
       && ((reqId && gapsByReqId.get(reqId)) || []).length === 0) {
       status = "FULLY MET";
     }
