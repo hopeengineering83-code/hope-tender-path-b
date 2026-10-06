@@ -1768,6 +1768,18 @@ jobs:
           DATABASE_URL=postgresql://x:y@localhost:5432/z npx tsx scripts/tmp-requirement-quotes-vs-app-text.ts /tmp/tender-requirements.json $args 2>&1 \
             | grep -v '"level":"warn"' | tail -120 || true
 
+      - name: Repeat the package verdict last (read-only)
+        if: env.NO_TENDER != '1'
+        run: |
+          # The job log is read from its tail and artifacts are not reachable
+          # from every reader, so the package verdict is printed again here:
+          # what blocks the ZIP, the Build Plan items, and why each document
+          # is held.
+          for f in /tmp/canonical-blockers.txt /tmp/build-plan-inputs.txt /tmp/document-quality-blockers.txt; do
+            echo "================ $f ================"
+            [ -s "$f" ] && cut -c1-400 "$f" | head -90 || echo "(empty)"
+          done
+
       - name: Upload inspection report
         uses: actions/upload-artifact@v4
         with:
