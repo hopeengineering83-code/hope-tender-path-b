@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { findSubmissionMethodClause } from "./submission-source-clauses";
 import { ANALYSIS_HASH_FILE_SELECT } from "./tender-analysis-content";
 import { provenPageOfQuote } from "./page-provenance";
 import { normalizeForContainment } from "./evidence-grounding";
@@ -359,8 +360,16 @@ export function validateCriticalMetadataEvidenceForBuildPlan(
     // Portal: require one fully grounded declared endpoint
     const hasEmail = effEmails && tender.submissionEmailSourceFileId && tender.submissionEmailSourcePage;
     const hasAddress = effAddress && tender.submissionAddressSourceFileId && tender.submissionAddressSourcePage;
-    if (!hasEmail && !hasAddress) {
-      blockers.push("Portal submission requires at least one fully grounded endpoint (email or address with source file + page).");
+    // A portal is its own endpoint: the grounded clause that states it is the
+    // delivery endpoint (the submissionMethod check above verifies its file,
+    // page and quote). An e-mail or address the tender never states for a
+    // portal is not required (ABSENT_TENDER_FACT_IS_NOT_REQUIRED).
+    const portalClauseGrounded = Boolean(tender.submissionMethodSourceFileId && tender.submissionMethodSourcePage && tender.submissionMethodSourceQuote)
+      && findSubmissionMethodClause("portal", tender.submissionMethodSourceQuote) !== null;
+    if (!hasEmail && !hasAddress && portalClauseGrounded) {
+      // Nothing further: the portal clause is the endpoint.
+    } else if (!hasEmail && !hasAddress) {
+      blockers.push("Portal submission requires its portal clause, or an email or address, grounded in the source (file + page + quote).");
     } else if (hasEmail) {
       checkField("submissionEmails", effEmails, tender.submissionEmailSourceFileId, tender.submissionEmailSourcePage, tender.submissionEmailSourceQuote, true, "submissionEmails");
       checkEmailSubjectIfPresent();

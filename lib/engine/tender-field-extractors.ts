@@ -1,3 +1,4 @@
+import { findStatedDeadline, isSubmissionEmailContext } from "./submission-source-clauses";
 import { nonClientEntityLabelPattern, canonicalizeCountry, containsMetadataPlaceholder, isValidReferenceNumber } from "./metadata-validators";
 
 // Deterministic, source-grounded extractors for tender-metadata scalar fields.
@@ -154,13 +155,20 @@ export function extractDeadline(input: ExtractorInput): ExtractedFieldOrMissing<
   for (const file of input.files ?? []) {
     const text = (file?.extractedText ?? "").toString();
     if (text.length < SOURCE_MIN) continue;
+    let matched = false;
     for (const p of DEADLINE_PATTERNS) {
       const m = p.rx.exec(text);
       if (!m) continue;
       const d = new Date(m[1]);
       if (isNaN(d.getTime())) continue;
       cands.push({ found: true, value: d, sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: p.confidence });
+      matched = true;
       break;
+    }
+    if (!matched) {
+      // "not later than the 23rd of September 2026", wrapped across lines.
+      const stated = findStatedDeadline(text);
+      if (stated) cands.push({ found: true, value: stated.date, sourceQuote: trimQuote(stated.quote), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, stated.index, file?.totalPages), confidence: "MEDIUM" });
     }
   }
   return pickBest(cands);
@@ -174,8 +182,13 @@ export function extractSubmissionEmails(input: ExtractorInput): ExtractedFieldOr
     const anchorIdx = text.toLowerCase().search(/submit|submission|closing|deadline|receipt|bids/);
     if (anchorIdx === -1) continue;
     const windowText = text.slice(anchorIdx, anchorIdx + 2000);
-    const emails = windowText.match(EMAIL_PATTERN);
-    if (!emails) continue;
+    // Only addresses in a sentence about submitting; a privacy or complaints
+    // contact inside the window is not a submission endpoint.
+    const emails = (windowText.match(EMAIL_PATTERN) ?? []).filter((email) => {
+      const at = text.indexOf(email, anchorIdx);
+      return at >= 0 && isSubmissionEmailContext(text, at, email.length);
+    });
+    if (emails.length === 0) continue;
     cands.push({ found: true, value: Array.from(new Set(emails.map(e => e.toLowerCase()))), sourceQuote: trimQuote(windowText.slice(0, QUOTE_MAX)), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, anchorIdx, file?.totalPages), confidence: "HIGH" });
   }
   return pickBest(cands);

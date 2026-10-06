@@ -21,6 +21,7 @@
 // extraction across 15+ tender fields, no AI call, no network. Patterns
 // are tuned for World Bank / UNDP / AfDB / govt RFP templates.
 
+import { findStatedDeadline, submissionEmailsFromText } from "./submission-source-clauses";
 import {
   isValidClientName,
   isValidReferenceNumber,
@@ -240,11 +241,11 @@ function inferClientContactTitle(text: string): string | null {
   ]);
 }
 
+// Only the addresses the text gives for submitting. Every address in the
+// document used to become a submission e-mail, so a supplier-screening
+// privacy contact was stored as one (2026-10-06).
 function inferEmails(text: string): string[] {
-  const out = new Set<string>();
-  const matches = text.match(/\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b/gi) ?? [];
-  for (const m of matches) out.add(m.toLowerCase());
-  return Array.from(out).slice(0, 6);
+  return submissionEmailsFromText(text, 6);
 }
 
 /**
@@ -365,7 +366,10 @@ function inferDeadline(text: string): Date | null {
     // (e.g. "submitted by email to ... no later than 30 March 2026").
     /(?:no\s+later\s+than|not\s+later\s+than|on\s+or\s+before|received\s+(?:on\s+or\s+)?before|due\s+(?:on|by))\s*[:\-]?\s*([^\n\r]{6,100})/i,
   ]);
-  return parseDateValue(raw);
+  // When the first label holds no date ("the deadline for bid submission will
+  // be …"), read the stated deadline across line breaks and ordinal forms
+  // ("not later than the 2 3rd\nof September 2026").
+  return parseDateValue(raw) ?? findStatedDeadline(text)?.date ?? null;
 }
 
 function inferSubmissionMethod(text: string): string | null {

@@ -9,6 +9,7 @@
  * and invalid in another. This resolver is the single source of truth.
  */
 
+import { findSubmissionMethodClause } from "./submission-source-clauses";
 import {
   ALWAYS_CRITICAL_FIELDS,
   isCriticalField,
@@ -429,6 +430,14 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
   const effectiveAddressValue = endpointOverride("submissionAddress", tender.submissionAddress);
   const portalHasEmailCandidate = !!(effectiveEmailsValue && tender.submissionEmailSourceFileId && tender.submissionEmailSourcePage);
   const portalHasAddressCandidate = !!(effectiveAddressValue && tender.submissionAddressSourceFileId && tender.submissionAddressSourcePage);
+  // A portal is its own endpoint: the clause that states it ("uploaded online
+  // through the following web tendering portal …"), grounded in an active
+  // file, is the delivery endpoint. Demanding an e-mail or postal address a
+  // portal tender never states blocked a real ToR (2026-10-06).
+  // The quote must itself state the portal; evidence for some other clause
+  // does not make the portal an endpoint.
+  const portalClauseGrounded = !!(tender.submissionMethodSourceFileId && tender.submissionMethodSourcePage && tender.submissionMethodSourceQuote)
+    && findSubmissionMethodClause("portal", tender.submissionMethodSourceQuote) !== null;
 
   const fieldKeys = [
     "clientName", "title", "reference", "deadline", "country", "currency",
@@ -846,8 +855,10 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
     const addressField = fields.find((f) => f.fieldKey === "submissionAddress");
     let portalBlockReason: string | null = null;
     let fieldsToBlock: CanonicalFieldState[] = [];
-    if (!portalHasEmailCandidate && !portalHasAddressCandidate) {
-      portalBlockReason = "Portal submission requires at least one fully grounded endpoint (email or address with source file + page).";
+    if (!portalHasEmailCandidate && !portalHasAddressCandidate && portalClauseGrounded) {
+      // The grounded portal clause is the endpoint; nothing else is required.
+    } else if (!portalHasEmailCandidate && !portalHasAddressCandidate) {
+      portalBlockReason = "Portal submission requires its portal clause, or an email or address, grounded in the source (file + page + quote).";
       fieldsToBlock = [emailsField, addressField].filter((f): f is CanonicalFieldState => !!f);
     } else if (portalHasEmailCandidate) {
       // The validator picks the email endpoint and applies the full evidence

@@ -29,13 +29,15 @@ import {
   isValidReferenceNumber,
 } from "./metadata-validators";
 import { detectMetadataContamination } from "./tender-metadata-completeness";
+import { findStatedDeadline, findSubmissionMethodClause, submissionEmailStanding } from "./submission-source-clauses";
+import { locateQuoteProvenPage } from "./page-provenance";
 import { sourceGroundedTenderFileNames, type UploadedSourceFile } from "./source-grounded-file-name";
 
 export type CanonicalAnalysisExisting = {
   // The tender's active uploaded files (names + extracted text). When given,
   // exactFileNaming / exactFileOrder keep only names the tender states, and
   // never an upload's own name (sourceGroundedTenderFileNames).
-  sourceFiles?: readonly UploadedSourceFile[];
+  sourceFiles?: readonly (UploadedSourceFile & { id?: string; totalPages?: number | null })[];
   // Existing canonical values that gate whether the AI value is allowed to
   // overwrite them (mirrors the route's conditional spreads exactly).
   clientName?: string | null;
@@ -296,5 +298,72 @@ export function buildCanonicalAnalysisTenderUpdate(
     metadataContaminated,
   };
 
+  groundDeliveryFactsInSource(data, aiResult, existing);
   return { data, metadataContaminated };
+}
+
+/**
+ * Ground the delivery facts in the tender's own clauses when the model's
+ * quote cannot be found in any file (a paraphrase is not evidence), and drop
+ * an e-mail the tender gives for something other than submitting.
+ *
+ * A real ToR (2026-10-06) states "Quotations must be uploaded online through
+ * the following web tendering portal not later than the 2 3rd of September
+ * 2026": the method stayed ungrounded and blocked the Build Plan, the deadline
+ * was not read at all, and a supplier-screening privacy contact was stored as
+ * the submission e-mail. Every value set here is a verbatim clause of an
+ * active file, located the same way a model quote is.
+ */
+function groundDeliveryFactsInSource(
+  data: Record<string, unknown>,
+  aiResult: AIAnalysisResult,
+  existing: CanonicalAnalysisExisting,
+): void {
+  const files = (existing.sourceFiles ?? []).filter(
+    (f): f is UploadedSourceFile & { id: string; extractedText: string; totalPages?: number | null } =>
+      typeof f.id === "string" && typeof f.extractedText === "string" && f.extractedText.length > 0,
+  );
+  if (files.length === 0) return;
+
+  const method = (typeof data.submissionMethod === "string" ? data.submissionMethod : null) ?? existing.submissionMethod ?? null;
+  const methodGrounded = Boolean(data.submissionMethodSourceFileId) && typeof data.submissionMethodSourcePage === "number";
+  if (method && !methodGrounded) {
+    for (const file of files) {
+      const clause = findSubmissionMethodClause(method, file.extractedText);
+      if (!clause) continue;
+      data.submissionMethodSourceFileId = file.id;
+      data.submissionMethodSourceQuote = clause.quote;
+      data.submissionMethodSourcePage = locateQuoteProvenPage(file.extractedText, clause.quote, file.totalPages ?? null);
+      break;
+    }
+  }
+
+  if (!aiResult.deadline) {
+    for (const file of files) {
+      const stated = findStatedDeadline(file.extractedText);
+      if (!stated) continue;
+      data.deadline = stated.date;
+      data.deadlineSourceFileId = file.id;
+      data.deadlineSourceQuote = stated.quote;
+      data.deadlineSourcePage = locateQuoteProvenPage(file.extractedText, stated.quote, file.totalPages ?? null);
+      break;
+    }
+  }
+
+  const emails = (typeof data.submissionEmails === "string" ? data.submissionEmails : null) ?? existing.submissionEmails ?? null;
+  if (emails) {
+    const listed = emails.split(/[\s,;]+/).map((e) => e.trim()).filter(Boolean);
+    const kept = listed.filter((email) => {
+      const standings = files.map((file) => submissionEmailStanding(file.extractedText, email));
+      return standings.includes("submission") || standings.every((s) => s === "absent");
+    });
+    if (kept.length !== listed.length) {
+      data.submissionEmails = kept.length > 0 ? kept.join(", ") : null;
+      if (kept.length === 0) {
+        data.submissionEmailSourceFileId = null;
+        data.submissionEmailSourcePage = null;
+        data.submissionEmailSourceQuote = null;
+      }
+    }
+  }
 }
