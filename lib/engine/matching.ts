@@ -140,7 +140,7 @@ const CAPABILITY_KEYWORDS: Record<CapabilityFamily, RegExp[]> = {
   TRANSPORT_LOGISTICS: [/airport\s+(?:design|infrastructure)/i, /railway/i, /port\s+(?:design|infrastructure)/i, /maritime/i, /freight/i, /cargo/i, /supply\s+chain/i, /logistics\s+(?:hub|network)/i, /terminal\s+(?:design|construct)/i, /warehouse\s+(?:design|management)/i],
   MINING_EXTRACTIVES: [/\bmining\b/i, /extractiv/i, /quarry/i, /mineral\s+resourc/i, /tailings/i, /smelter/i, /\b(?:ore|metal|mineral)\s+refining\b/i, /artisanal/i, /\bJORC\b/i, /slope\s+stability/i, /\bmine\s+plan/i],
   TELECOMS: [/telecom/i, /telecommunication/i, /fiber\s+optic/i, /fibre\s+optic/i, /broadband/i, /\b5G\b/i, /\b4G\b/i, /tower\s+infrastructure/i, /spectrum/i, /\bBTS\b/i, /backhaul/i],
-  OIL_GAS_PETROLEUM: [/\bHAZOP\b/i, /\bP&ID\b/i, /pipeline\s+(?:design|integrit|engineer)/i, /refinery/i, /petrochemical/i, /wellhead/i, /upstream\s+petroleum/i, /oil\s+facilit/i, /gas\s+facilit/i, /\bFEED\b.*process/i, /process\s+safety/i, /\bPSSR\b/i],
+  OIL_GAS_PETROLEUM: [/\bHAZOP\b/i, /\bP&ID\b/i, /pipeline\s+(?:design|integrit|engineer)/i, /refinery/i, /petrochemical/i, /wellhead/i, /upstream\s+petroleum/i, /\boil\s+(?:and\s+gas\s+)?facilit/i, /(?<!medical\s)(?<!medical-)\bgas\s+(?:processing\s+|production\s+|compression\s+)?facilit/i, /\bFEED\b.*process/i, /process\s+safety/i, /\bPSSR\b/i],
   INSTITUTIONAL_REFORM: [/institutional\s+(?:reform|strengthen)/i, /governance\s+reform/i, /policy\s+(?:design|framework)/i, /capacity\s+building/i, /public\s+sector\s+reform/i, /civil\s+service\s+reform/i, /regulator\s+(?:design|framework)/i, /strategic\s+plan/i, /M&E\s+framework/i, /monitoring\s+and\s+evaluation/i],
 };
 

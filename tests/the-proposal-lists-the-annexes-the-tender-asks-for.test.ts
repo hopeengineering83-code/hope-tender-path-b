@@ -59,6 +59,8 @@ describe("the annexes the tender asks for", () => {
     const row = (title: string) => section.split("\n").find((line) => line.includes(title)) ?? "";
     assert.match(row("Annexes / Supporting Documents"), /\| Annex Schedule \|.*\| PARTIALLY MET \|$/);
     assert.match(row("Cover Letter"), /FULLY MET/);
+    const rated = buildComplianceMatrixSection({ requirements, matrixRows: matrixRows.map((r) => ({ ...r, supportLevel: "FULL" })), gaps: [] } as never) ?? "";
+    assert.match(rated.split("\n").find((line) => line.includes("Annexes / Supporting")) ?? "", /\| PARTIALLY MET \|$/);
   });
 
   it("the Annex Schedule closes the proposal body, before the Declaration", () => {

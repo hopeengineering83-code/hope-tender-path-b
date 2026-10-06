@@ -123,7 +123,7 @@ const SECTOR_PATTERNS: PatternMap<SectorDomain> = {
   GENERAL_BUILDINGS: [/building/i, /facility/i, /office/i, /complex/i, /centre/i, /center/i],
   MINING_EXTRACTIVE: [/\bmining\b/i, /\bjorc\b/i, /tailings/i, /\bore\s+body\b/i, /\bmine\s+plan/i, /mineral\s+resource/i, /quarry/i, /extractive/i],
   PORT_MARITIME: [/\bport\b/i, /berth/i, /quay/i, /maritime/i, /dredging/i, /harbour/i, /\bisps\b/i, /nautical/i],
-  OIL_GAS: [/\bhazop\b/i, /p&id/i, /pipeline\s+design/i, /oil\s+facilit/i, /gas\s+facilit/i, /petrochemical/i, /upstream\s+petroleum/i, /refinery/i],
+  OIL_GAS: [/\bhazop\b/i, /p&id/i, /pipeline\s+design/i, /\boil\s+(?:and\s+gas\s+)?facilit/i, /(?<!medical\s)(?<!medical-)\bgas\s+(?:processing\s+|production\s+|compression\s+)?facilit/i, /petrochemical/i, /upstream\s+petroleum/i, /refinery/i],
   FINANCIAL_SERVICES: [/\bkyc\b/i, /\baml\b/i, /core\s+banking/i, /microfinance/i, /\bifrs\b/i, /\bbasel\b/i, /fintech/i, /payment\s+system/i, /prudential/i],
   TELECOMS_BROADBAND: [/spectrum/i, /broadband/i, /\blte\b/i, /\b5g\b/i, /base\s+station/i, /backhaul/i, /mobile\s+network/i, /telecoms\b/i, /\brf\b\s+plan/i],
 };

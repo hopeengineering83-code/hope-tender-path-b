@@ -324,15 +324,18 @@ export function buildComplianceMatrixSection(input: ComplianceMatrixBuilderInput
     // answered by the proposal alone, at a concrete destination, with no gap.
     const answeredByThisProposal = matchingRows.length > 0
       && matchingRows.every((r) => String(r.evidenceType ?? "").toUpperCase() === "PROPOSAL_RESPONSE");
-    // The Annex Schedule only lists the documents the owner attaches; listing
-    // them does not meet a requirement to submit them (2026-10-06, a real run
-    // printed "Annexes / Supporting Documents … FULLY MET" for a one-file
-    // package). That row keeps the engine's rating.
     if (status === "PARTIALLY MET" && answeredByThisProposal && proposalLocation !== "Sections A–D"
-      && proposalLocation !== "Annex Schedule"
       && ((reqId && gapsByReqId.get(reqId)) || []).length === 0) {
       status = "FULLY MET";
     }
+
+    // The Annex Schedule only lists the documents the owner attaches after the
+    // package is built; listing them does not meet a requirement to submit
+    // them. Two real runs (2026-10-06) printed "Annexes / Supporting Documents
+    // … FULLY MET" for a one-file package: once through the promotion above,
+    // once from an engine row already rated FULL. Section E's other renderer
+    // caps attachment rows the same way (statusForRequirement).
+    if (proposalLocation === "Annex Schedule" && status === "FULLY MET") status = "PARTIALLY MET";
 
     // Evidence cell — concatenate up to 2 evidence sources.
     const evidenceParts: string[] = [];

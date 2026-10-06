@@ -359,7 +359,11 @@ export const PROPOSAL_THEMES: ProposalTheme[] = [
   {
     code: "OIL_GAS",
     label: "Oil and gas, pipeline engineering and process facilities",
-    triggers: [/\bHAZOP\b/i, /\bP&ID\b/i, /pipeline.*design/i, /upstream.*petroleum/i, /oil.*facilit/i, /gas.*facilit/i, /refinery/i, /petrochemical/i, /wellhead/i, /\bLNG\b/i, /\bFEED\b/i, /process.*safety/i, /pipeline.*integrity/i],
+    // Each trigger names the work itself. "/gas.*facilit/" read "medical gas,
+    // IT, telehealth, and healthcare facility engineering systems" as a gas
+    // facility and gave a hospital design pipeline stress analysis (2026-10-06);
+    // "/oil.*facilit/" matched "toilet … facility" and "/FEED/i" the verb "feed".
+    triggers: [/\bHAZOP\b/i, /\bP&ID\b/i, /\bpipeline\s+design/i, /\bupstream\s+petroleum/i, /\boil\s+(?:and\s+gas\s+)?facilit/i, /(?<!medical\s)(?<!medical-)\bgas\s+(?:processing\s+|production\s+|compression\s+)?facilit/i, /\brefiner(?:y|ies)\b/i, /\bpetrochemical/i, /\bwellhead/i, /\bLNG\b/i, /\bFEED\b/, /\bprocess\s+safety\b/i, /\bpipeline\s+integrity/i],
     proofTerms: [/HAZOP/i, /P&ID/i, /pipeline/i, /oil/i, /gas/i, /refinery/i, /API/i, /ASME/i, /LOPA/i, /cathodic/i, /ILI/i, /wellhead/i, /petrochemical/i, /FEED/i],
     methodologyBullets: [
       "design basis and HAZOP: process flow diagram, P&ID development, HAZOP study (all action items tracked to close-out), LOPA for high-severity nodes, and applicable code selection (API, ASME, ISO)",
@@ -1029,9 +1033,15 @@ function makeDifferentiators(
     items.push(`In-house geotechnical capability${equipment.length > 0 ? ` (${equipment.join(", ")})` : ""} ${outcome}.`);
   }
 
-  // MEP in-house — claim. Word boundary on MEP (3-char abbreviation).
-  if (/\bMEP\b|electrical.*engineer|sanitary.*engineer|mechanical/i.test(allExpertText)) {
-    items.push("Single-source multidisciplinary MEP team (electrical, sanitary, mechanical) under one firm — coordination is internal, not contractual.");
+  // MEP in-house — claim, naming only the services disciplines the experts'
+  // own titles and disciplines hold. A fixed "(electrical, sanitary,
+  // mechanical)" was printed for a team with no mechanical engineer.
+  const servicesText = experts.map((e) => textOf(e.title, ...safeParseArr(e.disciplines))).join("\n");
+  const mepDisciplines = ([["electrical", /electrical/i], ["mechanical", /mechanical|\bHVAC\b/i], ["sanitary", /sanitary|plumbing/i]] as const)
+    .filter(([, pattern]) => pattern.test(servicesText))
+    .map(([name]) => name);
+  if (mepDisciplines.length >= 2) {
+    items.push(`Single-source multidisciplinary MEP team (${mepDisciplines.join(", ")}) under one firm — coordination is internal, not contractual.`);
   }
 
   // Large project scale — already a claim, kept.
