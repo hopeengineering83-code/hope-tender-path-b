@@ -11,7 +11,6 @@
 
 import {
   ALWAYS_CRITICAL_FIELDS,
-  NEVER_NOT_APPLICABLE,
   isCriticalField,
   fieldDisplayLabel,
   type MetadataFieldState as PolicyFieldState,

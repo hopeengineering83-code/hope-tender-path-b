@@ -415,9 +415,10 @@ export function TenderIntakeDetailPanel({ tender }: { tender: TenderDetailLike }
     // is null/invalid, it's genuinely missing. If the parser found it, it's
     // NOT missing — even if the scalar is null.
     const si = intelligence.submissionInstructions;
-    if (!si.deadlineDisplay && !tender.deadline && !isResolvedByOverride(overrides, "deadline")) {
-      effectiveMissingFacts.push({ key: "deadline", label: "Submission Deadline", requiredFor: "final_submission", status: "missing" });
-    }
+    // A deadline the tender does not state is not asked for: it is not
+    // required of the bid (owner policy ABSENT_TENDER_FACT_IS_NOT_REQUIRED).
+    // Listing it as "Required before export" made the owner resolve a fact
+    // the tender never stated, and the resolution was then refused.
     if ((!si.method || si.method === "Unknown") && !tender.submissionMethod && !isResolvedByOverride(overrides, "submissionMethod")) {
       effectiveMissingFacts.push({ key: "submissionMethod", label: "Submission Method", requiredFor: "draft_context", status: "missing" });
     }

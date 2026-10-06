@@ -265,7 +265,7 @@ describe("fix area 1 — Tender Detail missing-facts uses intelligence", () => {
     const src = read("app/dashboard/tenders/[id]/tender-intake-detail-panel.tsx");
     assert.ok(src.includes("effectiveMissingFacts"), "must build effectiveMissingFacts");
     assert.ok(src.includes("intelligence"), "must use intelligence for missing-facts");
-    assert.ok(src.includes("!si.deadlineDisplay && !tender.deadline"), "deadline missing only when both parser and scalar are null");
+    assert.ok(!src.includes('effectiveMissingFacts.push({ key: "deadline"'), "an unstated deadline is never listed as missing (ABSENT_TENDER_FACT_IS_NOT_REQUIRED)");
     assert.ok(src.includes("!si.method || si.method === \"Unknown\""), "method missing only when parser says Unknown and scalar is null");
   });
 
@@ -275,12 +275,11 @@ describe("fix area 1 — Tender Detail missing-facts uses intelligence", () => {
     assert.ok(!src.includes("{sourceDetail.missingRelevantCount > 0"), "must NOT use sourceDetail.missingRelevantCount for the missing-facts condition");
   });
 
-  it("intake panel does not list deadline as missing when parser found it", () => {
+  it("intake panel never lists the deadline as missing (found → shown; not stated → not required)", () => {
     const src = read("app/dashboard/tenders/[id]/tender-intake-detail-panel.tsx");
-    // The condition for deadline missing is: !si.deadlineDisplay && !tender.deadline
-    // If the parser found the deadline (si.deadlineDisplay is truthy), the condition is false
-    // → deadline is NOT pushed to effectiveMissingFacts → NOT shown as missing
-    assert.ok(src.includes("!si.deadlineDisplay && !tender.deadline"), "deadline missing requires BOTH parser AND scalar to be null");
+    // Owner policy ABSENT_TENDER_FACT_IS_NOT_REQUIRED (2026-10-06 report: an
+    // unstated deadline was shown as "Required before export").
+    assert.ok(!src.includes('effectiveMissingFacts.push({ key: "deadline"'), "the deadline is never pushed to effectiveMissingFacts");
   });
 
   it("intake panel does not list submissionMethod as missing when parser found it", () => {

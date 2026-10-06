@@ -81,6 +81,11 @@ export type CriticalMetadataField =
   | "proposalValidity";
 
 export type NonCriticalMetadataField =
+  // A client, method or deadline the tender does not state is advisory
+  // (ABSENT_TENDER_FACT_IS_NOT_REQUIRED); a placeholder value stays critical.
+  | "clientName"
+  | "submissionMethod"
+  | "deadline"
   | "reference"
   | "clientContactName"
   | "clientContactEmail"
@@ -368,12 +373,28 @@ export function assessTenderMetadataCompleteness(
   // Accept either clientName or procuringEntityName — if the AI set procuringEntityName
   // but the back-fill into clientName hasn't run yet, do not block generation.
   const effectiveClientName = input.clientName || input.procuringEntityName;
-  checkCritical("clientName", effectiveClientName, "Client / procuring entity name is required for cover letter and declarations.");
+  // Owner policy ABSENT_TENDER_FACT_IS_NOT_REQUIRED (tender-fact-authority): a
+  // client, method or deadline the tender does not state is not required of
+  // the bid. A PRESENT value that is a placeholder is still critical (it would
+  // put false information into the bid); an absent one is advisory. The title
+  // stays critical, and so does the endpoint a stated method depends on.
+  const checkStatedCritical = (field: CriticalMetadataField & NonCriticalMetadataField, value: unknown, reason: string) => {
+    if (isPresent(value)) {
+      checkCritical(field, value, reason);
+    } else if (isNotApplicable(field)) {
+      notApplicableFields.push({ field, reason });
+    } else if (!isOverrideResolved(field)) {
+      missingNonCritical.push({ field, reason: `Not stated in the tender — the proposal is built without it. ${reason}` });
+    }
+  };
+  checkStatedCritical("clientName", effectiveClientName, "Client / procuring entity name is used in the cover letter and declarations.");
   checkCritical("title", input.title, "Tender title is required throughout the proposal.");
-  checkCritical("submissionMethod", input.submissionMethod, "Submission method (portal / sealed envelope / email) drives package mode and final ZIP behaviour.");
+  checkStatedCritical("submissionMethod", input.submissionMethod, "Submission method (portal / sealed envelope / email) drives package mode and final ZIP behaviour.");
   // submissionEndpoint = either an email list, a submission address, or a portal URL
   const hasAnyEndpoint = isValidPresent(input.submissionEmails) || isValidPresent(input.submissionAddress);
-  if (!hasAnyEndpoint) {
+  const statedMethodNeedsEndpoint = isPhysicalSubmissionMethod(input.submissionMethod)
+    || (typeof input.submissionMethod === "string" && /e-?mail/i.test(input.submissionMethod) && !/no.{0,30}e-?mail|e-?mail.{0,30}not.{0,10}(accepted|allowed)/i.test(input.submissionMethod));
+  if (!hasAnyEndpoint && statedMethodNeedsEndpoint) {
     const endpointField = "submissionEndpoint";
     if (isNotApplicable(endpointField)) {
       notApplicableFields.push({ field: endpointField, reason: "Submission endpoint (email or address) is required for the cover letter and submission package label." });
@@ -381,7 +402,7 @@ export function assessTenderMetadataCompleteness(
       missingCritical.push({ field: endpointField, reason: "Submission endpoint (email or address) is required for the cover letter and submission package label." });
     }
   }
-  checkCritical("deadline", input.deadline, "Submission deadline is required for scheduling and final approval rules.");
+  checkStatedCritical("deadline", input.deadline, "Submission deadline is used for scheduling and final approval rules.");
   if ((input.requirementCount ?? 0) === 0) {
     const reqField = "requiredDocuments";
     if (!isOverrideResolved(reqField)) {

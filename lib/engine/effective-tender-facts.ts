@@ -573,7 +573,8 @@ function resolveDeadline(
     facts.push({ key, label, value: display, status: "resolved_from_scalar_fallback", requiredFor: "final_submission", source: "scalar" });
     return { display, iso };
   }
-  facts.push({ key, label, value: null, status: "missing", requiredFor: "final_submission", source: "none" });
+  // Not stated in the tender: not required (ABSENT_TENDER_FACT_IS_NOT_REQUIRED).
+  facts.push({ key, label, value: null, status: "missing", requiredFor: "optional", source: "none" });
   return { display: null, iso: null };
 }
 

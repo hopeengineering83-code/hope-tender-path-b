@@ -326,28 +326,31 @@ describe("PR #974 required tests — final strict only for tender-derived requir
     assert.ok(r.blockers.some((b) => b.includes("title")));
   });
 
-  it("FINAL is strict about clientName (universal baseline — every tender needs a client)", () => {
+  // Superseded by owner policy ABSENT_TENDER_FACT_IS_NOT_REQUIRED (2026-09-24,
+  // restated 2026-10-06): a client the tender does not state is not required.
+  it("FINAL does not require a client the tender does not state", () => {
     const r = resolveTenderOperationGate(makeInput(makeTender({
       clientName: null,
     }), "FINAL_SUBMISSION_READY"));
-    assert.equal(r.ok, false);
-    assert.ok(r.blockers.some((b) => b.includes("clientName")));
+    assert.ok(!r.blockers.some((b) => b.includes("clientName")));
   });
 
-  it("FINAL is strict about deadline (universal baseline — every tender needs a deadline)", () => {
+  // Superseded by owner policy ABSENT_TENDER_FACT_IS_NOT_REQUIRED (2026-09-24,
+  // restated 2026-10-06): a deadline the tender does not state is not required.
+  it("FINAL does not require a deadline the tender does not state", () => {
     const r = resolveTenderOperationGate(makeInput(makeTender({
       deadline: null,
     }), "FINAL_SUBMISSION_READY"));
-    assert.equal(r.ok, false);
-    assert.ok(r.blockers.some((b) => b.includes("deadline")));
+    assert.ok(!r.blockers.some((b) => b.includes("deadline")));
   });
 
-  it("FINAL is strict about submissionMethod (universal baseline — every tender needs a method)", () => {
+  // Superseded by owner policy ABSENT_TENDER_FACT_IS_NOT_REQUIRED (2026-09-24,
+  // restated 2026-10-06): a method the tender does not state is not required.
+  it("FINAL does not require a method the tender does not state", () => {
     const r = resolveTenderOperationGate(makeInput(makeTender({
       submissionMethod: null,
     }), "FINAL_SUBMISSION_READY"));
-    assert.equal(r.ok, false);
-    assert.ok(r.blockers.some((b) => b.includes("submissionMethod")));
+    assert.ok(!r.blockers.some((b) => b.includes("submissionMethod")));
   });
 
   it("CRITICAL_FINAL_FIELDS only contains universal baseline fields (title, clientName, deadline, submissionMethod)", () => {

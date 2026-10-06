@@ -256,6 +256,10 @@ export function isValidReferenceNumber(value: string | null | undefined): boolea
   if (containsMetadataPlaceholder(text)) return false;
   // Reject if it's mostly noise (no alphanumeric run of ≥2 chars).
   if (!/[A-Z0-9]{2,}/i.test(text)) return false;
+  // A reference without a digit is a code ("PHARO-RFP", "AA/PROC/ARCH"), never
+  // a lowercase word or a phrase. "Terms of Reference will …" was stored as
+  // reference "will", and a sentence of the ToR passed as one (2026-10-06).
+  if (!/\d/.test(text) && (/\s/.test(text) || /[a-z]/.test(text))) return false;
   return true;
 }
 

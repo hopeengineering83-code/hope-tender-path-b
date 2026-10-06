@@ -243,10 +243,17 @@ describe("AiAnalyzeRetryState persistence is wired end-to-end", () => {
 
 // ── Deploy-safety guard ──────────────────────────────────────────────────────
 describe("Vercel cron budget is not exceeded", () => {
-  it("vercel.json keeps at most 2 crons (Hobby limit) — retries reuse run-next", () => {
-    const vercel = JSON.parse(readFileSync("vercel.json", "utf8")) as { crons?: unknown[] };
+  // The project moved to Vercel Pro (2026-10-06), which runs crons as often as
+  // every minute; Hobby allowed two daily crons, so a durable retry with no
+  // browser open waited for an external scheduler. The worker now drains the
+  // queue every minute on the Production deployment.
+  it("vercel.json drains the durable job queue every minute and re-arms analysis retries", () => {
+    const vercel = JSON.parse(readFileSync("vercel.json", "utf8")) as { crons?: Array<{ path: string; schedule: string }> };
     assert.ok(Array.isArray(vercel.crons), "crons must be an array");
-    assert.ok((vercel.crons ?? []).length <= 2, `expected ≤ 2 crons, found ${(vercel.crons ?? []).length}`);
+    const crons = vercel.crons ?? [];
+    assert.ok(crons.some((c) => c.path === "/api/ai-jobs/run-next" && c.schedule === "* * * * *"));
+    assert.ok(crons.some((c) => c.path === "/api/cron/ai-analyze-retry"));
+    assert.ok(crons.length <= 10, `unexpectedly many crons: ${crons.length}`);
   });
 });
 

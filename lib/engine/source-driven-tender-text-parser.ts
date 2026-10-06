@@ -1167,11 +1167,19 @@ export function parseTenderDocumentIntelligence(
   }
 
   // Project title
+  // A labelled "Project name:" / "Project title:" may replace the known
+  // tender title; the loose "for <Capitalised …>" reading only fills a tender
+  // with no title. That fallback replaced "CONSULTANCY SERVICE FOR FEASIBILITY
+  // STUDY" with "The proposed project has four main areas of intervention:"
+  // (2026-10-06). A line that runs on into a list (ends with ":") is prose.
   let projectTitle: string | null = options.tenderTitle ?? null;
-  const titleMatch = text.match(/project\s+name:?\s*([^\n\r]{5,150})/i)
-    || text.match(/project\s+title:?\s*([^\n\r]{5,150})/i)
-    || text.match(/for\s+([A-Z][^\n\r]{5,150})/);
-  if (titleMatch) {
+  const looksLikeTitle = (value: string) => !/:\s*$/.test(value) && !/^(?:the|this|these|a|an)\s+\w+\s+(?:has|have|is|are|will|shall|was|were)\b/i.test(value);
+  const labelled = text.match(/project\s+name\s*:\s*([^\n\r]{5,150})/i)
+    || text.match(/project\s+title\s*:\s*([^\n\r]{5,150})/i);
+  const titleMatch = labelled && looksLikeTitle(labelled[1].trim())
+    ? labelled
+    : !projectTitle ? text.match(/for\s+([A-Z][^\n\r]{5,150})/) : null;
+  if (titleMatch && looksLikeTitle(titleMatch[1].trim())) {
     projectTitle = titleMatch[1].trim();
     sourceExcerpts.projectTitle = titleMatch[0];
   }

@@ -379,25 +379,17 @@ describe("MetadataTruthCounts — tests 11 & 12: correct numerator/denominator",
   });
 });
 
-// ─── 13. Critical fields cannot be bulk-dismissed via Not-Applicable ──────────
+// ─── 13. A deadline the tender does not state may be marked not stated ──────
+//
+// Superseded rule: "deadline is in NEVER_NOT_APPLICABLE". Owner policy
+// ABSENT_TENDER_FACT_IS_NOT_REQUIRED: an unstated deadline is not required, and
+// the owner must be able to mark it not stated (refused on 2026-10-06).
 
-describe("deadline Not-Applicable protection — test 13", () => {
-  it("deadline field is in NEVER_NOT_APPLICABLE set", () => {
-    const NEVER_NOT_APPLICABLE = new Set(["deadline"]);
-    assert.equal(NEVER_NOT_APPLICABLE.has("deadline"), true);
-  });
-
-  it("when fieldState is NOT_APPLICABLE for deadline, status resolves to INVALID", () => {
-    // From the resolveFieldStatus logic:
-    // if override?.fieldState === "NOT_APPLICABLE" and field is in NEVER_NOT_APPLICABLE
-    // → status = "INVALID" (not "NOT_APPLICABLE")
-    const NEVER_NOT_APPLICABLE = new Set(["deadline"]);
-    const field = "deadline";
-    const fieldState = "NOT_APPLICABLE";
-    const expectedStatus = NEVER_NOT_APPLICABLE.has(field)
-      ? "INVALID"
-      : "NOT_APPLICABLE";
-    assert.equal(expectedStatus, "INVALID");
+describe("deadline not-stated — test 13", () => {
+  it("no field is universally barred from being marked not stated", async () => {
+    const { NEVER_NOT_APPLICABLE, canBeNotApplicable } = await import("../lib/engine/tender-policy-registry");
+    assert.equal(NEVER_NOT_APPLICABLE.has("deadline"), false);
+    assert.equal(canBeNotApplicable("deadline"), true);
   });
 });
 
