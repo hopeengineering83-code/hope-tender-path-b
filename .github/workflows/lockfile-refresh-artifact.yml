@@ -1713,9 +1713,40 @@ jobs:
             curl -sS --connect-timeout 15 --max-time 120 -H "Cookie: hope_session=$SESSION_COOKIE" \
               -o "/tmp/src-$fid.bin" "$BASE_URL/api/tenders/$TENDER_ID/files/$fid" || true
             pdftotext -layout "/tmp/src-$fid.bin" "/tmp/src-$fid.txt" 2>/dev/null || true
+            pdftotext "/tmp/src-$fid.bin" "/tmp/src-$fid.raw.txt" 2>/dev/null || true
             echo "=== SOURCE FILE $fname ($(wc -c < /tmp/src-$fid.bin 2>/dev/null || echo 0) bytes) ==="
             grep -inE -B1 -A2 "submi|portal|@|clos|deadline|apply|application|e-?tender|tender ?(no|ref)" "/tmp/src-$fid.txt" 2>/dev/null | head -120 || true
           done < /tmp/tender-file-ids.txt
+          # Each requirement's quote against each source file's text, so a
+          # "quote is not supported by active file text" refusal names the
+          # quote, the file it is bound to, and the file (if any) that holds it.
+          curl -sS --connect-timeout 15 --max-time 60 -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/tenders/$TENDER_ID/requirements" > /tmp/tender-requirements.json || true
+          python3 - <<'PYEOF' || true
+          import json, os, re
+          def norm(s, typo=False):
+              s = (s or '').lower()
+              if typo:
+                  s = re.sub('[‐-―−]', '-', s)
+                  s = re.sub('[•●▪◦]', ' ', s)
+              return re.sub(r'\s+', ' ', s).strip()
+          files = {}
+          for line in open('/tmp/tender-file-ids.txt', encoding='utf-8'):
+              parts = line.strip().split(' ', 1)
+              if not parts or not parts[0]: continue
+              p = f"/tmp/src-{parts[0]}.raw.txt"
+              files[parts[0]] = (parts[1] if len(parts) > 1 else '', open(p, encoding='utf-8', errors='replace').read() if os.path.exists(p) else '')
+          reqs = json.load(open('/tmp/tender-requirements.json', encoding='utf-8')).get('requirements') or []
+          print(f"=== REQUIREMENT QUOTES vs SOURCE TEXT ({len(reqs)} requirements) ===")
+          for r in reqs:
+              q = r.get('sourceExactQuote') or ''
+              bound = r.get('sourceTenderFileId')
+              plain = [fid for fid, (_, t) in files.items() if norm(q) and norm(q) in norm(t)]
+              typo = [fid for fid, (_, t) in files.items() if norm(q, True) and norm(q, True) in norm(t, True)]
+              print(f"  {r.get('id')} p{r.get('sourcePageNumber')} bound={bound} plainIn={plain} typoIn={typo} method={r.get('sourceExtractionMethod')}")
+              print(f"     title: {json.dumps(r.get('title'), ensure_ascii=False)[:160]}")
+              print(f"     quote: {json.dumps(q, ensure_ascii=False)[:500]}")
+          PYEOF
 
       - name: Upload inspection report
         uses: actions/upload-artifact@v4
