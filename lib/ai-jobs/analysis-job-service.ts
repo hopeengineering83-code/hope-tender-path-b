@@ -1241,8 +1241,23 @@ export async function finalizeJob(jobId: string, userId: string) {
     // accepted. 2026-09-29, Preview: a new tender's analysis succeeded and was
     // then refused for 6 uncited mandatory requirements, so Run Engine — whose
     // repair would have grounded them — could never start.
+    //
+    // Every requirement's quote is evidence, whatever its priority: the Build
+    // Plan cites optional rows too and verifies each cited quote. A quote that
+    // is not contained in the file it is bound to (a list re-punctuated as
+    // "A; B; C", 2026-10-06) is searched for the same way; it is replaced only
+    // by a passage verbatim in an active file, and kept as it was otherwise.
+    const quoteNotInBoundFile = (r: any): boolean => {
+        const fileId = typeof r.sourceTenderFileId === "string" ? r.sourceTenderFileId.trim() : "";
+        const quote = typeof r.sourceQuote === "string" ? r.sourceQuote.trim() : "";
+        if (!fileId || !quote) return false;
+        const file = activeFilesForGrounding.find((f: any) => f.id === fileId);
+        if (!file?.extractedText) return false;
+        return !normalizeForContainment(file.extractedText).includes(normalizeForContainment(quote));
+    };
     merged.requirements = merged.requirements.map((req: any) => {
-        if (!/mandatory|critical/i.test(req.priority ?? "") || !lacksGrounding(req)) return req;
+        const mandatory = /mandatory|critical/i.test(req.priority ?? "");
+        if (!(mandatory && lacksGrounding(req)) && !quoteNotInBoundFile(req)) return req;
         const repair = groundRequirementInActiveFiles(req, activeFilesForGrounding);
         if (!repair) return req;
         return {

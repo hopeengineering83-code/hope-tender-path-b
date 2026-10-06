@@ -254,18 +254,24 @@ export function groundRequirementInActiveFiles(
   requirement: { title: string; description?: string | null; sourceTenderFileId?: string | null; sourceQuote?: string | null },
   files: Array<{ id: string; extractedText: string | null; totalPages: number | null }>,
 ): { fileId: string; quote: string; confidence: number; page: number; heading: string | null } | null {
-  return bestRepairForRequirement(
-    {
-      id: "",
-      title: requirement.title,
-      description: requirement.description ?? "",
-      sourceTenderFileId: requirement.sourceTenderFileId ?? null,
-      sourcePageNumber: null,
-      sourceExactQuote: requirement.sourceQuote ?? null,
-      sourceConfidence: 0,
-    },
-    files.map((file) => ({ ...file, fileName: "" })),
-  );
+  const activeFiles = files.map((file) => ({ ...file, fileName: "" }));
+  const base = {
+    id: "",
+    title: requirement.title,
+    description: requirement.description ?? "",
+    sourceTenderFileId: requirement.sourceTenderFileId ?? null,
+    sourcePageNumber: null,
+    sourceExactQuote: requirement.sourceQuote ?? null,
+    sourceConfidence: 0,
+  };
+  const found = bestRepairForRequirement(base, activeFiles);
+  if (found) return found;
+  // A model that re-punctuated a list ("A; B; C" for three bullets) kept the
+  // words of the passage it lifted; a short title and description may not.
+  // Search with the quote's own words, under the same verbatim-passage rule.
+  const quote = requirement.sourceQuote?.trim() ?? "";
+  if (quote.length < 20) return null;
+  return bestRepairForRequirement({ ...base, title: "", description: quote, sourceExactQuote: null }, activeFiles);
 }
 
 /**

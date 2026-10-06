@@ -549,8 +549,13 @@ function planDocumentMatchKey(exactFileName: string | null | undefined): string 
   return normalizePlanName(exactFileName ?? "");
 }
 
+// The draft preflight, AI Analyze's grounding and the panels all compare
+// through normalizeForContainment (dash variants, list glyphs). Confirmation
+// compared lowercase/whitespace only, so a quote over a bulleted list
+// ("Technical Proposal • Understanding of the assignment; …") passed the
+// draft and then refused the automatic Build Plan (2026-10-06).
 function quoteSupported(extractedText: unknown, quote: string): boolean {
-  return normalizeText(extractedText).includes(normalizeText(quote));
+  return normalizeForContainment(String(extractedText ?? "")).includes(normalizeForContainment(quote));
 }
 
 export async function computeTenderBuildPlanHash(prisma: PrismaClient, tenderId: string, userId: string, items?: BuildPlanItem[]): Promise<string | null> {
