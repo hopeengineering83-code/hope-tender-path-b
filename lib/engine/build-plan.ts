@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { ANALYSIS_HASH_FILE_SELECT } from "./tender-analysis-content";
 import { provenPageOfQuote } from "./page-provenance";
 import { normalizeForContainment } from "./evidence-grounding";
 import type { PrismaClient } from "@prisma/client";
@@ -403,7 +404,7 @@ export async function assertTenderReadyToDraftBuildPlan(
   const tender = await prisma.tender.findFirst({
     where: { id: tenderId, userId },
     include: {
-      files: { where: { deletionStatus: "ACTIVE" }, select: { id: true, originalFileName: true, extractedText: true, deletionStatus: true, extractionScore: true, totalPages: true, extractedPages: true, ocrPages: true, failedPages: true } },
+      files: { where: { deletionStatus: "ACTIVE" }, select: { ...ANALYSIS_HASH_FILE_SELECT, ocrPages: true } },
       // Every field buildSubmissionPlan reads. The confirmation re-derivation
       // (validateBuildPlanForConfirmation) loads full rows; a narrower load
       // here let the draft and its verification plan different files from

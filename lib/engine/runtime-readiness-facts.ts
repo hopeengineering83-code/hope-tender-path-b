@@ -36,6 +36,7 @@
 // Final export may block only for real final-package defects after effective
 // facts are checked.
 
+import { ANALYSIS_HASH_FILE_SELECT } from "./tender-analysis-content";
 import type { PrismaClient } from "@prisma/client";
 import { logger } from "../observability";
 import { getEffectiveTenderFacts, type EffectiveTenderFactsResult } from "./effective-tender-facts";
@@ -165,7 +166,7 @@ export async function getRuntimeReadinessFacts(
       status: true,
       files: {
         where: { deletionStatus: "ACTIVE" },
-        select: { id: true, originalFileName: true, classification: true, createdAt: true, extractedText: true, contentHash: true, deletionStatus: true },
+        select: { ...ANALYSIS_HASH_FILE_SELECT, contentHash: true },
       },
     },
   });

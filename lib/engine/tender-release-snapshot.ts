@@ -8,6 +8,7 @@
  *   still matches the owned source bytes, extraction revision, fields, and spans.
  */
 
+import { ANALYSIS_HASH_FILE_SELECT } from "./tender-analysis-content";
 import type { PrismaClient } from "@prisma/client";
 import { createHash } from "node:crypto";
 import { resolveCanonicalFieldState, type CanonicalFieldStateResult } from "./canonical-field-state";
@@ -187,13 +188,11 @@ export async function getTenderReleaseSnapshot(
       preBidMeetingLocation: true,
       evaluationMethodology: true,
       files: {
+        // The analysis-hash columns (ANALYSIS_HASH_FILE_SELECT) plus the page
+        // ledger. Without createdAt the current hash ordered files by id and
+        // never matched a multi-file tender's promoted analysis.
         select: {
-          id: true,
-          originalFileName: true,
-          extractedText: true,
-          extractionScore: true,
-          deletionStatus: true,
-          totalPages: true,
+          ...ANALYSIS_HASH_FILE_SELECT,
           pageStatusJson: true,
         },
       },

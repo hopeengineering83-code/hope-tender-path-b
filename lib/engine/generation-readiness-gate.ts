@@ -1,4 +1,5 @@
 // Central authoritative generation/export readiness gate.
+import { ANALYSIS_HASH_FILE_SELECT } from "./tender-analysis-content";
 import { logger } from "../observability";
 import { normalizeForContainment } from "./evidence-grounding";
 import { getCanonicalTenderWorkflowDecision } from "./canonical-workflow-decision";
@@ -475,7 +476,7 @@ export async function resolveCurrentAnalysisBinding(
       title: true,
       description: true,
       intakeSummary: true,
-      files: { select: { id: true, originalFileName: true, extractedText: true, classification: true, createdAt: true, deletionStatus: true } },
+      files: { select: ANALYSIS_HASH_FILE_SELECT },
     },
   });
   if (!tender) return { jobId: null, contentHash: null };
@@ -572,16 +573,7 @@ export async function assertTenderReadyForGenerationAndExport(args: {
         exactFileNaming: true,
         exactFileOrder: true,
         files: {
-          select: {
-            id: true,
-            originalFileName: true,
-            extractedText: true,
-            classification: true,
-            extractionScore: true,
-            createdAt: true,
-            deletionStatus: true,
-            totalPages: true,
-          },
+          select: ANALYSIS_HASH_FILE_SELECT,
         },
         metadataOverrides: {
           select: {
