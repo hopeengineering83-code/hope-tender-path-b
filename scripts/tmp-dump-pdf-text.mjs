@@ -27,9 +27,11 @@ for (let pageNumber = 1; pageNumber <= doc.numPages; pageNumber += 1) {
   // readable; a flat join turns a whole page into one unreviewable string.
   const rows = new Map();
   for (const item of content.items) {
-    if (typeof item.str !== "string" || item.str.trim().length === 0) continue;
+    if (typeof item.str !== "string") continue;
     const y = Math.round(item.transform[5]);
     if (!rows.has(y)) rows.set(y, []);
+    // A whitespace item is pdf.js reporting a space; keep it as a marker.
+    if (item.str.trim().length === 0) { rows.get(y).push({ x: item.transform[4], width: item.width ?? 0, text: " ", space: true }); continue; }
     rows.get(y).push({ x: item.transform[4], width: item.width ?? 0, text: item.str });
   }
   // Join on the real gap. A font change (bold to regular) starts a new text
@@ -38,8 +40,9 @@ for (let pageNumber = 1; pageNumber <= doc.numPages; pageNumber += 1) {
   const joinRow = (parts) => parts.reduce((out, p, i) => {
     if (i === 0) return p.text;
     const prev = parts[i - 1];
+    if (p.space) return out + " ";
     const gap = p.x - (prev.x + prev.width);
-    return out + (gap > 1 ? " " : "") + p.text;
+    return out + (gap > 1 || /\s$/.test(prev.text) ? " " : "") + p.text;
   }, "");
   const lines = [...rows.entries()]
     .sort((a, b) => b[0] - a[0])
