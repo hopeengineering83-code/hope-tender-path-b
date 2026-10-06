@@ -1147,33 +1147,6 @@ jobs:
             echo "TENDER_ID=$tid" >> "$GITHUB_ENV"
           fi
 
-      - name: Print the tender's own submission clauses (read-only)
-        if: env.NO_TENDER != '1'
-        run: |
-          # Which method, endpoint and closing the source actually states. The
-          # tender API omits extracted text, so each active source file is read
-          # through the owner's own download route and only the lines about
-          # submission, portals, e-mail addresses and closing are printed.
-          sudo apt-get install -y -qq poppler-utils >/dev/null 2>&1 || true
-          curl -sS --connect-timeout 15 --max-time 60 -H "Cookie: hope_session=$SESSION_COOKIE" \
-            "$BASE_URL/api/tenders/$TENDER_ID" > /tmp/tender-files.json || true
-          python3 - <<'PYEOF' > /tmp/tender-file-ids.txt
-          import json
-          d = json.load(open('/tmp/tender-files.json', encoding='utf-8'))
-          t = d.get('tender', d) if isinstance(d, dict) else {}
-          for f in (t.get('files') or []):
-              if (f.get('deletionStatus') or 'ACTIVE') == 'ACTIVE':
-                  print(f.get('id'), f.get('originalFileName') or f.get('fileName'))
-          PYEOF
-          while read -r fid fname; do
-            [ -n "$fid" ] || continue
-            curl -sS --connect-timeout 15 --max-time 120 -H "Cookie: hope_session=$SESSION_COOKIE" \
-              -o "/tmp/src-$fid.bin" "$BASE_URL/api/tenders/$TENDER_ID/files/$fid" || true
-            pdftotext -layout "/tmp/src-$fid.bin" "/tmp/src-$fid.txt" 2>/dev/null || true
-            echo "=== SOURCE FILE $fname ($(wc -c < /tmp/src-$fid.bin 2>/dev/null || echo 0) bytes) ==="
-            grep -inE -B1 -A2 "submi|portal|@|clos|deadline|apply|application|e-?tender|tender ?(no|ref)" "/tmp/src-$fid.txt" 2>/dev/null | head -120 || true
-          done < /tmp/tender-file-ids.txt
-
       - name: Print the Build Plan and the rows it is derived from
         if: env.NO_TENDER != '1'
         run: |
@@ -1715,6 +1688,34 @@ jobs:
           echo "================ AUTHORSHIP VERDICT (repeat) ================"
           cat /tmp/authorship.txt 2>/dev/null || echo "authorship.txt was not produced"
           echo "============================================================="
+
+      - name: Print the tender's own submission clauses (read-only)
+        if: env.NO_TENDER != '1'
+        run: |
+          # Last before the upload: a job log is read from its tail.
+          # Which method, endpoint and closing the source actually states. The
+          # tender API omits extracted text, so each active source file is read
+          # through the owner's own download route and only the lines about
+          # submission, portals, e-mail addresses and closing are printed.
+          sudo apt-get install -y -qq poppler-utils >/dev/null 2>&1 || true
+          curl -sS --connect-timeout 15 --max-time 60 -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/tenders/$TENDER_ID" > /tmp/tender-files.json || true
+          python3 - <<'PYEOF' > /tmp/tender-file-ids.txt
+          import json
+          d = json.load(open('/tmp/tender-files.json', encoding='utf-8'))
+          t = d.get('tender', d) if isinstance(d, dict) else {}
+          for f in (t.get('files') or []):
+              if (f.get('deletionStatus') or 'ACTIVE') == 'ACTIVE':
+                  print(f.get('id'), f.get('originalFileName') or f.get('fileName'))
+          PYEOF
+          while read -r fid fname; do
+            [ -n "$fid" ] || continue
+            curl -sS --connect-timeout 15 --max-time 120 -H "Cookie: hope_session=$SESSION_COOKIE" \
+              -o "/tmp/src-$fid.bin" "$BASE_URL/api/tenders/$TENDER_ID/files/$fid" || true
+            pdftotext -layout "/tmp/src-$fid.bin" "/tmp/src-$fid.txt" 2>/dev/null || true
+            echo "=== SOURCE FILE $fname ($(wc -c < /tmp/src-$fid.bin 2>/dev/null || echo 0) bytes) ==="
+            grep -inE -B1 -A2 "submi|portal|@|clos|deadline|apply|application|e-?tender|tender ?(no|ref)" "/tmp/src-$fid.txt" 2>/dev/null | head -120 || true
+          done < /tmp/tender-file-ids.txt
 
       - name: Upload inspection report
         uses: actions/upload-artifact@v4
