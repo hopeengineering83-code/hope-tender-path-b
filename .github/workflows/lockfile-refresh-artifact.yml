@@ -1748,6 +1748,26 @@ jobs:
               print(f"     quote: {json.dumps(q, ensure_ascii=False)[:500]}")
           PYEOF
 
+      - name: Setup Node for the app-text quote comparison (read-only)
+        if: env.NO_TENDER != '1'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Compare requirement quotes with the app's own extracted text (read-only)
+        if: env.NO_TENDER != '1'
+        run: |
+          # Last before the upload: the log is read from its tail. pdftotext is
+          # not the text the gates compare against; the app's extractor is.
+          npm ci --no-audit --no-fund --ignore-scripts >/dev/null 2>&1 && npx prisma generate >/dev/null 2>&1 || true
+          args=""
+          while read -r fid fname; do
+            [ -n "$fid" ] && [ -s "/tmp/src-$fid.bin" ] && args="$args $fid=/tmp/src-$fid.bin"
+          done < /tmp/tender-file-ids.txt
+          DATABASE_URL=postgresql://x:y@localhost:5432/z npx tsx scripts/tmp-requirement-quotes-vs-app-text.ts /tmp/tender-requirements.json $args 2>&1 \
+            | grep -v '"level":"warn"' | tail -120 || true
+
       - name: Upload inspection report
         uses: actions/upload-artifact@v4
         with:
