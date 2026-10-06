@@ -260,6 +260,42 @@ export function withoutUpstreamTeamTables(markdown: string, replace: { team: boo
 }
 
 /**
+ * A writer's experience section that names a record table and holds none.
+ *
+ * The client references table and the project portfolio cards are added only
+ * when no upstream section already carries their headings. A model-written
+ * "B.2 Project Portfolio" that only says the projects "are presented below",
+ * with nothing below, therefore suppressed the cards. When the records yield
+ * the table and the upstream section (with everything under it, down to the
+ * next heading of the same or a higher level) holds no table, that section is
+ * removed so the record-built one takes its place. A section that holds any
+ * table is the writer's and stays.
+ */
+const UPSTREAM_REFERENCES_HEADING = /^(#{1,4})\s+(?:[A-Z]\.\d+(?:\.\d+)*\s+)?Client\s+References\s*$/i;
+const UPSTREAM_PORTFOLIO_HEADING = /^(#{1,4})\s+(?:[A-Z]\.\d+(?:\.\d+)*\s+)?Project\s+Portfolio\s*$/i;
+
+export function withoutTablelessExperienceSections(markdown: string, replace: { references: boolean; portfolio: boolean }): string {
+  if (!replace.references && !replace.portfolio) return markdown;
+  const lines = markdown.split("\n");
+  const drop = new Set<number>();
+  for (let i = 0; i < lines.length; i++) {
+    const heading = lines[i]!.trim();
+    const match = (replace.references && UPSTREAM_REFERENCES_HEADING.exec(heading)) || (replace.portfolio && UPSTREAM_PORTFOLIO_HEADING.exec(heading));
+    if (!match) continue;
+    const level = match[1]!.length;
+    let end = i + 1;
+    while (end < lines.length) {
+      const next = /^(#{1,6})\s/.exec(lines[end]!);
+      if (next && next[1]!.length <= level) break;
+      end++;
+    }
+    if (lines.slice(i + 1, end).some((line) => /^\s*\|/.test(line))) continue;
+    for (let j = i; j < end; j++) drop.add(j);
+  }
+  return drop.size === 0 ? markdown : lines.filter((_, i) => !drop.has(i)).join("\n");
+}
+
+/**
  * A.5 Team-to-Project Experience Mapping — table.
  * Demonstrates that each lead expert has performed the same role on a comparable previous project.
  */

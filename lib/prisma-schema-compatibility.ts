@@ -66,6 +66,13 @@ export function publicJobFailureMessage(error: unknown, correlationId: string): 
   if (/ENGINE_SOURCE_REVISION_STALE/i.test(message)) {
     return `Your source documents changed while this run was in progress, so the run was superseded. A new run has already been queued automatically — no action is needed. ${ref}`;
   }
+  // The provenance gate refuses a mandatory requirement whose source quote is
+  // no longer in the active tender file. A real hands-off run hit it when AI
+  // Analyze ran again while a proposal was being generated; the bare code fell
+  // to the fallback below and told the owner to contact an administrator.
+  if (/^REQUIREMENT_QUOTE_NOT_IN_FILE\b/.test(message.trim())) {
+    return `REQUIREMENT_QUOTE_NOT_IN_FILE: A mandatory requirement's source quote is not in the active tender file, so this proposal was not generated. This happens when AI Analyze runs again while a proposal is being written: click Run Engine on the current analysis. If it recurs, re-run AI Analyze. ${ref}`;
+  }
   if (/TENDER_FACTS_INVALID[\s\S]{0,400}(?:metadata field title|title.*source page)|(?:metadata field title|title.*source page)[\s\S]{0,400}TENDER_FACTS_INVALID/i.test(message)) {
     return `TITLE_SOURCE_PROVENANCE_INVALID: The tender title could not be proven at a valid page in the active source. Reconcile the title source file, page, and quote, then retry Run Engine. ${ref}`;
   }

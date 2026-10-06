@@ -24,6 +24,7 @@ import { resolveSignatory, signOffLines } from "./signatory";
 import { orderTeamForPresentation, withoutUnassignedExperts } from "./team-order";
 import { repairCollapsedServiceLines } from "./service-lines-repair";
 import { applyAnnexPolicy, tenderAnnexPolicy } from "./annex-policy";
+import { restoreMissingSectionHeadings } from "./restore-section-headings";
 import { composeCoverLetterBody, composeExecutiveSummary } from "./executive-summary-composer";
 import { corporateFactsFromProfile } from "./company-profile-facts";
 import { sourceGroundedEvaluationCriteria } from "./tender-evaluation-criteria";
@@ -44,6 +45,7 @@ import {
   buildTeamToProjectMappingTable,
   buildValueFrameworkTable,
   makeHasHeadingChecker,
+  withoutTablelessExperienceSections,
   withoutUpstreamTeamTables,
   type ExpertRecord,
   type ProjectRecord,
@@ -2616,6 +2618,13 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
       if (!sourceMarkdown || sourceMarkdown.trim().length < 2500) {
         throw new Error(`AI proposal too short (${sourceMarkdown?.trim().length ?? 0} chars) — using deterministic fallback`);
       }
+      {
+        const headings = restoreMissingSectionHeadings(sourceMarkdown);
+        if (headings.restored.length > 0) {
+          logger.warn(`[generate-elite] Restored ${headings.restored.length} section heading(s) the writer left out: ${headings.restored.join("; ")}.`);
+          sourceMarkdown = headings.markdown;
+        }
+      }
       // Section C.2 is never padded to a sub-section count. Padding drew its
       // topics from prompt lines (one run printed "Section writing plan:" as a
       // heading) and filled each with the same boilerplate; a thin C.2 is left
@@ -2659,10 +2668,10 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
   // the client sections the matrix builds (Sections E and F) stay.
   // The team table and the team-to-project mapping are record-built whenever
   // the records yield them (withoutUpstreamTeamTables).
-  const upstreamWithoutTeamTables = withoutUpstreamTeamTables(stripSelfScoreSections(sourceMarkdown), {
+  const upstreamWithoutTeamTables = withoutTablelessExperienceSections(withoutUpstreamTeamTables(stripSelfScoreSections(sourceMarkdown), {
     team: experts.length > 0,
     mapping: buildTeamToProjectMappingTable(experts, projects) !== "",
-  });
+  }), { references: projects.length > 0, portfolio: projects.length > 0 });
   // Section E is always the canonical builder's (stripComplianceMatrixSections).
   const matrixMarkdown = stripComplianceMatrixSections(stripInternalReviewSections(appendEvaluatorResponseMatrix(upstreamWithoutTeamTables, evaluatorMatrixInput)).markdown);
   // The sector inferSector() read from what the assignment is. Testing the
