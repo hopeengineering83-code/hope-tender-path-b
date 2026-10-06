@@ -18,6 +18,8 @@
 // so the panels can never contradict.
 
 /** Minimum length of a supporting quote for it to count as real evidence. */
+import { tightenPunctuationSpacing } from "./page-provenance";
+
 export const MIN_GROUNDING_QUOTE_LENGTH = 10;
 
 /**
@@ -77,7 +79,7 @@ export type GroundingActiveFile = {
  * through this, or two checks will disagree about the same requirement.
  */
 export function normalizeForContainment(text: string): string {
-  return text
+  return tightenPunctuationSpacing(text
     .toLowerCase()
     // PDF extractors represent the same printed dash with several Unicode
     // code points. Treat typography as typography, not a changed claim.
@@ -86,7 +88,7 @@ export function normalizeForContainment(text: string): string {
     // two otherwise verbatim clauses. They delimit text; they are not words.
     .replace(/[•●▪◦\uf0b7]/g, " ")
     .replace(/\s+/g, " ")
-    .trim();
+    .trim());
 }
 
 /**

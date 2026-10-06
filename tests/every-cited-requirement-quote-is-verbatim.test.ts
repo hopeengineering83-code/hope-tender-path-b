@@ -16,6 +16,11 @@
 //      Specialist; … Specialist." — the model re-punctuated a bulleted list.
 //      Only MANDATORY rows were ever re-grounded, and this row is optional,
 //      yet the plan cites it.
+//   3. Underneath both: the app's PDF text layer spaces punctuation
+//      ("data - collection", "OECD - DAC", "New project ;") and the model's
+//      quote does not ("data-collection"), so a quote lifted from the page was
+//      "not supported" by the very text it came from. Whitespace touching
+//      punctuation is not content; it never joins two letters or digits.
 
 import { after, before, describe, it } from "node:test";
 import { strict as assert } from "node:assert";
@@ -23,6 +28,7 @@ import { groundRequirementInActiveFiles } from "../lib/engine/repair-source-grou
 import { validateBuildPlanForConfirmation } from "../lib/engine/build-plan";
 import { buildSubmissionPlan, plannedSubmissionTargetFiles } from "../lib/engine/submission-plan";
 import { normalizeForContainment } from "../lib/engine/evidence-grounding";
+import { locateQuoteProvenPage } from "../lib/engine/page-provenance";
 
 const PAGE_1 =
   "Terms of Reference — Consultancy Service for a Feasibility Study\n" +
@@ -37,7 +43,9 @@ const PAGE_2 =
   "11. Proposal content\nTechnical Proposal\n" +
   " Understanding of the assignment;\n" +
   " Proposed methodology;\n" +
-  " Approach to assessing previous/ongoing project – New project;\n" +
+  " Proposed data - collection tools and methods;\n" +
+  " Approach to OECD - DAC assessment;\n" +
+  " Approach to assessing previous/ongoing project – New project ;\n" +
   " Work plan;\n" +
   " Team composition.\n" +
   "The consultant shall submit a technical proposal and a financial proposal. ".repeat(3);
@@ -47,7 +55,8 @@ const REPUNCTUATED =
   "The proposed team should preferably include: Team Leader / WASH Systems Specialist; WASH Governance/Institutional Specialist; " +
   "WASH Financing Specialist; WASH Service Delivery/O&M Specialist; MEAL/Data Specialist.";
 const BULLETED =
-  "Technical Proposal • Understanding of the assignment; • Proposed methodology; • Approach to assessing previous/ongoing project – New project; • Work plan; • Team composition.";
+  "Technical Proposal • Understanding of the assignment; • Proposed methodology; • Proposed data-collection tools and methods; " +
+  "• Approach to OECD-DAC assessment; • Approach to assessing previous/ongoing project – New project; • Work plan; • Team composition.";
 
 describe("a re-punctuated quote is grounded on the passage it lifted", () => {
   const files = [{ id: "file-tor", extractedText: TEXT, totalPages: 2 }];
@@ -74,6 +83,46 @@ describe("a re-punctuated quote is grounded on the passage it lifted", () => {
       files,
     );
     assert.equal(hit, null);
+  });
+});
+
+describe("whitespace touching punctuation is not content", () => {
+  it("a quote lifted from spaced text is contained, and its page is found", () => {
+    assert.ok(normalizeForContainment(TEXT).includes(normalizeForContainment(BULLETED)));
+    assert.equal(locateQuoteProvenPage(TEXT, BULLETED, 2), 2);
+    assert.equal(locateQuoteProvenPage(TEXT, "Proposed data-collection tools and methods", 2), 2);
+  });
+
+  it("never joins two letters or two numbers", () => {
+    assert.equal(normalizeForContainment("the rapist").includes(normalizeForContainment("therapist")), false);
+    assert.equal(normalizeForContainment("from 20 - 24 May").includes("2024"), false);
+    assert.equal(normalizeForContainment("110 years").includes(normalizeForContainment("10years")), false);
+  });
+
+  it("a different word is still a different quote", () => {
+    assert.equal(normalizeForContainment(TEXT).includes(normalizeForContainment("Proposed data-analysis tools and methods")), false);
+  });
+});
+
+describe("the matcher follows the quote's words before the title's", () => {
+  it("does not ground a quoted list on an unrelated paragraph that shares the title's words", () => {
+    // As far from the list as the real ToR's page-2 paragraph was from its
+    // page-12 list: no 500-character search window spans both.
+    const decoy = "4. Structure of the study\nThe technical content of the proposal and the study questions are agreed at inception.\n"
+      + "Field visits cover the district water offices, utilities and community water committees. ".repeat(8);
+    const files = [{ id: "file-tor", extractedText: `${decoy}\f${PAGE_2}`, totalPages: 2 }];
+    const hit = groundRequirementInActiveFiles(
+      {
+        title: "Technical Proposal Content",
+        description: "The technical proposal content and study questions.",
+        sourceTenderFileId: "file-tor",
+        sourceQuote: "Technical Proposal: Understanding of the assignment, Proposed methodology, Work plan, Team composition.",
+      },
+      files,
+    );
+    assert.ok(hit, "grounded");
+    assert.equal(hit!.page, 2);
+    assert.match(hit!.quote, /Understanding of the assignment/);
   });
 });
 
@@ -169,10 +218,11 @@ describe("AI Analyze promotion grounds an optional requirement's quote — real 
           title: "Team Composition Requirements",
           description: "Proposed team composition.",
           requirementType: "PERSONNEL",
-          priority: "PREFERRED",
+          // As models return it: the opaque file token, no sourceTenderFileId.
+          priority: "SCORED",
           sourcePage: 1,
           sourceQuote: REPUNCTUATED,
-          sourceTenderFileId: fileId,
+          sourceFileToken: fileId,
         },
       ],
       exactFileNaming: [],

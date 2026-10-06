@@ -264,14 +264,17 @@ export function groundRequirementInActiveFiles(
     sourceExactQuote: requirement.sourceQuote ?? null,
     sourceConfidence: 0,
   };
-  const found = bestRepairForRequirement(base, activeFiles);
-  if (found) return found;
   // A model that re-punctuated a list ("A; B; C" for three bullets) kept the
-  // words of the passage it lifted; a short title and description may not.
-  // Search with the quote's own words, under the same verbatim-passage rule.
+  // words of the passage it lifted, so those words find it first. A short
+  // title and description can match an unrelated passage that happens to
+  // share them (a "Technical Proposal" row grounded on a page-2 background
+  // paragraph, 2026-10-06), so they are the fallback, not the lead.
   const quote = requirement.sourceQuote?.trim() ?? "";
-  if (quote.length < 20) return null;
-  return bestRepairForRequirement({ ...base, title: "", description: quote, sourceExactQuote: null }, activeFiles);
+  if (quote.length >= 20) {
+    const byQuote = bestRepairForRequirement({ ...base, title: "", description: quote }, activeFiles);
+    if (byQuote) return byQuote;
+  }
+  return bestRepairForRequirement(base, activeFiles);
 }
 
 /**

@@ -66,6 +66,20 @@ export function computeProvenPageNumber(
   return null;
 }
 
+/**
+ * Punctuation a PDF text layer spaces unpredictably: "data - collection",
+ * "OECD - DAC", "New project ;", "( a )". A quote lifted from the page reads
+ * "data-collection", so whitespace touching one of these is not content. It
+ * never joins two letters or digits, so no word or number changes.
+ * (2026-10-06: a ToR's requirement quotes failed every gate on this alone.)
+ */
+const TIGHT_PUNCTUATION = /[-;,:.()[\]|/]/;
+
+/** Drop the whitespace touching TIGHT_PUNCTUATION in already-collapsed text. */
+export function tightenPunctuationSpacing(collapsed: string): string {
+  return collapsed.replace(/ ?([-;,:.()[\]|/]) ?/g, "$1");
+}
+
 /** Minimum normalized quote length worth locating (mirrors grounding floor). */
 const MIN_QUOTE_CHARS = 6;
 
@@ -96,8 +110,13 @@ function buildNormalizedIndexMap(text: string): { normalized: string; map: numbe
       continue;
     }
     if (pendingSpace) {
-      normalized += " ";
-      map.push(i);
+      // Same rule as tightenPunctuationSpacing, so a match here maps back to
+      // the same original offset the containment check found.
+      const last = normalized[normalized.length - 1] ?? "";
+      if (!TIGHT_PUNCTUATION.test(ch) && !TIGHT_PUNCTUATION.test(last)) {
+        normalized += " ";
+        map.push(i);
+      }
       pendingSpace = false;
     }
     normalized += ch;
@@ -132,11 +151,11 @@ export function locateQuoteProvenPage(
   totalPages: number | null | undefined,
 ): number | null {
   if (!originalText || !quote) return null;
-  const needle = quote.toLowerCase()
+  const needle = tightenPunctuationSpacing(quote.toLowerCase()
     .replace(/[\u2010-\u2015\u2212]/g, "-")
     .replace(/[•●▪◦\uf0b7]/g, " ")
     .replace(/\s+/g, " ")
-    .trim();
+    .trim());
   if (needle.length < MIN_QUOTE_CHARS) return null;
   const { normalized, map } = buildNormalizedIndexMap(originalText);
   let idx = normalized.indexOf(needle);

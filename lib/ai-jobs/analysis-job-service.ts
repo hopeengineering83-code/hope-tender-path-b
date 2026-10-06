@@ -1248,7 +1248,11 @@ export async function finalizeJob(jobId: string, userId: string) {
     // "A; B; C", 2026-10-06) is searched for the same way; it is replaced only
     // by a passage verbatim in an active file, and kept as it was otherwise.
     const quoteNotInBoundFile = (r: any): boolean => {
-        const fileId = typeof r.sourceTenderFileId === "string" ? r.sourceTenderFileId.trim() : "";
+        // The model names the file through sourceFileToken; the binder above
+        // copies it to sourceTenderFileId only when it can place the quote.
+        const fileId = typeof r.sourceTenderFileId === "string" && r.sourceTenderFileId.trim()
+            ? r.sourceTenderFileId.trim()
+            : typeof r.sourceFileToken === "string" ? r.sourceFileToken.trim() : "";
         const quote = typeof r.sourceQuote === "string" ? r.sourceQuote.trim() : "";
         if (!fileId || !quote) return false;
         const file = activeFilesForGrounding.find((f: any) => f.id === fileId);
