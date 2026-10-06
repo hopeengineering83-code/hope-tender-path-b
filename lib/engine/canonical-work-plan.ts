@@ -216,6 +216,24 @@ function sectorPhasingRows(sector: string): PhasingRow[] {
       { phase: "5. Report Issue", deliverables: "Geotechnical investigation report (executive summary, borehole logs, laboratory results, interpreted soil profile, foundation recommendations); peer-review sign-off certificate; drawing set (borehole location plan, soil profile sections)", duration: "Weeks 10–12", responsible: "Principal Geotechnical Engineer" },
     ];
   }
+  if (/structural assessment|retrofit/i.test(s)) {
+    return [
+      { phase: "1. Document Review & Survey Plan", deliverables: "Review of available drawings and records; survey and testing plan agreed with the client; access and safety arrangements", duration: "Weeks 1–2", responsible: "Structural Engineer" },
+      { phase: "2. Condition Survey", deliverables: "Visual condition survey; defect map by floor and element; measured survey where drawings are missing", duration: "Weeks 2–4", responsible: "Structural Engineer" },
+      { phase: "3. Testing", deliverables: "Non-destructive testing results (rebound hammer, ultrasonic pulse velocity, cover-meter); core results where coring is permitted; test location plan", duration: "Weeks 4–6", responsible: "Structural Engineer" },
+      { phase: "4. Structural Analysis", deliverables: "Analysis model of the building as found; capacity check against present and intended loads; list of deficient elements", duration: "Weeks 6–8", responsible: "Structural Engineer" },
+      { phase: "5. Assessment Report & Retrofit Recommendation", deliverables: "Assessment report; prioritised retrofit options; outline retrofit specification and quantity schedule", duration: "Weeks 8–10", responsible: "Project Principal" },
+    ];
+  }
+  if (/renovation|adaptation/i.test(s)) {
+    return [
+      { phase: "1. Survey of the Existing Building", deliverables: "Measured survey; condition survey of structure, envelope and services; record of hidden conditions found", duration: "Weeks 1–3", responsible: "Architect" },
+      { phase: "2. Assessment & Renovation Brief", deliverables: "Structural and services assessment; renovation brief agreed with the client; phasing constraints for areas in use", duration: "Weeks 3–5", responsible: "Project Principal" },
+      { phase: "3. Concept & Detailed Design", deliverables: "Renovation concept; detailed renovation drawings; technical specifications; quantity schedules", duration: "Weeks 5–11", responsible: "Architect" },
+      { phase: "4. Inspection of the Works", deliverables: "Site inspection reports; non-conformance log; record of conditions found during the works and their resolution", duration: "Throughout the works", responsible: "Resident Engineer" },
+      { phase: "5. Close-out", deliverables: "Final inspection report; as-built drawings; handover documentation", duration: "8 weeks from completion of works", responsible: "Project Principal" },
+    ];
+  }
   // Building DESIGN with no supervision of works asked for. The combined
   // "Building Design & Construction Supervision" label is caught above by the
   // supervision branch; a design-only tender used to be too (2026-10-05 matrix:

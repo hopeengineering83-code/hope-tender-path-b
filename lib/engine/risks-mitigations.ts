@@ -201,6 +201,20 @@ function risksForSector(primarySector: string): SectorRisk[] {
     { risk: "Bearing capacity lower than anticipated — foundations more expensive than estimated", impact: "High", likelihood: "Medium", mitigation: "Preliminary bearing capacity estimate provided with results of each borehole as drilling progresses; client notified immediately if results indicate a change in foundation type; options-analysis section in report." },
     { risk: "Report peer review identifies errors — resubmission required", impact: "Medium", likelihood: "Low", mitigation: "Internal technical review by senior geotechnical engineer before report issue; independent peer review checklist applied to bearing capacity and settlement calculations; one-pass revision cycle built into programme." },
   ];
+  if (/structural assessment|retrofit/.test(sector)) return [
+    { risk: "Concealed elements cannot be inspected or tested", impact: "High", likelihood: "Medium", mitigation: "The testing plan names the elements to be opened up or cored, agreed with the client before the survey; any element left untested is stated as an assumption in the report." },
+    { risk: "No reliable as-built drawings", impact: "High", likelihood: "Medium", mitigation: "A measured survey of the structural frame is made before analysis, and reinforcement is located by scanning and confirmed at test locations." },
+    { risk: "Test results vary widely across the building", impact: "Medium", likelihood: "Medium", mitigation: "Test locations are spread by floor and element type, and non-destructive results are calibrated against cores where coring is permitted." },
+    { risk: "Unsafe condition found during the survey", impact: "High", likelihood: "Low", mitigation: "Any condition that affects present safety is reported to the client in writing the same day, ahead of the full report." },
+    { risk: "Retrofit options not affordable or not buildable while in use", impact: "Medium", likelihood: "Medium", mitigation: "Retrofit options are prioritised by risk and set out with their disruption to occupants, so the client can phase them." },
+  ];
+  if (/renovation|adaptation/.test(sector)) return [
+    { risk: "Hidden conditions in the existing building found after the design is fixed", impact: "High", likelihood: "Medium", mitigation: "A condition survey of structure and services comes before design; anything found during the works is recorded and resolved with the client before work continues." },
+    { risk: "Existing structure cannot carry the new use", impact: "High", likelihood: "Low", mitigation: "The structure is assessed against the loads of the new use before the brief is fixed." },
+    { risk: "Works disrupt parts of the building that stay in use", impact: "Medium", likelihood: "Medium", mitigation: "Phasing is agreed with the client before tender, and access, noise and dust controls are written into the specification." },
+    { risk: "Works depart from the approved design", impact: "High", likelihood: "Medium", mitigation: "Inspection hold points before work is covered, with non-conformances closed before the next stage." },
+    { risk: "Incomplete as-built record at handover", impact: "Medium", likelihood: "Medium", mitigation: "Changes are recorded on the drawings as the works proceed and the as-built set is a condition of close-out." },
+  ];
   // Building design with no supervision of works (see buildingSectorLabel).
   if (/\bbuilding design\b|architectur/.test(sector)) return [
     { risk: "Brief changes after concept approval causing redesign", impact: "High", likelihood: "Medium", mitigation: "The brief and accommodation schedule are frozen by client sign-off at concept stage; later changes are logged and agreed before design proceeds." },

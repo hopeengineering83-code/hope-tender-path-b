@@ -193,7 +193,11 @@ export const PROPOSAL_THEMES: ProposalTheme[] = [
     code: "WATER_INFRASTRUCTURE",
     label: "Water supply, hydraulics and infrastructure engineering",
     // Word boundary on WASH — bare /WASH/i matched "Washington".
-    triggers: [/water supply/i, /pump/i, /borehole/i, /sanitary/i, /hydraulic/i, /irrigation/i, /pipeline/i, /water.*system/i, /\bWASH\b/i],
+    // A borehole is water work only when it yields water: a geotechnical
+    // investigation drills boreholes too, and its proposal got a water-supply
+    // section (2026-10-06 matrix). "Sanitary" alone is a building's plumbing
+    // engineer, not a water scheme.
+    triggers: [/water supply/i, /pump(?:ing)?\s+station/i, /\b(?:water|production|supply|deep|shallow)\s+(?:wells?|boreholes?)\b|\bborehole\s+(?:yield|pump|drilling\s+for\s+water)/i, /\bsanitation\b|sanitary\s+sewer/i, /hydraulic/i, /irrigation/i, /pipeline/i, /water.*system/i, /\bWASH\b/i],
     proofTerms: [/water/i, /sanitary/i, /hydraulic/i, /borehole/i, /pump/i, /pipeline/i, /reservoir/i, /\bWASH\b/i],
     methodologyBullets: [
       "hydraulic modelling: demand projections, pipe network analysis using WaterCAD/EPANET, and pressure-zone definition",
@@ -230,7 +234,10 @@ export const PROPOSAL_THEMES: ProposalTheme[] = [
   {
     code: "URBAN_MASTER_PLANNING",
     label: "Urban planning, master planning and landscape architecture",
-    triggers: [/urban/i, /master plan/i, /city plan/i, /municipal/i, /landscape/i, /park/i, /eco-park/i, /public.*space/i, /mixed.use/i, /spatial.*plan/i],
+    // Planning WORK, not a municipal client or a car park: "municipal office
+    // building" and "parking" gave a structural assessment an urban-planning
+    // section (2026-10-06 tender-type matrix).
+    triggers: [/\burban\s+(?:plan|design|develop|renewal|regenerat|upgrad|expansion)/i, /master\s*plan/i, /city\s+plan/i, /\bstructure\s+plan/i, /\bland[- ]use\b/i, /\bmunicipal\s+(?:plan|master|infrastructure)/i, /landscape\s+(?:architect|design|plan)/i, /\b(?:public|city|eco|recreational)[- ]?parks?\b|\bpark\s+(?:design|development)\b/i, /public.*space/i, /mixed.use/i, /spatial.*plan/i],
     // Word boundary on GIS — bare /GIS/i matched "GISt" / "GIStt" etc.
     proofTerms: [/urban/i, /master plan/i, /landscape/i, /park/i, /zoning/i, /planning/i, /municipal/i, /\bGIS\b/i],
     methodologyBullets: [
@@ -832,6 +839,10 @@ export function inferSector(rawTenderText: string, opts?: { title?: string | nul
 }
 
 const GENERAL_SECTOR = "General Consultancy / Engineering";
+export const HERITAGE_SECTOR = "Heritage Conservation & Restoration";
+export const STRUCTURAL_ASSESSMENT_SECTOR = "Structural Assessment & Retrofit";
+export const CONTRACT_ADMINISTRATION_SECTOR = "Contract Administration & Quantity Surveying";
+export const RENOVATION_SECTOR = "Building Renovation & Adaptation";
 
 function inferSectorFromSubject(tenderText: string): string {
   // Health WORK, not the word: bare "health" is in a health ministry's name,
@@ -879,7 +890,14 @@ function inferSectorFromSubject(tenderText: string): string {
   if (HOSPITALITY_WORK.test(tenderText)) return "Hospitality & Tourism";
   if (/factory|industrial|manufacturing/i.test(tenderText)) return "Industrial / Manufacturing";
   if (/geotechnical|soil.*investigation|foundation.*design|seismic/i.test(tenderText)) return "Geotechnical & Structural Engineering";
-  if (/renovation|modification|retrofit|existing building/i.test(tenderText)) return "Building Renovation & Adaptation";
+  // Heritage, structural assessment and contract administration are their own
+  // kinds of work. All three fell to "General Consultancy" or to renovation,
+  // and were answered with a generic baseline-and-stakeholder method (2026-10-06
+  // tender-type matrix).
+  if (/\bheritage\b|historic\s+(?:building|site|structure|monument)|\bmonuments?\b|conservation\s+(?:and|&)\s+restoration|restoration\s+of\s+(?:the\s+)?(?:old|historic)/i.test(tenderText)) return HERITAGE_SECTOR;
+  if (/structural\s+(?:condition\s+)?(?:assessment|audit|evaluation|integrity)|condition\s+(?:assessment|survey)\s+of\s+(?:the\s+)?(?:existing\s+)?(?:building|structure)|non-destructive\s+test/i.test(tenderText)) return STRUCTURAL_ASSESSMENT_SECTOR;
+  if (/quantity\s+survey(?:ing|or)?\s+(?:and|&)\s+contract\s+administration|contract\s+administration\s+(?:and|&)\s+quantity\s+survey|\bcontract\s+administration\s+services|\bquantity\s+surveying\s+services|cost\s+(?:management|consultancy)\s+services|final\s+account/i.test(tenderText)) return CONTRACT_ADMINISTRATION_SECTOR;
+  if (/renovation|modification|retrofit|existing building/i.test(tenderText)) return RENOVATION_SECTOR;
   if (/agri|irrigation.*scheme|crop.*yield|farm.*develop|value.?chain.*agri|livestock.*develop/i.test(tenderText)) return "Agriculture & Rural Development";
   if (/\bmining\b|mineral.*extract|quarry.*design|\b(?:open[- ]?)?pit\s+(?:design|optimi[sz]ation|slope)|tailings|\bore\s*body\b|blast.*design/i.test(tenderText)) return "Mining & Extractive Industries";
   if (/\bport.*design|\bport.*master.*plan|berth.*design|quay.*design|harbour.*develop|dredging.*scheme|container.*terminal/i.test(tenderText)) return "Port / Maritime Infrastructure";
@@ -1357,6 +1375,9 @@ export function buildProposalIntelligence(params: {
     // "plant" removed — matches "water treatment plant", "pumping plant" in unrelated sectors
     { label: /Industrial|Manufacturing/, keywords: /factory|industrial|manufacturing|warehouse/i },
     // "existing" and "interior" narrowed — bare forms match almost every tender
+    { label: /Heritage/, keywords: /heritage|conservation|restoration|historic|monument/i },
+    { label: /Structural Assessment/, keywords: /structural|condition\s+(?:survey|assessment)|retrofit|non-destructive|existing\s+(?:building|struct)/i },
+    { label: /Contract Administration/, keywords: /contract\s+administration|quantity\s+survey|payment\s+certif|final\s+account|variation|claims/i },
     { label: /Renovation|Adaptation/, keywords: /renovation|modification|retrofit|existing\s+(?:building|facilit|struct)|adaptation|interior\s+(?:renovati|remodel|refurb)/i },
     // Keywords kept in sync with the inferSector() triggers for "Social Development & Advisory":
     // social.*develop | advisory.*service | institutional.*strength | capacity.*build | community.*develop

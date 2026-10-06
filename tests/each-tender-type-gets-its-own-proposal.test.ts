@@ -255,3 +255,26 @@ describe("an architect's contribution is architectural work", () => {
     assert.doesNotMatch(row.split("|").at(-2)!, /Structural design|MEP design/);
   });
 });
+
+describe("every kind of work the firm bids on has its own sector", () => {
+  it("heritage, structural assessment and contract administration are recognised", () => {
+    assert.equal(inferSector("Condition survey, conservation design and restoration supervision of the 1920s Old Railway Station.", { title: "Conservation and Restoration of the Old Railway Station" }), "Heritage Conservation & Restoration");
+    assert.equal(inferSector("Assess the structural condition of the G+5 municipal office building, including non-destructive testing.", { title: "Structural Condition Assessment of the Municipal Office Building" }), "Structural Assessment & Retrofit");
+    assert.equal(inferSector("Quantity surveying and contract administration services for 400 housing units under construction, including interim payment certificates and the final account.", { title: "Quantity Surveying and Contract Administration Services for a Housing Project" }), "Contract Administration & Quantity Surveying");
+  });
+
+  it("each gets its own work plan and risks, not the generic baseline-and-stakeholder plan", () => {
+    for (const sector of ["Structural Assessment & Retrofit", "Building Renovation & Adaptation", "Heritage Conservation & Restoration", "Contract Administration & Quantity Surveying"]) {
+      const titles = canonicalWorkPlan({ sector }).map((p) => p.title).join(" ");
+      assert.doesNotMatch(titles, /Baseline & Analysis|Stakeholder Validation/, sector);
+      assert.doesNotMatch(buildRisksMitigationsTable({ primarySector: sector, clientName: "Client" }), /Scope misalignment with client expectations/, sector);
+    }
+  });
+
+  it("a geotechnical borehole is not water work, and a municipal client or parking is not urban planning", () => {
+    assert.ok(!themeCodes("Geotechnical investigation with boreholes, SPT and laboratory testing for a G+3 library.").includes("WATER_INFRASTRUCTURE"));
+    assert.ok(themeCodes("Drilling of production boreholes and a pumping station for the town water supply.").includes("WATER_INFRASTRUCTURE"));
+    assert.ok(!themeCodes("Structural assessment of the municipal office building and its parking structure.").includes("URBAN_MASTER_PLANNING"));
+    assert.ok(themeCodes("Preparation of a town structure plan with land-use zoning.").includes("URBAN_MASTER_PLANNING"));
+  });
+});

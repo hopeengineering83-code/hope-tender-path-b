@@ -52,8 +52,8 @@ const FIRM = {
   name: "Northgate Engineering Consultants",
   legalName: "Northgate Engineering Consultants PLC",
   description: "Northgate Engineering Consultants PLC is a multidisciplinary engineering and architectural consultancy registered in Ethiopia.",
-  serviceLines: ["Architectural design", "Structural engineering", "Highway engineering", "Water supply engineering", "MEP design", "Construction supervision", "Feasibility studies", "Quantity surveying"],
-  sectors: ["Healthcare", "Hospitality/tourism", "Education", "Roads", "Water", "Commercial/office"],
+  serviceLines: ["Architectural design", "Structural engineering", "Highway engineering", "Water supply engineering", "MEP design", "Construction supervision", "Feasibility studies", "Quantity surveying", "Urban planning", "Geotechnical investigation", "Environmental and social studies", "Heritage conservation"],
+  sectors: ["Healthcare", "Hospitality/tourism", "Education", "Roads", "Water", "Commercial/office", "Urban planning", "Heritage"],
 };
 
 const EXPERTS = [
@@ -63,6 +63,10 @@ const EXPERTS = [
   { fullName: "Yonas Girma", title: "Water Supply Engineer", years: 12, discipline: "Water Engineering", profile: "Hydraulic design of the Hilltown Water Supply Expansion: boreholes, transmission mains and reservoirs." },
   { fullName: "Ruth Haile", title: "MEP Engineer", years: 10, discipline: "Electrical Engineering", profile: "MEP design for Riverside District Hospital, Lakeshore Resort Hotel and Hillcrest Office Tower." },
   { fullName: "Daniel Worku", title: "Quantity Surveyor", years: 11, discipline: "Quantity Surveying", profile: "Quantity schedules and contract administration on Greenfield Secondary School and Eastgate–Valley Road Rehabilitation." },
+  { fullName: "Selam Tesfaye", title: "Senior Urban Planner", years: 16, discipline: "Urban Planning", profile: "Urban planner. Led the Northridge Town Structure Plan: land-use zoning, GIS base mapping and infrastructure demand projection." },
+  { fullName: "Abel Mengistu", title: "Senior Geotechnical Engineer", years: 13, discipline: "Geotechnical Engineering", profile: "Geotechnical engineer. Led the Central Market Geotechnical Investigation: boreholes, SPT, laboratory testing and bearing capacity report." },
+  { fullName: "Martha Alemu", title: "Environmental and Social Specialist", years: 12, discipline: "Environmental Science", profile: "Environmental and social specialist. Prepared the ESIA and ESMP for the Eastgate–Valley Road Rehabilitation and the Hilltown Water Supply Expansion." },
+  { fullName: "Bereket Lemma", title: "Conservation Architect", years: 14, discipline: "Architecture", profile: "Conservation architect. Led the Old Post Office Restoration: condition survey, archival research and conservation design." },
 ];
 
 const PROJECTS = [
@@ -72,6 +76,9 @@ const PROJECTS = [
   { name: "Eastgate–Valley Road Rehabilitation", client: "Regional Roads Authority", sector: "Roads", services: ["Highway engineering", "Construction supervision", "Quantity surveying"], value: 980_000_000, summary: "Supervision of the rehabilitation of 62 km of gravel road to asphalt standard, including drainage structures." },
   { name: "Hilltown Water Supply Expansion", client: "Hilltown Water Utility", sector: "Water", services: ["Water supply engineering", "Feasibility studies", "Construction supervision"], value: 145_000_000, summary: "Feasibility, design and supervision of boreholes, 18 km of transmission mains and two 1,000 m³ reservoirs." },
   { name: "Hillcrest Office Tower", client: "Hillcrest Holdings", sector: "Commercial/office", services: ["Architectural design", "Structural engineering", "MEP design"], value: 520_000_000, summary: "Design of a G+14 office tower (21,000 m²) with two basement levels." },
+  { name: "Northridge Town Structure Plan", client: "Northridge Town Administration", sector: "Urban planning", services: ["Urban planning", "Feasibility studies"], value: 18_000_000, summary: "Structure plan for a town of 120,000 residents: land-use zoning, road hierarchy and infrastructure demand to 2040." },
+  { name: "Central Market Geotechnical Investigation", client: "Central City Trade Bureau", sector: "Commercial/office", services: ["Geotechnical investigation"], value: 3_200_000, summary: "Twelve boreholes to 25 m, SPT, laboratory testing and a bearing capacity report for a four-storey market." },
+  { name: "Old Post Office Restoration", client: "City Culture and Heritage Office", sector: "Heritage", services: ["Heritage conservation", "Architectural design", "Structural engineering"], value: 42_000_000, summary: "Condition survey, conservation design and restoration supervision of a 1930s masonry post office (1,800 m²)." },
 ];
 
 const COMMON_REQUIREMENTS: Requirement[] = [
@@ -213,6 +220,78 @@ const FIXTURES: Fixture[] = [
     ],
     forbidden: /\b(?:guestroom|RevPAR|pavement|FF&E brand|load-flow|SCADA|Senior Highway Engineer)\b/i,
     ownSectors: ["healthcare"],
+  },
+  {
+    id: "master-plan", title: "Preparation of a Structure Plan for Southvale Town", client: "Southvale Town Administration", reference: "RFP STA/31-04",
+    text: [
+      "Southvale Town Administration invites consultants to prepare a ten-year structure plan, including land-use zoning, a road hierarchy plan and infrastructure demand projections.",
+    ],
+    requirements: [
+      { title: "Urban Planning Experience", type: "PROJECT_EXPERIENCE", quote: "At least one town structure plan or master plan prepared.", priority: "MANDATORY" },
+      { title: "Urban Planner", type: "EXPERT", quote: "A senior urban planner.", priority: "MANDATORY" },
+    ],
+    forbidden: /\b(?:clinical|patient|IPC-compliant|medical gas|guestroom|RevPAR|FF&E|joinery|curtain wall)\b/i,
+    ownSectors: ["roads", "water"],
+  },
+  {
+    id: "geotech", title: "Geotechnical Investigation for a Regional Library", client: "Eastvale Culture Bureau", reference: "RFQ ECB/31-06",
+    text: [
+      "Eastvale Culture Bureau invites consultants to carry out a geotechnical investigation for a G+3 regional library, including boreholes, in-situ testing, laboratory testing and a foundation recommendation report.",
+    ],
+    requirements: [
+      { title: "Geotechnical Investigation Experience", type: "PROJECT_EXPERIENCE", quote: "At least one geotechnical investigation for a building.", priority: "MANDATORY" },
+      { title: "Geotechnical Engineer", type: "EXPERT", quote: "A geotechnical engineer.", priority: "MANDATORY" },
+    ],
+    forbidden: /\b(?:clinical|patient|IPC-compliant|medical gas|guestroom|RevPAR|FF&E|joinery|space programming|curtain wall)\b/i,
+    ownSectors: [],
+  },
+  {
+    id: "esia", title: "Environmental and Social Impact Assessment of the Westfield Bypass", client: "Regional Roads Authority", reference: "RFP RRA/31-30",
+    text: [
+      "The Regional Roads Authority invites consultants to prepare an Environmental and Social Impact Assessment and an Environmental and Social Management Plan for a 22 km bypass, including baseline surveys and public consultation.",
+    ],
+    requirements: [
+      { title: "ESIA Experience", type: "PROJECT_EXPERIENCE", quote: "At least one ESIA for a road or water project.", priority: "MANDATORY" },
+      { title: "Environmental and Social Specialist", type: "EXPERT", quote: "An environmental and social specialist.", priority: "MANDATORY" },
+    ],
+    forbidden: /\b(?:clinical|patient|IPC-compliant|medical gas|guestroom|RevPAR|FF&E|joinery|space programming|curtain wall|Marshall mix)\b/i,
+    ownSectors: ["roads"],
+  },
+  {
+    id: "heritage", title: "Conservation and Restoration of the Old Railway Station", client: "City Culture and Heritage Office", reference: "RFP CHO/31-02",
+    text: [
+      "The City Culture and Heritage Office invites consultants for the condition survey, conservation design and restoration supervision of the 1920s Old Railway Station.",
+    ],
+    requirements: [
+      { title: "Heritage Conservation Experience", type: "PROJECT_EXPERIENCE", quote: "At least one restoration of a historic building.", priority: "MANDATORY" },
+      { title: "Conservation Architect", type: "EXPERT", quote: "A conservation architect.", priority: "MANDATORY" },
+    ],
+    forbidden: /\b(?:clinical|patient|IPC-compliant|medical gas|guestroom|RevPAR|pavement design)\b/i,
+    ownSectors: [],
+  },
+  {
+    id: "structural-assessment", title: "Structural Condition Assessment of the Municipal Office Building", client: "Lakeside City Administration", reference: "RFQ LCA/31-17",
+    text: [
+      "Lakeside City Administration invites consultants to assess the structural condition of its G+5 municipal office building, including non-destructive testing, a structural analysis and a retrofit recommendation report.",
+    ],
+    requirements: [
+      { title: "Structural Assessment Experience", type: "PROJECT_EXPERIENCE", quote: "At least one structural assessment of an existing building.", priority: "MANDATORY" },
+      { title: "Structural Engineer", type: "EXPERT", quote: "A senior structural engineer.", priority: "MANDATORY" },
+    ],
+    forbidden: /\b(?:clinical|patient|IPC-compliant|medical gas|guestroom|RevPAR|FF&E|pavement design|space programming)\b/i,
+    ownSectors: [],
+  },
+  {
+    id: "qs-contract-admin", title: "Quantity Surveying and Contract Administration Services for a Housing Project", client: "Metro Housing Agency", reference: "RFP MHA/31-09",
+    text: [
+      "Metro Housing Agency invites consultants to provide quantity surveying and contract administration services for 400 low-cost housing units under construction, including measurement, interim payment certificates, variation assessment and the final account.",
+    ],
+    requirements: [
+      { title: "Contract Administration Experience", type: "PROJECT_EXPERIENCE", quote: "At least one contract administration assignment for building works.", priority: "MANDATORY" },
+      { title: "Quantity Surveyor", type: "EXPERT", quote: "A quantity surveyor.", priority: "MANDATORY" },
+    ],
+    forbidden: /\b(?:clinical|patient|IPC-compliant|medical gas|guestroom|RevPAR|FF&E|pavement design|space programming)\b/i,
+    ownSectors: [],
   },
   {
     id: "office-building", title: "Architectural and Engineering Design of a G+8 Office Building", client: "Metro Savings Bank", reference: "RFP MSB/31-11",
