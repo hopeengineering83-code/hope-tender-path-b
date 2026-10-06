@@ -7,7 +7,7 @@ import { continueSuccessfulAnalysis } from "../../../../lib/ai-jobs/engine-conti
 import { continueSuccessfulEngineToProposal } from "../../../../lib/ai-jobs/proposal-continuation-service";
 import { ensureAutoFinalizeContinuationJob } from "../../../../lib/ai-jobs/auto-finalize-continuation-job";
 import { claimJobForCaller } from "../../../../lib/job-claim-policy";
-import { scheduleRequestScopedWorkerWake } from "../../../../lib/ai-jobs/request-scoped-worker-wake";
+import { scheduleRequestScopedWorkerWake, scheduleRetryWorkerWake } from "../../../../lib/ai-jobs/request-scoped-worker-wake";
 import { getHandler, isTerminalHandlerResult } from "../../../../lib/ai-job-handlers";
 import { parseJobTypeFilter, SUPPORTED_JOB_TYPES } from "../../../../lib/job-type-policy";
 import { prisma, prismaReady } from "../../../../lib/prisma";
@@ -152,6 +152,9 @@ export async function POST(req: Request) {
   // filter and may advance to a continuation this worker itself enqueued — see
   // the hand-off note at the end of the claim loop.
   let activeJobType = parsedJobType.value;
+  // A durable job this invocation could not wait for (its back-off outlasts
+  // the budget left). Handed to a fresh worker after the loop.
+  let pendingRetry: { jobType: string; tenderId: string | null } | null = null;
 
   while (Date.now() - startTime < maxRunMs) {
     // DIRECTIVE 5: Don't start a new job when insufficient budget remains.
@@ -171,7 +174,38 @@ export async function POST(req: Request) {
       userId: userId ?? undefined,
       global: isAutomatedCaller,
     });
-    if (!claimed) break;
+    if (!claimed) {
+      // Nothing is due now. A job re-armed for a short back-off is not
+      // claimable until its nextAttemptAt; wait for it here when it fits,
+      // otherwise wait what this invocation can and hand it on. Without this a
+      // retry scheduled near the end of an invocation waited for the external
+      // drain, hours away with the browser closed.
+      const waiting = await prisma.aiJob.findFirst({
+        where: {
+          status: "QUEUED",
+          nextAttemptAt: { gt: new Date() },
+          ...(activeJobType ? { jobType: activeJobType } : {}),
+          ...(tenderId ? { tenderId } : {}),
+          ...(userId && !isAutomatedCaller ? { userId } : {}),
+        },
+        orderBy: { nextAttemptAt: "asc" },
+        select: { jobType: true, tenderId: true, nextAttemptAt: true },
+      }).catch(() => null);
+      if (waiting?.nextAttemptAt) {
+        const waitMs = waiting.nextAttemptAt.getTime() - Date.now();
+        const remaining = absoluteDeadline - Date.now();
+        if (shouldWaitOutRetry(waitMs, remaining)) {
+          await new Promise((resolve) => setTimeout(resolve, Math.max(0, waitMs) + RETRY_WAIT_MARGIN_MS));
+          continue;
+        }
+        pendingRetry = { jobType: waiting.jobType, tenderId: waiting.tenderId };
+        // Spend this invocation's spare time waiting, so the next one starts
+        // closer to the job's turn instead of chaining immediately.
+        const idle = Math.min(Math.max(0, waitMs), remaining - MINIMUM_REMAINING_BUDGET_MS);
+        if (idle > 0) await new Promise((resolve) => setTimeout(resolve, idle));
+      }
+      break;
+    }
 
     const handler = getHandler(claimed.jobType);
     if (!handler) {
@@ -629,8 +663,14 @@ export async function POST(req: Request) {
         activeJobType = claimed.jobType as typeof activeJobType;
         continue;
       }
+      if (retryWaitMs !== null) pendingRetry = { jobType: claimed.jobType, tenderId: claimed.tenderId ?? null };
       break;
     }
+  }
+
+  if (pendingRetry) {
+    const woke = scheduleRetryWorkerWake(req, pendingRetry.jobType, pendingRetry.tenderId);
+    logger.info("[run-next] Handing a re-armed job to a fresh worker", { jobType: pendingRetry.jobType, tenderId: pendingRetry.tenderId ?? undefined, woke });
   }
 
   if (processedJobs.length === 0) {

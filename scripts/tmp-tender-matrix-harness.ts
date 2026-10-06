@@ -16,6 +16,7 @@ import { completeJob } from "../lib/ai-jobs";
 import { runTenderEngine } from "../lib/engine/run-tender-engine";
 import { buildAndVerifyBuildPlan } from "../lib/engine/automatic-build-plan";
 import { generateTenderDocuments } from "../lib/engine/generate-elite";
+import { generateMissingPlanFiles } from "../lib/engine/missing-plan-file-generation";
 
 const sha = (text: string) => createHash("sha256").update(text).digest("hex");
 
@@ -31,6 +32,8 @@ type Fixture = {
   forbidden: RegExp;
   /** Sector families a numbered heading may name for this tender. */
   ownSectors: string[];
+  /** Owner pricing workbook lines, for a tender that asks for a financial proposal. */
+  pricing?: Array<{ category: string; label: string; quantity: number; unit: string; rate: number }>;
 };
 
 /** Sector families a numbered heading can belong to; any family the tender does not own is foreign. */
@@ -217,8 +220,9 @@ const FIXTURES: Fixture[] = [
     requirements: [
       { title: "Healthcare Facility Design Experience", type: "PROJECT_EXPERIENCE", quote: "At least one healthcare facility designed.", priority: "MANDATORY" },
       { title: "Registered Architect", type: "EXPERT", quote: "A registered architect.", priority: "MANDATORY" },
+      { title: "Annexes / Supporting Documents", type: "ANNEX", quote: "Attach supporting documents such as company profile, project references, professional CVs, licenses, and certificates.", priority: "SCORED" },
     ],
-    forbidden: /\b(?:guestroom|RevPAR|pavement|FF&E brand|load-flow|SCADA|Senior Highway Engineer)\b/i,
+    forbidden: /\b(?:guestroom|RevPAR|pavement|FF&E brand|load-flow|SCADA|Senior Highway Engineer|on request)\b/i,
     ownSectors: ["healthcare"],
   },
   {
@@ -292,6 +296,25 @@ const FIXTURES: Fixture[] = [
     ],
     forbidden: /\b(?:clinical|patient|IPC-compliant|medical gas|guestroom|RevPAR|FF&E|pavement design|space programming)\b/i,
     ownSectors: [],
+  },
+  {
+    id: "road-design-with-financial", title: "Detailed Design of the Eastvale Feeder Roads (35 km)", client: "Regional Roads Authority", reference: "RFP RRA/31-40",
+    text: [
+      "The Regional Roads Authority invites consultants for the detailed engineering design of 35 km of feeder roads, including topographic survey, pavement design and tender documents.",
+      "Proposals shall be submitted in two separate envelopes: a Technical Proposal and a Financial Proposal. The Financial Proposal shall state prices in Ethiopian Birr inclusive of VAT and remain valid for 120 days.",
+    ],
+    requirements: [
+      { title: "Road Design Experience", type: "PROJECT_EXPERIENCE", quote: "At least one road design or rehabilitation project.", priority: "MANDATORY" },
+      { title: "Highway Engineer", type: "EXPERT", quote: "A senior highway engineer.", priority: "MANDATORY" },
+      { title: "Financial Proposal", type: "FINANCIAL_PROPOSAL", quote: "The Financial Proposal shall be submitted in a separate envelope, priced in Ethiopian Birr inclusive of VAT.", priority: "MANDATORY" },
+    ],
+    forbidden: /\b(?:clinical|patient|IPC-compliant|medical gas|guestroom|RevPAR|FF&E|joinery)\b/i,
+    ownSectors: ["roads"],
+    pricing: [
+      { category: "PERSONNEL", label: "Team Leader / Senior Highway Engineer", quantity: 60, unit: "DAY", rate: 5_000 },
+      { category: "PERSONNEL", label: "Quantity Surveyor", quantity: 30, unit: "DAY", rate: 3_000 },
+      { category: "REIMBURSABLE", label: "Topographic survey field costs", quantity: 35, unit: "KM", rate: 2_500 },
+    ],
   },
   {
     id: "office-building", title: "Architectural and Engineering Design of a G+8 Office Building", client: "Metro Savings Bank", reference: "RFP MSB/31-11",
@@ -447,14 +470,33 @@ async function runFixture(fixture: Fixture, outDir: string): Promise<{ id: strin
     } catch (error) {
       findings.push(`generation threw: ${(error as Error).message.slice(0, 200)}`);
     }
+    if (fixture.pricing) {
+      await prisma.pricingWorkbook.create({ data: { tenderId: tender.id, currency: "ETB", validityDays: 120, vatPercent: 15, lines: { create: fixture.pricing.map((l) => ({ ...l, total: l.quantity * l.rate })) } } });
+    }
+    const planFiles = await generateMissingPlanFiles({ prisma, tenderId: tender.id, userId: user.id, actorLabel: "matrix-harness" }).catch((e: Error) => ({ ok: false, code: e.message }) as never);
+    const planNote = (`PLAN FILES: ${JSON.stringify({ ok: (planFiles as { ok?: boolean }).ok, code: (planFiles as { code?: string }).code, created: (planFiles as { created?: unknown[] }).created?.length, planned: (planFiles as { plannedCreated?: unknown[] }).plannedCreated })}`);
     const docs = await prisma.generatedDocument.findMany({ where: { tenderId: tender.id }, orderBy: { createdAt: "asc" } });
-    const parts: string[] = [selectionNote];
+    const parts: string[] = [selectionNote, planNote];
     for (const d of docs) {
       parts.push(`===== ${d.name} (${d.format}) =====`);
       if (d.fileContent && d.format === "DOCX") {
         const text = await docxText(d.fileContent);
         parts.push(text);
-        findings.push(...genericFindings(text, fixture));
+        if (/financial/i.test(`${d.name} ${d.documentType ?? ""}`)) {
+          // The separate envelope: priced, and nothing technical in it.
+          if (!/Total offer price/.test(text)) findings.push(`financial proposal has no total offer price: "${text.slice(0, 160)}"`);
+          if (/methodology|work plan|technical approach|key personnel/i.test(text)) findings.push("technical content in the financial envelope");
+        } else {
+          findings.push(...genericFindings(text, fixture));
+          // Historical project values are allowed; the offer's own figures are not.
+          if (fixture.pricing) {
+            const fmt = (n: number) => n.toLocaleString("en-US", { minimumFractionDigits: 2 });
+            const subtotal = fixture.pricing.reduce((sum, l) => sum + l.quantity * l.rate, 0);
+            const offerFigures = [fmt(subtotal), fmt(subtotal * 1.15), ...fixture.pricing.map((l) => fmt(l.rate))];
+            const leaked = offerFigures.find((f) => text.includes(f));
+            if (leaked || /Total offer price/.test(text)) findings.push(`price in the technical envelope: ${leaked ?? "Total offer price"}`);
+          }
+        }
       }
     }
     if (docs.length === 0) findings.push("no document generated");

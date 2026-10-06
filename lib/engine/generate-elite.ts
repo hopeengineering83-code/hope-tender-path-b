@@ -23,6 +23,7 @@ import { appendEvaluatorResponseMatrix } from "./proposal-evaluator-matrix";
 import { resolveSignatory, signOffLines } from "./signatory";
 import { orderTeamForPresentation, withoutUnassignedExperts } from "./team-order";
 import { repairCollapsedServiceLines } from "./service-lines-repair";
+import { applyAnnexPolicy, tenderAnnexPolicy } from "./annex-policy";
 import { composeCoverLetterBody, composeExecutiveSummary } from "./executive-summary-composer";
 import { corporateFactsFromProfile } from "./company-profile-facts";
 import { sourceGroundedEvaluationCriteria } from "./tender-evaluation-criteria";
@@ -4175,6 +4176,14 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
   // from the sealed body. Run 34037370200 rebuilt it before the seal and
   // shipped a contents page listing A.4a, a C.8 that followed C.6, and a D.5
   // with no D.4 — none of which the body it described still contained.
+  // The tender's attachment rule: copies it asks for are attached, not "on
+  // request", and the annexes are listed in its order (annex-policy.ts).
+  const annexPolicy = tenderAnnexPolicy(tender.requirements.map((r) => `${(r as { title?: string | null }).title ?? ""} — ${(r as { description?: string | null }).description ?? ""}`));
+  if (annexPolicy.required) {
+    workingMarkdown = applyAnnexPolicy(workingMarkdown, annexPolicy);
+    logger.info(`[generate-elite] Tender requires ${annexPolicy.items.length} annex kind(s); listed for the owner to attach: ${annexPolicy.items.join("; ")}`);
+  }
+
   const sealedOrder = reorderSectionsAndRebuildToc(workingMarkdown);
   logger.info(`[generate-elite] Contents page rebuilt from the sealed body: ${sealedOrder.tocEntries} entries.`);
   workingMarkdown = sealedOrder.markdown;

@@ -28,6 +28,7 @@
 // (see lib/engine/financial-separation-rule.ts).
 
 import { decideExistingArtifactRegeneration, withContractMarker } from "./generated-artifact-staleness";
+import { buildFinancialProposalDocx, computeWorkbookTotals, isFinancialProposalFile, pricedLines, type PricedLine, type WorkbookSettings } from "./financial-proposal";
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
 import type { PrismaClient } from "@prisma/client";
 import { logAction } from "../audit";
@@ -233,6 +234,19 @@ function matchingRequirements(fileName: string, requirements: RequirementLike[])
   return picked.length > 0
     ? picked
     : requirements.filter((requirement) => (requirement.priority ?? "").toUpperCase() === "MANDATORY").slice(0, 8);
+}
+
+async function pricingRequiredControlContent(tenderTitle: string, fileName: string) {
+  const children: Paragraph[] = [
+    para(fileName, true),
+    para(`Tender: ${tenderTitle}`),
+    heading("Owner pricing required"),
+    bullet("The tender requires a priced financial proposal. Prices are the firm's business decision, and the app does not set them."),
+    bullet("Enter the priced lines (quantities, units and rates), currency, VAT and validity in this tender's pricing workbook, then finalise again; or attach the firm's own priced financial proposal under this exact file name."),
+    bullet("Use any financial form the tender prescribes, and keep the financial proposal in its separate envelope."),
+  ];
+  const buffer = await Packer.toBuffer(new Document({ sections: [{ properties: {}, children }] }));
+  return buffer.toString("base64");
 }
 
 async function replacementControlContent(tenderTitle: string, fileName: string, replaceWithOriginal: boolean) {
@@ -623,7 +637,39 @@ async function buildPlannedRowContent(args: {
   requirements: RequirementLike[];
   evidence?: { experts: string[]; projects: string[] };
   letterContext?: { clientName: string | null; companyName: string; reference: string | null };
+  pricing?: { settings: WorkbookSettings; lines: PricedLine[] } | null;
 }) {
+  // A financial proposal is priced from the owner's workbook, or not written
+  // at all: it waits for the owner's prices rather than shipping a narrative
+  // shell with none (financial-proposal.ts).
+  if (isFinancialProposalFile(args.fileName, args.documentType)) {
+    const priced = args.pricing ? pricedLines(args.pricing.lines) : [];
+    if (args.pricing && priced.length > 0) {
+      const totals = computeWorkbookTotals(priced, args.pricing.settings);
+      return {
+        fileContent: await buildFinancialProposalDocx({
+          title: args.fileName.replace(/\.[a-z0-9]{2,5}$/i, "").replace(/^\d+[\s._-]+/, "").replace(/[_-]+/g, " "),
+          tenderTitle: args.tenderTitle,
+          reference: args.letterContext?.reference ?? null,
+          clientName: args.letterContext?.clientName ?? null,
+          companyName: args.letterContext?.companyName ?? "The Firm",
+          settings: args.pricing.settings,
+          lines: priced,
+        }),
+        format: "DOCX",
+        validationStatus: "NEEDS_REVALIDATION",
+        reviewStatus: "NEEDS_REVIEW",
+        contentSummary: `Priced financial proposal for ${args.fileName} from the pricing workbook: ${priced.length} priced line(s), total offer ${args.pricing.settings.currency} ${totals.offerTotal.toFixed(2)}. The owner reviews the prices and signs before export.`,
+      };
+    }
+    return {
+      fileContent: await pricingRequiredControlContent(args.tenderTitle, args.fileName),
+      format: "CONTROL",
+      validationStatus: "PENDING",
+      reviewStatus: "REPLACE_WITH_ORIGINAL",
+      contentSummary: `Owner pricing required for ${args.fileName}: enter priced lines in the tender's pricing workbook (or attach the priced financial proposal). The app does not set prices.`,
+    };
+  }
   const replaceWithOriginal = needsOriginalReplacement(args.fileName, args.documentType);
   const isSubmissionRules = args.documentType === "SUBMISSION_RULES"
     || /submission formatting|packaging rules|submission rules|delivery instruction/i.test(args.fileName);
@@ -845,6 +891,11 @@ export async function generateMissingPlanFiles(args: {
     companyName: company?.legalName || company?.name || "The Firm",
     reference: tender.reference ?? null,
   };
+  const workbook = await prisma.pricingWorkbook.findUnique({ where: { tenderId }, include: { lines: true } }).catch(() => null);
+  const pricing = workbook ? {
+    settings: { currency: workbook.currency, validityDays: workbook.validityDays, vatPercent: workbook.vatPercent, contingencyPct: workbook.contingencyPct, withholdingPct: workbook.withholdingPct },
+    lines: workbook.lines.map((l) => ({ category: l.category, label: l.label, quantity: l.quantity, unit: l.unit, rate: l.rate, total: l.total })),
+  } : null;
   for (const file of missing) {
     const documentType = documentTypeFor(file.exactFileName, file.documentType);
     const generated = await buildPlannedRowContent({
@@ -854,6 +905,7 @@ export async function generateMissingPlanFiles(args: {
       requirements: tender.requirements,
       evidence,
       letterContext,
+      pricing,
     });
     // A file the app must not invent — a priced financial proposal, a
     // tender-issued form — still needs a row, as PLANNED awaiting its official
@@ -888,6 +940,7 @@ export async function generateMissingPlanFiles(args: {
       requirements: tender.requirements,
       evidence,
       letterContext,
+      pricing,
     });
     preparedPlanned.push({
       fileName,

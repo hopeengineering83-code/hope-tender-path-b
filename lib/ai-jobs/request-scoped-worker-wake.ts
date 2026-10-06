@@ -82,3 +82,52 @@ export function scheduleRequestScopedWorkerWake(
 
   return true;
 }
+
+/**
+ * Wake a fresh worker for a durable job this worker re-armed with a back-off
+ * it could not wait out itself.
+ *
+ * A transient stage failure is re-armed QUEUED with a future nextAttemptAt.
+ * When the invocation that re-armed it had too little budget left to wait,
+ * nothing woke a worker again: the job waited for the external drain, which
+ * runs from the default branch against Production only, irregularly. With
+ * the browser closed, a 30-second retry could sit for hours. This carries the
+ * job's existing authority forward exactly as a continuation wake does — the
+ * job was already enqueued by an authorized route, and nothing here can
+ * create one.
+ */
+export function scheduleRetryWorkerWake(
+  req: Request,
+  jobType: string,
+  tenderId: string | null | undefined,
+  schedule: Scheduler = after,
+  fetchDispatcher: typeof fetch = fetch,
+): boolean {
+  const cookie = req.headers.get("cookie");
+  if (!cookie) return false;
+  const requestUrl = new URL(req.url);
+  const dispatchUrl = new URL("/api/ai-jobs/dispatch", requestUrl.origin);
+  dispatchUrl.searchParams.set("jobType", jobType);
+  if (tenderId) dispatchUrl.searchParams.set("tenderId", tenderId);
+  const origin = requestUrl.origin;
+  const referer = req.url;
+  schedule(async () => {
+    try {
+      const response = await fetchDispatcher(dispatchUrl, {
+        method: "POST",
+        cache: "no-store",
+        redirect: "manual",
+        headers: { cookie, origin, referer, "x-requested-with": "XMLHttpRequest" },
+      });
+      if (!response.ok) {
+        logger.warn("[worker-wake] retry wake was rejected; the job stays queued for the next worker", { jobType, status: response.status });
+      }
+    } catch (error) {
+      logger.warn("[worker-wake] retry wake failed; the job stays queued for the next worker", {
+        jobType,
+        errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+      });
+    }
+  });
+  return true;
+}

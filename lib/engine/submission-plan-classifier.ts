@@ -105,6 +105,18 @@ export function classifySubmissionPlanItem(input: ClassifierInput): ClassifierRe
   // "Financial Proposal Omission" — the live tender's actual wording — armed
   // neither, so the Build Plan required a file named
   // "Financial Proposal Omission.docx" invented from a prohibition.
+  // A row TITLED as the financial proposal, that tells the bidder to submit
+  // it, is that deliverable — even when it adds "in a separate envelope".
+  // "Financial Proposal: the Financial Proposal shall be submitted in a
+  // separate envelope, priced in Birr inclusive of VAT" was read as a
+  // separation rule, so a tender that required priced output got a Build Plan
+  // with no financial file at all (2026-10-06 tender-type matrix). The
+  // separation still holds — the file goes to the FINANCIAL envelope — and
+  // every negative wording ("no financial proposal", "technical only",
+  // "omitted", "not required") stays a rule.
+  if (requiresSubmittedFinancialProposal(input.title, value)) {
+    return result("REQUIRED_OUTPUT_FILE", "The tender requires a priced financial proposal, submitted in its own envelope.");
+  }
   if (statesFinancialSeparation(value)) {
     return result("COMMERCIAL_SEPARATION_RULE", "Financial/technical separation or no-financial rule, not a deliverable file.");
   }
@@ -229,3 +241,17 @@ export function plannedFileIsARule(file: { exactFileName?: string | null; notes?
   return { rule, rationale: classification.rationale };
 }
 
+
+const FINANCIAL_PROPOSAL_TITLE = /^\s*(?:\d+[.)]\s*)?(?:the\s+)?(?:financial|commercial|price)\s+(?:proposal|offer|bid)\b/i;
+const FINANCIAL_ABSENCE = /\b(?:no|without|omit(?:ted)?|omission|exclu(?:de|ded|sion)|waive[d]?|not\s+(?:required|requested|applicable|to\s+be\s+submitted|be\s+submitted|included)|later\s+stage|technical\s+(?:proposal\s+|submission\s+|offer\s+)?only|only\s+the\s+technical|do\s+not|shall\s+not|must\s+not|price[-\s]?free)\b/i;
+const SUBMISSION_VERB = /\b(?:shall|must|should|is\s+to|are\s+to|will)\s+(?:be\s+)?(?:submit(?:ted)?|provide[d]?|include[d]?|prepare[d]?|state)\b|\bsubmit\b|\bprovide\b|\bpriced\b/i;
+
+/** The row's own title names the financial proposal and the row requires it to be submitted. */
+export function requiresSubmittedFinancialProposal(title: string | null | undefined, text: string | null | undefined): boolean {
+  const t = String(title ?? "");
+  const body = String(text ?? "");
+  // A prescribed form, template or bill of quantities is the tender's own
+  // document to complete, never one the app writes.
+  if (/\b(?:form|template|prescribed|bill\s+of\s+quantities|boq|schedule\s+of\s+(?:prices|rates))\b/i.test(`${t} ${body}`)) return false;
+  return FINANCIAL_PROPOSAL_TITLE.test(t) && SUBMISSION_VERB.test(body) && !FINANCIAL_ABSENCE.test(`${t} ${body}`);
+}

@@ -2,6 +2,7 @@ import { logger } from "../../../../../lib/observability";
 import { NextRequest, NextResponse } from "next/server";
 import { requireRole, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
+import { nudgeStalledTenderJob } from "../../../../../lib/ai-jobs/stalled-job-nudge";
 import { getTenderReleaseSnapshot } from "../../../../../lib/engine/tender-release-snapshot";
 import { getCanonicalTenderWorkflowState } from "../../../../../lib/engine/workflow/workflow-state";
 import { getCanonicalTenderWorkflowDecision } from "../../../../../lib/engine/canonical-workflow-decision";
@@ -18,7 +19,7 @@ function stageStatusFromCanonical(canonicalState: string | undefined, fallback: 
 }
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
@@ -41,6 +42,10 @@ export async function GET(
         { status: 404 },
       );
     }
+
+    // The page the owner watches polls this route, so it is also the safety
+    // net for a queued job nothing claimed (lib/ai-jobs/stalled-job-nudge.ts).
+    await nudgeStalledTenderJob(req, tenderId, actor.id).catch(() => null);
 
     const [snapshot, workflow, rawDecision] = await Promise.all([
       getTenderReleaseSnapshot(prisma, tenderId, actor.id),

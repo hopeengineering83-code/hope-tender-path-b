@@ -31,6 +31,7 @@
  * decide whether to append.
  */
 
+import { tenderAnnexPolicy } from "./annex-policy";
 import { isStrongSupportLevel, normalizeSupportLevel } from "./requirement-evidence-profile";
 import { clientSafeComplianceEvidence } from "./automatic-requirement-coverage";
 type RequirementLite = {
@@ -110,6 +111,15 @@ export function inferProposalLocation(req: RequirementLite): string {
   if (/\b(?:submission|submit(?:ted)?|file\s+name|pdf|format|envelope|deadline)\b/.test(title)
     && !/\b(?:experience|portfolio|reference|expert|cv|team)\b/.test(title)) {
     return "Cover Letter";
+  }
+  // A requirement to attach documents is answered by the Annexes list the
+  // proposal carries when the tender asks for attachments (annex-policy.ts),
+  // not by the section that mentions the same kind of record. "Attach
+  // supporting documents such as … CVs, licenses" was placed under the team
+  // table (2026-10-05).
+  if (/\b(?:annex(?:es)?|appendi(?:x|ces)|attachments?|supporting\s+documents?)\b/.test(title)
+    && tenderAnnexPolicy([`${req.title ?? ""} — ${req.description ?? ""}`]).required) {
+    return "Annexes";
   }
   // The title says what the requirement IS; the description only elaborates.
   // A keyword in the description decides only when the title matches nothing.

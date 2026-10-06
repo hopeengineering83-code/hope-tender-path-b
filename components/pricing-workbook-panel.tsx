@@ -192,8 +192,8 @@ export function PricingWorkbookPanel({ tenderId, canMutate = false }: { tenderId
             <div><p className="text-slate-500">Subtotal</p><p className="font-bold text-slate-900">{money(workbook.totals.subtotal, workbook.currency)}</p></div>
             <div><p className="text-slate-500">Contingency</p><p className="font-bold text-slate-900">{money(workbook.totals.contingency, workbook.currency)}</p></div>
             <div><p className="text-slate-500">VAT</p><p className="font-bold text-slate-900">{money(workbook.totals.vat, workbook.currency)}</p></div>
-            <div><p className="text-slate-500">Withholding</p><p className="font-bold text-slate-900">{money(workbook.totals.withholding, workbook.currency)}</p></div>
-            <div><p className="text-slate-500">Grand total</p><p className="font-bold text-emerald-700">{money(workbook.totals.grandTotal, workbook.currency)}</p></div>
+            <div><p className="text-slate-500">Withholding (deducted by client at payment)</p><p className="font-bold text-slate-900">{money(workbook.totals.withholding, workbook.currency)}</p></div>
+            <div><p className="text-slate-500">Total offer price</p><p className="font-bold text-emerald-700">{money(workbook.totals.grandTotal, workbook.currency)}</p></div>
           </div>
 
           <div className="rounded-xl border border-slate-100 p-3">

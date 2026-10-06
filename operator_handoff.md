@@ -64,7 +64,13 @@ a pass: two intermediate SHAs on this branch (`5e2518ca`, `20d2d7db`) show
 |---|---|---|---|---|---|
 | Codex → Claude Code | `release/consolidated-recovery-20260717` (PR #1175, draft, base `integration/controlled-recovery`) | Consolidated release recovery: 10-provider fallback chain, provider-diversity request planning, durable fallback staging, canonical readiness/export convergence, artifact identity, real DOCX/PDF/ZIP bytes | `lib/ai.ts`, `lib/ai-jobs/analysis-job-service.ts`, `lib/ai-analyze/retry-service.ts`, `lib/engine/*`, `app/api/tenders/[id]/*`, `docs/pr1175-frozen-regression-ledger.md` | Open (draft). Head **`3b11507c`** at the 2026-09-25 recheck; exact-head CI, Dependency Security Audit, Exact-head route/screenshot audit, and Vercel all report `SUCCESS`. The four client-facing defects from run 36074770709 are fixed and covered by 31 focused passing tests. | **DO NOT MERGE OR PROMOTE PRODUCTION.** Continue exact-head Preview artifact acceptance only when requested/authorized. |
 
-#### CURRENT STATE — as of 2026-09-14T15:25Z (head `e59eca99`)
+#### CURRENT STATE — see the newest Session Log entry (2026-10-06)
+
+The block below is the historical 2026-09-14 state and is kept for its
+provider analysis only. Current head, CI, Preview and open owner actions are in
+the newest Session Log entry; verify them yourself before relying on them.
+
+#### HISTORICAL STATE — as of 2026-09-14T15:25Z (head `e59eca99`)
 
 Preview database **healthy** (8/8 tables, schema matches code). Vault restored
 and durably verified 114/114. Owner upload complete; tender extraction 7/7
@@ -206,6 +212,19 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 - Avoid unnecessary Vercel previews; run local checks before pushing work.
 
 ## Session Log
+
+### 2026-10-06 UTC — Claude Code (financial proposal, annexes, background retries)
+
+Started at `a87c6201` (CI, dependency audit, route/screenshot audit and Preview all green on that head).
+
+- **Owner decision (2026-10-06):** "I will attach [annexes] manually. The App work is to finish the proposals and other documents based on the tender criteria."
+- **Annexes.** When the tender asks for supporting documents to be attached (CVs, licences, certificates, references, company profile, registration, financial statements), the proposal now says they "are attached as annexes" instead of "can be provided on request", lists them in the tender's order under "Annexes" before the Declaration, and Section E points the attachment requirement at that list. The owner attaches the originals. `lib/engine/annex-policy.ts`.
+- **Financial proposal — was a shell with no prices.** A tender-required financial proposal was written as the requirement list plus key personnel and projects; the owner's pricing workbook (`PricingWorkbook`/`CostLine`) was read by no document. Now `lib/engine/financial-proposal.ts` builds it from the workbook (offer letter, price schedule, subtotal, contingency, VAT, total, validity, signature table); with no priced line the row waits for the owner ("Owner pricing required"); the app never sets a price. The workbook total subtracted withholding tax from the offer; the offer price is now subtotal + contingency + VAT and withholding is shown as deducted by the client at payment (one `computeWorkbookTotals` for the page and the document).
+- **Financial proposal was never planned.** "The Financial Proposal shall be submitted in a separate envelope" was classified as a separation rule, so the Build Plan held no financial file. A row titled as the financial proposal that requires its submission is now a required file in the FINANCIAL envelope; negatives, prescribed forms and BOQs are unchanged. "The financial proposal shall not be included" (a prohibition) had been read as a required file; fixed in the shared separation rule.
+- **Background retries.** A durable job re-armed for a back-off its worker could not wait out sat QUEUED until the external drain (GitHub cron on `main`, Production only, observed hours apart). The worker now waits for a re-armed job when it fits, otherwise spends its spare time and hands the job to one fresh worker; the tender page's poll (`workflow-center`) wakes a queued job that has been due over a minute with no claimant. Neither path can create a job or start a manual gate.
+- **Matrix:** 18 tender types incl. a two-envelope road design tender priced from a workbook (ETB 477,500.00 + VAT 71,625.00 = 549,125.00; no offer figure in the technical envelope).
+- **Owner/infrastructure actions remaining:** a reliable scheduler for unattended long retries (Vercel Pro cron, or keep the GitHub drain on `main` against Production); SMTP for password reset; provider credit/keys (Mistral rate-limited; Cerebras, OpenRouter, OpenAI, DeepSeek, Anthropic out of credit; Together key invalid); real tenders of other service families to qualify beyond the synthetic matrix; Production promotion.
+- **Merge status:** not reviewed for merge. DO NOT MERGE OR PROMOTE PRODUCTION without the owner's explicit instruction.
 
 ### 2026-10-05 UTC — Claude Code (independence proven hands-off; the office EOI was written as a hospital)
 

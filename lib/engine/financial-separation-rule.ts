@@ -83,6 +83,10 @@ const EXPLICIT_RULE_PHRASES: RegExp[] = [
   /\b(?:do\s+not|must\s+not|shall\s+not)\s+(?:generate|submit|include)\s+(?:a\s+)?financial\s+(?:proposal|offer)\b/,
   /\bwithout\s+(?:a\s+)?(?:financial\s+(?:proposal|offer)|prices?)\b/,
   /\bprice[-\s]?free\b/,
+  // "The financial proposal shall not be included" is a prohibition; the
+  // "not included" form above did not see the modal verb, so it became a
+  // required file (2026-10-06).
+  /\bfinancial\s+(?:proposal|offer)\b[^.]{0,40}\b(?:shall|must|should|will|is\s+to)\s+not\s+be\s+(?:included|submitted|provided|required)\b/,
 ];
 
 /**
