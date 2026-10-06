@@ -17,6 +17,7 @@ import { runTenderEngine } from "../lib/engine/run-tender-engine";
 import { buildAndVerifyBuildPlan } from "../lib/engine/automatic-build-plan";
 import { generateTenderDocuments } from "../lib/engine/generate-elite";
 import { generateMissingPlanFiles } from "../lib/engine/missing-plan-file-generation";
+import { hasUnprovenClaim } from "../lib/engine/detection-patterns";
 
 const sha = (text: string) => createHash("sha256").update(text).digest("hex");
 
@@ -359,6 +360,7 @@ function genericFindings(text: string, fixture: Fixture): string[] {
   hit("article", /\ba (?:[AEIOU][a-z]+) (?:requirement|project|assignment)\b/);
   hit("cross-sector", fixture.forbidden);
   hit("site visit claimed", /Site visit attendance confirmed/i);
+  if (hasUnprovenClaim(text)) out.push("unproven claim the final gate refuses (phantom attachment or relationship claim)");
   hit("duplicated deliverable phrase", /design quantity and resource schedules?,?\s+(?:and\s+)?quantity schedules|quantity schedules,?\s+(?:and\s+)?design quantity and resource/i);
   hit("repeated evidence kind", /\b(from (?:company document|project reference|expert CV|proposal narrative|legal\/registration record))(?: \([^)|]*\))?; \1\b/);
   // Technical Methodology must say how the work is done, not one QA line.

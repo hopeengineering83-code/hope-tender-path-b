@@ -119,7 +119,7 @@ export function inferProposalLocation(req: RequirementLite): string {
   // table (2026-10-05).
   if (/\b(?:annex(?:es)?|appendi(?:x|ces)|attachments?|supporting\s+documents?)\b/.test(title)
     && tenderAnnexPolicy([`${req.title ?? ""} — ${req.description ?? ""}`]).required) {
-    return "Annexes";
+    return "Annex Schedule";
   }
   // The title says what the requirement IS; the description only elaborates.
   // A keyword in the description decides only when the title matches nothing.

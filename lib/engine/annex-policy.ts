@@ -47,20 +47,26 @@ export function tenderAnnexPolicy(requirementTexts: readonly string[]): AnnexPol
 }
 
 /**
- * The proposal as the tender's attachment rule requires it: copies the tender
- * asks for are "attached as annexes", not "available on request", and the
- * annexes are listed before the declaration.
+ * The proposal as the tender's attachment rule requires it. Copies the tender
+ * asks for are "listed in the Annex Schedule", not "available on request",
+ * and the schedule names them in the tender's order before the declaration.
+ *
+ * It never says they are attached: the owner attaches the originals after the
+ * app's package is built, so at generation time that would be a claim with no
+ * package-level proof, which the document quality gate rightly refuses
+ * (PHANTOM_ATTACHMENT_CLAIM). A first version said "attached as annexes" and
+ * auto-finalize stopped on GENERATED_DOCUMENT_QUALITY_FAILED (2026-10-06).
  */
 export function applyAnnexPolicy(markdown: string, policy: AnnexPolicy): string {
   if (!policy.required) return markdown;
   let out = markdown
-    .replace(/\bcan be provided on request\b/gi, "are attached as annexes to this proposal")
-    .replace(/\b(?:are\s+)?available on request\b/gi, "attached as annexes to this proposal");
-  if (/^#\s+Annexes\b/im.test(out)) return out;
+    .replace(/\bcan be provided on request\b/gi, "are listed in the Annex Schedule")
+    .replace(/\b(?:are\s+)?available on request\b/gi, "listed in the Annex Schedule");
+  if (/^#\s+Annex Schedule\b/im.test(out)) return out;
   const list = [
-    "# Annexes",
+    "# Annex Schedule",
     "",
-    "The following documents, required by the tender, are attached to this proposal in the order the tender lists them:",
+    "The supporting documents the tender requires with this proposal, in the order the tender lists them:",
     "",
     ...policy.items.map((item, i) => `- Annex ${i + 1}: ${item}`),
     "",

@@ -31,17 +31,20 @@ describe("the annexes the tender asks for", () => {
     assert.equal(tenderAnnexPolicy(["Proposed Team — Describe the team.", "Methodology — Describe the method."]).required, false);
   });
 
-  it("turn 'on request' into 'attached as annexes' and list them before the declaration", () => {
+  it("turn 'on request' into the Annex Schedule, list them before the declaration, and never claim they are attached", async () => {
     const md = "## A.3 Team\n\nFull curricula vitae can be provided on request.\n\n# Declaration\n\nSupported by documentary evidence available on request.\n";
     const out = applyAnnexPolicy(md, tenderAnnexPolicy([ATTACH]));
     assert.doesNotMatch(out, /on request/);
-    assert.match(out, /Full curricula vitae are attached as annexes to this proposal\./);
-    assert.ok(out.indexOf("# Annexes") < out.indexOf("# Declaration"));
+    assert.match(out, /Full curricula vitae are listed in the Annex Schedule\./);
+    assert.ok(out.indexOf("# Annex Schedule") < out.indexOf("# Declaration"));
+    const { PHANTOM_ATTACHMENT_CLAIM } = await import("../lib/engine/detection-patterns");
+    assert.doesNotMatch(out, PHANTOM_ATTACHMENT_CLAIM);
+    assert.doesNotMatch(out, /\battached\b/i);
     assert.match(out, /- Annex 1: Company profile/);
     assert.equal(applyAnnexPolicy(md, { required: false, items: [] }), md);
   });
 
   it("the compliance matrix points the attachment requirement at the Annexes list", () => {
-    assert.equal(inferProposalLocation({ title: "Annexes / Supporting Documents", description: "Attach supporting documents such as professional CVs and licenses.", requirementType: "ANNEX" } as never), "Annexes");
+    assert.equal(inferProposalLocation({ title: "Annexes / Supporting Documents", description: "Attach supporting documents such as professional CVs and licenses.", requirementType: "ANNEX" } as never), "Annex Schedule");
   });
 });
