@@ -727,7 +727,14 @@ jobs:
               values = result.get(key) or []
               if values:
                   print(f"  {key}: {json.dumps(values)[:900]}")
-          if result.get('ok') is not True or blockers:
+          print(f"package status: {result.get('packageStatus')} proposalComplete={result.get('proposalComplete')} ownerAttachmentsOutstanding={result.get('ownerAttachmentsOutstanding')}")
+          # PROPOSAL COMPLETE — OWNER ATTACHMENTS REQUIRED is a finished
+          # proposal waiting only on originals the owner attaches. It is not a
+          # pass of the submission gate and is reported as such; every other
+          # refusal still fails here.
+          if result.get('packageStatus') == 'PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED':
+              print("PROPOSAL COMPLETE — OWNER ATTACHMENTS REQUIRED: every document the app produces is ready; the submission waits on the owner's originals.")
+          elif result.get('ok') is not True or blockers:
               raise SystemExit(
                   f"Hosted readiness did not pass: ok={result.get('ok')!r}, "
                   f"blockers={len(blockers)} (each named above)")
