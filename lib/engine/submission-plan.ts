@@ -1,4 +1,4 @@
-import { classifySubmissionPlanItem, plannedFileIsARule } from "./submission-plan-classifier";
+import { classifySubmissionPlanItem, financialProposalNameInTitle, plannedFileIsARule, requiresSubmittedFinancialProposal } from "./submission-plan-classifier";
 import { statedSingleSubmissionFile } from "./single-submission-file-rule";
 
 export type SubmissionPlanFormat = "DOCX" | "PDF" | "ZIP" | "XLSX" | "OTHER";
@@ -275,7 +275,16 @@ function buildFileFromRequirement(requirement: TenderRequirementLike, index: num
   });
   if (!classifier.shouldBePlannedFile) return null;
 
+  // A row the tender words as "submit a financial proposal …" is required
+  // whatever priority label the model gave it: "SCORED" says the proposal is
+  // weighted, not that it is optional. A feasibility-study ToR asking for a
+  // technical and a financial proposal got a plan with no financial file
+  // because the row was SCORED (2026-10-06). The file is the deliverable the
+  // title names ("Financial Proposal"), not the row's heading.
+  const financialProposal = !requirement.exactFileName?.trim()
+    && requiresSubmittedFinancialProposal(requirement.title, `${requirement.title ?? ""} ${requirement.description ?? ""}`.toLowerCase());
   const baseName = requirement.exactFileName?.trim()
+    || (financialProposal ? financialProposalNameInTitle(requirement.title) : null)
     || requirement.title?.trim()
     || `${type.toLowerCase()}-${index + 1}`;
   const format = inferFormat(baseName, `${requirement.description ?? ""} ${requirement.restrictions ?? ""}`);
@@ -285,7 +294,7 @@ function buildFileFromRequirement(requirement: TenderRequirementLike, index: num
     canonicalId: `req-${requirement.id}`,
     exactFileName: fileNameWithExtension(baseName, format),
     documentType: documentTypeFromRequirement(requirement),
-    required: requirement.priority?.toUpperCase() === "MANDATORY" || Boolean(requirement.exactFileName),
+    required: requirement.priority?.toUpperCase() === "MANDATORY" || Boolean(requirement.exactFileName) || financialProposal,
     exactOrder: requirement.exactOrder ?? index + 1,
     format,
     envelope: inferEnvelope(requirement.requirementType, baseName, requirement.description),

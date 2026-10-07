@@ -155,6 +155,27 @@ export function classifySubmissionPlanItem(input: ClassifierInput): ClassifierRe
     return result("SUBMISSION_RULE", "Submission delivery channel (how the package is sent), not a deliverable file.");
   }
 
+  // How proposals are evaluated is not something the bidder hands over.
+  // "Technical proposals will be evaluated on a 60% weight" and "Proposals
+  // must score 40% or above on the technical proposal to be considered for
+  // financial evaluation" name the technical proposal, so they fell through
+  // to the deliverable pattern below and a feasibility-study ToR's Build Plan
+  // required a file called "Technical Pass Gate.docx" (2026-10-06). A row
+  // that also tells the bidder to submit or provide something keeps the
+  // branches below.
+  // A row titled as a deliverable ("Technical Proposal: … subject to the
+  // evaluation criteria in Annex 2") is that deliverable.
+  if (!BIDDER_OUTPUT_FILE.test(String(input.title ?? "").toLowerCase()) && statesOnlyHowProposalsAreEvaluated(value)) {
+    return result("INTERNAL_COMPLIANCE_CONTROL", "How proposals are evaluated or scored — answered by the proposal, not a file.");
+  }
+  // The client's payment terms ("Payment will be made upon … approval of
+  // deliverables: 20% … 25% …") are a contract term, not a schedule the
+  // bidder completes. A row asking the bidder to propose one keeps the
+  // branches below.
+  if (PAYMENT_TERMS.test(value) && !BIDDER_DIRECTIVE.test(value)) {
+    return result("INTERNAL_COMPLIANCE_CONTROL", "The client's payment terms — a contract term, not a file.");
+  }
+
   // Formatting rules → INTERNAL_COMPLIANCE_CONTROL (not TECHNICAL_PROPOSAL)
   if (
     /document control|formatting rules|labelling rules|file naming|internal checklist|compliance control|page limit|font size|margin requirement|document format/.test(value) ||
@@ -170,6 +191,17 @@ export function classifySubmissionPlanItem(input: ClassifierInput): ClassifierRe
   // remains fail-closed. This narrower form is a bidder-produced package/index.
   if (/\bannex(?:es)?\s+(?:for|of)\s+(?:supporting\s+(?:documents?|evidence)|company\s+documents?|credentials?)\b/.test(value)) {
     return result("REQUIRED_OUTPUT_FILE", "Bidder-assembled supporting-document annex/package.");
+  }
+
+  // Copies of documents the bidder already holds are attachments the owner
+  // provides, not files the app writes. "Submit scanned copies of Supplier
+  // declaration form, Renewed trade license, and VAT registration
+  // certificate" was read as a form to complete ("declaration form") and the
+  // plan required "Submission Documents.docx", which no generator can
+  // produce (2026-10-06). The owner attaches these (Annex Schedule); an
+  // explicit tender-issued form has already matched the HIGH template check.
+  if (asksForCopiesOfDocuments(value)) {
+    return result("ORIGINAL_EVIDENCE_ATTACHMENT", "Copies of documents the bidder holds — attached by the owner, not generated.");
   }
 
   // Explicit rule language has now had its say, so a weaker template signal
@@ -196,6 +228,24 @@ export function classifySubmissionPlanItem(input: ClassifierInput): ClassifierRe
   if (isProbablyDeliverable(input)) return result("REQUIRED_OUTPUT_FILE", "Exact file name or requirement type indicates a deliverable.");
 
   return result("INTERNAL_COMPLIANCE_CONTROL", "No deliverable pattern matched; defaulting to internal compliance row to avoid inventing a file.");
+}
+
+const EVALUATION_STATEMENT = /\b(?:will\s+be\s+(?:evaluated|scored|assessed|weighted|ranked)|evaluation\s+(?:criteria|weight(?:ing)?|method(?:ology)?|score|process)|weight(?:ed|ing)?\s+(?:of\s+)?\d{1,3}\s*%|\d{1,3}\s*%\s+weight|pass(?:ing)?\s+mark|minimum\s+(?:technical\s+)?score|(?:must|shall|should)\s+score|considered\s+for\s+(?:further|financial)\s+evaluation|qualifying\s+score)/;
+const BIDDER_DIRECTIVE = /\b(?:submit(?:ted)?|provide[ds]?|prepare[ds]?|attach(?:ed)?|enclose[ds]?|furnish(?:ed)?|include[ds]?|fill\s+in|complete\s+and\s+(?:sign|return))\b/;
+
+/** The row states how proposals are evaluated, and asks the bidder for nothing. */
+export function statesOnlyHowProposalsAreEvaluated(value: string): boolean {
+  const v = value.toLowerCase();
+  return EVALUATION_STATEMENT.test(v) && !BIDDER_DIRECTIVE.test(v);
+}
+
+const PAYMENT_TERMS = /\bpayments?\s+(?:will|shall)\s+be\s+(?:made|effected|released|paid)\b|\b(?:indicative\s+)?payment\s+(?:schedule|terms)\s+(?:is|are|will|shall)\b/;
+
+const COPIES_OF_DOCUMENTS = /\b(?:scanned|certified|notari[sz]ed|attested|photo)\s*cop(?:y|ies)\s+of\b|\bcop(?:y|ies)\s+of\s+(?:the\s+|your\s+|a\s+|an\s+|valid\s+|renewed\s+|current\s+)?(?:[\w/-]+\s+){0,3}(?:licen[cs]es?|certificates?|registrations?|permits?|ids?|passports?)\b/;
+
+/** The row asks for copies of documents the bidder already holds. */
+export function asksForCopiesOfDocuments(value: string): boolean {
+  return COPIES_OF_DOCUMENTS.test(value.toLowerCase());
 }
 
 /** Names that identify a bidder-produced deliverable on their own. */
@@ -245,6 +295,16 @@ export function plannedFileIsARule(file: { exactFileName?: string | null; notes?
 const FINANCIAL_PROPOSAL_TITLE = /^\s*(?:\d+[.)]\s*)?(?:the\s+)?(?:financial|commercial|price)\s+(?:proposal|offer|bid)\b/i;
 const FINANCIAL_ABSENCE = /\b(?:no|without|omit(?:ted)?|omission|exclu(?:de|ded|sion)|waive[d]?|not\s+(?:required|requested|applicable|to\s+be\s+submitted|be\s+submitted|included)|later\s+stage|technical\s+(?:proposal\s+|submission\s+|offer\s+)?only|only\s+the\s+technical|do\s+not|shall\s+not|must\s+not|price[-\s]?free)\b/i;
 const SUBMISSION_VERB = /\b(?:shall|must|should|is\s+to|are\s+to|will)\s+(?:be\s+)?(?:submit(?:ted)?|provide[d]?|include[d]?|prepare[d]?|state)\b|\bsubmit\b|\bprovide\b|\bpriced\b/i;
+
+/**
+ * The deliverable a financial-proposal row names, as its title writes it:
+ * "Financial Proposal Content" → "Financial Proposal". Null when the title
+ * does not name one.
+ */
+export function financialProposalNameInTitle(title: string | null | undefined): string | null {
+  const m = /^\s*(?:\d+[.)]\s*)?(?:the\s+)?((?:financial|commercial|price)\s+(?:proposal|offer|bid))\b/i.exec(String(title ?? ""));
+  return m ? m[1]!.replace(/\s+/g, " ") : null;
+}
 
 /** The row's own title names the financial proposal and the row requires it to be submitted. */
 export function requiresSubmittedFinancialProposal(title: string | null | undefined, text: string | null | undefined): boolean {

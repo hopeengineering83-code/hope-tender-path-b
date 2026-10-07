@@ -15,11 +15,14 @@
 
 export type AnnexPolicy = { required: boolean; items: string[] };
 
-const ATTACH_VERB = /\b(?:attach(?:ed|ing)?|enclos(?:e|ed|ing)|annex(?:ed|es)?|appendi(?:x|ces)|supporting\s+documents?|containing\s+all\s+required\s+sections\s+and\s+annexes)\b|\b(?:provide|submit)\s+(?:a\s+|the\s+)?(?:valid\s+|certified\s+)?(?:cop(?:y|ies)|evidence|proof)\s+of\b/i;
+const ATTACH_VERB = /\b(?:attach(?:ed|ing)?|enclos(?:e|ed|ing)|annex(?:ed|es)?|appendi(?:x|ces)|supporting\s+documents?|containing\s+all\s+required\s+sections\s+and\s+annexes)\b|\b(?:provide|submit)\s+(?:a\s+|the\s+)?(?:valid\s+|certified\s+|scanned\s+|notari[sz]ed\s+|attested\s+)?(?:cop(?:y|ies)|evidence|proof)\s+of\b/i;
 
 /** Annex kinds, tested against the tender's own wording; listed in the order the tender first names them. */
 const ANNEX_KINDS: Array<{ name: string; test: RegExp }> = [
   { name: "Company profile", test: /\bcompany\s+profile\b/i },
+  // A declaration the tender issues for the bidder to sign ("Scanned copy of
+  // Supplier declaration form (Annex I)"): the owner signs and attaches it.
+  { name: "Signed declaration form issued with the tender", test: /\b(?:supplier|bidder|vendor|self)[-\s]+declaration\b|\bdeclaration\s+form\b/i },
   { name: "Business licence and registration certificates", test: /\bbusiness\s+licen[cs]e|\bcommercial\s+registration|\bregistration\s+certificate|\btrade\s+licen[cs]e/i },
   { name: "Tax clearance, VAT and TIN certificates", test: /\btax\s+clearance|\bVAT\b|\bTIN\b/ },
   { name: "Curricula vitae of the proposed experts", test: /\bCVs?\b|\bcurricul(?:um|a)\s+vita/i },
