@@ -1,3 +1,4 @@
+import { requiresSubmittedFinancialProposal } from "./submission-plan-classifier";
 import type { CompanyKnowledgeSnapshot, ComplianceResult, MatchingResult, RequirementDraft } from "./types";
 import { isPackagingOrFormatRequirement, isSubmissionInstructionRequirement } from "./packaging-requirement-rule";
 
@@ -246,6 +247,19 @@ export function buildCompliance(
         knowledge.legalRecords[0]?.title,
         legalDocument?.originalFileName,
       );
+    } else if (req.requirementType === "FINANCIAL" && requiresSubmittedFinancialProposal(req.title, `${req.title ?? ""} ${req.description ?? ""}`.toLowerCase())) {
+      // "The Financial Proposal shall be submitted …" asks for a deliverable,
+      // priced from the owner's pricing workbook — not for financial-capacity
+      // evidence. Checking it against audited statements in the Company Vault
+      // raised a CRITICAL gap that no price could ever clear, so a priced
+      // package still could not be exported. The package gate keeps the
+      // financial file non-exportable until it is priced.
+      supportStrength = 0.75;
+      supportStatus = "EVIDENCE_PENDING_REVIEW";
+      evidenceSummary = "Answered by the financial proposal, priced from the owner's pricing workbook. The package is not exportable until it is priced.";
+      evidenceType = "PROPOSAL_RESPONSE";
+      evidenceSource = "Owner pricing workbook";
+      evidenceReference = undefined;
     } else if (["FINANCIAL", "FINANCIAL_CAPACITY"].includes(req.requirementType)) {
       supportStrength = financialCount > 0 ? 1 : 0;
       supportStatus = supportStrength >= 0.75 ? "SUPPORTED" : supportStrength > 0 ? "EVIDENCE_PENDING_REVIEW" : "UNSUPPORTED";

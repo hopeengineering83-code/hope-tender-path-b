@@ -75,6 +75,9 @@ if (RUN_DB) {
 
 const TENDER_FILE_NAME = "MWE-RFP-2026-0114.txt";
 const PLAN_FILES = ["01-Technical-Proposal.docx", "02-Company-Profile.docx"];
+// The financial envelope's one file, priced from the owner's workbook.
+const FINANCIAL_FILE = "03-Financial-Proposal.docx";
+const ALL_PLAN_FILES = [...PLAN_FILES, FINANCIAL_FILE];
 
 const TENDER_TEXT = `[Page 1]
 Ministry of Water and Energy
@@ -98,11 +101,13 @@ financial information.
 Files must be named and ordered exactly as follows:
 1. 01-Technical-Proposal.docx
 2. 02-Company-Profile.docx
+3. 03-Financial-Proposal.docx
 
 [Page 3]
 SECTION III - MANDATORY ELIGIBILITY REQUIREMENTS
 The Consultant shall present a technical approach and methodology for the scope of services.
 The Consultant shall submit a company profile describing its organisation, staffing and relevant experience.
+The Financial Proposal shall be submitted in a separate envelope, priced in ETB inclusive of VAT.
 
 [Page 4]
 SECTION IV - EVALUATION CRITERIA
@@ -154,9 +159,10 @@ function analysisAnswer(prompt: string) {
     requirements: [
       requirement("Technical approach and methodology", "The proposal must present a technical approach and methodology covering source assessment, detailed engineering design, preparation of tender documents and construction supervision.", "METHODOLOGY", PLAN_FILES[0], "The Consultant shall present a technical approach and methodology for the scope of services."),
       requirement("Company profile", "The proposal must include a company profile describing the firm's organisation, staffing and relevant experience in water supply engineering.", "COMPANY_PROFILE", PLAN_FILES[1], "The Consultant shall submit a company profile describing its organisation, staffing and relevant experience."),
+      requirement("Financial Proposal", "The Financial Proposal shall be submitted in a separate envelope, priced in ETB inclusive of VAT.", "FINANCIAL", FINANCIAL_FILE, "The Financial Proposal shall be submitted in a separate envelope, priced in ETB inclusive of VAT."),
     ],
-    exactFileNaming: PLAN_FILES,
-    exactFileOrder: PLAN_FILES,
+    exactFileNaming: ALL_PLAN_FILES,
+    exactFileOrder: ALL_PLAN_FILES,
     tenderCategory: "WATER_SUPPLY",
     envelopeMode: "TWO_ENVELOPE",
     clientType: "GOVERNMENT",
@@ -252,6 +258,7 @@ let userId = "";
 let tenderId = "";
 let zipBytes: Buffer | null = null;
 let zipEntries: Array<{ name: string; size: number; text: string }> = [];
+let financialEntries: Array<{ name: string; size: number; text: string }> = [];
 let planItemCount = 0;
 let generatedDocNames: string[] = [];
 let finalDocumentQuality: Array<{ name: string; score: string; numericScore: number; validationStatus: string }> = [];
@@ -357,6 +364,25 @@ before(async () => {
   const intakeBody = await intake.clone().text();
   assert.equal(intake.status, 201, `tender intake failed: ${intake.status} ${intakeBody}`);
   tenderId = JSON.parse(intakeBody).tenderId;
+
+  // ── The owner's prices (the app never sets one) ─────────────────────────
+  // Entered through the pricing workbook's own routes, as the owner would.
+  const pricingRoute = require("../app/api/tenders/[id]/pricing/route");
+  const pricingLinesRoute = require("../app/api/tenders/[id]/pricing/lines/route");
+  const pricingParams = { params: Promise.resolve({ id: tenderId }) };
+  const putWorkbook = await pricingRoute.PUT(new Request(`http://localhost/api/tenders/${tenderId}/pricing`, {
+    method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ currency: "ETB", vatPercent: 15 }),
+  }), pricingParams);
+  assert.ok(putWorkbook.status < 300, `pricing workbook update failed: ${putWorkbook.status} ${await putWorkbook.text()}`);
+  for (const line of [
+    { category: "PERSONNEL", label: "Team Leader / Water Resources Engineer", quantity: 40, unit: "DAY", rate: 9000 },
+    { category: "REIMBURSABLE", label: "Field travel and survey logistics", quantity: 1, unit: "LUMP_SUM", rate: 60000 },
+  ]) {
+    const added = await pricingLinesRoute.POST(new Request(`http://localhost/api/tenders/${tenderId}/pricing/lines`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(line),
+    }), { params: Promise.resolve({ id: tenderId }) });
+    assert.ok(added.status < 300, `pricing line add failed: ${added.status} ${await added.text()}`);
+  }
 
   const runNext = require("../app/api/ai-jobs/run-next/route");
   const wake = (qs: string) => runNext.POST(new Request(`http://localhost/api/ai-jobs/run-next?${qs}`, { method: "POST" })).then((r: Response) => r.text());
@@ -474,6 +500,18 @@ before(async () => {
     const buffer = await loaded.file(name)!.async("nodebuffer");
     zipEntries.push({ name, size: buffer.length, text: await docxVisibleText(buffer) });
   }
+
+  // The financial envelope, downloaded on its own as the app instructs.
+  const financial = await downloadRoute.GET(new Request(`http://localhost/api/tenders/${tenderId}/download?type=zip&envelope=financial`), { params: Promise.resolve({ id: tenderId }) });
+  if (financial.status !== 200) {
+    assert.fail(`financial envelope ZIP was not produced: HTTP ${financial.status} ${(await financial.text()).slice(0, 1500)}`);
+  }
+  const financialZip = await JSZip.loadAsync(Buffer.from(await financial.arrayBuffer()));
+  for (const name of Object.keys(financialZip.files)) {
+    if (financialZip.files[name].dir) continue;
+    const buffer = await financialZip.file(name)!.async("nodebuffer");
+    financialEntries.push({ name, size: buffer.length, text: await docxVisibleText(buffer) });
+  }
 });
 
 after(async () => {
@@ -535,8 +573,8 @@ dbDescribe("the pipeline produces a real, downloadable ZIP", () => {
   });
 
   it("generated every file the confirmed plan requires, with no manual recovery click", () => {
-    assert.equal(planItemCount, PLAN_FILES.length, `the confirmed plan should carry ${PLAN_FILES.length} files, got ${planItemCount}`);
-    for (const planFile of PLAN_FILES) {
+    assert.equal(planItemCount, ALL_PLAN_FILES.length, `the confirmed plan should carry ${ALL_PLAN_FILES.length} files, got ${planItemCount}`);
+    for (const planFile of ALL_PLAN_FILES) {
       assert.ok(
         generatedDocNames.some((n) => n.toLowerCase() === planFile.toLowerCase()),
         `the confirmed plan required "${planFile}" but generation produced no document row for it (rows: ${generatedDocNames.join(", ") || "none"}). ` +
@@ -580,6 +618,24 @@ dbDescribe("the pipeline produces a real, downloadable ZIP", () => {
       assert.equal(doc.validationStatus, "VALIDATED", `${doc.name} did not complete canonical validation`);
       assert.equal(doc.score, "GOOD", `${doc.name} was marked validated with canonical quality ${doc.score} (${doc.numericScore}/100)`);
       assert.ok(doc.numericScore >= 80, `${doc.name} passed below the unchanged 80/100 quality threshold`);
+    }
+  });
+
+  it("prices the financial proposal from the owner's workbook, in its own envelope", () => {
+    assert.deepEqual(financialEntries.map((e) => e.name), [FINANCIAL_FILE], "the financial envelope holds exactly the planned financial file");
+    const text = financialEntries[0]!.text;
+    // 40 days x 9,000 + 60,000 lump sum = 420,000.00; VAT 15% = 63,000.00.
+    assert.match(text, /ETB 420,000\.00/, "subtotal");
+    assert.match(text, /ETB 63,000\.00/, "VAT at the workbook's 15%");
+    assert.match(text, /ETB 483,000\.00/, "offer total");
+    assert.match(text, /Team Leader \/ Water Resources Engineer/, "the priced line is the owner's");
+  });
+
+  it("keeps every price out of the technical envelope", () => {
+    for (const entry of zipEntries) {
+      for (const figure of [/483,000/, /420,000/, /63,000/, /9,000\.00/]) {
+        assert.doesNotMatch(entry.text, figure, `${entry.name} leaks the financial offer (${figure})`);
+      }
     }
   });
 
