@@ -894,6 +894,39 @@ export async function getFinalSubmissionReadiness(
       recommendedAction: "Fill the missing critical Tender Details — client/procuring entity, deadline, submission method — before final proposal generation.",
     });
   }
+  // A single combined PDF the tender says must contain its annexes must carry
+  // the verified Vault originals (annex-bundle.ts). Missing originals are the
+  // owner's to supply; a file that does not bind the planned set is not final.
+  {
+    const { loadAnnexBundlePlan } = await import("./annex-bundle-loader");
+    const { annexBundleIdentity, readAnnexBundleMarker } = await import("./annex-bundle");
+    const annex = await loadAnnexBundlePlan(opts.tenderId, opts.userId, client).catch(() => null);
+    if (annex?.plan.applies) {
+      const combined = annex.plan.combinedFileName!;
+      if (annex.plan.missing.length > 0) {
+        tenderLevelBlockers.push({
+          category: "COMBINED_FILE_ANNEX_MISSING",
+          severity: "HIGH",
+          title: `"${combined}" must contain the tender's annexes. Not available as verified PDF originals: ${annex.plan.missing.map((m) => `${m.kind} (${m.reason})`).join("; ")}.`,
+          recommendedAction: "Upload the verified PDF original of each to the Company Vault — signed where the tender requires a signature. The combined file is rebuilt with them automatically.",
+        });
+      } else {
+        const row = generatedDocuments.find((doc) => String((doc as { exactFileName?: string | null }).exactFileName ?? "").toLowerCase() === combined.toLowerCase()
+          && typeof (doc as { fileContent?: string | null }).fileContent === "string" && ((doc as { fileContent?: string | null }).fileContent ?? "").length > 0);
+        if (row && annex.plan.parts.length > 0) {
+          const marker = await readAnnexBundleMarker(Buffer.from((row as { fileContent: string }).fileContent, "base64"));
+          if ((marker?.bound ?? []).join(",") !== annexBundleIdentity(annex.plan).join(",")) {
+            tenderLevelBlockers.push({
+              category: "COMBINED_FILE_ANNEXES_NOT_BOUND",
+              severity: "HIGH",
+              title: `"${combined}" does not yet contain every verified annex original the tender requires.`,
+              recommendedAction: "The combined file is rebuilt automatically with the current verified originals; if this persists, re-run Run Engine.",
+            });
+          }
+        }
+      }
+    }
+  }
   // Unresolved CRITICAL compliance gaps hard-block final export at the
   // actual download route regardless of category — mirror that here so
   // this readiness signal cannot show Ready while the download link

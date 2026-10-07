@@ -997,6 +997,15 @@ async function runPdfFinalization(
   let skipped = 0;
   let failed = 0;
 
+  // A tender whose whole submission is one PDF that must contain the annexes
+  // gets its verified Vault originals bound in after the proposal
+  // (annex-bundle.ts). Anything else is unchanged.
+  const { loadAnnexBundlePlan } = await import("../engine/annex-bundle-loader");
+  const { annexBundleIdentity, bindAnnexBundle, readAnnexBundleMarker } = await import("../engine/annex-bundle");
+  const annex = await loadAnnexBundlePlan(tenderId, userId).catch(() => null);
+  const isCombinedFile = (fileName: string) => Boolean(annex?.plan.applies && annex.plan.combinedFileName?.toLowerCase() === fileName.toLowerCase());
+  const plannedBundle = annex ? annexBundleIdentity(annex.plan) : [];
+
   for (const requiredName of requiredPdfNames) {
     // Check if the required PDF has actually been PRODUCED.
     //
@@ -1033,7 +1042,13 @@ async function runPdfFinalization(
       skipped++;
       continue;
     }
-    if (existingPdf && existingPdf.updatedAt >= sourceDoc.updatedAt) {
+    // A combined file is current only when it binds exactly the planned originals.
+    const bundleCurrent = !isCombinedFile(requiredName) || await (async () => {
+      if (!existingPdf?.fileContent) return false;
+      const marker = await readAnnexBundleMarker(Buffer.from(existingPdf.fileContent, "base64"));
+      return (marker?.bound ?? []).join(",") === plannedBundle.join(",");
+    })();
+    if (existingPdf && existingPdf.updatedAt >= sourceDoc.updatedAt && bundleCurrent) {
       skipped++;
       continue;
     }
@@ -1091,7 +1106,15 @@ async function runPdfFinalization(
         // hardcoded assertion it replaces: unknown or corrupt bytes now fail
         // closed into the surrounding catch (failed++) instead of being
         // recorded as VERIFIED.
-        const pdfBase64 = result.bytes.toString("base64");
+        let pdfBytes = result.bytes;
+        if (annex && isCombinedFile(requiredName) && annex.plan.parts.length > 0) {
+          const bundled = await bindAnnexBundle(result.bytes, annex.plan, annex.loadOriginal);
+          pdfBytes = bundled.bytes;
+          if (bundled.unreadable.length > 0) {
+            logger.warn("[auto-finalize] annex originals could not be bound", { tenderId, unreadable: bundled.unreadable });
+          }
+        }
+        const pdfBase64 = pdfBytes.toString("base64");
         const { verifiedIntegrityDataFromBase64 } = await import("../engine/persisted-byte-integrity");
         const pdfIntegrity = verifiedIntegrityDataFromBase64({
           fileContent: pdfBase64,

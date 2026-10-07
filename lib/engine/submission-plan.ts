@@ -115,7 +115,7 @@ const QUANTITY_REQUIREMENT_TYPES = new Set<SubmissionPlanQuantityRule["requireme
   "DECLARATION",
 ]);
 
-function parseStringArray(value?: string | null): string[] {
+export function parseStringArray(value?: string | null): string[] {
   if (!value) return [];
   try {
     const parsed = JSON.parse(value);

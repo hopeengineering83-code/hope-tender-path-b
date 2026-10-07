@@ -297,7 +297,10 @@ async function readVisibleText(
     // placeholder, AI trace, or current-bid pricing.
     if (buffer.length >= 5 && buffer.subarray(0, 5).toString("ascii") === "%PDF-") {
       const fileName = document?.exactFileName ?? document?.name ?? "generated-document.pdf";
-      const text = await extractTextFromBuffer(buffer, document?.contentMimeType ?? "application/pdf", fileName);
+      // A combined file binds verified Vault originals after the proposal
+      // (annex-bundle.ts); the proposal's own claims are its own pages.
+      const { proposalPagesOnly } = await import("./annex-bundle");
+      const text = await extractTextFromBuffer(await proposalPagesOnly(buffer), document?.contentMimeType ?? "application/pdf", fileName);
       if (!text.trim() || text.startsWith("[Extraction failed for ")) return null;
       return reflowExtractedPdfLines(collapseWhitespacePerLine(text));
     }
