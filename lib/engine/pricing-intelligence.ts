@@ -149,7 +149,8 @@ const WORD_NUMBERS: Record<string, number> = {
   eleven: 11, twelve: 12, fifteen: 15, eighteen: 18, twenty: 20, "twenty-four": 24, thirty: 30, "thirty-six": 36,
 };
 
-function readNumber(token: string): number | null {
+function readNumber(token: string | undefined): number | null {
+  if (!token) return null;
   const cleaned = token.replace(/,/g, "").trim().toLowerCase();
   if (/^\d+(?:\.\d+)?$/.test(cleaned)) return Number(cleaned);
   return WORD_NUMBERS[cleaned] ?? null;
@@ -249,8 +250,10 @@ function prescribedRate(text: string, keyword: RegExp): { rate: number; currency
 function statedCount(text: string, noun: RegExp): { count: number; quote: string } | null {
   for (const s of sentences(text)) {
     if (!noun.test(s)) continue;
-    const m = new RegExp(String.raw`\b${NUM}\s*(?:\(\s*\d+\s*\)\s*)?(?:[a-z-]+\s+){0,2}` + noun.source, "i").exec(s);
-    const n = m ? readNumber(m[1]!) : null;
+    // The noun is grouped: an alternation ("enumerators?|data collectors?")
+    // left bare would match its second branch with no number at all.
+    const m = new RegExp(String.raw`\b${NUM}\s*(?:\(\s*\d+\s*\)\s*)?(?:[a-z-]+\s+){0,2}(?:${noun.source})`, "i").exec(s);
+    const n = m ? readNumber(m[1]) : null;
     if (n && n > 0 && n < 10_000) return { count: n, quote: snippet(s) };
   }
   return null;

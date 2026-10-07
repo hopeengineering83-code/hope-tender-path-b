@@ -56,12 +56,26 @@ describe("Owner Attachment Checklist", () => {
     assert.equal(list.outstanding, 3);
     for (const item of list.items) {
       assert.equal(item.status, "OWNER_TO_ATTACH");
-      assert.match(item.ownerAction, /^Attach the scanned copy of /);
+      assert.match(item.ownerAction, /^Attach the (?:signed )?scanned copy of /);
       assert.match(item.location, /Technical envelope, as Annex \d after the proposal/);
     }
     const text = ownerAttachmentChecklistText("Feasibility study", list);
     assert.match(text, /Do not submit this list/);
     assert.match(text, /page 13/);
+  });
+
+  it("names each document of a list, even when the stored quote was cut short", () => {
+    const list = buildOwnerAttachmentChecklist({
+      requirements: [{ ...separateRequirement, sourceExactQuote: "The following documents must be submitted before the set tender closing: • Scanned copy of Supplier declaration form (please refer to the Annex I of this document) • Scanned copy of Renewed trade license and trade registration certificate • Scanned copy of VAT a" }],
+      declaredFileNames: [], vaultDocuments: [], selectedExpertSourceDocumentIds: [], selectedProjectSourceDocumentIds: [], formsAwaitingOriginal: [], boundHashes: [],
+    });
+    assert.deepEqual(list.items.map((i) => i.document), [
+      "Scanned copy of Supplier declaration form (please refer to the Annex I of this document)",
+      "Scanned copy of Renewed trade license and trade registration certificate",
+      "VAT registration certificate",
+    ]);
+    assert.equal(list.items[2]!.copyType, "SCANNED_COPY", "the copy type of the whole sentence");
+    assert.match(list.items[0]!.ownerAction, /^Attach the signed scanned copy of Supplier declaration form/);
   });
 
   it("for one combined PDF: binds what the Vault holds verified, and names the rest", () => {

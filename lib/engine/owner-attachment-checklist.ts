@@ -97,6 +97,29 @@ function clauseFor(text: string, test: RegExp): string | null {
   return hit ? hit.trim().replace(/[;,.]$/, "").slice(0, 220) : null;
 }
 
+/**
+ * "Submit scanned copies of A, B, and C before …" names three documents; the
+ * one this item is about is the list element that matches it.
+ */
+function listElementFor(sentence: string, test: RegExp): string {
+  const list = /^(.*?\b(?:cop(?:y|ies)|evidence|proof)\s+of\s+)(.+?)(?:\s+(?:before|by|with|on|at|no\s+later)\b.*)?$/i.exec(sentence);
+  if (!list) return sentence;
+  // Commas separate documents; "and" inside one element names one document
+  // ("trade license and trade registration certificate").
+  const elements = list[2]!.split(/,\s*/).map((e) => e.replace(/^(?:and|or)\s+/i, "").trim()).filter(Boolean);
+  if (elements.length < 2) return sentence;
+  const hit = elements.find((e) => test.test(e));
+  return hit ? hit.replace(/[.;,]$/, "") : sentence;
+}
+
+/** A stored quote without its trailing fragment when it was cut mid-word. */
+function completeQuote(quote: string | null | undefined): string {
+  const q = (quote ?? "").trim();
+  if (!q || /[.;:!?)"”]$/.test(q)) return q;
+  const lastBreak = Math.max(q.lastIndexOf("•"), q.lastIndexOf(";"), q.lastIndexOf(". "));
+  return lastBreak > 0 ? q.slice(0, lastBreak) : q;
+}
+
 export function copyTypeOf(text: string): AttachmentCopyType {
   if (/\b(?:certified|notari[sz]ed|attested|authenticated)\b/i.test(text)) return "CERTIFIED_COPY";
   if (/\bscanned\b/i.test(text)) return "SCANNED_COPY";
@@ -139,8 +162,12 @@ export function buildOwnerAttachmentChecklist(input: ChecklistInput): OwnerAttac
     const test = KIND_TEST[kind];
     const req = input.requirements.find((r) => test?.test(`${r.title} ${r.description ?? ""} ${r.sourceExactQuote ?? ""}`)) ?? null;
     const reqText = req ? `${req.sourceExactQuote ?? ""} ${req.description ?? ""} ${req.title}` : "";
-    const clause = (test && clauseFor(reqText, test)) || kind;
-    const copyType = copyTypeOf(clause);
+    // The tender's own words first, then the analysed description. They are
+    // read separately: a quote stored cut short ("… VAT a") must not run on
+    // into the description's first sentence.
+    const sentence = (test && req && (clauseFor(completeQuote(req.sourceExactQuote), test) || clauseFor(req.description ?? "", test) || clauseFor(req.title, test))) || kind;
+    const clause = test ? listElementFor(sentence, test) : sentence;
+    const copyType = copyTypeOf(sentence);
     const ownerSigned = isOwnerSignedKind(kind);
     const signatureRequired = ownerSigned || /\bsign(?:ed|ature)\b/i.test(clause);
     const stampRequired = /\b(?:stamp(?:ed)?|seal(?:ed)?)\b/i.test(clause);
@@ -150,7 +177,8 @@ export function buildOwnerAttachmentChecklist(input: ChecklistInput): OwnerAttac
     const envelope = envelopeOf(reqText);
     const annexNo = index + 1;
     const packaged = mode === "COMBINED_FILE" && verified.length > 0 && verified.every((d) => bound.has(d.contentSha256 || d.id));
-    const what = `${COPY_PHRASE[copyType]} of ${clause.replace(/^(?:a\s+|the\s+)?(?:scanned|certified|notari[sz]ed|attested)?\s*cop(?:y|ies)\s+of\s+/i, "")}${signatureRequired ? ", signed" : ""}${stampRequired ? " and stamped" : ""}`;
+    const qualifiers = [signatureRequired ? "signed" : "", stampRequired ? "stamped" : ""].filter(Boolean).join(" and ");
+    const what = `${qualifiers ? `${qualifiers} ` : ""}${COPY_PHRASE[copyType]} of ${clause.replace(/^(?:a\s+|the\s+)?(?:scanned|certified|notari[sz]ed|attested)?\s*cop(?:y|ies)\s+of\s+/i, "")}`;
     const location = mode === "COMBINED_FILE"
       ? `Inside "${combined}", after the proposal pages, as Annex ${annexNo}`
       : `${envelope === "FINANCIAL" ? "Financial" : "Technical"} envelope, as Annex ${annexNo} after the proposal`;

@@ -125,6 +125,16 @@ describe("Pricing Intelligence", () => {
     }
   });
 
+  it("reads a stated count of any noun form without failing (data collectors, test pits)", () => {
+    const est = estimateTenderPrice(input({
+      tenderText: "The assignment shall be completed within three (3) months. Proposed data-collection tools and methods; data collectors will administer questionnaires. Twelve test pits and laboratory testing are required.",
+    }));
+    const lines = est.scenarios[1]!.lines;
+    assert.ok(lines.some((l) => /enumerators/i.test(l.label)));
+    const pits = lines.find((l) => /test pits/i.test(l.label))!;
+    assert.equal(pits.quantity, 12);
+  });
+
   it("records where an approved line came from", () => {
     const est = estimateTenderPrice(input({ historicalProjects: [project("Water supply feasibility A", 800_000, 4)] }));
     const note = approvedLineNotes(est.scenarios[1]!.lines[0]!, "BALANCED");
