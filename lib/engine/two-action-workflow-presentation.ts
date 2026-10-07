@@ -1,4 +1,4 @@
-import { OWNER_PRICING_ACTION } from "./owner-pricing-stop";
+import { OWNER_PRICING_ACTION, OWNER_PRICING_ACTION_LABEL } from "./owner-pricing-stop";
 import type { CanonicalWorkflowDecision } from "./canonical-workflow-decision";
 
 /**
@@ -43,7 +43,7 @@ export function presentTwoActionWorkflowDecision(
     return {
       ...decision,
       nextRequiredAction: "ENTER_OWNER_PRICING",
-      nextRequiredActionLabel: "Enter prices",
+      nextRequiredActionLabel: OWNER_PRICING_ACTION_LABEL,
       nextRequiredActionReason:
         `Everything the app can prepare is done. ${OWNER_PRICING_ACTION} (${pricing.join("; ")}). The package completes automatically after that.${originals}`,
     };

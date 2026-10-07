@@ -13,7 +13,7 @@
 // All panels must consume this decision object — no panel may compute its
 // own competing "next action" or stage truth.
 
-import { isAwaitingOwnerPricing, OWNER_PRICING_ACTION } from "./owner-pricing-stop";
+import { isAwaitingOwnerPricing, OWNER_PRICING_ACTION, OWNER_PRICING_ACTION_LABEL } from "./owner-pricing-stop";
 import { publicJobFailureMessage } from "../prisma-schema-compatibility";
 
 export type WorkflowBlockerPriority =
@@ -437,7 +437,7 @@ export function buildCanonicalWorkflowDecision(input: {
     MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE: { action: "LINK_VAULT_EVIDENCE", label: "Source evidence required", reason: `Automatic matching found release-qualified FULL/SUBSTANTIAL coverage for ${input.mandatoryFullOrSubstantialCoverageCount}/${Math.max(0, input.mandatoryRequirementCount - (input.mandatoryNotMachineDecidableCount ?? 0))} automatically decidable mandatory requirements. Strengthen partial evidence or add eligible source-backed evidence where none is adequate; no confirmation click can bypass this gate.` },
     PDF_REQUIRED_UNAVAILABLE: { action: "FINALIZE_REQUIRED_PDF", label: "Finalize required PDF", reason: "Required PDF output is unavailable. Finalize the required PDF (from the approved DOCX source) or upload the tender-issued PDF." },
     REQUIRED_DOCS_NOT_GENERATED: (input.awaitingOwnerPricingFileNames?.length ?? 0) > 0
-      ? { action: "ENTER_OWNER_PRICING", label: "Enter prices", reason: `${input.generatedDocumentsTotal}/${input.requiredDocumentsTotal} required documents generated. ${OWNER_PRICING_ACTION}` }
+      ? { action: "ENTER_OWNER_PRICING", label: OWNER_PRICING_ACTION_LABEL, reason: `${input.generatedDocumentsTotal}/${input.requiredDocumentsTotal} required documents generated. ${OWNER_PRICING_ACTION}` }
       : { action: "GENERATE_DOCUMENTS", label: "Generate proposal documents", reason: `${input.generatedDocumentsTotal}/${input.requiredDocumentsTotal} required documents generated.` },
     DOCS_NOT_VALIDATED: { action: "FIX_EXPORT_BLOCKERS", label: "Validate documents", reason: "Generated documents have not been validated." },
     DOCS_NOT_APPROVED_EXPORT_READY: { action: "AUTOMATIC_PROCESSING", label: "Checking machine export eligibility", reason: "The durable worker verifies document validation, byte integrity, format and package eligibility without impersonating human release authority." },

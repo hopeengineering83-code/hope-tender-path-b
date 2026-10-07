@@ -241,8 +241,8 @@ async function pricingRequiredControlContent(tenderTitle: string, fileName: stri
     para(fileName, true),
     para(`Tender: ${tenderTitle}`),
     heading("Owner pricing required"),
-    bullet("The tender requires a priced financial proposal. Prices are the firm's business decision, and the app does not set them."),
-    bullet("Enter the priced lines (quantities, units and rates), currency, VAT and validity in this tender's pricing workbook, then finalise again; or attach the firm's own priced financial proposal under this exact file name."),
+    bullet("The tender requires a priced financial proposal. The app has prepared an estimated price in three scenarios (Competitive, Balanced, Conservative) from the tender and the firm's own evidence; nothing is priced until the owner approves it."),
+    bullet("Review the estimate in this tender's pricing workbook and approve a scenario (adjusting any rate or quantity), and the financial proposal is written and packaged automatically; or attach the firm's own priced financial proposal under this exact file name."),
     bullet("Use any financial form the tender prescribes, and keep the financial proposal in its separate envelope."),
   ];
   const buffer = await Packer.toBuffer(new Document({ sections: [{ properties: {}, children }] }));
@@ -667,7 +667,7 @@ async function buildPlannedRowContent(args: {
       format: "CONTROL",
       validationStatus: "PENDING",
       reviewStatus: "REPLACE_WITH_ORIGINAL",
-      contentSummary: `Owner pricing required for ${args.fileName}: enter priced lines in the tender's pricing workbook (or attach the priced financial proposal). The app does not set prices.`,
+      contentSummary: `Owner pricing required for ${args.fileName}: review and approve the estimated price in the tender's pricing workbook (or attach the priced financial proposal). Nothing is priced until the owner approves.`,
     };
   }
   const replaceWithOriginal = needsOriginalReplacement(args.fileName, args.documentType);

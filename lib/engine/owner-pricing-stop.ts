@@ -11,8 +11,12 @@
  * says the one thing that completes it.
  */
 
+// The app prepares an estimated price in three scenarios (pricing-intelligence.ts);
+// the owner approves or adjusts it. Nothing is priced without that approval.
 export const OWNER_PRICING_ACTION =
-  "Enter the required prices in the pricing workbook or attach the completed financial proposal.";
+  "Review the estimated price and approve or adjust it in the pricing workbook, or attach the completed financial proposal.";
+
+export const OWNER_PRICING_ACTION_LABEL = "Approve price";
 
 const FINANCIAL_PROPOSAL_NAME = /financial[\s._-]+proposal|commercial[\s._-]+proposal|price[\s._-]+(?:proposal|offer)/i;
 

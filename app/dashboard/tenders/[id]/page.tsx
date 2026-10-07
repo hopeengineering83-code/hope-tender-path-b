@@ -23,6 +23,7 @@ import { TenderAICopilotPanel } from "../../../../components/tender-ai-copilot-p
 import { ExportReadinessPanel } from "../../../../components/export-readiness-panel";
 import { EvaluatorObjectionsPanel } from "../../../../components/evaluator-objections-panel";
 import { PricingWorkbookPanel } from "../../../../components/pricing-workbook-panel";
+import { PricingIntelligencePanel } from "../../../../components/pricing-intelligence-panel";
 import { GenerationReadinessPanel } from "../../../../components/generation-readiness-panel";
 import { GenerationActionPanel } from "../../../../components/generation-action-panel";
 import { AIHealthPanel } from "../../../../components/ai-health-panel";
@@ -378,6 +379,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       </WorkflowStage>
 
       <WorkflowStage number={5} title="Final package and submission" description="Reconcile pricing, inspect the exact manifest, verify export readiness, and download the released package.">
+        <PricingIntelligencePanel tenderId={tender.id} canMutate={canMutate} />
         <PricingWorkbookPanel tenderId={tender.id} canMutate={canMutate} />
         <FinalPackageManifestPanel tenderId={tender.id} />
         <ExportReadinessPanel tenderId={tender.id} canMutate={canMutate} />

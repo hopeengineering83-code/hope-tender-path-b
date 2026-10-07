@@ -262,6 +262,9 @@ let financialEntries: Array<{ name: string; size: number; text: string }> = [];
 let planItemCount = 0;
 let generatedDocNames: string[] = [];
 let finalDocumentQuality: Array<{ name: string; score: string; numericScore: number; validationStatus: string }> = [];
+let pricingEstimate: any = null;
+let approvedLineNotesText = "";
+let approvedLeaderLabel = "";
 
 const XML_ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
 
@@ -365,25 +368,6 @@ before(async () => {
   assert.equal(intake.status, 201, `tender intake failed: ${intake.status} ${intakeBody}`);
   tenderId = JSON.parse(intakeBody).tenderId;
 
-  // ── The owner's prices (the app never sets one) ─────────────────────────
-  // Entered through the pricing workbook's own routes, as the owner would.
-  const pricingRoute = require("../app/api/tenders/[id]/pricing/route");
-  const pricingLinesRoute = require("../app/api/tenders/[id]/pricing/lines/route");
-  const pricingParams = { params: Promise.resolve({ id: tenderId }) };
-  const putWorkbook = await pricingRoute.PUT(new Request(`http://localhost/api/tenders/${tenderId}/pricing`, {
-    method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ currency: "ETB", vatPercent: 15 }),
-  }), pricingParams);
-  assert.ok(putWorkbook.status < 300, `pricing workbook update failed: ${putWorkbook.status} ${await putWorkbook.text()}`);
-  for (const line of [
-    { category: "PERSONNEL", label: "Team Leader / Water Resources Engineer", quantity: 40, unit: "DAY", rate: 9000 },
-    { category: "REIMBURSABLE", label: "Field travel and survey logistics", quantity: 1, unit: "LUMP_SUM", rate: 60000 },
-  ]) {
-    const added = await pricingLinesRoute.POST(new Request(`http://localhost/api/tenders/${tenderId}/pricing/lines`, {
-      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(line),
-    }), { params: Promise.resolve({ id: tenderId }) });
-    assert.ok(added.status < 300, `pricing line add failed: ${added.status} ${await added.text()}`);
-  }
-
   const runNext = require("../app/api/ai-jobs/run-next/route");
   const wake = (qs: string) => runNext.POST(new Request(`http://localhost/api/ai-jobs/run-next?${qs}`, { method: "POST" })).then((r: Response) => r.text());
 
@@ -456,6 +440,43 @@ before(async () => {
   // durable, retried job in production, so give it the same retries here.
   const { runAutoFinalizeAfterGeneration } = require("../lib/ai-jobs/auto-finalize-continuation-service");
   const finalizeJob = await prisma.aiJob.findFirst({ where: { tenderId, jobType: "AUTO_FINALIZE" }, select: { id: true } });
+
+  // ── Pricing: the app estimates, the owner approves ──────────────────────
+  // Without an approved price the package stops on the financial proposal,
+  // and says the one thing that completes it.
+  const unpricedRun = await runAutoFinalizeAfterGeneration(tenderId, userId, finalizeJob?.id ?? "pipeline-zip-test");
+  assert.notEqual(unpricedRun.ok, true, "the package must not complete before the owner approves a price");
+  const { OWNER_PRICING_ACTION } = require("../lib/engine/owner-pricing-stop");
+  const readinessRoute = require("../app/api/tenders/[id]/export-readiness/route");
+  const stopped = await (await readinessRoute.GET(new Request(`http://localhost/api/tenders/${tenderId}/export-readiness`), { params: Promise.resolve({ id: tenderId }) })).text();
+  assert.ok(stopped.includes(OWNER_PRICING_ACTION), "the pricing stop names the approve-price action");
+
+  const estimateRoute = require("../app/api/tenders/[id]/pricing/estimate/route");
+  const estimateRes = await estimateRoute.GET(new Request(`http://localhost/api/tenders/${tenderId}/pricing/estimate`), { params: Promise.resolve({ id: tenderId }) });
+  assert.equal(estimateRes.status, 200);
+  pricingEstimate = (await estimateRes.json()).estimate;
+
+  // The owner adjusts the team leader's input and rate and drops every other
+  // line, so the approved figures below are exact.
+  // No expert is selected for this tender and it names no roles, so fees are
+  // one lump sum; either form is approved at the same 360,000 subtotal.
+  const leader = pricingEstimate.scenarios.find((sc: any) => sc.id === "BALANCED").lines.find((l: any) => l.category === "PERSONNEL");
+  assert.ok(leader, `the estimate prices professional fees: ${JSON.stringify(pricingEstimate.scenarios[1].lines.map((l: any) => [l.label, l.unit]))}`);
+  approvedLeaderLabel = leader.label;
+  const approveRoute = require("../app/api/tenders/[id]/pricing/approve/route");
+  const approveRes = await approveRoute.POST(new Request(`http://localhost/api/tenders/${tenderId}/pricing/approve`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      scenario: "BALANCED",
+      rates: { [leader.key]: leader.unit === "LUMP_SUM" ? 360000 : 9000 },
+      quantities: { [leader.key]: 40 },
+      exclude: pricingEstimate.scenarios[1].lines.filter((l: any) => l.key !== leader.key).map((l: any) => l.key),
+    }),
+  }), { params: Promise.resolve({ id: tenderId }) });
+  const approveBody = await approveRes.text();
+  assert.equal(approveRes.status, 200, `approval failed: ${approveBody}`);
+  approvedLineNotesText = (await prisma.costLine.findMany({ where: { workbook: { tenderId } }, select: { notes: true } })).map((l: any) => l.notes ?? "").join(" ");
+
   for (let attempt = 0; attempt < 3; attempt++) {
     const result = await runAutoFinalizeAfterGeneration(tenderId, userId, finalizeJob?.id ?? "pipeline-zip-test");
     if (result.ok === true) break;
@@ -621,19 +642,35 @@ dbDescribe("the pipeline produces a real, downloadable ZIP", () => {
     }
   });
 
-  it("prices the financial proposal from the owner's workbook, in its own envelope", () => {
+  it("estimates the price in three scenarios with a recommendation", () => {
+    assert.ok(pricingEstimate, "no estimate");
+    assert.deepEqual(pricingEstimate.scenarios.map((sc: any) => sc.id), ["AGGRESSIVE", "BALANCED", "CONSERVATIVE"]);
+    assert.equal(pricingEstimate.recommended, "BALANCED");
+    assert.ok(pricingEstimate.recommendation.length > 40);
+    assert.equal(pricingEstimate.currency, "ETB");
+    assert.equal(pricingEstimate.vatPercent, 15);
+    for (const l of pricingEstimate.scenarios[1].lines) {
+      assert.ok(l.quantityBasis && l.rateBasis && l.confidence, `${l.label} lacks its basis or confidence`);
+    }
+    assert.match(approvedLineNotesText, /Approved BALANCED estimate/, "the approved line keeps its basis");
+    assert.match(approvedLineNotesText, /Adjusted by the owner/, "the owner's adjustment is recorded");
+  });
+
+  it("prices the financial proposal from the approved estimate, in its own envelope", () => {
     assert.deepEqual(financialEntries.map((e) => e.name), [FINANCIAL_FILE], "the financial envelope holds exactly the planned financial file");
     const text = financialEntries[0]!.text;
-    // 40 days x 9,000 + 60,000 lump sum = 420,000.00; VAT 15% = 63,000.00.
-    assert.match(text, /ETB 420,000\.00/, "subtotal");
-    assert.match(text, /ETB 63,000\.00/, "VAT at the workbook's 15%");
-    assert.match(text, /ETB 483,000\.00/, "offer total");
-    assert.match(text, /Team Leader \/ Water Resources Engineer/, "the priced line is the owner's");
+    // 360,000.00 subtotal (40 days x 9,000, or the same as a lump sum);
+    // contingency 5% = 18,000.00; VAT 15% of 378,000 = 56,700.00.
+    assert.match(text, /ETB 360,000\.00/, "subtotal");
+    assert.match(text, /ETB 18,000\.00/, "contingency at the Balanced scenario's 5%");
+    assert.match(text, /ETB 56,700\.00/, "VAT at 15%");
+    assert.match(text, /ETB 434,700\.00/, "offer total");
+    assert.ok(approvedLeaderLabel && text.includes(approvedLeaderLabel), `the priced line is the approved one (${approvedLeaderLabel})`);
   });
 
   it("keeps every price out of the technical envelope", () => {
     for (const entry of zipEntries) {
-      for (const figure of [/483,000/, /420,000/, /63,000/, /9,000\.00/]) {
+      for (const figure of [/434,700/, /360,000/, /56,700/]) {
         assert.doesNotMatch(entry.text, figure, `${entry.name} leaks the financial offer (${figure})`);
       }
     }

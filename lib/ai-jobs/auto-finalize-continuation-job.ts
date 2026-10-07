@@ -265,3 +265,47 @@ async function describe(
     ? { jobId: job.id, state: "REARMED", claimable: true, reused }
     : { jobId: job.id, state: "NOT_CLAIMABLE", claimable: false, reused };
 }
+
+export type OwnerInputResumeResult =
+  | { state: "REQUEUED"; jobId: string }
+  | { state: "ALREADY_PENDING"; jobId: string }
+  | { state: "NO_FINALIZE_YET" };
+
+/**
+ * Re-run AUTO_FINALIZE because the owner supplied what it stopped for (an
+ * approved price). The owner's input is new evidence, so the stage gets a fresh
+ * attempt budget rather than the one an earlier "waiting for the owner" stop
+ * used up. It never creates the stage: a tender whose pipeline has not reached
+ * finalization yet will read the owner's input when it does, and nothing here
+ * can start AI Analyze or Run Engine.
+ */
+export async function resumeAutoFinalizeAfterOwnerInput(
+  input: { tenderId: string; userId: string; reason: string },
+  db: any = prisma,
+): Promise<OwnerInputResumeResult> {
+  await prismaReady;
+  const latest = await db.aiJob.findFirst({
+    where: { tenderId: input.tenderId, userId: input.userId, jobType: "AUTO_FINALIZE" },
+    orderBy: { createdAt: "desc" },
+    select: { id: true, status: true, input: true },
+  });
+  if (!latest) return { state: "NO_FINALIZE_YET" };
+  if (latest.status === "QUEUED" || latest.status === "RUNNING") return { state: "ALREADY_PENDING", jobId: latest.id };
+  const previous = parseObject(latest.input);
+  const result = await db.aiJob.updateMany({
+    where: { id: latest.id, status: { in: ["FAILED", "CANCELED", "PARTIAL_SUCCESS", "SUCCEEDED"] } },
+    data: {
+      status: "QUEUED",
+      startedAt: null,
+      finishedAt: null,
+      errorMessage: null,
+      output: null,
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      nextAttemptAt: null,
+      retries: 0,
+      input: JSON.stringify({ ...previous, ownerResume: { reason: input.reason, at: new Date().toISOString() } }),
+    },
+  });
+  return result.count === 1 ? { state: "REQUEUED", jobId: latest.id } : { state: "ALREADY_PENDING", jobId: latest.id };
+}
