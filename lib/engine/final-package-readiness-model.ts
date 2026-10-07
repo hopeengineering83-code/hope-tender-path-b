@@ -1,3 +1,4 @@
+import { OWNER_PRICING_ACTION } from "./owner-pricing-stop";
 import {
   deriveDocumentOutputState,
   exportBlockReason,
@@ -910,7 +911,9 @@ function buildDocumentBlockers(
       documentName: document.displayName,
       generatedDocumentId: document.generatedDocumentId,
       reason: document.blockerReason ?? "Required document is not ready.",
-      nextAction: document.status === "missing"
+      nextAction: (document.blockerReason ?? "").startsWith("Owner pricing required")
+        ? OWNER_PRICING_ACTION
+        : document.status === "missing"
         ? "Generate the planned document or upload the required original."
         : document.expectedFormat === "PDF"
           ? "Upload an approved final PDF mapped to this planned document."

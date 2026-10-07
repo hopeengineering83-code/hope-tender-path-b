@@ -449,7 +449,12 @@ export function scrubSourceDocumentMetadata(markdown: string): string {
 }
 
 const FINANCIAL_KEYWORD_RE = /\b(?:price|pricing|quotation|ETB|USD|EUR|GBP|fee|rate|lump\s+sum|unit\s+price)\b/gi;
-const REFERENCE_COST_CONTEXT_RE = /\b(?:construction|design|supervision|contract|project|feasibility|geotechnical)\s+cost\b|contract\s+value|cost\s+details|comparable\s+project|project\s+reference/i;
+// A completed project's value is portfolio evidence, however the table words
+// it: "Construction Value of Works ETB 9,800,000,000", "Project value ETB
+// 3,500,000,000", "ETB 13.7B Aggregate Value of Projects Delivered"
+// (2026-10-07, a feasibility-study proposal warned of "financial content" on
+// twelve such rows and no own price at all).
+const REFERENCE_COST_CONTEXT_RE = /\b(?:construction|design|supervision|contract|project|feasibility|geotechnical)\s+cost\b|contract\s+value|cost\s+details|comparable\s+project|project\s+reference|\b(?:construction|project|contract|works)\s+value\b|\bvalue\s+of\s+(?:the\s+)?(?:works|projects?|contracts?|services)\b|\bprojects?\s+delivered\b/i;
 const NO_OFFER_DISCLAIMER_RE = /no\s+financial\s+offer|no\s+pricing|not\s+include[sd]?\s+(?:any\s+)?(?:financial|price|pricing)|technical\s+proposal\s+only|do\s+not\s+include\s+any\s+financial/i;
 // "at no fee" / "at no additional fee" / "budgeted into fee" state that
 // something is NOT separately charged — a value-add commitment, the opposite
@@ -458,7 +463,10 @@ const NO_OFFER_DISCLAIMER_RE = /no\s+financial\s+offer|no\s+pricing|not\s+includ
 // "success/completion/defect/response rate" are safety and quality KPIs a
 // methodology or QA/QC section is expected to state, never a price.
 const NO_CHARGE_RE = /\bat\s+no\s+(?:additional\s+)?(?:fee|cost|charge)\b|\bfree\s+of\s+charge\b|\bbudgeted\s+into\b|\bno\s+extra\s+(?:fee|cost|charge)\b/i;
-const NON_FINANCIAL_RATE_RE = /\b(?:frequency|injury|success|completion|defect|rejection|response|conversion|failure|pass|attendance|literacy|vacancy|occupancy|utili[sz]ation|growth|compliance|error|accuracy|retention)\s+rate\b|\brate\s*\([A-Z]+\)/i;
+// Hydraulic and field-test rates ("constant-rate yield testing", "flow
+// rate", "infiltration rate") are measurements a WASH or geotechnical
+// methodology states, never a price.
+const NON_FINANCIAL_RATE_RE = /\b(?:frequency|injury|success|completion|defect|rejection|response|conversion|failure|pass|attendance|literacy|vacancy|occupancy|utili[sz]ation|growth|compliance|error|accuracy|retention|constant|flow|pumping|discharge|infiltration|recharge|abstraction|yield|sampling|step|penetration|settlement|consolidation|loading|strain|deflection)[-\s]rate\b|\brate\s*\([A-Z]+\)/i;
 
 /**
  * How many pricing/currency mentions in `text` read as the FIRM'S OWN price

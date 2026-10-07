@@ -1,4 +1,4 @@
-import { isAwaitingOwnerPricing, OWNER_PRICING_ACTION } from "./owner-pricing-stop";
+import { isAwaitingOwnerPricing, isFinancialProposalFile, OWNER_PRICING_ACTION } from "./owner-pricing-stop";
 import { resolveArtifactQualitySchema, resolvePackageRole } from "./artifact-quality-schema";
 import { requiresEvidenceOfType } from "./mandatory-evidence-requirement";
 import { looksLikeEncodedBytes } from "./encoded-content";
@@ -1055,7 +1055,7 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
     prisma.complianceMatrix.count({ where: { tenderId } }),
     prisma.tenderExpertMatch.count({ where: { tenderId } }),
     prisma.tenderProjectMatch.count({ where: { tenderId } }),
-    prisma.generatedDocument.findMany({ where: { tenderId, generationStatus: "PLANNED" }, select: { exactFileName: true, name: true, documentType: true, reviewStatus: true } }),
+    prisma.generatedDocument.findMany({ where: { tenderId, OR: [{ generationStatus: "PLANNED" }, { reviewStatus: "REPLACE_WITH_ORIGINAL" }] }, select: { exactFileName: true, name: true, documentType: true, reviewStatus: true, generationStatus: true } }),
     mandatoryReqIds.length > 0
       ? prisma.complianceMatrix.findMany({
           where: { tenderId, requirementId: { in: mandatoryReqIds }, supportLevel: { in: ["FULL", "SUBSTANTIAL"] } },
@@ -1085,11 +1085,15 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
   }
   if (requiresExperts && totalExpertMatches === 0) blockers.push(tenderBlocker("NO_TENDER_SPECIFIC_EXPERT_MATCHES", "No tender-specific expert match rows exist.", "Run Engine to create expert matches from the reviewed vault."));
   if (requiresProjects && totalProjectMatches === 0) blockers.push(tenderBlocker("NO_TENDER_SPECIFIC_PROJECT_MATCHES", "No tender-specific project match rows exist.", "Run Engine to create project matches from the reviewed vault."));
-  const plannedDocCount = plannedDocRows.length;
+  const plannedOnly = plannedDocRows.filter((row) => row.generationStatus === "PLANNED");
+  const plannedDocCount = plannedOnly.length;
   if (plannedDocCount > 0) {
     // A financial proposal waiting for prices is completed by the owner, not
-    // by the generator (owner-pricing-stop.ts).
-    const awaitingPricing = plannedDocRows.filter((row) => isAwaitingOwnerPricing(row));
+    // by the generator (owner-pricing-stop.ts). The planned placeholder and
+    // the pricing control row can be separate rows of the same file.
+    const tenderAwaitsPricing = plannedDocRows.some((row) => isAwaitingOwnerPricing(row));
+    const awaitingPricing = plannedOnly.filter((row) => isAwaitingOwnerPricing(row)
+      || (tenderAwaitsPricing && isFinancialProposalFile(`${row.exactFileName ?? ""} ${row.name ?? ""}`, String(row.documentType ?? ""))));
     const action = awaitingPricing.length === plannedDocCount
       ? OWNER_PRICING_ACTION
       : awaitingPricing.length > 0
