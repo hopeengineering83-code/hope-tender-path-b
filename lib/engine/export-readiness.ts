@@ -1315,7 +1315,16 @@ export async function checkDocumentQualityGate(
     const documentType = schema.role === "COMPONENT" && schema.matchedSectionTitle === "Cover Letter"
       ? "COVER_LETTER"
       : (doc.documentType ?? "");
-    const requiredSections = schema.requiredSections;
+    // The whole-submission table is a generic default, not this tender's
+    // instructions. A heading it lists ("Submission Checklist", "Technical
+    // Approach and Methodology") is required here only when the tender itself
+    // names it; otherwise a feasibility-study ToR that asks for a "proposed
+    // methodology" and no checklist failed this check while every export gate
+    // passed the same document. Structure is still judged by the canonical
+    // quality gate (lib/engine/document-quality-gate.ts).
+    const requiredSections = schema.role === "COMPONENT"
+      ? schema.requiredSections
+      : schema.requiredSections.filter((section) => tenderNamesSection(section, ctx, mandatoryRequirements));
     const result = validateGeneratedDocumentQuality(
       text,
       documentType,
@@ -1373,6 +1382,27 @@ export async function checkFullExportReadinessWithQualityGate(opts: {
     tenderLevelBlockers: base.tenderLevelBlockers,
     advisoryWarnings: base.advisoryWarnings,
   };
+}
+
+const sectionWords = (value: string) => value.toLowerCase().replace(/&/g, " and ").replace(/[^a-z0-9]+/g, " ").trim();
+
+/** Whether the tender's own extracted instructions name this section. */
+export function tenderNamesSection(
+  section: string,
+  ctx: Pick<TenderDocumentGenerationContext, "scopeOfServices" | "deliverables" | "evaluationCriteria" | "mandatoryRequirements" | "requiredDocuments">,
+  mandatoryRequirements: readonly string[] = [],
+): boolean {
+  const wanted = sectionWords(section);
+  if (!wanted) return false;
+  const tenderText = sectionWords([
+    ...(ctx.scopeOfServices ?? []),
+    ...(ctx.deliverables ?? []),
+    ...(ctx.evaluationCriteria ?? []),
+    ...(ctx.mandatoryRequirements ?? []),
+    ...(ctx.requiredDocuments ?? []),
+    ...mandatoryRequirements,
+  ].join(" \n "));
+  return ` ${tenderText} `.includes(` ${wanted} `);
 }
 
 export const DEFAULT_REQUIRED_SECTIONS_BY_TYPE: Record<string, string[]> = {

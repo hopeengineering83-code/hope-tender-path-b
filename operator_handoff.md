@@ -64,7 +64,7 @@ a pass: two intermediate SHAs on this branch (`5e2518ca`, `20d2d7db`) show
 |---|---|---|---|---|---|
 | Codex → Claude Code | `release/consolidated-recovery-20260717` (PR #1175, draft, base `integration/controlled-recovery`) | Consolidated release recovery: 10-provider fallback chain, provider-diversity request planning, durable fallback staging, canonical readiness/export convergence, artifact identity, real DOCX/PDF/ZIP bytes | `lib/ai.ts`, `lib/ai-jobs/analysis-job-service.ts`, `lib/ai-analyze/retry-service.ts`, `lib/engine/*`, `app/api/tenders/[id]/*`, `docs/pr1175-frozen-regression-ledger.md` | Open (draft). Head **`3b11507c`** at the 2026-09-25 recheck; exact-head CI, Dependency Security Audit, Exact-head route/screenshot audit, and Vercel all report `SUCCESS`. The four client-facing defects from run 36074770709 are fixed and covered by 31 focused passing tests. | **DO NOT MERGE OR PROMOTE PRODUCTION.** Continue exact-head Preview artifact acceptance only when requested/authorized. |
 
-#### CURRENT STATE — see the newest Session Log entry (2026-10-06)
+#### CURRENT STATE — see the newest Session Log entry (2026-10-07)
 
 The block below is the historical 2026-09-14 state and is kept for its
 provider analysis only. Current head, CI, Preview and open owner actions are in
@@ -212,6 +212,23 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 - Avoid unnecessary Vercel previews; run local checks before pushing work.
 
 ## Session Log
+
+### 2026-10-07 UTC — Claude Code (final production closure: scheduler, pricing stop, leakage, annex binding)
+
+Branch `release/consolidated-recovery-20260717`, PR #1175 (draft, unmerged). Started at `778bf60f`.
+
+- **Scheduler (Vercel Pro).** `vercel.json` crons: `/api/ai-jobs/run-next` every minute, `/api/cron/ai-analyze-retry` every 5 minutes, both `CRON_SECRET`-bearer authenticated. A worker killed mid-stage (Vercel hard stop) is re-queued by the next sweep once its 330 s invocation cap (`WORKER_INVOCATION_HARD_CAP_MS`) has passed, within the stage's attempt budget; past the budget it still FAILS (`failStuckJobs` in `lib/ai-jobs.ts`). Proven on real PostgreSQL: 6 concurrent claimers → exactly one claim; concurrent sweeps re-arm once (`tests/a-killed-worker-does-not-strand-the-package-db.test.ts`). The GitHub "Drain AiJob queue" workflow is now manual/emergency only (no `schedule:`). `/api/admin/diagnostics` reports `scheduler.cronSecretConfigured` (boolean only). **Production cron execution is NOT proven** — Vercel runs crons only on Production. Post-release smoke test: `docs/PRODUCTION_RELIABILITY_RUNBOOK.md` → "Post-release scheduler smoke test".
+- **Pricing stop.** Every surface (document, package, tender-level blockers, next action) now reads "Owner pricing required. Enter the required prices in the pricing workbook or attach the completed financial proposal." with primary action "Enter prices" (`lib/engine/owner-pricing-stop.ts`). Verified on the Preview, WHH tender `a0069e0e`, inspect run 37641861622.
+- **False "financial content detected" warning.** Past project values ("construction value", "value of the works", "projects delivered") and engineering rates (constant-rate pumping test, infiltration rate, …) are no longer counted as the bidder's own price. Real leakage detection is unchanged. Preview: own-price mentions in the WHH Technical Proposal = 0 (run 37641861622).
+- **Financial path.** A FINANCIAL "submit a financial proposal" row is a deliverable answered by the owner's pricing workbook, not a Vault financial-capacity check (`lib/engine/compliance.ts`). `tests/pipeline-produces-real-zip-end-to-end.test.ts` now enters prices via the real routes and downloads the financial envelope: ETB 420,000.00 + VAT 63,000.00 = 483,000.00, file `03-Financial-Proposal.docx` alone; the technical envelope carries none of those figures.
+- **Annex binding.** When the tender requires ONE named PDF "containing all required sections and annexes", AUTO_FINALIZE appends the verified Company Vault PDF originals after the proposal pages, in the tender's order, CVs/reference letters only from the selected experts/projects, deduplicated by content hash, pages copied unchanged (`lib/engine/annex-bundle.ts`, `annex-bundle-loader.ts`). Proposal-only validators read only the proposal pages (`hope-proposal-pages:N` keyword). A missing kind blocks with `COMBINED_FILE_ANNEX_MISSING`; a document pending deletion is never bound. Separate-attachment tenders are unchanged. Real tender `e14d5cc7` (run 37638642551) correctly stops: the Preview Vault holds 6 TEXT summaries and no PDF originals.
+- **Recovery Validate asked for sections the tender never named.** `checkDocumentQualityGate` (POST /validate only) failed the WHH Technical Proposal for "Technical Approach and Methodology, Submission Checklist" from a generic table while every export gate passed it. Whole-submission sections from that table are now required only when the tender names them. Test: `tests/validate-asks-only-for-sections-the-tender-names.test.ts` (fails without the fix).
+- **Hands-off, Preview, WHH `a0069e0e` on `5343169b` (run 37641332770):** AUTO_FINALIZE reached package 2/2 and stops only on Financial Proposal.docx awaiting owner pricing.
+- **Real sectors available on this Preview:** two tenders only — WHH feasibility study (WASH, `a0069e0e`) and Pharo architectural consultancy (healthcare buildings, `e14d5cc7`). No real road, geotechnical, urban-planning or supervision/QS tenders exist; those families are covered only by the synthetic tender-type matrix.
+- **Tests:** full suite with `RUN_DB_INTEGRATION=true` on real PostgreSQL: 12,934 pass, 0 fail, 0 skipped (before the Validate fix; re-run recorded in the PR report). tsc, lint, build clean.
+- **Owner/external actions remaining:** confirm `CRON_SECRET` (≥16 chars) in Vercel Production and run the post-release smoke test; enter the WHH prices in the pricing workbook; upload verified PDF originals (company profile, CVs, reference letters, business licence, tax/VAT certificates, signed declaration) to the Company Vault; upload real tenders of the unproven families; SMTP for password reset; provider credit/keys; Production promotion.
+- **Next action:** owner enters WHH prices → package completes automatically; then owner release approval.
+- **Merge status:** not merged. DO NOT MERGE OR PROMOTE PRODUCTION without the owner's explicit instruction.
 
 ### 2026-10-06 UTC — Claude Code (financial proposal, annexes, background retries)
 
