@@ -1781,6 +1781,18 @@ jobs:
           # from every reader, so the package verdict is printed again here:
           # what blocks the ZIP, the Build Plan items, and why each document
           # is held.
+          # The Company Vault's originals: format and integrity decide whether
+          # one can be bound into a combined submission file.
+          curl -sS --connect-timeout 15 --max-time 60 -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/company/documents?limit=100" > /tmp/vault-docs.json || true
+          python3 - <<'PYEOF' || true
+          import json
+          d = json.load(open('/tmp/vault-docs.json', encoding='utf-8'))
+          items = d.get('items') or []
+          print(f"================ COMPANY VAULT DOCUMENTS ({len(items)}) ================")
+          for it in items:
+              print(f"  {it.get('category'):<20} format={it.get('detectedFormat')} mime={it.get('mimeType')} integrity={it.get('integrityStatus')} name={it.get('originalFileName')}")
+          PYEOF
           for f in /tmp/canonical-blockers.txt /tmp/build-plan-inputs.txt /tmp/document-quality-blockers.txt; do
             echo "================ $f ================"
             [ -s "$f" ] && cut -c1-400 "$f" | head -90 || echo "(empty)"

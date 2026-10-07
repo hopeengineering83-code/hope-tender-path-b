@@ -7,6 +7,7 @@
  */
 
 import { prisma as defaultPrisma } from "../prisma";
+import { COMPANY_DOCUMENT_PENDING_DELETE_MARKER } from "../company-document-durable-deletion";
 import { getStorageAdapter } from "../storage";
 import { requireVerifiedPersistedFileBytes } from "./persisted-byte-integrity";
 import { statedSingleSubmissionFile } from "./single-submission-file-rule";
@@ -59,7 +60,12 @@ export async function loadAnnexBundlePlan(tenderId: string, userId: string, db: 
   const combinedFileName = combinedSubmissionFileName(tender.requirements, parseStringArray(tender.exactFileNaming));
   if (!combinedFileName) return empty;
 
-  const vault = await db.companyDocument.findMany({ where: { company: { userId } }, select: VAULT_SELECT, orderBy: { createdAt: "asc" } });
+  // A document being deleted is never bound in.
+  const vault = await db.companyDocument.findMany({
+    where: { company: { userId }, NOT: { metadata: { contains: COMPANY_DOCUMENT_PENDING_DELETE_MARKER } } },
+    select: VAULT_SELECT,
+    orderBy: { createdAt: "asc" },
+  });
   const byId = new Map<string, any>(vault.map((doc: any) => [doc.id, doc]));
   const plan = planAnnexBundle({
     combinedFileName,
