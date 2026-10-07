@@ -10,6 +10,8 @@ import { prisma, prismaReady } from "../lib/prisma";
 import { approvePricingEstimate } from "../lib/engine/pricing-approval";
 import { loadPricingEstimate } from "../lib/engine/pricing-intelligence-loader";
 import { executeTenderDeletion } from "../lib/tender/delete-tender";
+import { addRateCardEntries, loadRateCard } from "../lib/engine/pricing-rate-card";
+import { resumeAutoFinalizeAfterOwnerInput } from "../lib/ai-jobs/auto-finalize-continuation-job";
 
 if (process.env.RUN_DB_INTEGRATION !== "true") {
   console.error("FATAL: RUN_DB_INTEGRATION=true is required for this test suite.");
@@ -59,20 +61,28 @@ describe("the owner approves the estimated price — real PostgreSQL", () => {
     await prisma.user.deleteMany({ where: { id: userId } });
   });
 
-  it("prepares quantities by the roles the tender names, without inventing rates", async () => {
+  it("cold start: prices the named roles from the cost model and leaves a line no source covers unpriced", async () => {
     const estimate = await loadPricingEstimate(tenderId, userId, prisma);
     assert.ok(estimate);
-    assert.equal(estimate!.status, "INSUFFICIENT_EVIDENCE");
-    const labels = estimate!.scenarios[1]!.lines.map((l) => l.label);
-    assert.deepEqual(labels.filter((l) => /Leader|Engineer/.test(l)), ["Team Leader", "Water Engineer"]);
-    assert.ok(estimate!.scenarios[1]!.lines.every((l) => l.rate === null));
+    assert.equal(estimate!.status, "PARTIAL");
+    const lines = estimate!.scenarios[1]!.lines;
+    assert.deepEqual(lines.map((l) => l.label).filter((l) => /Leader|Engineer/.test(l)), ["Team Leader", "Water Engineer"]);
+    for (const l of lines.filter((x) => x.category === "PERSONNEL")) {
+      assert.equal(l.rateSource, "Cost model (public salary scale)");
+      assert.equal(l.confidence, "LOW");
+      assert.ok(l.build && l.rate! > l.build.costRate, "priced above its day cost");
+    }
+    const workshops = lines.find((l) => /workshop/i.test(l.label))!;
+    assert.equal(workshops.rate, null, "no public source prices a workshop; none is invented");
+    assert.ok(estimate!.warnings.some((w) => w.code === "NO_RATE" && /workshop/i.test(w.message)));
+    assert.ok(estimate!.benchmarksUsed.some((b) => b.sourceUrl && /addisstandard/.test(b.sourceUrl)));
   });
 
   it("refuses approval while a line has no rate, and changes nothing", async () => {
     const result = await approvePricingEstimate({ tenderId, userId, actorLabel: "owner@example.test", request: { scenario: "BALANCED" } }, prisma);
     assert.equal(result.ok, false);
     assert.equal((result as any).code, "PRICING_LINES_UNPRICED");
-    assert.ok((result as any).unpriced.length >= 3);
+    assert.ok((result as any).unpriced.some((u: { label: string }) => /workshop/i.test(u.label)));
     assert.equal(await prisma.costLine.count({ where: { workbook: { tenderId } } }), 0);
     assert.equal((await prisma.aiJob.findUniqueOrThrow({ where: { id: finalizeJobId } })).status, "FAILED");
   });
@@ -126,6 +136,41 @@ describe("the owner approves the estimated price — real PostgreSQL", () => {
       assert.ok(leader.sourceDate);
     } finally {
       await prisma.$transaction((tx) => executeTenderDeletion(tx, second.id, "pricing-approve-test", userId));
+    }
+  });
+
+  it("a rate-card entry prices the line on every later estimate; an unsourced entry is refused whole", async () => {
+    const refused = await addRateCardEntries(userId, [
+      { category: "WORKSHOP", unit: "EACH", currency: "ETB", median: 40_000, label: "Validation workshop", source: "HAEC 2026 venue quotes", effectiveDate: "2026-09-01" },
+      { category: "WORKSHOP", unit: "EACH", currency: "ETB", median: 40_000, label: "No source" },
+    ], prisma);
+    assert.equal(refused.ok, false);
+    assert.equal((refused as any).code, "INVALID_ENTRIES");
+    assert.equal((await loadRateCard(userId, prisma)).owner.length, 0, "nothing saved from a half-valid import");
+
+    const added = await addRateCardEntries(userId, [
+      { category: "WORKSHOP", serviceKey: "workshops", unit: "EACH", currency: "ETB", low: 35_000, median: 40_000, high: 48_000, label: "Validation workshop (one day, 40 people)", source: "HAEC 2026 venue quotes", effectiveDate: "2026-09-01" },
+    ], prisma);
+    assert.equal(added.ok, true, JSON.stringify(added));
+    const estimate = (await loadPricingEstimate(tenderId, userId, prisma))!;
+    const [agg, bal, con] = estimate.scenarios;
+    for (const [sc, rate] of [[agg, 35_000], [bal, 40_000], [con, 48_000]] as const) {
+      const workshops = sc!.lines.find((l) => /workshop/i.test(l.label))!;
+      assert.equal(workshops.rate, rate, `${sc!.id} uses the rate card's spread`);
+      assert.equal(workshops.rateSource, "Owner rate card");
+    }
+    assert.ok(estimate.benchmarksUsed.some((b) => b.origin === "OWNER"));
+  });
+
+  it("does not re-run an older revision's finalize while a newer Run Engine chain is in flight", async () => {
+    await prisma.aiJob.update({ where: { id: finalizeJobId }, data: { status: "SUCCEEDED" } });
+    const engine = await prisma.aiJob.create({ data: { userId, tenderId, jobType: "PROPOSAL_GENERATION", status: "RUNNING", input: JSON.stringify({ analysisRevision: "r2" }) } });
+    try {
+      const resumed = await resumeAutoFinalizeAfterOwnerInput({ tenderId, userId, reason: "PRICING_ESTIMATE_APPROVED" }, prisma);
+      assert.equal(resumed.state, "NEWER_RUN_IN_PROGRESS");
+      assert.equal((await prisma.aiJob.findUniqueOrThrow({ where: { id: finalizeJobId } })).status, "SUCCEEDED", "the superseded revision's finalize is left alone");
+    } finally {
+      await prisma.aiJob.delete({ where: { id: engine.id } });
     }
   });
 });

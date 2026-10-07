@@ -28,6 +28,8 @@
  * (pricing-intelligence-loader.ts) gathers the evidence.
  */
 
+import { SEED_BENCHMARKS, BENCHMARK_STALE_AFTER_MONTHS, benchmarkAgeMonths, classifyRole, findBenchmark, seniorityOf, type BenchmarkCategory, type PricingBenchmark } from "./pricing-benchmarks";
+
 export type PricingConfidence = "HIGH" | "MEDIUM" | "LOW" | "NONE";
 export type PricingScenarioId = "AGGRESSIVE" | "BALANCED" | "CONSERVATIVE";
 
@@ -60,6 +62,8 @@ export type PricingEvidenceInput = {
   /** Rates the owner approved on other tenders. */
   priorRates: Array<{ label: string; category: string; unit: string; rate: number; currency: string; date: string | Date; tenderTitle?: string | null }>;
   companyDefaultCurrency?: string | null;
+  /** The benchmark registry: the shipped public figures plus the owner's own. Defaults to the shipped figures. */
+  benchmarks?: readonly PricingBenchmark[];
   now: Date;
 };
 
@@ -82,6 +86,21 @@ export type EstimateLine = {
   confidence: PricingConfidence;
   assumptions: string[];
   expertId?: string | null;
+  /**
+   * How the billed rate is built when it starts from a cost (a salary, an
+   * allowance): cost per unit, then overhead and margin. Absent for a rate
+   * that is already a fee (an approved rate, a fee benchmark, a tender rate).
+   */
+  build?: { costRate: number; overheadPct: number; marginPct: number } | null;
+};
+
+export type PricingWarning = { code: "STALE_BENCHMARK" | "WEAK_COMPARATOR" | "FOREIGN_CURRENCY" | "MISSING_QUANTITY" | "ABNORMAL_MARGIN" | "BELOW_COST" | "BUDGET_EXCEEDED" | "NO_RATE"; message: string };
+
+export type EvaluationModel = {
+  model: "QCBS" | "LCS" | "QBS" | "FIXED_BUDGET" | "UNKNOWN";
+  technicalWeight: number | null;
+  financialWeight: number | null;
+  basis: string;
 };
 
 export type PricingScenario = {
@@ -89,7 +108,11 @@ export type PricingScenario = {
   label: string;
   description: string;
   contingencyPct: number;
+  overheadPct: number;
+  marginPct: number;
   lines: EstimateLine[];
+  /** Cost → overhead → margin, for lines built from a cost; fee-rate lines are summed separately. */
+  build: { directCost: number; overhead: number; margin: number; feeLines: number };
   subtotal: number;
   contingency: number;
   vat: number;
@@ -120,6 +143,10 @@ export type PricingEstimate = {
   recommendation: string;
   /** Lines and assumptions the owner should look at before approving. */
   lowConfidence: string[];
+  warnings: PricingWarning[];
+  evaluation: EvaluationModel;
+  /** The benchmarks this estimate used, with their sources. */
+  benchmarksUsed: Array<Pick<PricingBenchmark, "id" | "label" | "source" | "sourceUrl" | "sourceType" | "effectiveDate" | "lastVerified" | "confidence" | "origin">>;
   evidenceUsed: string[];
   generatedAt: string;
 };
@@ -441,17 +468,68 @@ function toIsoDate(value: string | Date): string {
   return Number.isNaN(d.getTime()) ? String(value) : d.toISOString().slice(0, 10);
 }
 
-const SCENARIOS: Array<{ id: PricingScenarioId; label: string; description: string; factor: number; budgetShare: number; contingencyPct: number }> = [
-  { id: "AGGRESSIVE", label: "Competitive", description: "Lowest defensible price: evidence rates trimmed 5%, the low quartile of comparable past contracts (at least 8% under their median), no contingency.", factor: 0.95, budgetShare: 0.88, contingencyPct: 0 },
-  { id: "BALANCED", label: "Balanced (recommended)", description: "Evidence rates as approved before, the median of comparable past contracts, 5% contingency.", factor: 1.0, budgetShare: 0.94, contingencyPct: 5 },
-  { id: "CONSERVATIVE", label: "Conservative", description: "Protects margin: evidence rates plus 7%, the high quartile of comparable past contracts (at least 8% over their median), 10% contingency.", factor: 1.07, budgetShare: 0.99, contingencyPct: 10 },
+const SCENARIOS: Array<{ id: PricingScenarioId; label: string; description: string; factor: number; budgetShare: number; contingencyPct: number; overheadPct: number; marginPct: number }> = [
+  { id: "AGGRESSIVE", label: "Competitive", description: "Lowest defensible price: evidence rates trimmed 5%, the low end of each benchmark and of comparable past contracts, cost-built personnel at 80% overhead and 5% margin, no contingency.", factor: 0.95, budgetShare: 0.88, contingencyPct: 0, overheadPct: 80, marginPct: 5 },
+  { id: "BALANCED", label: "Balanced (recommended)", description: "Evidence rates as approved before, benchmark medians, cost-built personnel at 100% overhead and 10% margin, 5% contingency.", factor: 1.0, budgetShare: 0.94, contingencyPct: 5, overheadPct: 100, marginPct: 10 },
+  { id: "CONSERVATIVE", label: "Conservative", description: "Protects margin and risk: evidence rates plus 7%, the high end of each benchmark and of comparable past contracts, cost-built personnel at 120% overhead and 15% margin, 10% contingency.", factor: 1.07, budgetShare: 0.99, contingencyPct: 10, overheadPct: 120, marginPct: 15 },
 ];
+
+/**
+ * The tender's evaluation model: how much price weighs. QCBS weights are read
+ * from "technical … 60% … financial … 40%"; least-cost and quality-based
+ * selection from their names. Nothing is assumed when the tender says nothing.
+ */
+export function evaluationModelOf(text: string): EvaluationModel {
+  for (const s of sentences(text)) {
+    if (/\b(?:least[\s-]+cost|lowest\s+(?:evaluated\s+)?(?:price|cost|bid)|\bLCS\b)/i.test(s)) return { model: "LCS", technicalWeight: null, financialWeight: null, basis: `stated by the tender: "${snippet(s)}"` };
+    if (/\b(?:quality[\s-]+based\s+selection|\bQBS\b)/i.test(s)) return { model: "QBS", technicalWeight: 100, financialWeight: 0, basis: `stated by the tender: "${snippet(s)}"` };
+    if (/\bfixed[\s-]+budget\b|\bFBS\b/i.test(s)) return { model: "FIXED_BUDGET", technicalWeight: null, financialWeight: null, basis: `stated by the tender: "${snippet(s)}"` };
+  }
+  const t = /\btechnical\b[^.%]{0,80}?(\d{1,3})\s*%|(\d{1,3})\s*%\s*(?:for\s+)?(?:the\s+)?technical/i.exec(text.replace(/\s+/g, " "));
+  const f = /\bfinancial\b[^.%]{0,80}?(\d{1,3})\s*%|(\d{1,3})\s*%\s*(?:for\s+)?(?:the\s+)?financial/i.exec(text.replace(/\s+/g, " "));
+  const tw = t ? Number(t[1] ?? t[2]) : null;
+  const fw = f ? Number(f[1] ?? f[2]) : null;
+  if (tw !== null && fw !== null && tw + fw === 100) {
+    return { model: "QCBS", technicalWeight: tw, financialWeight: fw, basis: `technical ${tw}% / financial ${fw}%, stated by the tender` };
+  }
+  return { model: "UNKNOWN", technicalWeight: null, financialWeight: null, basis: "the tender states no evaluation weights" };
+}
+
+/** The per-diem tier for where the field work is. */
+function perDiemTier(text: string): { key: string; basis: string } {
+  if (/\b(?:woredas?|kebeles?|rural|villages?|communit(?:y|ies))\b/i.test(text)) return { key: "per_diem_woreda", basis: "field work in woredas/kebeles" };
+  if (/\b(?:zones?|zonal)\b/i.test(text)) return { key: "per_diem_zonal_capital", basis: "field work in zones" };
+  if (/\bregion(?:al|s)?\b/i.test(text)) return { key: "per_diem_regional_capital", basis: "field work in the regions" };
+  return { key: "per_diem_addis_ababa", basis: "no field location stated; Addis Ababa rate assumed" };
+}
+
+const RULE_BENCHMARK: Record<string, BenchmarkCategory> = {
+  "field-transport": "TRANSPORT",
+  "per-diem": "PER_DIEM",
+  "enumerators": "ENUMERATOR",
+  "workshops": "WORKSHOP",
+  "boreholes": "DRILLING",
+  "laboratory": "LABORATORY",
+  "survey": "SURVEY",
+  "site-vehicle": "EQUIPMENT",
+  "reports": "PRINTING",
+};
 
 /** Build the estimate. */
 export function estimateTenderPrice(input: PricingEvidenceInput): PricingEstimate {
   const text = input.tenderText ?? "";
   const evidenceUsed: string[] = [];
   const lowConfidence: string[] = [];
+  const warnings: PricingWarning[] = [];
+  const benchmarks = input.benchmarks ?? SEED_BENCHMARKS;
+  const benchmarksUsed = new Map<string, PricingBenchmark>();
+  const recordBenchmark = (bm: PricingBenchmark) => {
+    benchmarksUsed.set(bm.id, bm);
+    if (benchmarkAgeMonths(bm, input.now) > BENCHMARK_STALE_AFTER_MONTHS) {
+      warnings.push({ code: "STALE_BENCHMARK", message: `${bm.label}: effective ${bm.effectiveDate}, older than ${BENCHMARK_STALE_AFTER_MONTHS} months.` });
+    }
+  };
+  const evaluation = evaluationModelOf(text);
 
   // ── Currency, tax, validity ────────────────────────────────────────────
   const budgetFromText = statedBudget(text);
@@ -507,7 +585,13 @@ export function estimateTenderPrice(input: PricingEvidenceInput): PricingEstimat
   type Draft = Omit<EstimateLine, "rate" | "amount" | "rateBasis" | "rateSource" | "sourceDate" | "rateConfidence" | "confidence"> & {
     weight: number;
     rateKeyword?: RegExp;
-    evidenceRate?: { rate: number; basis: string; source: string; date: string | null; confidence: PricingConfidence; scalable: boolean };
+    evidenceRate?: {
+      rate: number; basis: string; source: string; date: string | null; confidence: PricingConfidence; scalable: boolean;
+      /** A benchmark's spread: the scenarios take its low / median / high instead of scaling the median. */
+      range?: { low: number; high: number };
+      /** A cost passed through at cost (an allowance), not a fee. */
+      atCost?: boolean;
+    };
   };
   const drafts: Draft[] = [];
   const team = input.experts.length > 0 ? input.experts : [];
@@ -644,6 +728,51 @@ export function estimateTenderPrice(input: PricingEvidenceInput): PricingEstimat
   const directCount = drafts.filter((d) => d.evidenceRate).length;
   if (directCount > 0) evidenceUsed.push(`${directCount} line(s) priced from tender-fixed or previously approved rates.`);
 
+  // ── Benchmark registry: the owner's rate card and the shipped public figures
+  const tier = perDiemTier(text);
+  let benchmarked = 0;
+  for (const d of drafts) {
+    if (d.evidenceRate) continue;
+    let bm: PricingBenchmark | null = null;
+    if (d.category === "PERSONNEL" && d.unit === "DAY") {
+      const title = d.label.split(" — ")[0]!;
+      bm = findBenchmark(benchmarks, { category: "PERSONNEL_FEE", serviceKey: classifyRole(title), seniority: seniorityOf(title), currency, unit: "DAY" });
+    } else if (RULE_BENCHMARK[d.key]) {
+      const category = RULE_BENCHMARK[d.key]!;
+      bm = findBenchmark(benchmarks, { category, serviceKey: category === "PER_DIEM" ? tier.key : d.key.replace(/-/g, "_"), currency, unit: d.unit });
+    }
+    if (!bm) continue;
+    recordBenchmark(bm);
+    benchmarked += 1;
+    const atCost = bm.rateBasis === "COST";
+    d.evidenceRate = {
+      rate: bm.median,
+      basis: `${bm.label} — ${bm.source}${d.key === "per-diem" ? ` (${tier.basis})` : ""}`,
+      source: bm.origin === "OWNER" ? "Owner rate card" : "Market benchmark (public source)",
+      date: bm.effectiveDate,
+      confidence: bm.confidence,
+      scalable: !atCost,
+      range: { low: bm.low, high: bm.high },
+      atCost,
+    };
+    if (atCost) d.assumptions.push("Reimbursed at cost: no overhead or margin is added.");
+  }
+  if (benchmarked > 0) evidenceUsed.push(`${benchmarked} line(s) priced from the benchmark registry (source and date on each).`);
+
+  // ── Cost model for personnel with no rate evidence ────────────────────
+  // A professional's day cost from the public salary scale for the role's
+  // seniority plus the statutory employer pension, over the working days of a
+  // month. The scenario then adds overhead and margin. Transparent and LOW:
+  // a public scale is a floor for private consultancy pay.
+  const pension = findBenchmark(benchmarks, { category: "STATUTORY_RATE", serviceKey: "employer_pension", currency, unit: "PERCENT" });
+  const dayCost = (title: string, years?: number | null) => {
+    const salary = findBenchmark(benchmarks, { category: "PERSONNEL_SALARY", serviceKey: classifyRole(title), seniority: seniorityOf(title, years), currency, unit: "MONTH" });
+    if (!salary) return null;
+    const charges = pension ? pension.median / 100 : 0;
+    return { cost: round2((salary.median * (1 + charges)) / WORKING_DAYS_PER_MONTH), salary, charges };
+  };
+  const expertYears = new Map(team.map((e) => [`expert:${e.id}`, e.yearsExperience ?? null]));
+
   // ── Envelope from comparable past contracts ────────────────────────────
   const tenderWords = new Set(normalizeLabel(`${input.tender.title} ${input.tender.category ?? ""}`));
   const comparable = input.historicalProjects
@@ -672,7 +801,11 @@ export function estimateTenderPrice(input: PricingEvidenceInput): PricingEstimat
     evidenceUsed.push(`Top-down envelope from ${comparable.length} comparable past contract(s).`);
     if (confidence === "LOW") lowConfidence.push(`Envelope: only ${comparable.length} comparable past contract(s) with value and dates; the spread lines are indicative.`);
   }
-  lowConfidence.push("Market benchmarks: no current market rate source is held by the app; none is assumed.");
+  if (!benchmarks.some((bm) => bm.category === "PERSONNEL_FEE" && bm.currency.toUpperCase() === currency)) {
+    lowConfidence.push(`Market benchmarks: no published consultancy fee rate for ${currency} is held; personnel without an approved rate are cost-built from the public salary scale (LOW).`);
+  }
+  if (skippedCurrency > 0) warnings.push({ code: "FOREIGN_CURRENCY", message: `${skippedCurrency} past contract value(s) in another currency were not converted; no exchange rate is assumed.` });
+  if (envelope?.confidence === "LOW") warnings.push({ code: "WEAK_COMPARATOR", message: envelope.basis });
 
   // ── Scenarios ──────────────────────────────────────────────────────────
   const scenarios: PricingScenario[] = SCENARIOS.map((sc) => {
@@ -684,16 +817,22 @@ export function estimateTenderPrice(input: PricingEvidenceInput): PricingEstimat
         assumptions: [...d.assumptions], expertId: d.expertId ?? null,
       };
       if (d.evidenceRate) {
-        const rate = d.evidenceRate.scalable ? roundEstimatedRate(d.evidenceRate.rate * sc.factor) : d.evidenceRate.rate;
-        const assumptions = d.evidenceRate.scalable && sc.factor !== 1 ? [...base.assumptions, `Scenario adjustment ×${sc.factor} on the approved rate.`] : base.assumptions;
+        const ev = d.evidenceRate;
+        const rate = ev.range && !ev.atCost
+          ? roundEstimatedRate(sc.id === "AGGRESSIVE" ? ev.range.low : sc.id === "BALANCED" ? ev.rate : ev.range.high)
+          : ev.scalable ? roundEstimatedRate(ev.rate * sc.factor) : ev.rate;
+        const assumptions = ev.range && !ev.atCost && ev.range.low !== ev.range.high
+          ? [...base.assumptions, `${sc.label}: the benchmark's ${sc.id === "AGGRESSIVE" ? "low" : sc.id === "BALANCED" ? "median" : "high"} value.`]
+          : ev.scalable && !ev.range && sc.factor !== 1 ? [...base.assumptions, `Scenario adjustment ×${sc.factor} on the approved rate.`] : base.assumptions;
         return {
           ...base, assumptions, rate, amount: round2(rate * d.quantity),
-          rateBasis: d.evidenceRate.basis, rateSource: d.evidenceRate.source, sourceDate: d.evidenceRate.date,
-          rateConfidence: d.evidenceRate.confidence, confidence: weaker(d.evidenceRate.confidence, d.quantityConfidence),
+          rateBasis: ev.basis, rateSource: ev.source, sourceDate: ev.date,
+          rateConfidence: ev.confidence, confidence: weaker(ev.confidence, d.quantityConfidence),
+          build: ev.atCost ? { costRate: rate, overheadPct: 0, marginPct: 0 } : null,
         };
       }
       return {
-        ...base, rate: null, amount: null,
+        ...base, rate: null, amount: null, build: null,
         rateBasis: "no defensible rate evidence", rateSource: "—", sourceDate: null, rateConfidence: "NONE" as PricingConfidence, confidence: "NONE" as PricingConfidence,
       };
     });
@@ -746,6 +885,35 @@ export function estimateTenderPrice(input: PricingEvidenceInput): PricingEstimat
       }
     }
 
+    // Personnel still without a rate: build it from cost.
+    for (const l of lines) {
+      if (l.rate !== null || l.category !== "PERSONNEL" || l.unit !== "DAY") continue;
+      const title = l.label.split(" — ")[0]!;
+      const c = dayCost(title, expertYears.get(l.key));
+      if (!c) continue;
+      recordBenchmark(c.salary);
+      if (pension) recordBenchmark(pension);
+      const rate = roundEstimatedRate(c.cost * (1 + sc.overheadPct / 100) * (1 + sc.marginPct / 100));
+      l.rate = rate;
+      l.amount = round2(rate * l.quantity);
+      l.build = { costRate: c.cost, overheadPct: sc.overheadPct, marginPct: sc.marginPct };
+      l.rateBasis = `cost-built: ${c.salary.label} ${currency} ${c.salary.median.toLocaleString("en-US")}/month${c.charges ? ` + ${Math.round(c.charges * 100)}% employer pension` : ""} ÷ ${WORKING_DAYS_PER_MONTH} days = ${currency} ${c.cost.toLocaleString("en-US")}/day cost, + ${sc.overheadPct}% overhead + ${sc.marginPct}% margin (${c.salary.source})`;
+      l.rateSource = "Cost model (public salary scale)";
+      l.sourceDate = c.salary.effectiveDate;
+      l.rateConfidence = "LOW";
+      l.confidence = "LOW";
+      l.assumptions.push(`Overhead ${sc.overheadPct}% and margin ${sc.marginPct}% are this scenario's commercial assumptions; adjust them at approval.`);
+    }
+
+    // Below cost: a fee rate under the day cost of the same seniority loses money.
+    for (const l of lines) {
+      if (l.rate === null || l.category !== "PERSONNEL" || l.unit !== "DAY" || l.build) continue;
+      const c = dayCost(l.label.split(" — ")[0]!, expertYears.get(l.key));
+      if (c && l.rate < c.cost) {
+        warnings.push({ code: "BELOW_COST", message: `${sc.label}: ${l.label} at ${currency} ${l.rate.toLocaleString("en-US")}/day is below its estimated day cost of ${currency} ${c.cost.toLocaleString("en-US")}.` });
+      }
+    }
+
     // A budget is a ceiling: no scenario exceeds it.
     let subtotal = round2(lines.reduce((s, l) => s + (l.amount ?? 0), 0));
     if (budget) {
@@ -761,31 +929,78 @@ export function estimateTenderPrice(input: PricingEvidenceInput): PricingEstimat
         }
         subtotal = round2(lines.reduce((s, l) => s + (l.amount ?? 0), 0));
         notes.push("Scaled down to stay within the client's stated budget.");
+        warnings.push({ code: "BUDGET_EXCEEDED", message: `${sc.label}: the evidence-based price exceeded the client's budget and was scaled ×${round2(scale)} to fit; check it still covers cost.` });
       }
     }
+    // Cost → overhead → margin, for the cost-built lines; fee lines as billed.
+    const build = { directCost: 0, overhead: 0, margin: 0, feeLines: 0 };
+    for (const l of lines) {
+      if (l.amount === null) continue;
+      if (l.build) {
+        const cost = l.build.costRate * l.quantity;
+        const overhead = cost * l.build.overheadPct / 100;
+        build.directCost += cost;
+        build.overhead += overhead;
+        build.margin += (cost + overhead) * l.build.marginPct / 100;
+      } else {
+        build.feeLines += l.amount;
+      }
+    }
+    build.directCost = round2(build.directCost);
+    build.overhead = round2(build.overhead);
+    build.margin = round2(build.margin);
+    build.feeLines = round2(build.feeLines);
     const contingency = round2(subtotal * sc.contingencyPct / 100);
     const vat = round2((subtotal + contingency) * vatPercent / 100);
     const complete = lines.every((l) => l.rate !== null);
     if (!complete) notes.push(`${lines.filter((l) => l.rate === null).length} line(s) have no defensible rate; enter them before approving.`);
-    return { id: sc.id, label: sc.label, description: sc.description, contingencyPct: sc.contingencyPct, lines, subtotal, contingency, vat, offerTotal: round2(subtotal + contingency + vat), complete, notes };
+    return { id: sc.id, label: sc.label, description: sc.description, contingencyPct: sc.contingencyPct, overheadPct: sc.overheadPct, marginPct: sc.marginPct, lines, build, subtotal, contingency, vat, offerTotal: round2(subtotal + contingency + vat), complete, notes };
   });
 
-  const balanced = scenarios.find((s) => s.id === "BALANCED")!;
-  const pricedLines = balanced.lines.filter((l) => l.rate !== null).length;
-  const status: PricingEstimate["status"] = balanced.complete ? "COMPLETE" : pricedLines > 0 ? "PARTIAL" : "INSUFFICIENT_EVIDENCE";
-  for (const l of balanced.lines) {
+  // The evaluation model decides which scenario fits: least-cost selection
+  // rewards the lowest defensible price; quality-based selection does not
+  // score price; QCBS weighs both, so the balanced price is recommended
+  // unless price carries at least half the score.
+  const recommended: PricingScenarioId = evaluation.model === "LCS"
+    ? "AGGRESSIVE"
+    : evaluation.model === "QBS" ? "CONSERVATIVE"
+      : evaluation.model === "QCBS" && (evaluation.financialWeight ?? 0) >= 50 ? "AGGRESSIVE" : "BALANCED";
+  const chosen = scenarios.find((s) => s.id === recommended)!;
+  const pricedLines = chosen.lines.filter((l) => l.rate !== null).length;
+  const status: PricingEstimate["status"] = chosen.complete ? "COMPLETE" : pricedLines > 0 ? "PARTIAL" : "INSUFFICIENT_EVIDENCE";
+  for (const l of chosen.lines) {
     if (l.confidence === "LOW") lowConfidence.push(`${l.label}: ${l.rateBasis}; ${l.quantityBasis}.`);
-    if (l.confidence === "NONE") lowConfidence.push(`${l.label}: no rate evidence — the owner must enter the rate.`);
+    if (l.confidence === "NONE") {
+      lowConfidence.push(`${l.label}: no rate evidence — the owner must enter the rate.`);
+      warnings.push({ code: "NO_RATE", message: `${l.label}: no defensible rate; enter it before approving (or add it to the rate card once).` });
+    }
+    if (l.quantityConfidence === "LOW") warnings.push({ code: "MISSING_QUANTITY", message: `${l.label}: quantity assumed — ${l.quantityBasis}.` });
+  }
+  for (const sc of scenarios) {
+    const base = sc.build.directCost + sc.build.overhead;
+    if (base > 0 && (sc.build.margin / base > 0.4 || sc.build.margin < 0)) {
+      warnings.push({ code: "ABNORMAL_MARGIN", message: `${sc.label}: margin ${Math.round((sc.build.margin / base) * 100)}% of cost and overhead.` });
+    }
   }
   const money = (n: number) => `${currency} ${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const why = evaluation.model === "LCS"
+    ? "The tender awards the lowest evaluated price, so the Competitive scenario is recommended; it stays above the estimated cost of every line."
+    : evaluation.model === "QBS"
+      ? "The tender selects on quality alone, so price is not scored: the Conservative scenario protects delivery and margin."
+      : evaluation.model === "QCBS"
+        ? `Price carries ${evaluation.financialWeight}% of the score (technical ${evaluation.technicalWeight}%). Under QCBS the financial score is usually the lowest price ÷ this price × ${evaluation.financialWeight}: ${recommended === "AGGRESSIVE" ? "with price weighted this heavily, the Competitive scenario gains more score than it gives up in margin" : `pricing ${Math.round((1 - scenarios[0]!.offerTotal / Math.max(chosen.offerTotal, 1)) * 100)}% lower (Competitive) would add at most about ${Math.round((evaluation.financialWeight ?? 0) * (1 - scenarios[0]!.offerTotal / Math.max(chosen.offerTotal, 1)))} points, while the technical score decides most of the ranking — so the Balanced price is recommended`}.`
+        : evaluation.model === "FIXED_BUDGET"
+          ? "The tender fixes the budget: the offer should use it fully on scope, so the Balanced scenario within the budget is recommended."
+          : "The tender states no evaluation weights; the Balanced scenario is recommended as commercially defensible.";
   const recommendation = status === "INSUFFICIENT_EVIDENCE"
-    ? `No line can be priced from defensible evidence: the tender states no budget or rates, the firm has no comparable past contract value in ${currency}, and no rate was approved on a previous tender. The quantities are prepared; enter the rates and approve.`
+    ? `No line can be priced from defensible evidence: the tender states no budget or rates, no comparable past contract value in ${currency}, no approved or rate-card rate, and no benchmark covers these lines. The quantities are prepared; enter the rates (once, in the rate card) and approve.`
     : [
-        `Recommended bid: ${money(balanced.offerTotal)}${vatPercent > 0 ? ` including VAT at ${vatPercent}%` : ""} (Balanced scenario).`,
-        budget ? `This is ${Math.round((balanced.offerTotal / (budget.inclusiveOfVat ? budget.amount : budget.amount * (1 + vatPercent / 100))) * 100)}% of the client's stated budget.` : "",
-        `The Competitive scenario (${money(scenarios[0]!.offerTotal)}) improves the price score at the cost of margin; the Conservative scenario (${money(scenarios[2]!.offerTotal)}) protects margin and risk.`,
+        `Recommended bid: ${money(chosen.offerTotal)}${vatPercent > 0 ? ` including VAT at ${vatPercent}%` : ""} (${chosen.label} scenario).`,
+        why,
+        budget ? `This is ${Math.round((chosen.offerTotal / (budget.inclusiveOfVat ? budget.amount : budget.amount * (1 + vatPercent / 100))) * 100)}% of the client's stated budget.` : "",
+        `Range: Competitive ${money(scenarios[0]!.offerTotal)} · Balanced ${money(scenarios[1]!.offerTotal)} · Conservative ${money(scenarios[2]!.offerTotal)}.`,
         status === "PARTIAL" ? "Some lines have no defensible rate and must be entered before approval." : "",
-        `Confidence: ${balanced.lines.filter((l) => l.confidence === "HIGH" || l.confidence === "MEDIUM").length} of ${balanced.lines.length} line(s) rest on direct evidence; the rest are marked LOW.`,
+        `Confidence: ${chosen.lines.filter((l) => l.confidence === "HIGH" || l.confidence === "MEDIUM").length} of ${chosen.lines.length} line(s) rest on direct evidence or a sourced benchmark; the rest are marked LOW.`,
       ].filter(Boolean).join(" ");
 
   return {
@@ -799,9 +1014,12 @@ export function estimateTenderPrice(input: PricingEvidenceInput): PricingEstimat
     budget,
     envelope,
     scenarios,
-    recommended: "BALANCED",
+    recommended,
     recommendation,
     lowConfidence: Array.from(new Set(lowConfidence)),
+    warnings: warnings.filter((w, i, all) => all.findIndex((o) => o.code === w.code && o.message === w.message) === i),
+    evaluation,
+    benchmarksUsed: Array.from(benchmarksUsed.values()).map((bm) => ({ id: bm.id, label: bm.label, source: bm.source, sourceUrl: bm.sourceUrl ?? null, sourceType: bm.sourceType, effectiveDate: bm.effectiveDate, lastVerified: bm.lastVerified, confidence: bm.confidence, origin: bm.origin })),
     evidenceUsed,
     generatedAt: input.now.toISOString(),
   };
@@ -814,6 +1032,9 @@ export function approvedLineNotes(line: EstimateLine, scenario: PricingScenarioI
     `Quantity: ${line.quantityBasis}.`,
     `Rate: ${line.rateBasis}${line.sourceDate ? ` (${line.sourceDate})` : ""}.`,
     `Confidence: ${line.confidence}.`,
+    ...(line.build && (line.build.overheadPct > 0 || line.build.marginPct > 0)
+      ? [`Build: day cost ${line.build.costRate} + ${line.build.overheadPct}% overhead + ${line.build.marginPct}% margin.`]
+      : []),
     ...line.assumptions,
   ].join(" ").slice(0, 2000);
 }

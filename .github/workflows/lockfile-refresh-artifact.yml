@@ -1881,6 +1881,17 @@ jobs:
               print(f"     source: {src.get('requirementTitle')} p.{src.get('page')} | vault={(i.get('vault') or {}).get('status')} {(i.get('vault') or {}).get('documents')}")
               print(f"     action: {i.get('ownerAction')}")
           PYEOF
+          # Who changed what, most recent first: separates the owner's own
+          # actions in the browser from the pipeline's when a run is disturbed.
+          curl -sS --connect-timeout 15 --max-time 60 -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/audit?limit=50" > /tmp/audit-trail.json || true
+          python3 - <<'PYEOF' || true
+          import json
+          d = json.load(open('/tmp/audit-trail.json', encoding='utf-8'))
+          print("================ AUDIT TRAIL (latest 50) ================")
+          for r in d.get('logs') or []:
+              print(f"  {r.get('createdAt')} {r.get('action')} {r.get('entityType')}: {(r.get('description') or '')[:200]}")
+          PYEOF
           curl -sS --connect-timeout 15 --max-time 90 -H "Cookie: hope_session=$SESSION_COOKIE" \
             "$BASE_URL/api/tenders/$TENDER_ID/export-readiness" > /tmp/package-status.json || true
           python3 -c "import json; d=json.load(open('/tmp/package-status.json')); print('PACKAGE STATUS:', d.get('packageStatus'), '| proposalComplete:', d.get('proposalComplete'), '| outstanding:', d.get('ownerAttachmentsOutstanding'), '| primary:', d.get('primaryBlockerReason'))" || true

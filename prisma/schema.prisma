@@ -103,6 +103,7 @@ model Company {
   complianceRecords CompanyComplianceRecord[]
   planBStaging      PlanBStaging[]
   settings          AppSettings?
+  pricingBenchmarks PricingBenchmark[]
   createdAt         DateTime                  @default(now())
   updatedAt         DateTime                  @updatedAt
 }
@@ -1197,6 +1198,37 @@ model PricingWorkbook {
   lines           CostLine[]
 
   @@index([tenderId])
+}
+
+// The owner's rate card: sourced, dated rates the pricing estimator reads for
+// every tender (lib/engine/pricing-benchmarks.ts). Entered once, not per tender.
+model PricingBenchmark {
+  id            String   @id @default(uuid())
+  companyId     String
+  company       Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  market        String   @default("ET")
+  category      String
+  serviceKey    String
+  label         String
+  seniority     String?
+  unit          String
+  currency      String
+  low           Float
+  median        Float
+  high          Float
+  rateBasis     String   @default("FEE")
+  effectiveDate String
+  source        String
+  sourceUrl     String?
+  sourceType    String   @default("OWNER_RATE_CARD")
+  confidence    String   @default("HIGH")
+  notes         String?
+  lastVerified  String
+  createdById   String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([companyId, category])
 }
 
 model CostLine {

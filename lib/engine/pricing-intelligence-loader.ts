@@ -1,12 +1,14 @@
 /**
  * Gathers the evidence estimateTenderPrice reads for one tender: the tender's
  * own text, the selected team, the firm's past contracts and the rates the
- * owner approved on other tenders. Read-only.
+ * owner approved on other tenders, and the rate card with the public
+ * benchmarks. Read-only.
  */
 
 import { prisma as defaultPrisma } from "../prisma";
 import { canUseVaultRecord, parseStoredStringList } from "../vault-review-provenance";
 import { estimateTenderPrice, type PricingEstimate } from "./pricing-intelligence";
+import { loadBenchmarks } from "./pricing-rate-card";
 
 export async function loadPricingEstimate(tenderId: string, userId: string, db: any = defaultPrisma, now = new Date()): Promise<PricingEstimate | null> {
   const tender = await db.tender.findFirst({
@@ -81,6 +83,7 @@ export async function loadPricingEstimate(tenderId: string, userId: string, db: 
       label: l.label, category: l.category, unit: l.unit, rate: l.rate, currency: l.workbook?.currency ?? "", date: l.updatedAt, tenderTitle: l.workbook?.tender?.title ?? null,
     })),
     companyDefaultCurrency: company?.settings?.defaultCurrency ?? null,
+    benchmarks: await loadBenchmarks(userId, db),
     now,
   });
 }

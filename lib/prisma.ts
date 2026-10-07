@@ -927,6 +927,33 @@ export async function bootstrap(client: PrismaClient): Promise<void> {
     "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     FOREIGN KEY ("workbookId") REFERENCES "PricingWorkbook"("id") ON DELETE CASCADE
   )`);
+  // The owner's pricing rate card (migration 20261007120000).
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "PricingBenchmark" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "companyId" TEXT NOT NULL,
+    "market" TEXT NOT NULL DEFAULT 'ET',
+    "category" TEXT NOT NULL,
+    "serviceKey" TEXT NOT NULL,
+    "label" TEXT NOT NULL,
+    "seniority" TEXT,
+    "unit" TEXT NOT NULL,
+    "currency" TEXT NOT NULL,
+    "low" DOUBLE PRECISION NOT NULL,
+    "median" DOUBLE PRECISION NOT NULL,
+    "high" DOUBLE PRECISION NOT NULL,
+    "rateBasis" TEXT NOT NULL DEFAULT 'FEE',
+    "effectiveDate" TEXT NOT NULL,
+    "source" TEXT NOT NULL,
+    "sourceUrl" TEXT,
+    "sourceType" TEXT NOT NULL DEFAULT 'OWNER_RATE_CARD',
+    "confidence" TEXT NOT NULL DEFAULT 'HIGH',
+    "notes" TEXT,
+    "lastVerified" TEXT NOT NULL,
+    "createdById" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+    FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE CASCADE ON UPDATE CASCADE
+  )`);
 
   // ─── G9: page-level requirement source coordinates ─────────────────────
   await ensureColumn(client, "TenderRequirement", "sourceTenderFileId", "TEXT");
@@ -1263,6 +1290,7 @@ export async function bootstrap(client: PrismaClient): Promise<void> {
     // G8 — PricingWorkbook / CostLine
     `CREATE INDEX IF NOT EXISTS "PricingWorkbook_tenderId_idx" ON "PricingWorkbook"("tenderId")`,
     `CREATE INDEX IF NOT EXISTS "CostLine_workbookId_idx" ON "CostLine"("workbookId")`,
+    `CREATE INDEX IF NOT EXISTS "PricingBenchmark_companyId_category_idx" ON "PricingBenchmark"("companyId", "category")`,
     // G9 — TenderRequirement source coords
     `CREATE INDEX IF NOT EXISTS "TenderRequirement_tenderId_idx" ON "TenderRequirement"("tenderId")`,
     `CREATE INDEX IF NOT EXISTS "TenderRequirement_sourceTenderFileId_idx" ON "TenderRequirement"("sourceTenderFileId")`,

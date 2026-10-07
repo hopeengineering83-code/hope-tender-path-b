@@ -49,7 +49,7 @@ describe("Pricing Intelligence", () => {
   });
 
   it("with no rate evidence prepares quantities but invents no rate", () => {
-    const est = estimateTenderPrice(input());
+    const est = estimateTenderPrice(input({ benchmarks: [] }));
     assert.equal(est.status, "INSUFFICIENT_EVIDENCE");
     for (const sc of est.scenarios) {
       assert.equal(sc.complete, false);
@@ -93,6 +93,7 @@ describe("Pricing Intelligence", () => {
   it("spreads an envelope from comparable past contracts, marked LOW, scenarios ascending", () => {
     const est = estimateTenderPrice(input({
       historicalProjects: [project("Water supply feasibility A", 800_000, 4), project("Water supply design B", 1_500_000, 6), project("Water feasibility C", 600_000, 3)],
+      benchmarks: [],
     }));
     assert.equal(est.status, "COMPLETE");
     assert.ok(est.envelope);

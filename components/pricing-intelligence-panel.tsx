@@ -10,8 +10,11 @@ type Line = {
   rate: number | null; amount: number | null;
   rateBasis: string; rateSource: string; sourceDate: string | null; rateConfidence: Confidence;
   confidence: Confidence; assumptions: string[];
+  build?: { costRate: number; overheadPct: number; marginPct: number } | null;
 };
-type Scenario = { id: string; label: string; description: string; contingencyPct: number; lines: Line[]; subtotal: number; contingency: number; vat: number; offerTotal: number; complete: boolean; notes: string[] };
+type Warning = { code: string; message: string };
+type BenchmarkRef = { id: string; label: string; source: string; sourceUrl: string | null; effectiveDate: string; confidence: string; origin: "SEED" | "OWNER" };
+type Scenario = { id: string; label: string; description: string; contingencyPct: number; overheadPct?: number; marginPct?: number; build?: { directCost: number; overhead: number; margin: number; feeLines: number }; lines: Line[]; subtotal: number; contingency: number; vat: number; offerTotal: number; complete: boolean; notes: string[] };
 type Estimate = {
   status: "COMPLETE" | "PARTIAL" | "INSUFFICIENT_EVIDENCE";
   currency: string; currencyBasis: string;
@@ -26,6 +29,15 @@ type Estimate = {
   recommendation: string;
   lowConfidence: string[];
   evidenceUsed: string[];
+  warnings?: Warning[];
+  evaluation?: { model: string; technicalWeight: number | null; financialWeight: number | null; basis: string };
+  benchmarksUsed?: BenchmarkRef[];
+};
+
+/** The rate-card category for an estimate line, so an entered rate prices the same line on the next tender. */
+const LINE_CATEGORY: Record<string, string> = {
+  "field-transport": "TRANSPORT", "per-diem": "PER_DIEM", "enumerators": "ENUMERATOR", "workshops": "WORKSHOP",
+  "boreholes": "DRILLING", "laboratory": "LABORATORY", "survey": "SURVEY", "site-vehicle": "EQUIPMENT", "reports": "PRINTING",
 };
 
 const CONFIDENCE_STYLE: Record<Confidence, string> = {
@@ -48,6 +60,7 @@ export function PricingIntelligencePanel({ tenderId, canMutate = false }: { tend
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [saveToRateCard, setSaveToRateCard] = useState(true);
 
   const load = useCallback(async () => {
     setError(null);
@@ -90,6 +103,26 @@ export function PricingIntelligencePanel({ tenderId, canMutate = false }: { tend
     setMessage(null);
     const numeric = (m: Record<string, string>) => Object.fromEntries(Object.entries(m).filter(([, v]) => v !== "" && Number(v) > 0).map(([k, v]) => [k, Number(v)]));
     try {
+      // Rates the owner typed for lines the evidence could not price go to the
+      // rate card too, so the next tender prices them without asking again.
+      const typed = scenario.lines.filter((l) => !excluded[l.key] && l.rate === null && Number(rates[l.key]) > 0 && (l.category === "PERSONNEL" ? l.unit === "DAY" : LINE_CATEGORY[l.key]));
+      if (saveToRateCard && typed.length > 0) {
+        const today = new Date().toISOString().slice(0, 10);
+        await fetch("/api/company/pricing-benchmarks", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            entries: typed.map((l) => ({
+              category: l.category === "PERSONNEL" ? "PERSONNEL_FEE" : LINE_CATEGORY[l.key],
+              serviceKey: l.category === "PERSONNEL" ? undefined : l.key.replace(/-/g, "_"),
+              label: l.label.split(" — ")[0],
+              unit: l.unit, currency: estimate?.currency, median: Number(rates[l.key]),
+              source: "Rate entered by the owner when approving a tender price",
+              sourceType: "OWNER_RATE_CARD", confidence: "HIGH", effectiveDate: today, lastVerified: today,
+            })),
+          }),
+        }).catch(() => null);
+      }
       const res = await fetch(`/api/tenders/${tenderId}/pricing/approve`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -154,6 +187,15 @@ export function PricingIntelligencePanel({ tenderId, canMutate = false }: { tend
         ))}
       </div>
 
+      {estimate.evaluation ? (
+        <p className="mt-2 text-xs text-slate-600" data-testid="pricing-evaluation"><span className="font-medium">Evaluation:</span> {estimate.evaluation.model === "UNKNOWN" ? "not stated" : estimate.evaluation.model} — {estimate.evaluation.basis}</p>
+      ) : null}
+      {scenario?.build && (scenario.build.directCost > 0 || scenario.build.feeLines > 0) ? (
+        <p className="mt-1 text-xs text-slate-600" data-testid="pricing-build">
+          <span className="font-medium">Price build ({scenario.label}):</span> cost {money(scenario.build.directCost, estimate.currency)} + overhead {money(scenario.build.overhead, estimate.currency)} + margin {money(scenario.build.margin, estimate.currency)} (cost-built personnel) + fee and reimbursable lines {money(scenario.build.feeLines, estimate.currency)} → subtotal {money(scenario.subtotal, estimate.currency)} + contingency {money(scenario.contingency, estimate.currency)} + VAT {money(scenario.vat, estimate.currency)} = offer {money(scenario.offerTotal, estimate.currency)}.{estimate.withholdingPct > 0 ? ` Withholding ${estimate.withholdingPct}% is deducted by the client at payment; it does not reduce the offer.` : ""}
+        </p>
+      ) : null}
+
       <dl className="mt-3 grid gap-x-4 gap-y-1 text-xs text-slate-600 sm:grid-cols-2">
         <div><dt className="inline font-medium">Currency:</dt> <dd className="inline">{estimate.currency} — {estimate.currencyBasis}</dd></div>
         <div><dt className="inline font-medium">VAT:</dt> <dd className="inline">{estimate.vatPercent}% — {estimate.vatBasis}</dd></div>
@@ -197,6 +239,26 @@ export function PricingIntelligencePanel({ tenderId, canMutate = false }: { tend
         </div>
       ) : null}
 
+      {estimate.warnings && estimate.warnings.length > 0 ? (
+        <details className="mt-3 rounded border border-rose-200 bg-rose-50 p-2 text-xs text-rose-900" open data-testid="pricing-warnings">
+          <summary className="cursor-pointer font-medium">Pricing warnings ({estimate.warnings.length})</summary>
+          <ul className="mt-1 list-disc pl-5">{estimate.warnings.map((w) => <li key={`${w.code}:${w.message}`}><span className="font-mono">{w.code}</span> — {w.message}</li>)}</ul>
+        </details>
+      ) : null}
+
+      {estimate.benchmarksUsed && estimate.benchmarksUsed.length > 0 ? (
+        <details className="mt-3 rounded border border-slate-200 p-2 text-xs text-slate-700" data-testid="pricing-sources">
+          <summary className="cursor-pointer font-medium">Benchmark sources ({estimate.benchmarksUsed.length})</summary>
+          <ul className="mt-1 list-disc pl-5">
+            {estimate.benchmarksUsed.map((b) => (
+              <li key={b.id}>
+                {b.label} — {b.origin === "OWNER" ? "your rate card" : b.sourceUrl ? <a className="underline" href={b.sourceUrl} target="_blank" rel="noreferrer noopener">{b.source}</a> : b.source} (effective {b.effectiveDate}, {b.confidence})
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+
       {estimate.lowConfidence.length > 0 ? (
         <details className="mt-3 rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900" open={estimate.status !== "COMPLETE"}>
           <summary className="cursor-pointer font-medium">Check before approving ({estimate.lowConfidence.length})</summary>
@@ -215,6 +277,10 @@ export function PricingIntelligencePanel({ tenderId, canMutate = false }: { tend
           >
             {busy ? "Approving…" : `Approve ${scenario.label} price — ${money(adjusted.total, estimate.currency)}`}
           </button>
+          <label className="flex items-center gap-1 text-xs text-slate-600">
+            <input type="checkbox" checked={saveToRateCard} onChange={(e) => setSaveToRateCard(e.target.checked)} />
+            Save rates I enter to the rate card for future tenders
+          </label>
           {adjusted.unpriced > 0 ? <span className="text-xs text-rose-700">Enter a rate for {adjusted.unpriced} line(s) or untick them.</span> : null}
         </div>
       ) : null}

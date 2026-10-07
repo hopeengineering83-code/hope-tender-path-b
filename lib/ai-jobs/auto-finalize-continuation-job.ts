@@ -269,6 +269,7 @@ async function describe(
 export type OwnerInputResumeResult =
   | { state: "REQUEUED"; jobId: string }
   | { state: "ALREADY_PENDING"; jobId: string }
+  | { state: "NEWER_RUN_IN_PROGRESS"; jobId: string }
   | { state: "NO_FINALIZE_YET" };
 
 /**
@@ -287,10 +288,25 @@ export async function resumeAutoFinalizeAfterOwnerInput(
   const latest = await db.aiJob.findFirst({
     where: { tenderId: input.tenderId, userId: input.userId, jobType: "AUTO_FINALIZE" },
     orderBy: { createdAt: "desc" },
-    select: { id: true, status: true, input: true },
+    select: { id: true, status: true, input: true, createdAt: true },
   });
   if (!latest) return { state: "NO_FINALIZE_YET" };
   if (latest.status === "QUEUED" || latest.status === "RUNNING") return { state: "ALREADY_PENDING", jobId: latest.id };
+  // A Run Engine started after this finalize job belongs to a newer analysis
+  // revision. Re-running the older finalize would package the superseded
+  // revision alongside — and against — the generation now in flight. The
+  // newer chain reaches its own AUTO_FINALIZE and reads the owner's input
+  // there.
+  const newer = await db.aiJob.findFirst({
+    where: {
+      tenderId: input.tenderId,
+      jobType: { in: ["ENGINE_RUN", "PROPOSAL_GENERATION"] },
+      status: { in: ["QUEUED", "RUNNING"] },
+      createdAt: { gt: latest.createdAt },
+    },
+    select: { id: true },
+  });
+  if (newer) return { state: "NEWER_RUN_IN_PROGRESS", jobId: newer.id };
   const previous = parseObject(latest.input);
   const result = await db.aiJob.updateMany({
     where: { id: latest.id, status: { in: ["FAILED", "CANCELED", "PARTIAL_SUCCESS", "SUCCEEDED"] } },
