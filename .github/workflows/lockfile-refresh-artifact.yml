@@ -914,12 +914,14 @@ jobs:
           PYEOF
 
       - name: Render every page of the final PDF and check the layout
+        # Run 37667631357 sat in this step for 35 minutes with no output: a
+        # hang must fail with a reason, not hold the run open.
+        timeout-minutes: 15
         run: |
           # "Do not accept a PDF from text extraction alone." Every page is
           # rasterised with poppler and inspected for clipping, overflow,
           # footer collision and pagination.
-          sudo apt-get update -qq >/dev/null 2>&1 || true
-          sudo apt-get install -y -qq poppler-utils >/dev/null 2>&1 || true
+          command -v pdftoppm >/dev/null || { timeout 240 sudo apt-get update -qq >/dev/null 2>&1 || true; timeout 240 sudo apt-get install -y -qq poppler-utils >/dev/null 2>&1 || true; }
           mkdir -p /tmp/pdf-pages /tmp/zip-extract
           python3 -m zipfile -e /tmp/preview-final.zip /tmp/zip-extract/
           ls -la /tmp/zip-extract/
@@ -935,7 +937,8 @@ jobs:
           fi
           if [ -z "$pdf" ]; then echo "::error::No proposal PDF to inspect."; exit 1; fi
           echo "$pdf" > /tmp/proposal-pdf-path.txt
-          node scripts/tmp-render-pdf-pages.mjs "$pdf" /tmp/pdf-pages 2>&1 | tee /tmp/pdf-page-report.txt
+          ls -la "$pdf"
+          timeout 600 node scripts/tmp-render-pdf-pages.mjs "$pdf" /tmp/pdf-pages 2>&1 | tee /tmp/pdf-page-report.txt
 
       - name: Audit the delivered PDF for embedded brand-asset bytes
         run: |
