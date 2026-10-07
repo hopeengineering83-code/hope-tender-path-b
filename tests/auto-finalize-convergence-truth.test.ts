@@ -202,7 +202,8 @@ describe("the wiring cannot drift back to unconditional success", () => {
     assert.match(block, /AUTO_FINALIZE_NOT_CONVERGED/);
     // The success branch must come after the guard, never before it.
     assert.ok(
-      block.indexOf("if (!result.ok)") < block.indexOf('message: `Auto-finalize complete:'),
+      block.indexOf("if (!result.ok)") >= 0
+        && block.indexOf("if (!result.ok)") < block.indexOf('status: "SUCCEEDED"'),
       "the SUCCEEDED record must be unreachable for a blocked run",
     );
   });
