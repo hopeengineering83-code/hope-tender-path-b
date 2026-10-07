@@ -455,6 +455,10 @@ export async function runAutoFinalizeAfterGeneration(
       message: "Auto-repairing export gaps (AI traces, placeholders, pricing leakage)",
       status: "RUNNING",
     });
+    // Positions come from the confirmed plan before anything is validated:
+    // a generator's own default must not decide the package order.
+    const { alignDocumentOrderToPlan } = await import("../engine/align-document-order");
+    await alignDocumentOrderToPlan(prisma, tenderId, userId).catch(() => 0);
     const exportRepair = await runSafeExportRepairs(tenderId, userId);
     result.exportRepair = exportRepair;
     await recordStep(jobId, {

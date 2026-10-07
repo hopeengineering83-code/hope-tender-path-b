@@ -4525,6 +4525,8 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
               documentType: proposalDocumentType,
               format: "DOCX",
               exactFileName: proposalFileName,
+              // Provisional: alignDocumentOrderToPlan below moves it to the
+              // confirmed plan's position.
               exactOrder: 1,
               fileContent,
               ...proposalIntegrity,
@@ -4575,6 +4577,10 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
     )
   }
 
+  {
+    const { alignDocumentOrderToPlan } = await import("./align-document-order");
+    await alignDocumentOrderToPlan(prisma, tenderId, userId).catch(() => 0);
+  }
   await prisma.tender.update({ where: { id: tenderId }, data: { status: "GENERATED", stage: "GENERATION", updatedAt: new Date() } });
 
   // ─── Proposal version snapshot ──────────────────────────────────────────────
