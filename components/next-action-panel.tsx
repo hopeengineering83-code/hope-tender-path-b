@@ -57,6 +57,7 @@ function stepFromCanonicalAction(action: string): WorkflowStep {
     case "GENERATE_DOCUMENTS": return "GENERATE_DOCUMENTS";
     case "AUTOMATIC_PROCESSING":
     case "UPLOAD_SIGNED_ORIGINALS":
+    case "ENTER_OWNER_PRICING":
     case "FIX_EXPORT_BLOCKERS":
     case "VALIDATE_DOCS": return "VALIDATE_DOCS";
     case "EXPORT_READY": return "EXPORT_ZIP";

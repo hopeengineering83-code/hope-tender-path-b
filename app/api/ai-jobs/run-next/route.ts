@@ -121,6 +121,9 @@ export async function POST(req: Request) {
       if (recovery.recovered > 0) {
         logger.error(`[run-next] Stuck-job recovery failed ${recovery.recovered} job(s): ${recovery.ids.join(", ")}`);
       }
+      if (recovery.rearmed > 0) {
+        logger.warn(`[run-next] Stuck-job recovery re-armed ${recovery.rearmed} durable stage(s): ${recovery.rearmedIds.join(", ")}`);
+      }
     } catch (err) {
       logger.error(`[run-next] Stuck-job recovery sweep failed: ${err instanceof Error ? err.message : String(err)}`);
     }

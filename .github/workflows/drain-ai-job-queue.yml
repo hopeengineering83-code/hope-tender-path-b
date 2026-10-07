@@ -1,4 +1,10 @@
-# G10 — Free external cron for the AiJob queue
+# G10 — Manual / emergency drain for the AiJob queue
+#
+# HISTORY: written for the Vercel Hobby plan, which allowed only daily crons,
+# so this workflow drained the queue every 5 minutes. The project is on Vercel
+# Pro now and vercel.json schedules the drain natively every minute, so the
+# schedule below was removed (2026-10-07). The notes that follow describe the
+# original Hobby-era setup and still apply to manual runs.
 #
 # Vercel Hobby plans allow only ONE cron invocation per day, which is too
 # slow for an interactive queue. GitHub Actions schedules run every 5 min
@@ -42,11 +48,11 @@
 name: Drain AiJob queue
 
 on:
-  schedule:
-    # Every 5 minutes. GitHub Actions cron uses UTC and may drift.
-    - cron: "*/5 * * * *"
-  # Allow manual triggering from the Actions tab for ad-hoc draining or
-  # for testing the secret wiring after the initial setup above.
+  # MANUAL / EMERGENCY ONLY. The normal scheduler is Vercel Cron (vercel.json:
+  # /api/ai-jobs/run-next every minute, /api/cron/ai-analyze-retry every 5
+  # minutes), which authenticates with CRON_SECRET. This workflow no longer
+  # runs on a schedule: run it from the Actions tab only to drain the queue by
+  # hand, e.g. while CRON_SECRET is being configured.
   workflow_dispatch:
 
 # Don't pile up if a previous run is still going (rare — each curl is <1s).

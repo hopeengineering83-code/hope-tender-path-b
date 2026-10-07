@@ -294,6 +294,26 @@ export async function detailedLivenessPayload() {
       providerOrder: aiHealth.eligibleProviders ?? [],
       activeChain: aiHealth.activeChain,
     },
+    scheduler: schedulerReadiness(),
     timestamp: new Date().toISOString(),
+  };
+}
+
+/**
+ * Whether the unattended queue can run on this deployment — booleans only,
+ * never a value. Vercel Cron calls /api/ai-jobs/run-next every minute with
+ * `Authorization: Bearer $CRON_SECRET`, and both cron routes refuse a missing
+ * or short (< 16 characters) secret, so without it every scheduled drain is
+ * a 401 and work waits for a browser. Vercel runs crons only on the
+ * Production deployment; on a Preview this reports configuration, not
+ * scheduled execution.
+ */
+export function schedulerReadiness(env: Record<string, string | undefined> = process.env) {
+  const cronSecret = env.CRON_SECRET ?? "";
+  const workerSecret = env.AI_JOBS_WORKER_SECRET ?? "";
+  return {
+    cronSecretConfigured: cronSecret.length >= 16,
+    workerSecretConfigured: workerSecret.length >= 16,
+    vercelCronRunsHere: (env.VERCEL_ENV ?? "") === "production",
   };
 }

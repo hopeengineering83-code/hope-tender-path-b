@@ -25,7 +25,8 @@ describe("Behavioral DB: worker transient retry (Category 4)", { skip: !RUN }, (
           userId: user.id,
           jobType: "ENGINE_RUN",
           status: "RUNNING",
-          startedAt: new Date(Date.now() - 300_000), // 5 minutes ago
+          // Older than any live invocation can be (WORKER_INVOCATION_HARD_CAP_MS).
+          startedAt: new Date(Date.now() - 600_000), // 10 minutes ago
           input: JSON.stringify({ tenderId: null, retryCount: 0 }),
         },
       });
@@ -34,15 +35,16 @@ describe("Behavioral DB: worker transient retry (Category 4)", { skip: !RUN }, (
       const running = await prisma.aiJob.findUnique({ where: { id: job.id } });
       assert.equal(running?.status, "RUNNING");
 
-      // Call failStuckJobs — it should mark the job as FAILED
+      // Call failStuckJobs — a killed durable stage within its attempt
+      // budget runs again (QUEUED); one past its budget fails.
       const { failStuckJobs } = await import("../lib/ai-jobs");
       const result = await failStuckJobs();
       assert.ok(result.recovered >= 0, "failStuckJobs should return a result");
 
-      // The job should no longer be RUNNING (it should be FAILED)
+      // The job should no longer be RUNNING
       const after = await prisma.aiJob.findUnique({ where: { id: job.id } });
       assert.notEqual(after?.status, "RUNNING", "Stuck RUNNING job must be recovered by failStuckJobs");
-      assert.match(after?.status ?? "", /FAILED|SUCCEEDED/, "Recovered job should be FAILED or SUCCEEDED");
+      assert.match(after?.status ?? "", /QUEUED|FAILED|SUCCEEDED/, "Recovered job should be re-armed, FAILED or SUCCEEDED");
     } finally {
       await prisma.aiJob.deleteMany({ where: { userId: user.id } });
       await prisma.user.delete({ where: { id: user.id } });

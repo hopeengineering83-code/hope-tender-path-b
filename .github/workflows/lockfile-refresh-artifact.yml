@@ -1768,6 +1768,12 @@ jobs:
           DATABASE_URL=postgresql://x:y@localhost:5432/z npx tsx scripts/tmp-requirement-quotes-vs-app-text.ts /tmp/tender-requirements.json $args 2>&1 \
             | grep -v '"level":"warn"' | tail -120 || true
 
+      - name: Name the sentences the price detector counts (read-only)
+        if: env.NO_TENDER != '1'
+        run: |
+          [ -s /tmp/version.json ] || { echo "no stored proposal version"; exit 0; }
+          DATABASE_URL=postgresql://x:y@localhost:5432/z npx tsx scripts/tmp-own-price-mentions.ts /tmp/version.json 2>&1 | tail -60 || true
+
       - name: Repeat the package verdict last (read-only)
         if: env.NO_TENDER != '1'
         run: |

@@ -1,3 +1,4 @@
+import { isAwaitingOwnerPricing, OWNER_PRICING_ACTION, type PricingRowLike } from "./owner-pricing-stop";
 import { hasRestoredInlineFileContent, hasVisibleStoredFile } from "../restored-record-visibility";
 import { resolveArtifactIdentity } from "./artifact-identity";
 
@@ -348,7 +349,7 @@ export function exportBlockReason(
    * QUALITY_BLOCKED uses them today: it is the one state whose fixed sentence
    * asserted a specific authority it could not actually know.
    */
-  detail?: { qualityBlockReasons?: string[] | null } | null,
+  detail?: ({ qualityBlockReasons?: string[] | null } & PricingRowLike) | null,
 ): string | null {
   switch (state) {
     case "READY_FOR_EXPORT":
@@ -369,6 +370,7 @@ export function exportBlockReason(
     case "CONTROL_RECORD_ONLY":
       return "Document is a control, placeholder, or text-only row. Generate or attach the real final file.";
     case "ORIGINAL_REQUIRED":
+      if (isAwaitingOwnerPricing(detail)) return `Owner pricing required. ${OWNER_PRICING_ACTION}`;
       return "Document is not exportable or must be replaced with the tender-issued original before export.";
     case "PDF_CONVERSION_REQUIRED":
       return "Planned extension is .pdf but the current content is not a real PDF.";

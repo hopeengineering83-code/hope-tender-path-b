@@ -1,3 +1,4 @@
+import { isAwaitingOwnerPricing, OWNER_PRICING_ACTION } from "./owner-pricing-stop";
 import { resolveArtifactQualitySchema, resolvePackageRole } from "./artifact-quality-schema";
 import { requiresEvidenceOfType } from "./mandatory-evidence-requirement";
 import { looksLikeEncodedBytes } from "./encoded-content";
@@ -511,7 +512,7 @@ export function checkExportReadiness(docs: ExportReadyDocument[], opts: { requir
     const reasons: string[] = [];
     const state = deriveDocumentOutputState(doc);
     if ((EXPORT_BLOCKING_STATES as readonly DocumentOutputState[]).includes(state)) {
-      const blockReason = exportBlockReason(state);
+      const blockReason = exportBlockReason(state, doc);
       if (blockReason) reasons.push(`[${state}] ${blockReason}`);
     } else if (state !== "READY_FOR_EXPORT") {
       if (!isGenerated(doc.generationStatus)) reasons.push(`generationStatus is ${doc.generationStatus}, expected GENERATED`);
@@ -1050,11 +1051,11 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
   if (requiresProjects && reviewedSelectedProjects === 0) blockers.push(tenderBlocker("NO_SELECTED_REVIEWED_PROJECTS", "Tender requires project references but no selected reviewed project matches exist.", "Run Engine and select/review project matches before export."));
 
   const mandatoryReqIds = tender.requirements.filter((r) => String(r.priority ?? "").toUpperCase() === "MANDATORY").map((r) => r.id);
-  const [complianceRows, totalExpertMatches, totalProjectMatches, plannedDocCount, coveredMandatoryIds] = await Promise.all([
+  const [complianceRows, totalExpertMatches, totalProjectMatches, plannedDocRows, coveredMandatoryIds] = await Promise.all([
     prisma.complianceMatrix.count({ where: { tenderId } }),
     prisma.tenderExpertMatch.count({ where: { tenderId } }),
     prisma.tenderProjectMatch.count({ where: { tenderId } }),
-    prisma.generatedDocument.count({ where: { tenderId, generationStatus: "PLANNED" } }),
+    prisma.generatedDocument.findMany({ where: { tenderId, generationStatus: "PLANNED" }, select: { exactFileName: true, name: true, documentType: true, reviewStatus: true } }),
     mandatoryReqIds.length > 0
       ? prisma.complianceMatrix.findMany({
           where: { tenderId, requirementId: { in: mandatoryReqIds }, supportLevel: { in: ["FULL", "SUBSTANTIAL"] } },
@@ -1084,7 +1085,18 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
   }
   if (requiresExperts && totalExpertMatches === 0) blockers.push(tenderBlocker("NO_TENDER_SPECIFIC_EXPERT_MATCHES", "No tender-specific expert match rows exist.", "Run Engine to create expert matches from the reviewed vault."));
   if (requiresProjects && totalProjectMatches === 0) blockers.push(tenderBlocker("NO_TENDER_SPECIFIC_PROJECT_MATCHES", "No tender-specific project match rows exist.", "Run Engine to create project matches from the reviewed vault."));
-  if (plannedDocCount > 0) blockers.push(tenderBlocker("UNGENERATED_PLANNED_DOCUMENTS", `${plannedDocCount} required submission document(s) are planned but not yet generated — the ZIP package would be incomplete.`, "Planned documents are generated automatically. Tender-issued forms are sourced from uploaded Tender Intake files.", "HIGH"));
+  const plannedDocCount = plannedDocRows.length;
+  if (plannedDocCount > 0) {
+    // A financial proposal waiting for prices is completed by the owner, not
+    // by the generator (owner-pricing-stop.ts).
+    const awaitingPricing = plannedDocRows.filter((row) => isAwaitingOwnerPricing(row));
+    const action = awaitingPricing.length === plannedDocCount
+      ? OWNER_PRICING_ACTION
+      : awaitingPricing.length > 0
+        ? `Planned documents are generated automatically. ${OWNER_PRICING_ACTION}`
+        : "Planned documents are generated automatically. Tender-issued forms are sourced from uploaded Tender Intake files.";
+    blockers.push(tenderBlocker("UNGENERATED_PLANNED_DOCUMENTS", `${plannedDocCount} required submission document(s) are planned but not yet generated — the ZIP package would be incomplete.`, action, "HIGH"));
+  }
 
   const ungroundedMandatory = tender.requirements.filter((req) => req.priority === "MANDATORY" && !req.sectionReference && !req.sourceTenderFileId && !req.sourcePageNumber && !req.sourceExactQuote && (req.sourceConfidence ?? 0) <= 0);
   if (ungroundedMandatory.length > 0) blockers.push(tenderBlocker("SOURCE_REFERENCES_MISSING", `${ungroundedMandatory.length} mandatory requirement(s) lack source/page/quote traceability.`, "Run source extraction and review mandatory requirement references before export.", "HIGH"));

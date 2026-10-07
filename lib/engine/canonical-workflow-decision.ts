@@ -13,6 +13,7 @@
 // All panels must consume this decision object — no panel may compute its
 // own competing "next action" or stage truth.
 
+import { isAwaitingOwnerPricing } from "./owner-pricing-stop";
 import { publicJobFailureMessage } from "../prisma-schema-compatibility";
 
 export type WorkflowBlockerPriority =
@@ -43,6 +44,8 @@ export type CanonicalWorkflowDecision = {
   nextRequiredActionReason: string;
   /** Planned files waiting only for an original the owner must sign/supply. */
   awaitingOwnerOriginalFileNames?: string[];
+  /** Financial proposals waiting only for the owner's prices. */
+  awaitingOwnerPricingFileNames?: string[];
   blockingStageCode: string;
   blockerCodes: string[];
   blockerDetails: string[];
@@ -179,6 +182,8 @@ export function buildCanonicalWorkflowDecision(input: {
   finalExportAllowed: boolean;
   /** Planned files waiting only for an original the owner must sign/supply. */
   awaitingOwnerOriginalFileNames?: string[];
+  /** Financial proposals waiting only for the owner's prices. */
+  awaitingOwnerPricingFileNames?: string[];
   authorityOrQualityBlockers: boolean;
   /**
    * The export blockers that are NOT generation blockers — i.e. exactly the
@@ -589,6 +594,7 @@ export function buildCanonicalWorkflowDecision(input: {
     pdfRequiredButUnavailable: input.pdfRequiredButUnavailable,
     finalExportAllowed: input.finalExportAllowed,
     awaitingOwnerOriginalFileNames: input.awaitingOwnerOriginalFileNames ?? [],
+    awaitingOwnerPricingFileNames: input.awaitingOwnerPricingFileNames ?? [],
   };
 }
 
@@ -786,9 +792,16 @@ export async function getCanonicalTenderWorkflowDecision(
   // Rows that can only be completed by the owner's signed/issued original.
   // Named so the owner is told exactly what to upload instead of "Processing
   // automatically" while nothing is processing.
+  const ownerFileName = (row: { exactFileName: string | null; name: string }) => row.exactFileName ?? row.name;
   const awaitingOwnerOriginalFileNames = generatedDocRows
-    .filter((row) => row.reviewStatus === "REPLACE_WITH_ORIGINAL")
-    .map((row) => row.exactFileName ?? row.name)
+    .filter((row) => row.reviewStatus === "REPLACE_WITH_ORIGINAL" && !isAwaitingOwnerPricing(row))
+    .map(ownerFileName)
+    .filter((name): name is string => typeof name === "string" && name.trim().length > 0);
+  // A financial proposal waiting for prices is not an original to upload
+  // (owner-pricing-stop.ts).
+  const awaitingOwnerPricingFileNames = generatedDocRows
+    .filter((row) => isAwaitingOwnerPricing(row))
+    .map(ownerFileName)
     .filter((name): name is string => typeof name === "string" && name.trim().length > 0);
 
   const generatedDocumentsTotal = generatedDocs.length;
@@ -922,6 +935,7 @@ export async function getCanonicalTenderWorkflowDecision(
     pdfRequiredButUnavailable,
     finalExportAllowed,
     awaitingOwnerOriginalFileNames,
+    awaitingOwnerPricingFileNames,
     authorityOrQualityBlockers,
     authorityOrQualityBlockerNames,
   });

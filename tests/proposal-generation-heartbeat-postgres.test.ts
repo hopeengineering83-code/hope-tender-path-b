@@ -8,6 +8,7 @@
 // ENGINE_RUN, and that a still-progressing job (fresh heartbeat step) is
 // correctly left alone.
 
+import { MAX_DURABLE_STAGE_ATTEMPTS } from "../lib/engine/stage-retry-policy";
 import { after, before, describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { prisma, prismaReady } from "../lib/prisma";
@@ -74,6 +75,9 @@ describe("PROPOSAL_GENERATION progress-only stuck recovery — real PostgreSQL",
       data: {
         userId, jobType: "PROPOSAL_GENERATION", status: "RUNNING", startedAt,
         input: JSON.stringify({}),
+        // Past its attempt budget: a killed stage within budget is re-armed
+        // instead (tests/a-killed-worker-does-not-strand-the-package-db.test.ts).
+        retries: MAX_DURABLE_STAGE_ATTEMPTS,
       },
     });
 

@@ -1,3 +1,4 @@
+import { OWNER_PRICING_ACTION } from "./owner-pricing-stop";
 import type { CanonicalWorkflowDecision } from "./canonical-workflow-decision";
 
 /**
@@ -31,7 +32,22 @@ export function presentTwoActionWorkflowDecision(
   // "Processing automatically" there left the owner waiting on a worker that
   // had nothing left to do (2026-09-30, Preview, a telecom-tower EOI).
   const awaiting = decision.awaitingOwnerOriginalFileNames ?? [];
+  const pricing = decision.awaitingOwnerPricingFileNames ?? [];
   const missing = Math.max(0, decision.requiredDocumentsTotal - decision.generatedDocumentsTotal);
+  if (decision.currentBlockingStage === "REQUIRED_DOCS_NOT_GENERATED" && pricing.length > 0 && missing <= awaiting.length + pricing.length) {
+    // The financial proposal waits for the owner's prices; the app never sets
+    // a price. Any signed originals still due are named alongside.
+    const originals = awaiting.length > 0
+      ? ` Also upload the signed original of: ${awaiting.join("; ")}.`
+      : "";
+    return {
+      ...decision,
+      nextRequiredAction: "ENTER_OWNER_PRICING",
+      nextRequiredActionLabel: "Enter prices",
+      nextRequiredActionReason:
+        `Everything the app can prepare is done. ${OWNER_PRICING_ACTION} (${pricing.join("; ")}). The package completes automatically after that.${originals}`,
+    };
+  }
   if (decision.currentBlockingStage === "REQUIRED_DOCS_NOT_GENERATED" && awaiting.length > 0 && missing <= awaiting.length) {
     return {
       ...decision,

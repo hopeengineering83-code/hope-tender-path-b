@@ -42,9 +42,7 @@ export function computeWorkbookTotals(lines: readonly PricedLine[], s: Pick<Work
   return { subtotal, contingency, beforeTax, vat, offerTotal, withholding, netAfterWithholding: round2(offerTotal - withholding) };
 }
 
-export function isFinancialProposalFile(fileName: string, documentType: string): boolean {
-  return /^FINANCIAL_PROPOSAL$/i.test(documentType) || /financial[\s._-]+proposal|commercial[\s._-]+proposal|price[\s._-]+(?:proposal|offer)/i.test(fileName);
-}
+export { isFinancialProposalFile } from "./owner-pricing-stop";
 
 export function pricedLines(lines: readonly PricedLine[]): PricedLine[] {
   return lines.filter((l) => lineAmount(l) > 0);

@@ -27,6 +27,7 @@
 // Acceptance: any change to readiness logic must go through this helper.
 // Consumers must NEVER inline blockers/advisory checks that conflict.
 
+import { isAwaitingOwnerPricing, OWNER_PRICING_ACTION } from "./owner-pricing-stop";
 import { resolvePackageRole } from "./artifact-quality-schema";
 import { DEFAULT_REQUIRED_SECTIONS_BY_TYPE as PACKAGE_SECTION_TABLE } from "./export-readiness";
 import type { PrismaClient } from "@prisma/client";
@@ -1097,7 +1098,9 @@ export async function getFinalSubmissionReadiness(
       category: "SUBMISSION_PLAN_DOCUMENTS_MISSING",
       severity: "HIGH",
       title: `${missingPlan.length} submission plan document(s) have not been generated: ${missingPlan.map((d) => d.exactFileName).join(", ")}.`,
-      recommendedAction: "Generate the missing documents from the Generate Documents panel before attempting final export.",
+      recommendedAction: missingPlan.every((d) => generatedDocuments.some((row) => isAwaitingOwnerPricing(row) && (row as { exactFileName?: string | null }).exactFileName === d.exactFileName))
+        ? OWNER_PRICING_ACTION
+        : "Generate the missing documents from the Generate Documents panel before attempting final export.",
     });
   }
   // Hard block when there are generated documents outside the confirmed
