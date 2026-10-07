@@ -1793,6 +1793,19 @@ jobs:
           for it in items:
               print(f"  {it.get('category'):<20} format={it.get('detectedFormat')} mime={it.get('mimeType')} integrity={it.get('integrityStatus')} name={it.get('originalFileName')}")
           PYEOF
+          # Every tender the owner has uploaded, so a reader can pick real
+          # tenders from different service families without guessing ids.
+          curl -sS --connect-timeout 15 --max-time 60 -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/tenders?limit=100" > /tmp/tender-inventory.json || true
+          python3 - <<'PYEOF' || true
+          import json
+          d = json.load(open('/tmp/tender-inventory.json', encoding='utf-8'))
+          rows = d if isinstance(d, list) else (d.get('items') or d.get('tenders') or [])
+          print(f"================ TENDERS ON THIS DEPLOYMENT ({len(rows)}) ================")
+          for t in rows:
+              files = t.get('files') or []
+              print(f"  {t.get('id')} status={t.get('status')} category={t.get('category')} files={len(files)} reqs={len(t.get('requirements') or [])} docs={len(t.get('generatedDocuments') or [])} title={(t.get('title') or '')[:110]!r}")
+          PYEOF
           for f in /tmp/canonical-blockers.txt /tmp/build-plan-inputs.txt /tmp/document-quality-blockers.txt; do
             echo "================ $f ================"
             [ -s "$f" ] && cut -c1-400 "$f" | head -90 || echo "(empty)"

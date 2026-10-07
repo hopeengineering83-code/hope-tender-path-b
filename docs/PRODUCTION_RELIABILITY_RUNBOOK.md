@@ -227,6 +227,32 @@ client-side errors with server-side logs:
 
 ---
 
+## Post-release scheduler smoke test (Production only)
+
+Vercel Cron runs only on the Production deployment, so a Preview can never
+prove it. After the owner promotes a release, check once:
+
+1. Signed in as an admin, open `/api/admin/diagnostics` and read `scheduler`:
+   `cronSecretConfigured` must be `true` (it reports presence only, never the
+   value). If it is `false`, set `CRON_SECRET` (at least 16 characters) in the
+   Vercel project's **Production** environment and redeploy; until then no
+   cron in `vercel.json` can authenticate.
+2. In Vercel → Project → Settings → Cron Jobs, confirm `/api/ai-jobs/run-next`
+   (every minute) and `/api/cron/ai-analyze-retry` (every 5 minutes) are listed
+   and their recent invocations return 200, not 401.
+3. Start AI Analyze on a tender and close the browser. Within about a minute
+   the job must move from QUEUED to RUNNING without the page open (the
+   Workflow Center shows it on return). A job still QUEUED after five minutes
+   means the cron is not running: re-check steps 1–2.
+4. The GitHub Actions workflow "Drain AiJob queue" is manual/emergency only
+   (no schedule). Use it only if Vercel Cron is unavailable.
+
+A worker killed mid-stage is re-queued by the next sweep once its invocation
+cap (330 s) has passed, up to the stage's attempt budget; no one needs to
+click anything.
+
+---
+
 ## Release-Blocker Checklist for Reliability Issues
 
 Before merging any PR that touches upload, extraction, AI analyze, generation,
