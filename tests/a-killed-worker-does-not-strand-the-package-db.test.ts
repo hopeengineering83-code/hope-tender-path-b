@@ -46,7 +46,7 @@ describe("a killed worker does not strand the package — real PostgreSQL", () =
 
   it("re-arms a durable stage whose worker is certainly dead, and one caller claims it", async () => {
     const id = await runningJob("PROPOSAL_GENERATION", WORKER_INVOCATION_HARD_CAP_MS + 60_000);
-    const result = await failStuckJobs();
+    const result = await failStuckJobs({ tenderId });
     assert.ok(result.rearmedIds.includes(id), JSON.stringify(result));
     const row = await prisma.aiJob.findUniqueOrThrow({ where: { id } });
     assert.equal(row.status, "QUEUED");
@@ -59,7 +59,7 @@ describe("a killed worker does not strand the package — real PostgreSQL", () =
 
   it("leaves alone a stalled job a live invocation may still be running", async () => {
     const id = await runningJob("ENGINE_RUN", 200_000);
-    const result = await failStuckJobs();
+    const result = await failStuckJobs({ tenderId });
     assert.equal(result.rearmedIds.includes(id), false);
     assert.equal(result.ids.includes(id), false);
     assert.equal((await prisma.aiJob.findUniqueOrThrow({ where: { id } })).status, "RUNNING");
@@ -67,14 +67,14 @@ describe("a killed worker does not strand the package — real PostgreSQL", () =
 
   it("fails a stage that has spent its attempt budget", async () => {
     const id = await runningJob("AUTO_FINALIZE", WORKER_INVOCATION_HARD_CAP_MS + 60_000, MAX_DURABLE_STAGE_ATTEMPTS);
-    const result = await failStuckJobs();
+    const result = await failStuckJobs({ tenderId });
     assert.ok(result.ids.includes(id));
     assert.equal((await prisma.aiJob.findUniqueOrThrow({ where: { id } })).status, "FAILED");
   });
 
   it("running the sweep twice changes nothing more", async () => {
     const id = await runningJob("ENGINE_RUN", WORKER_INVOCATION_HARD_CAP_MS + 60_000);
-    const [a, b] = await Promise.all([failStuckJobs(), failStuckJobs()]);
+    const [a, b] = await Promise.all([failStuckJobs({ tenderId }), failStuckJobs({ tenderId })]);
     assert.equal([...a.rearmedIds, ...b.rearmedIds].filter((x) => x === id).length, 1);
     assert.equal((await prisma.aiJob.findUniqueOrThrow({ where: { id } })).retries, 1);
   });

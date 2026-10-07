@@ -404,13 +404,21 @@ function seniorityWeight(title: string, years: number | null | undefined, index:
 }
 
 function normalizeLabel(label: string): string[] {
-  return label.toLowerCase().replace(/[^a-z\s]/g, " ").split(/\s+/).filter((w) => w.length > 2 && !["and", "the", "for", "with", "senior", "expert", "specialist"].includes(w));
+  // Generic role nouns say nothing about the discipline: "Pavement Engineer"
+  // and "Water Engineer" are not the same role.
+  return label.toLowerCase().replace(/[^a-z\s]/g, " ").split(/\s+/).filter((w) => w.length > 2 && !["and", "the", "for", "with", "senior", "junior", "expert", "specialist", "engineer", "officer", "consultant", "manager", "team", "lead", "leader", "principal", "chief", "assistant"].includes(w));
 }
 
 function labelSimilarity(a: string, b: string): number {
   const ta = new Set(normalizeLabel(a));
   const tb = new Set(normalizeLabel(b));
-  if (ta.size === 0 || tb.size === 0) return 0;
+  if (ta.size === 0 || tb.size === 0) {
+    // A label of generic words only ("Team Leader") matches a label that
+    // contains every one of them.
+    const words = (v: string) => new Set(v.toLowerCase().replace(/[^a-z\s]/g, " ").split(/\s+/).filter((w) => w.length > 2));
+    const [short, long] = [words(a), words(b)].sort((x, y) => x.size - y.size) as [Set<string>, Set<string>];
+    return short.size > 0 && Array.from(short).every((w) => long.has(w)) ? 1 : 0;
+  }
   let shared = 0;
   for (const t of ta) if (tb.has(t)) shared += 1;
   return shared / Math.min(ta.size, tb.size);
@@ -597,6 +605,29 @@ export function estimateTenderPrice(input: PricingEvidenceInput): PricingEstimat
       .map((r) => ({ r, sim: d.category === "PERSONNEL" ? labelSimilarity(d.label.split(" — ")[0]!, r.label.split(" — ")[0]!) : labelSimilarity(d.label, r.label) }))
       .filter((c) => c.sim >= 0.5 && (d.category !== "PERSONNEL" || c.r.category === "PERSONNEL"))
       .sort((a, b) => new Date(b.r.date).getTime() - new Date(a.r.date).getTime());
+    if (candidates.length === 0 && d.category === "PERSONNEL" && d.unit === "DAY") {
+      // No approved rate for this role by name. The owner's approved day rates
+      // for the same tier (team lead vs other experts) are the firm's own
+      // pricing for comparable seniority — weaker evidence, marked MEDIUM.
+      const leader = LEADER_RE.test(d.label);
+      const tier = input.priorRates
+        .filter((r) => r.category === "PERSONNEL" && r.unit === "DAY" && r.rate > 0 && r.currency.toUpperCase() === currency)
+        .filter((r) => LEADER_RE.test(r.label) === leader)
+        .sort((a, b) => a.rate - b.rate);
+      if (tier.length > 0) {
+        const median = tier[Math.floor((tier.length - 1) / 2)]!;
+        const latest = tier.reduce((m, r) => (new Date(r.date) > new Date(m.date) ? r : m), tier[0]!);
+        d.evidenceRate = {
+          rate: median.rate,
+          basis: `median of ${tier.length} day rate(s) the owner approved for ${leader ? "team-lead" : "expert"} roles on earlier tenders (no approved rate for this role by name)`,
+          source: "Owner-approved rates, same seniority tier",
+          date: toIsoDate(latest.date),
+          confidence: "MEDIUM",
+          scalable: true,
+        };
+        continue;
+      }
+    }
     if (candidates.length > 0) {
       const best = candidates[0]!.r;
       const ageMonths = monthsBetween(new Date(best.date), input.now);

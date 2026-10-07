@@ -135,6 +135,28 @@ describe("Pricing Intelligence", () => {
     assert.equal(pits.quantity, 12);
   });
 
+  it("one earlier approval prices another tender's roles by seniority tier, marked MEDIUM", () => {
+    const est = estimateTenderPrice(input({
+      tender: { id: "t2", title: "Detailed design of a rural road", country: "Ethiopia", category: "ROADS", currency: null, budget: null },
+      experts: [
+        { id: "x1", name: "L", title: "Team Leader / Highway Engineer", yearsExperience: 20 },
+        { id: "x2", name: "M", title: "Pavement Engineer", yearsExperience: 9 },
+      ],
+      priorRates: [
+        { label: "Team Leader / WASH Specialist — A", category: "PERSONNEL", unit: "DAY", rate: 11_000, currency: "ETB", date: "2026-09-01" },
+        { label: "MEAL Specialist — B", category: "PERSONNEL", unit: "DAY", rate: 6_000, currency: "ETB", date: "2026-09-01" },
+        { label: "Water Engineer — C", category: "PERSONNEL", unit: "DAY", rate: 7_000, currency: "ETB", date: "2026-09-01" },
+      ],
+    }));
+    const lines = est.scenarios[1]!.lines;
+    const lead = lines.find((l) => /Highway/.test(l.label))!;
+    const pavement = lines.find((l) => /Pavement/.test(l.label))!;
+    assert.equal(lead.rate, 11_000, "team-lead tier");
+    assert.equal(pavement.rate, 6_000, "expert tier median (lower of two)");
+    assert.equal(pavement.rateConfidence, "MEDIUM");
+    assert.match(pavement.rateBasis, /seniority|expert roles/);
+  });
+
   it("records where an approved line came from", () => {
     const est = estimateTenderPrice(input({ historicalProjects: [project("Water supply feasibility A", 800_000, 4)] }));
     const note = approvedLineNotes(est.scenarios[1]!.lines[0]!, "BALANCED");

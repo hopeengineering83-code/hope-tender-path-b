@@ -321,7 +321,7 @@ export function isProgressStuckOnlyType(jobType: string): boolean {
  *     legitimate Claude call (which can run several minutes between
  *     steps) from being killed by the recovery sweep.
  */
-export async function findStuckJobs(opts?: { stuckAfterMs?: number; progressStuckAfterMs?: number; limit?: number }): Promise<{
+export async function findStuckJobs(opts?: { stuckAfterMs?: number; progressStuckAfterMs?: number; limit?: number; tenderId?: string }): Promise<{
   count: number;
   jobs: Array<{ id: string; jobType: JobType; userId: string; tenderId: string | null; startedAt: Date | null; retries: number; latestStepName: string | null; latestStepAt: Date | null }>;
 }> {
@@ -339,6 +339,7 @@ export async function findStuckJobs(opts?: { stuckAfterMs?: number; progressStuc
   const candidates = await prisma.aiJob.findMany({
     where: {
       status: "RUNNING",
+      ...(opts?.tenderId ? { tenderId: opts.tenderId } : {}),
       OR: [
         { startedAt: { lt: totalThreshold } },
         { jobType: { in: ["ENGINE_RUN", "PROPOSAL_GENERATION", "AUTO_FINALIZE"] }, startedAt: { lt: progressThreshold } },
@@ -398,9 +399,11 @@ export async function findStuckJobs(opts?: { stuckAfterMs?: number; progressStuc
  */
 export const WORKER_INVOCATION_HARD_CAP_MS = 330_000;
 
-export async function failStuckJobs(opts?: { stuckAfterMs?: number; progressStuckAfterMs?: number; reason?: string; limit?: number }): Promise<{ recovered: number; ids: string[]; rearmed: number; rearmedIds: string[] }> {
+export async function failStuckJobs(opts?: { stuckAfterMs?: number; progressStuckAfterMs?: number; reason?: string; limit?: number; tenderId?: string }): Promise<{ recovered: number; ids: string[]; rearmed: number; rearmedIds: string[] }> {
   await prismaReady;
-  const { jobs } = await findStuckJobs({ stuckAfterMs: opts?.stuckAfterMs, progressStuckAfterMs: opts?.progressStuckAfterMs, limit: opts?.limit ?? 50 });
+  // `tenderId` scopes the sweep to one tender (tests, targeted recovery);
+  // the scheduled sweep omits it and covers every tenant.
+  const { jobs } = await findStuckJobs({ stuckAfterMs: opts?.stuckAfterMs, progressStuckAfterMs: opts?.progressStuckAfterMs, limit: opts?.limit ?? 50, tenderId: opts?.tenderId });
   if (jobs.length === 0) return { recovered: 0, ids: [], rearmed: 0, rearmedIds: [] };
   const recovered: string[] = [];
   const rearmedIds: string[] = [];

@@ -210,7 +210,10 @@ describe("Tender Workflow E2E Gates Regression Pack", () => {
       const src = readFileSync(resolve(process.cwd(), "app/api/tenders/[id]/download/route.ts"), "utf8");
 
       assert.ok(src.includes("const canonical = await getFinalSubmissionReadiness"), "Download route must check canonical readiness");
-      assert.ok(src.includes("if (!canonical.ok)"), "Download route must block if canonical readiness is not OK");
+      // The one exception is the proposal-only package: requested explicitly,
+      // and only when every app document is ready and only owner originals remain.
+      assert.ok(src.includes("if (!canonical.ok && !proposalOnly)"), "Download route must block if canonical readiness is not OK");
+      assert.ok(src.includes('const proposalOnly = !canonical.ok && packageScope === "proposal" && canonical.proposalComplete;'), "the proposal-only exception is explicit and gated on proposalComplete");
     });
 
     it("Export route must block on EXTRACTION_QUALITY_INSUFFICIENT", async () => {
