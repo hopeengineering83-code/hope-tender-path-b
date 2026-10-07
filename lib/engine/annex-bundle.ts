@@ -113,11 +113,23 @@ const KIND_RULES: Record<string, KindRule> = {
   },
 };
 
-function isVerifiedPdf(doc: AnnexVaultDocument): boolean {
+export function isVerifiedPdf(doc: AnnexVaultDocument): boolean {
   if (String(doc.integrityStatus ?? "").toUpperCase() !== "VERIFIED") return false;
   const format = String(doc.detectedFormat ?? "").toUpperCase();
   const mime = String(doc.contentMimeType ?? doc.mimeType ?? "").toLowerCase();
   return format === "PDF" || mime === "application/pdf";
+}
+
+/** The Vault documents that answer one annex kind (verified or not). Empty for a kind with no rule. */
+export function vaultCandidatesForKind(kind: string, input: Pick<AnnexBundleInput, "vaultDocuments" | "selectedExpertSourceDocumentIds" | "selectedProjectSourceDocumentIds">): AnnexVaultDocument[] {
+  const rule = KIND_RULES[kind];
+  if (!rule) return [];
+  return input.vaultDocuments.filter((doc) => rule.select(doc, input as AnnexBundleInput));
+}
+
+/** Kinds only the owner can produce: they must be signed. */
+export function isOwnerSignedKind(kind: string): boolean {
+  return KIND_RULES[kind]?.missingReason === OWNER_SIGNED;
 }
 
 /** Which originals the combined file must carry, and which are missing. */

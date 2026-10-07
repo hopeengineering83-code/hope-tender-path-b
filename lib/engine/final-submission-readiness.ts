@@ -153,8 +153,23 @@ export type FinalReadinessSummary = {
   primaryFixAction: string | null;
 };
 
+/**
+ * Where the package stands. A generated proposal can be complete while the
+ * submission is not: the originals the tender asks for (licences, signed
+ * declarations, tender-issued forms …) are the owner's to attach, and the app
+ * must not claim SUBMISSION_READY until they are actually in the package.
+ */
+export type FinalPackageStatus = "SUBMISSION_READY" | "PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED" | "IN_PROGRESS";
+
+export const PROPOSAL_COMPLETE_LABEL = "PROPOSAL COMPLETE — OWNER ATTACHMENTS REQUIRED";
+
 export type FinalSubmissionReadiness = {
   ok: boolean;
+  /** Every document the app produces is export-ready; only owner attachments remain (or nothing remains). */
+  proposalComplete: boolean;
+  packageStatus: FinalPackageStatus;
+  /** What the owner attaches, and where. */
+  ownerAttachments: import("./owner-attachment-checklist").OwnerAttachmentChecklist | null;
   tender: { id: string; title: string; status: string; stage: string; readinessScore: number };
   documentBlockers: FinalReadinessDocumentBlocker[];
   tenderLevelBlockers: FinalReadinessTenderBlocker[];
@@ -894,6 +909,22 @@ export async function getFinalSubmissionReadiness(
       recommendedAction: "Fill the missing critical Tender Details — client/procuring entity, deadline, submission method — before final proposal generation.",
     });
   }
+  // The originals the tender requires that the app does not produce. They do
+  // not stop the proposal; they stop a claim of SUBMISSION_READY until they
+  // are actually in the package.
+  const { loadOwnerAttachmentChecklist } = await import("./owner-attachment-checklist");
+  const ownerAttachments = await loadOwnerAttachmentChecklist(opts.tenderId, opts.userId, client).catch(() => null);
+  if (ownerAttachments?.mode === "SEPARATE_ATTACHMENTS") {
+    const outstanding = ownerAttachments.items.filter((item) => item.status === "OWNER_TO_ATTACH" && item.kind !== "Tender-issued form");
+    if (outstanding.length > 0) {
+      tenderLevelBlockers.push({
+        category: "OWNER_ATTACHMENTS_REQUIRED",
+        severity: "HIGH",
+        title: `${outstanding.length} original(s) the tender requires are attached by the owner: ${outstanding.map((item) => item.kind).join("; ")}.`,
+        recommendedAction: "Attach each item in the Owner Attachment Checklist to the submission, in the order listed. The proposal itself is complete.",
+      });
+    }
+  }
   // A single combined PDF the tender says must contain its annexes must carry
   // the verified Vault originals (annex-bundle.ts). Missing originals are the
   // owner's to supply; a file that does not bind the planned set is not final.
@@ -908,7 +939,7 @@ export async function getFinalSubmissionReadiness(
           category: "COMBINED_FILE_ANNEX_MISSING",
           severity: "HIGH",
           title: `"${combined}" must contain the tender's annexes. Not available as verified PDF originals: ${annex.plan.missing.map((m) => `${m.kind} (${m.reason})`).join("; ")}.`,
-          recommendedAction: "Upload the verified PDF original of each to the Company Vault — signed where the tender requires a signature. The combined file is rebuilt with them automatically.",
+          recommendedAction: "Insert each original into the combined file in the Owner Attachment Checklist's order when assembling it, or upload it to the Company Vault as a PDF (signed where the tender requires) and it is bound in automatically. The proposal itself is complete.",
         });
       } else {
         const row = generatedDocuments.find((doc) => String((doc as { exactFileName?: string | null }).exactFileName ?? "").toLowerCase() === combined.toLowerCase()
@@ -1450,10 +1481,30 @@ export async function getFinalSubmissionReadiness(
   // No separate currency authority call needed here.
 
   const ok = readiness.ok && documentBlockers.length === 0 && tenderLevelBlockers.length === 0;
-  const message = buildMessage({ ok, documentBlockers, tenderLevelBlockers, advisoryWarnings });
+  const proposalComplete = ok || isProposalCompleteExceptOwnerAttachments({
+    documentBlockers,
+    tenderLevelBlockers,
+    exportReadyCount: finalCandidates.filter((d) => isExportReady(d)).length,
+    formsAwaitingOriginal: (ownerAttachments?.items ?? []).filter((item) => item.kind === "Tender-issued form").map((item) => item.document),
+    plannedFileNames: generatedDocuments
+      .filter((d) => (d.generationStatus ?? "").toUpperCase() === "PLANNED")
+      .map((d) => String((d as { exactFileName?: string | null }).exactFileName ?? (d as { name?: string | null }).name ?? "")),
+    missingPlanFileNames: missingPlan.map((d) => String(d.exactFileName ?? "")),
+  });
+  const packageStatus: FinalPackageStatus = ok ? "SUBMISSION_READY" : proposalComplete ? "PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED" : "IN_PROGRESS";
+  const message = packageStatus === "PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED"
+    ? `${PROPOSAL_COMPLETE_LABEL}. The proposal documents are complete; ${ownerAttachments?.outstanding ?? 0} required original(s) are the owner's to attach — see the Owner Attachment Checklist.`
+    : buildMessage({ ok, documentBlockers, tenderLevelBlockers, advisoryWarnings });
+  if (packageStatus === "PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED") {
+    summary.primaryBlockerReason = PROPOSAL_COMPLETE_LABEL;
+    summary.primaryFixAction = "Attach the originals in the Owner Attachment Checklist. The proposal can be downloaded for assembly now.";
+  }
 
   return {
     ok,
+    proposalComplete,
+    packageStatus,
+    ownerAttachments,
     tender: {
       id: tender.id,
       title: tender.title,
@@ -1470,6 +1521,34 @@ export async function getFinalSubmissionReadiness(
     message,
     canonicalFields: canonicalExportState.fields,
   };
+}
+
+/** Blocker categories resolved only by the owner attaching an original. */
+const OWNER_ATTACHMENT_CATEGORIES = new Set(["OWNER_ATTACHMENTS_REQUIRED", "COMBINED_FILE_ANNEX_MISSING"]);
+const PLAN_SHORTFALL_CATEGORIES = new Set(["UNGENERATED_PLANNED_DOCUMENTS", "SUBMISSION_PLAN_DOCUMENTS_MISSING"]);
+
+/**
+ * True when every document the app produces is export-ready and every
+ * remaining blocker is an original the owner attaches: a tender-issued form
+ * awaiting its signed original, or an annex the tender requires. A pricing
+ * approval, a failed validation, a grounding gap or anything else keeps the
+ * proposal incomplete.
+ */
+export function isProposalCompleteExceptOwnerAttachments(input: {
+  documentBlockers: Array<{ name: string; fileName: string }>;
+  tenderLevelBlockers: Array<{ category: string }>;
+  exportReadyCount: number;
+  formsAwaitingOriginal: string[];
+  plannedFileNames: string[];
+  missingPlanFileNames: string[];
+}): boolean {
+  if (input.exportReadyCount === 0) return false;
+  if (input.documentBlockers.length === 0 && input.tenderLevelBlockers.length === 0) return false;
+  const forms = new Set(input.formsAwaitingOriginal.map((n) => n.trim().toLowerCase()).filter(Boolean));
+  const isForm = (name: string) => forms.has(name.trim().toLowerCase());
+  const shortfallIsForms = input.plannedFileNames.every(isForm) && input.missingPlanFileNames.every(isForm);
+  return input.documentBlockers.every((b) => isForm(b.fileName) || isForm(b.name))
+    && input.tenderLevelBlockers.every((b) => OWNER_ATTACHMENT_CATEGORIES.has(b.category) || (PLAN_SHORTFALL_CATEGORIES.has(b.category) && shortfallIsForms && forms.size > 0));
 }
 
 // ── pure exports for tests ─────────────────────────────────────────────────

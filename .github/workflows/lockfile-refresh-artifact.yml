@@ -769,8 +769,17 @@ jobs:
           echo "$resp" | tee /tmp/export-response.json
           status=$(echo "$resp" | grep -oE "STATUS:[0-9]+" | cut -d: -f2)
           if [ "$status" != "200" ]; then
-            echo "::error::POST /export did not return 200 (HTTP $status)."
-            exit 1
+            # The submission export is refused while originals the owner
+            # attaches are missing. That is the honest state, not a failure,
+            # when the gate itself says the proposal is complete.
+            pkg=$(curl -sS --connect-timeout 15 --max-time 90 -H "Cookie: hope_session=$SESSION_COOKIE" \
+              "$BASE_URL/api/tenders/$TENDER_ID/export-readiness" | python3 -c "import json,sys; print(json.load(sys.stdin).get('packageStatus') or '')" 2>/dev/null || true)
+            if [ "$status" = "409" ] && [ "$pkg" = "PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED" ]; then
+              echo "PROPOSAL COMPLETE — OWNER ATTACHMENTS REQUIRED: the submission export waits for the owner's originals."
+            else
+              echo "::error::POST /export did not return 200 (HTTP $status; package status ${pkg:-unknown})."
+              exit 1
+            fi
           fi
 
       - name: Download the final ZIP
@@ -796,6 +805,22 @@ jobs:
             status=$(cat /tmp/zip-status.txt)
             size=$(wc -c < /tmp/preview-final.zip)
             echo "TECHNICAL ENVELOPE ZIP HTTP:$status SIZE:$size"
+          fi
+          # Proposal complete, owner attachments required: the submission
+          # package is refused (originals are missing), and the app names the
+          # proposal package to assemble from. Follow it, as the UI does.
+          if [ "$status" = "409" ] && grep -q '"proposalComplete":true' /tmp/preview-final.zip; then
+            scope_env=""
+            grep -q '"strictTwoEnvelope":true' /tmp/preview-final.zip && scope_env="&envelope=technical"
+            echo "PROPOSAL COMPLETE — OWNER ATTACHMENTS REQUIRED; downloading the proposal package"
+            curl -sS --connect-timeout 15 --max-time 120 -o /tmp/preview-final.zip -D /tmp/zip-headers.txt \
+              -w "%{http_code}" \
+              -H "Cookie: hope_session=$SESSION_COOKIE" \
+              "$BASE_URL/api/tenders/$TENDER_ID/download?type=zip&scope=proposal${scope_env}" > /tmp/zip-status.txt
+            status=$(cat /tmp/zip-status.txt)
+            size=$(wc -c < /tmp/preview-final.zip)
+            grep -i "^x-package-status\|^x-owner-attachments\|^content-disposition" /tmp/zip-headers.txt || true
+            echo "PROPOSAL PACKAGE ZIP HTTP:$status SIZE:$size"
           fi
           if [ "$status" != "200" ] || [ "$size" -le 0 ]; then
             echo "::error::Final ZIP download failed (HTTP $status, $size bytes)."
@@ -1806,6 +1831,49 @@ jobs:
               files = t.get('files') or []
               print(f"  {t.get('id')} status={t.get('status')} category={t.get('category')} files={len(files)} reqs={len(t.get('requirements') or [])} docs={len(t.get('generatedDocuments') or [])} title={(t.get('title') or '')[:110]!r}")
           PYEOF
+          # Pricing Intelligence and the Owner Attachment Checklist, as the
+          # owner sees them on the tender page.
+          curl -sS --connect-timeout 15 --max-time 60 -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/tenders/$TENDER_ID/pricing/estimate" > /tmp/pricing-estimate.json || true
+          curl -sS --connect-timeout 15 --max-time 60 -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/tenders/$TENDER_ID/owner-attachments" > /tmp/owner-attachments.json || true
+          curl -sS --connect-timeout 15 --max-time 60 -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/tenders/$TENDER_ID/pricing" > /tmp/pricing-workbook.json || true
+          python3 - <<'PYEOF' || true
+          import json
+          def load(p):
+              try: return json.load(open(p, encoding='utf-8'))
+              except Exception as exc: return {"error": str(exc)}
+          e = load('/tmp/pricing-estimate.json').get('estimate') or {}
+          print("================ PRICING INTELLIGENCE ================")
+          print(f"status={e.get('status')} currency={e.get('currency')} vat={e.get('vatPercent')}% ({e.get('vatBasis')})")
+          print(f"period={e.get('durationMonths')} months ({e.get('durationBasis')})")
+          print(f"budget={e.get('budget')}")
+          env = e.get('envelope') or {}
+          print(f"envelope={ {k: env.get(k) for k in ('low','median','high','confidence','basis')} if env else None}")
+          for c in (env.get('comparables') or [])[:8]: print(f"   comparable: {c}")
+          print(f"recommendation: {e.get('recommendation')}")
+          for sc in e.get('scenarios') or []:
+              print(f"-- {sc.get('id')} ({sc.get('label')}) subtotal={sc.get('subtotal')} contingency={sc.get('contingency')} vat={sc.get('vat')} offer={sc.get('offerTotal')} complete={sc.get('complete')}")
+              if sc.get('id') == 'BALANCED':
+                  for l in sc.get('lines') or []:
+                      print(f"   {l.get('label')[:60]:<60} {l.get('quantity')} {l.get('unit')} x {l.get('rate')} = {l.get('amount')} [{l.get('confidence')}] {l.get('rateBasis','')[:90]}")
+          for s in (e.get('lowConfidence') or [])[:12]: print(f"   check: {s[:200]}")
+          for s in e.get('evidenceUsed') or []: print(f"   evidence: {s}")
+          w = load('/tmp/pricing-workbook.json').get('workbook') or {}
+          print(f"WORKBOOK: scenario={w.get('scenario')} lines={len(w.get('lines') or [])} total={(w.get('totals') or {}).get('grandTotal')} notes={w.get('notes')}")
+          c = load('/tmp/owner-attachments.json').get('checklist') or {}
+          print(f"================ OWNER ATTACHMENT CHECKLIST mode={c.get('mode')} combined={c.get('combinedFileName')} outstanding={c.get('outstanding')} ================")
+          for i in c.get('items') or []:
+              src = i.get('source') or {}
+              print(f"  {i.get('order')}. {i.get('kind')} [{i.get('status')}] copy={i.get('copyType')} signed={i.get('signatureRequired')} stamp={i.get('stampRequired')} copies={i.get('copies')} envelope={i.get('envelope')}")
+              print(f"     required: {i.get('document')}")
+              print(f"     source: {src.get('requirementTitle')} p.{src.get('page')} | vault={(i.get('vault') or {}).get('status')} {(i.get('vault') or {}).get('documents')}")
+              print(f"     action: {i.get('ownerAction')}")
+          PYEOF
+          curl -sS --connect-timeout 15 --max-time 90 -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/tenders/$TENDER_ID/export-readiness" > /tmp/package-status.json || true
+          python3 -c "import json; d=json.load(open('/tmp/package-status.json')); print('PACKAGE STATUS:', d.get('packageStatus'), '| proposalComplete:', d.get('proposalComplete'), '| outstanding:', d.get('ownerAttachmentsOutstanding'), '| primary:', d.get('primaryBlockerReason'))" || true
           for f in /tmp/canonical-blockers.txt /tmp/build-plan-inputs.txt /tmp/document-quality-blockers.txt; do
             echo "================ $f ================"
             [ -s "$f" ] && cut -c1-400 "$f" | head -90 || echo "(empty)"

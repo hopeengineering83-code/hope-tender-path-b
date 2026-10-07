@@ -191,7 +191,7 @@ function parseEnvelopeQuery(value: string | null): EnvelopeFilter | "INVALID" {
   return "INVALID";
 }
 
-async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeFilter) {
+async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeFilter, packageScope: "submission" | "proposal" = "submission") {
   const gate = await finalPackageGate(userId, tender);
   if (!gate.ok) return gate.response;
 
@@ -200,12 +200,20 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
   // judging byte readiness from metadata it never fetched.
   const canonical = await getFinalSubmissionReadiness(prisma, { tenderId: tender.id, userId, requireFileContent: true });
   if (!canonical) return err("Tender not found", 404, { code: "TENDER_NOT_FOUND" });
-  if (!canonical.ok) {
+  // The proposal package: every document the app produces is ready and only
+  // the originals the owner attaches remain. It is downloadable for the owner
+  // to assemble the submission, under its own name — never as the submission
+  // package. Every gate below still applies to the documents it carries.
+  const proposalOnly = !canonical.ok && packageScope === "proposal" && canonical.proposalComplete;
+  if (!canonical.ok && !proposalOnly) {
     return err(
       canonical.message,
       409,
       {
         code: "EXPORT_READINESS_BLOCKED",
+        packageStatus: canonical.packageStatus,
+        proposalComplete: canonical.proposalComplete,
+        ...(canonical.proposalComplete ? { proposalPackage: `?type=zip&scope=proposal${envelopeFilter ? `&envelope=${envelopeFilter.toLowerCase()}` : ""}` } : {}),
         documentBlockers: canonical.documentBlockers,
         tenderLevelBlockers: canonical.tenderLevelBlockers,
         advisoryWarnings: canonical.advisoryWarnings,
@@ -213,6 +221,11 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
       },
     );
   }
+  const ownerFormNames = new Set(
+    (canonical.ownerAttachments?.items ?? [])
+      .filter((item) => item.kind === "Tender-issued form")
+      .map((item) => item.document.trim().toLowerCase()),
+  );
 
   const finalBuildPlan = await getCurrentConfirmedBuildPlan(prisma, tender.id, userId);
   const plannedDeliveryNames = new Set(
@@ -223,6 +236,9 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
   const isConfirmedDelivery = (doc: any) => plannedDeliveryNames.has(
     String(doc.exactFileName ?? doc.name ?? "").trim().toLowerCase(),
   );
+  // A proposal package does not carry the forms the owner signs; nor does it
+  // require them to be present.
+  const isOwnerForm = (name: string) => proposalOnly && ownerFormNames.has(name.trim().toLowerCase());
   const finalOperationGate = resolveTenderOperationGate({
     tender: {
       id: tender.id,
@@ -335,7 +351,7 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
     // independently.
     if (finalBuildPlan.ok) {
       for (const item of finalBuildPlan.items) {
-        if (item.exactFileName?.trim()) {
+        if (item.exactFileName?.trim() && !isOwnerForm(item.exactFileName)) {
           manifestEntries.push({ exactFileName: item.exactFileName, documentType: item.documentType ?? "TENDER_REQUIRED_FILE" });
         }
       }
@@ -355,7 +371,11 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
       } catch { /* ignore */ }
     }
 
-    const authorityResult = runAuthorityReview(authorityDocs, manifestEntries, requiredSections);
+    const authorityResult = runAuthorityReview(
+      authorityDocs,
+      manifestEntries.filter((entry) => !isOwnerForm(entry.exactFileName)),
+      requiredSections.filter((section) => !isOwnerForm(section)),
+    );
     if (authorityResult.status !== "AUTHORITY_READY") {
       if (authorityResult.status === "BLOCKED") {
         return err(
@@ -554,7 +574,9 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
   const hasFinancialDocs = envelopeCounts.FINANCIAL > 0;
 
   const zipBuffer = assembledZip.buffer;
-  const baseLabel = `${safeFileBaseName(tender.title)}-submission-package`;
+  const baseLabel = proposalOnly
+    ? `${safeFileBaseName(tender.title)}-proposal-owner-attachments-required`
+    : `${safeFileBaseName(tender.title)}-submission-package`;
   const zipName = envelopeFilter
     ? `${baseLabel}-${envelopeFilter.toLowerCase()}.zip`
     : `${baseLabel}.zip`;
@@ -564,7 +586,9 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
   // single tenant-scoped transaction. The helper locks the tender row, reuses
   // an identical hash safely under concurrent downloads, and creates a distinct
   // snapshot when a technical/financial envelope produces different bytes.
-  const exportPackage = await persistVerifiedExportPackageDownload(prisma, {
+  // A proposal package is not the submission: it records no READY export
+  // package and never moves the tender to EXPORTED.
+  const exportPackage = proposalOnly ? null : await persistVerifiedExportPackageDownload(prisma, {
     tenderId: tender.id,
     userId,
     fileListJson: JSON.stringify(fileList),
@@ -579,12 +603,13 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
     action: "EXPORT_PACKAGE_DOWNLOAD",
     entityType: "Tender",
     entityId: tender.id,
-    description: `Downloaded ${envelopeFilter ? envelopeFilter + " envelope " : ""}ZIP package for "${tender.title}" (${entries.length} file(s); ${envelopeBreakdown})`,
+    description: `Downloaded ${proposalOnly ? "proposal (owner attachments required) " : ""}${envelopeFilter ? envelopeFilter + " envelope " : ""}ZIP package for "${tender.title}" (${entries.length} file(s); ${envelopeBreakdown})`,
     metadata: {
-      exportPackageId: exportPackage.id,
+      exportPackageId: exportPackage?.id ?? null,
       packageSha256: assembledZip.packageSha256,
       packageByteLength: zipBuffer.length,
       envelopeScope: envelopeFilter ?? "COMBINED",
+      packageStatus: canonical.packageStatus,
     },
   });
   const responseHeaders: Record<string, string> = {
@@ -595,6 +620,10 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
     "X-Content-Type-Options": "nosniff",
   };
   if (envelopeFilter) responseHeaders["X-Envelope-Scope"] = envelopeFilter;
+  responseHeaders["X-Package-Status"] = canonical.packageStatus;
+  if (proposalOnly) {
+    responseHeaders["X-Owner-Attachments-Outstanding"] = String(canonical.ownerAttachments?.outstanding ?? 0);
+  }
   if (hasFinancialDocs && !envelopeFilter) {
     responseHeaders["X-Envelope-Note"] =
       "FINANCIAL documents are included. If this tender requires separate technical and financial envelopes, submit the financial files in a separate sealed package per the tender instructions.";
@@ -741,7 +770,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     if (!tender) return err("Tender not found", 404, { code: "TENDER_NOT_FOUND" });
 
     if (docId) return await singleDocument(actor.id, tender, docId);
-    if (type === "zip") return await zipPackage(actor.id, tender, envelopeRaw);
+    if (type === "zip") return await zipPackage(actor.id, tender, envelopeRaw, searchParams.get("scope") === "proposal" ? "proposal" : "submission");
     if (type === "compliance" || type === "requirements") return await internalReport(actor.id, tender, type);
     if (type === "pdf") return await proposalPdf(actor.id, tender, searchParams.get("docId") ?? null);
     return err("Direct proposal export is disabled. Generate and download final documents or the ZIP package instead.", 409, { code: "DIRECT_PROPOSAL_EXPORT_DISABLED" });

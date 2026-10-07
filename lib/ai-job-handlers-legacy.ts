@@ -857,13 +857,19 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
       throw new Error(`AUTO_FINALIZE_NOT_CONVERGED — ${result.blockers.join("; ")}`);
     }
 
+    const ownerAttachmentsRequired = result.finalReadiness.proposalComplete === true && result.finalReadiness.ok !== true;
     await recordStep(ctx.jobId, {
       stepName: "auto-finalize.complete",
-      message: `Auto-finalize complete: ${summary}`,
+      message: ownerAttachmentsRequired
+        ? `Proposal complete — owner attachments required (${result.finalReadiness.ownerAttachmentsOutstanding ?? 0}): ${summary}`
+        : `Auto-finalize complete: ${summary}`,
       status: "SUCCEEDED",
     });
 
-    return result as unknown as Record<string, unknown>;
+    return {
+      ...(result as unknown as Record<string, unknown>),
+      packageStatus: ownerAttachmentsRequired ? "PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED" : "SUBMISSION_READY",
+    };
   },
 };
 

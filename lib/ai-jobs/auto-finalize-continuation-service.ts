@@ -79,6 +79,13 @@ export type AutoFinalizeResult = {
   finalReadiness: {
     evaluated: boolean;
     ok: boolean;
+    /**
+     * The proposal the app produces is complete and only originals the owner
+     * attaches remain. The run has done everything it can; it ends in that
+     * state rather than as a failure.
+     */
+    proposalComplete?: boolean;
+    ownerAttachmentsOutstanding?: number;
     documentBlockers: number;
     tenderLevelBlockers: number;
     /** Blocker categories, so the failure names what is wrong rather than counting it. */
@@ -178,6 +185,22 @@ export function evaluateAutoFinalizeConvergence(
   result: Omit<AutoFinalizeResult, "ok" | "blockers">,
 ): string[] {
   const blockers: string[] = [];
+  // Only originals the owner attaches remain: the final gate (the same one the
+  // download reads) says every document the app produces is ready. What is
+  // left is reported by the Owner Attachment Checklist, not as a failure. A
+  // grounding gap or a PDF the app could not finalize is still the app's.
+  if (result.finalReadiness?.evaluated && result.finalReadiness.proposalComplete && !result.finalReadiness.ok) {
+    if (result.sourceRepair.remaining > 0) {
+      blockers.push(`source grounding incomplete: ${result.sourceRepair.remaining} requirement(s) still have no current source trace`);
+    }
+    if (result.pdfFinalization.failed > 0) {
+      blockers.push(`INTEGRITY: ${result.pdfFinalization.failed} required PDF(s) could not be finalized from a validated source`);
+    }
+    if (result.pdfValidation.failed > 0) {
+      blockers.push(`readiness gate: ${result.pdfValidation.failed} auto-finalized PDF(s) failed canonical validation` + namedRejections(result.pdfValidation));
+    }
+    return blockers;
+  }
   if (result.sourceRepair.remaining > 0) {
     blockers.push(`source grounding incomplete: ${result.sourceRepair.remaining} requirement(s) still have no current source trace`);
   }
@@ -650,6 +673,8 @@ export async function runAutoFinalizeAfterGeneration(
       result.finalReadiness = {
         evaluated: true,
         ok: readiness.ok === true,
+        proposalComplete: readiness.proposalComplete === true,
+        ownerAttachmentsOutstanding: readiness.ownerAttachments?.outstanding ?? 0,
         documentBlockers: readiness.documentBlockers?.length ?? 0,
         tenderLevelBlockers: readiness.tenderLevelBlockers?.length ?? 0,
         categories: [
@@ -674,7 +699,9 @@ export async function runAutoFinalizeAfterGeneration(
   await recordStep(jobId, {
     stepName: "auto-finalize.convergence",
     message: result.ok
-      ? "Auto-finalize converged: no outstanding blockers"
+      ? result.finalReadiness.proposalComplete && !result.finalReadiness.ok
+        ? `Proposal complete — owner attachments required: ${result.finalReadiness.ownerAttachmentsOutstanding ?? 0} original(s) to attach (Owner Attachment Checklist)`
+        : "Auto-finalize converged: no outstanding blockers"
       : `Auto-finalize did not converge: ${result.blockers.join("; ")}`,
     status: result.ok ? "SUCCEEDED" : "FAILED",
   });

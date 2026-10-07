@@ -163,8 +163,14 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       ok: reconciledOk,
       blockers: publicBlockers,
       warnings: publicWarnings,
-      primaryBlockerReason: canonicalBlocker.length > 0 ? canonicalDecision.nextRequiredActionReason : readiness.summary.primaryBlockerReason,
-      primaryFixAction: canonicalBlocker.length > 0 ? canonicalDecision.nextRequiredActionLabel : readiness.summary.primaryFixAction,
+      // A complete proposal awaiting only the owner's originals says so,
+      // rather than reading as a generation failure.
+      primaryBlockerReason: readiness.packageStatus === "PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED"
+        ? readiness.message
+        : canonicalBlocker.length > 0 ? canonicalDecision.nextRequiredActionReason : readiness.summary.primaryBlockerReason,
+      primaryFixAction: readiness.packageStatus === "PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED"
+        ? readiness.summary.primaryFixAction
+        : canonicalBlocker.length > 0 ? canonicalDecision.nextRequiredActionLabel : readiness.summary.primaryFixAction,
       requiredDocumentsTotal: Math.max(finalPackage.documents.required.length, finalPackage.documents.planned.length),
       generatedDocumentsTotal: finalPackage.documents.generated.length,
       exportReadyDocumentsTotal: deliveryReadyDocumentsTotal,
@@ -173,8 +179,13 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({
       ...envelope,
       success: true,
+      packageStatus: readiness.packageStatus,
+      proposalComplete: readiness.proposalComplete,
+      ownerAttachmentsOutstanding: readiness.ownerAttachments?.outstanding ?? 0,
       exportReadiness: {
         ok: reconciledOk,
+        packageStatus: readiness.packageStatus,
+        proposalComplete: readiness.proposalComplete,
         tender: readiness.tender,
         summary: {
           activeDocuments: finalPackage.export.exportCandidateCount,

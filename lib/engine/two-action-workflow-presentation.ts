@@ -52,9 +52,9 @@ export function presentTwoActionWorkflowDecision(
     return {
       ...decision,
       nextRequiredAction: "UPLOAD_SIGNED_ORIGINALS",
-      nextRequiredActionLabel: awaiting.length === 1 ? "Upload your signed original" : "Upload your signed originals",
+      nextRequiredActionLabel: "Attach owner originals",
       nextRequiredActionReason:
-        `Everything the app can prepare is done. The package waits only on ${awaiting.length === 1 ? "a document" : "documents"} your company must sign or supply: ${awaiting.join("; ")}. Upload the signed original of each on the tender's Documents page; the package completes automatically after that.`,
+        `PROPOSAL COMPLETE — OWNER ATTACHMENTS REQUIRED. Everything the app prepares is done; the submission waits only on ${awaiting.length === 1 ? "a document" : "documents"} your company signs or supplies: ${awaiting.join("; ")}. Attach each to the submission as the Owner Attachment Checklist lists it (the proposal can be downloaded for assembly now), or upload the signed original on the tender's Documents page and it is packaged automatically.`,
     };
   }
 
