@@ -15,7 +15,7 @@
 import { isTelecomTowerSector, TELECOM_TOWER_RISKS } from "./telecom-tower-sector";
 import { resolveJurisdictionTokens } from "./jurisdiction-instruments";
 import { possessive } from "./possessive";
-import { isHealthcareSector } from "./assignment-subject";
+import { isHealthcareSector, threeStageReview, type ReviewDiscipline } from "./assignment-subject";
 
 type SectorRisk = { risk: string; impact: "High" | "Medium" | "Low"; likelihood: "High" | "Medium" | "Low"; mitigation: string };
 
@@ -23,7 +23,7 @@ function escCell(text: string): string {
   return text.replace(/\r?\n+/g, " ").replace(/\|/g, "/").replace(/\s{2,}/g, " ").trim();
 }
 
-function risksForSector(primarySector: string): SectorRisk[] {
+function risksForSector(primarySector: string, discipline: ReviewDiscipline = "GENERAL"): SectorRisk[] {
   const sector = primarySector.toLowerCase();
   if (isTelecomTowerSector(primarySector)) return TELECOM_TOWER_RISKS;
   if (isHealthcareSector(sector)) return [
@@ -226,7 +226,7 @@ function risksForSector(primarySector: string): SectorRisk[] {
   return [
     { risk: "Scope misalignment with client expectations", impact: "High", likelihood: "Medium", mitigation: "Documented scope confirmation at inception; named sign-off authority; change-control protocol agreed at contract signature." },
     { risk: "Resource availability shortfall during peak phases", impact: "High", likelihood: "Medium", mitigation: "Permanent-staff team confirmed in this proposal; backup specialists on standby; phased delivery to balance load." },
-    { risk: "Quality non-conformance at deliverable stage", impact: "High", likelihood: "Low", mitigation: "Three-stage design review (schematic, developed, pre-issue) with named reviewer sign-off catches issues before issue." },
+    { risk: "Quality non-conformance at deliverable stage", impact: "High", likelihood: "Low", mitigation: `${threeStageReview(discipline).name} (${threeStageReview(discipline).stages}) with named reviewer sign-off catches issues before issue.` },
     { risk: "Late-stage regulatory or approval blockers", impact: "High", likelihood: "Medium", mitigation: "Regulatory submissions prepared as a core project deliverable, not a separate later activity. Pre-check at Stage 2." },
     { risk: "Stakeholder communication breakdowns", impact: "Medium", likelihood: "Medium", mitigation: "Bi-weekly written progress reports; named single point of contact; documented escalation path." },
   ];
@@ -240,8 +240,10 @@ export function buildRisksMitigationsTable(opts: {
    * only when this text names it, and described by function otherwise.
    */
   sourceText?: string;
+  /** What kind of work the deliverables are (assignment-subject.ts). */
+  reviewDiscipline?: ReviewDiscipline;
 }): string {
-  const risks = risksForSector(opts.primarySector).map((r) => ({ ...r, mitigation: resolveJurisdictionTokens(r.mitigation, opts.sourceText) }));
+  const risks = risksForSector(opts.primarySector, opts.reviewDiscipline).map((r) => ({ ...r, mitigation: resolveJurisdictionTokens(r.mitigation, opts.sourceText) }));
   const rows = risks.map((r) => `| ${escCell(r.risk)} | ${r.impact} | ${r.likelihood} | ${escCell(r.mitigation)} |`);
 
   return [

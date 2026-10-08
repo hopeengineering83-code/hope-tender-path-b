@@ -104,6 +104,7 @@ export async function buildFinancialProposalDocx(opts: {
     // validator rightly reads as unfilled placeholders.
     new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows: ["Name", "Title", "Signature", "Stamp", "Date"].map((label) => new TableRow({ children: [cell(label, { bold: true }), cell(" ")] })) }),
   ];
-  const buffer = await Packer.toBuffer(new Document({ sections: [{ properties: {}, children }] }));
+  // File properties name the bidder; the library's default author is "Un-named".
+  const buffer = await Packer.toBuffer(new Document({ creator: opts.companyName, lastModifiedBy: opts.companyName, title: `${opts.title} — ${opts.tenderTitle}`, sections: [{ properties: {}, children }] }));
   return buffer.toString("base64");
 }

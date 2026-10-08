@@ -17,6 +17,7 @@
 //   COPILOT_DEEP_ANALYSIS   — async tender copilot Q&A (frees the request for follow-up actions)
 //   PROFILE_FACT_EXTRACTION — async pure-regex fact harvest from company/project/tender prose
 
+import { finalPackageStatus } from "./engine/final-submission-readiness";
 import { recordStep, type JobType } from "./ai-jobs";
 import { resolveProposalNarrativeText } from "./engine/proposal-narrative-resolver";
 import { checkEnginePostconditions } from "./engine/engine-postconditions";
@@ -866,9 +867,13 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
       status: "SUCCEEDED",
     });
 
+    // The package status is the export gate's verdict, the one the download
+    // and the checklist read — never inferred from the run having converged.
+    // A run that could not evaluate the gate claims nothing.
+    const verdict = result.finalReadiness?.evaluated ? result.finalReadiness : null;
     return {
       ...(result as unknown as Record<string, unknown>),
-      packageStatus: ownerAttachmentsRequired ? "PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED" : "SUBMISSION_READY",
+      packageStatus: verdict ? finalPackageStatus(verdict) : null,
     };
   },
 };

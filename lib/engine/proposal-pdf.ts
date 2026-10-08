@@ -1226,6 +1226,14 @@ export async function generateProposalPdf(opts: {
 
   const totalPages = ctx.pages.length;
   ctx.pages.forEach((page, pageIndex) => drawHeaderFooter(ctx, page, pageIndex, totalPages));
+  // The file's own properties are the bidder's, like its pages: the default
+  // Creator/Producer named the PDF library a client sees under Properties.
+  doc.setTitle(opts.title);
+  if (opts.companyName) {
+    doc.setAuthor(opts.companyName);
+    doc.setCreator(opts.companyName);
+    doc.setProducer(opts.companyName);
+  }
   return doc.save();
 }
 

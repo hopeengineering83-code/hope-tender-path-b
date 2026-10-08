@@ -10,6 +10,7 @@
  */
 
 import type { ExpertRecord, ProjectRecord } from "./benchmark-tables";
+import { threeStageReview, type ReviewDiscipline } from "./assignment-subject";
 
 function fmtMoney(value: number | null | undefined, currency: string | null | undefined): string {
   if (!value) return "";
@@ -40,6 +41,8 @@ export function buildWhyUsSummary(opts: {
   projects: ProjectRecord[];
   differentiators: string[];
   primarySector: string;
+  /** What kind of work the deliverables are (assignment-subject.ts). */
+  reviewDiscipline?: ReviewDiscipline;
 }): string | null {
   const bullets: string[] = [];
 
@@ -103,7 +106,7 @@ export function buildWhyUsSummary(opts: {
 
   // 5. Quality & compliance discipline
   bullets.push(
-    `**Quality discipline.** Three-stage design review (schematic / developed / pre-issue) with a named senior reviewer's sign-off, and every stated fact checked against the firm's own records before issue.`,
+    `**Quality discipline.** ${threeStageReview(opts.reviewDiscipline ?? "GENERAL").name} (${threeStageReview(opts.reviewDiscipline ?? "GENERAL").slashed}) with a named senior reviewer's sign-off, and every stated fact checked against the firm's own records before issue.`,
   );
 
   // Need at least 3 bullets to be meaningful

@@ -10,7 +10,7 @@ import { resolveJurisdictionTokens } from "./jurisdiction-instruments";
 import { projectsNamedInCv, licencesNamedInCv } from "./cv-grounding";
 import { possessive } from "./possessive";
 import { formatRegistration } from "./credential-format";
-import { isHealthcareSector } from "./assignment-subject";
+import { isHealthcareSector, threeStageReview, type ReviewDiscipline } from "./assignment-subject";
 
 /**
  * Benchmark-quality tabular sections built deterministically from the
@@ -653,7 +653,7 @@ function buildRelevanceStatement(project: ProjectRecord, tenderTitle: string, pr
  * C.3 Quality Assurance: Three-Stage Design Review — sector-agnostic table.
  * The reviewer roles, milestones, and gate-checks are constants; the action items are tender-aware.
  */
-export function buildThreeStageReviewTable(companyName: string, primarySector: string): string {
+export function buildThreeStageReviewTable(companyName: string, primarySector: string, discipline: ReviewDiscipline = "GENERAL"): string {
   const s = primarySector.toLowerCase();
   const isWaterTender = /water|borehole|hydraulic|sanitary|irrigation|sewage/.test(s);
   const isRoadTender = /road|bridge|highway|pavement|transport(?!ation planning)/.test(s);
@@ -670,6 +670,36 @@ export function buildThreeStageReviewTable(companyName: string, primarySector: s
   const isTelecomsTender = /telecom|broadband|spectrum|mobile network|isp|base.*station|backhaul|last.?mile/.test(s);
   const isDesignTender = !isWaterTender && !isRoadTender && !isHealthcareTender && !isICTTender && !isEnergyTender && !isAgricultureTender && !isMiningTender && !isPortTender && !isOilGasTender && !isFinancialTender && !isTelecomsTender &&
     /design|architect|building|construction|\bMEP\b|structural|engineer|consultancy|supervision/.test(s);
+
+  // Supervision, contract administration and a study are reviewed at their
+  // own stages, whatever the sector: a road-supervision contract has no
+  // "Detailed Design & Tender Documents" stage, and a geotechnical
+  // investigation no floor plans or MEP routing.
+  const byWork = discipline === "SUPERVISION"
+    ? [["30% Mobilisation & Inspection Plan", "inspection and test plan, hold points, and reporting format agreed with the client"],
+       ["60% Works Inspection & Certification Review", "inspection records, test results, interim payment certificates, and variations reviewed"],
+       ["100% Completion & Handover Package", "snag list closed, as-built records, final certificate, and handover documentation finalised"]]
+    : discipline === "CONTRACT_ADMINISTRATION"
+      ? [["30% Cost Baseline & Contract Set-Up", "contract sum, measurement rules, valuation schedule, and reporting format confirmed"],
+         ["60% Interim Valuation & Variation Review", "measured quantities, interim valuations, and variation assessments reviewed"],
+         ["100% Final Account Package", "final measurement, agreed variations, and final account finalised"]]
+      : discipline === "STUDY" && !isEnvTender
+        ? [["30% Inception & Investigation Programme", "scope, data sources, field and test programme, and report structure confirmed"],
+           ["60% Draft Findings Review", "field and test results, analysis, and draft recommendations reviewed"],
+           ["100% Final Report Package", "final report, supporting data, and recommendations finalised"]]
+        : null;
+  if (byWork) {
+    return [
+      "## C.3 Quality Assurance: Three-Stage Review",
+      `Every deliverable package is reviewed through three mandatory stages before issue. ${companyName} applies this review protocol to the deliverables of this assignment, and each stage carries the named review authority and written sign-off set out below.`,
+      "",
+      "| Stage | Milestone | Review Authority and Required Action |",
+      "|---|---|---|",
+      `| Stage 1 | ${byWork[0]![0]}: ${byWork[0]![1]} | Senior discipline lead and a second reviewer. Written sign-off required before proceeding. |`,
+      `| Stage 2 | ${byWork[1]![0]}: ${byWork[1]![1]} | Senior reviewer outside the delivery team. Contract and compliance check. Written approval required. |`,
+      `| Stage 3 | ${byWork[2]![0]}: ${byWork[2]![1]} | General Manager / Principal. Final sign-off before issue. All review comments resolved. |`,
+    ].join("\n");
+  }
 
   const stage1Action = isWaterTender ? "30% Source Investigation & Demand Assessment"
     : isRoadTender ? "30% Survey, Investigation & Preliminary Design"
@@ -833,6 +863,8 @@ export function buildBenchmarkTablesBlock(opts: {
   scopeRoles?: Map<string, { leads: string[]; supports: string[] }>;
   /** The tender's scope items, which each project card's relevance row answers. */
   scopeItems?: ScopeItem[];
+  /** What kind of work the deliverables are (assignment-subject.ts). */
+  reviewDiscipline?: ReviewDiscipline;
 }): string {
   const blocks: string[] = [];
 
@@ -852,7 +884,7 @@ export function buildBenchmarkTablesBlock(opts: {
   }
 
   if (!opts.alreadyHasHeading("C.3 Quality Assurance: Three-Stage Review") && !opts.alreadyHasHeading("Three-Stage Review") && !opts.alreadyHasHeading("Three-Stage Design Review")) {
-    blocks.push(buildThreeStageReviewTable(opts.companyName, opts.primarySector));
+    blocks.push(buildThreeStageReviewTable(opts.companyName, opts.primarySector, opts.reviewDiscipline));
   }
 
   return blocks.filter(Boolean).join("\n\n");
@@ -949,7 +981,7 @@ function referenceValue(project: ProjectRecord): string {
 
 type ValueFrameworkPillar = { pillar: string; clientGains: string };
 
-function valueFrameworkPillars(primarySector: string, clientName: string, sourceText?: string): ValueFrameworkPillar[] {
+function valueFrameworkPillars(primarySector: string, clientName: string, sourceText?: string, discipline: ReviewDiscipline = "GENERAL"): ValueFrameworkPillar[] {
   const isHealthcare = isHealthcareSector(primarySector);
   const isWater = /water|borehole|hydraulic|sanitary/i.test(primarySector);
   const isRoad = /road|bridge|highway|pavement|transport/i.test(primarySector);
@@ -1058,7 +1090,7 @@ function valueFrameworkPillars(primarySector: string, clientName: string, source
     // no record proves it, and on a tender with no comparable project it was
     // plainly untrue (2026-10-01).
     { pillar: "Named Team", clientGains: "Each proposed expert is named in Section A with the role, registration and tools their own CV records." },
-    { pillar: "Quality Discipline", clientGains: "Three-stage design review (schematic, developed, pre-issue) with named reviewer sign-off catches issues before issue." },
+    { pillar: "Quality Discipline", clientGains: `${threeStageReview(discipline).name} (${threeStageReview(discipline).stages}) with named reviewer sign-off catches issues before issue.` },
     { pillar: "Compliance & Documentation", clientGains: "Submission package follows tender file naming, ordering, and format rules exactly — no mechanical compliance failures." },
     { pillar: "Risk Reduction", clientGains: "Senior bid-review controls, source-evidence verification, and final validation pass reduce delivery risk for the awarding authority." },
   ];
@@ -1072,8 +1104,10 @@ export function buildValueFrameworkTable(opts: {
    * only when this text names it, and described by function otherwise.
    */
   sourceText?: string;
+  /** What kind of work the deliverables are (assignment-subject.ts). */
+  reviewDiscipline?: ReviewDiscipline;
 }): string {
-  const pillars = valueFrameworkPillars(opts.primarySector, opts.clientName, opts.sourceText).map((p) => ({ ...p, clientGains: resolveJurisdictionTokens(p.clientGains, opts.sourceText) }));
+  const pillars = valueFrameworkPillars(opts.primarySector, opts.clientName, opts.sourceText, opts.reviewDiscipline).map((p) => ({ ...p, clientGains: resolveJurisdictionTokens(p.clientGains, opts.sourceText) }));
   const rows = pillars.map((p) => `| ${escCell(p.pillar)} | ${escCell(p.clientGains)} |`);
 
   return [

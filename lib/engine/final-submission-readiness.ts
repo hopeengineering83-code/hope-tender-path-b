@@ -163,6 +163,16 @@ export type FinalPackageStatus = "SUBMISSION_READY" | "PROPOSAL_COMPLETE_OWNER_A
 
 export const PROPOSAL_COMPLETE_LABEL = "PROPOSAL COMPLETE — OWNER ATTACHMENTS REQUIRED";
 
+/**
+ * The package status, from the export gate's verdict. The one place it is
+ * derived: the export-readiness route, the download and the AUTO_FINALIZE job
+ * all report this, so no surface can call SUBMISSION READY what another calls
+ * proposal-complete or in progress.
+ */
+export function finalPackageStatus(verdict: { ok: boolean; proposalComplete?: boolean | null }): FinalPackageStatus {
+  return verdict.ok ? "SUBMISSION_READY" : verdict.proposalComplete ? "PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED" : "IN_PROGRESS";
+}
+
 export type FinalSubmissionReadiness = {
   ok: boolean;
   /** Every document the app produces is export-ready; only owner attachments remain (or nothing remains). */
@@ -1491,7 +1501,7 @@ export async function getFinalSubmissionReadiness(
       .map((d) => String((d as { exactFileName?: string | null }).exactFileName ?? (d as { name?: string | null }).name ?? "")),
     missingPlanFileNames: missingPlan.map((d) => String(d.exactFileName ?? "")),
   });
-  const packageStatus: FinalPackageStatus = ok ? "SUBMISSION_READY" : proposalComplete ? "PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED" : "IN_PROGRESS";
+  const packageStatus: FinalPackageStatus = finalPackageStatus({ ok, proposalComplete });
   const message = packageStatus === "PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED"
     ? `${PROPOSAL_COMPLETE_LABEL}. The proposal documents are complete; ${ownerAttachments?.outstanding ?? 0} required original(s) are the owner's to attach — see the Owner Attachment Checklist.`
     : buildMessage({ ok, documentBlockers, tenderLevelBlockers, advisoryWarnings });

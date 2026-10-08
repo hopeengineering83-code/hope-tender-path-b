@@ -15,6 +15,13 @@ export type ProjectLite = { name: string; clientName?: string | null; country?: 
 export type ProposalTheme = {
   code: string; label: string; triggers: RegExp[]; proofTerms: RegExp[]; methodologyBullets: string[];
   /**
+   * Per bullet, what the assignment must ask for before that bullet is
+   * written. A theme can span kinds of work: the structural-and-geotechnical
+   * theme gave a geotechnical investigation ETABS structural analysis and a
+   * "schematic to working-drawing" design review (2026-10-08 matrix).
+   */
+  bulletRequires?: Array<RegExp | null>;
+  /**
    * Distinct triggers a tender must hit before the theme applies. A
    * cross-cutting theme is not the tender's subject on one incidental phrase:
    * "ineligible by ... the World Bank Group" in a debarment declaration, or a
@@ -214,6 +221,11 @@ export const PROPOSAL_THEMES: ProposalTheme[] = [
       "geotechnical investigation: borehole drilling, soil sampling, laboratory testing to {{JURISDICTION:MATERIALS_TESTING_STANDARD}}, and a bearing capacity recommendation",
       "structural analysis using ETABS/SAP2000/SAFE: seismic detailing to {{JURISDICTION:SEISMIC_DESIGN_CODE}}, foundation engineering for site-specific soil conditions",
       "staged design review from schematic to working-drawing level with independent peer check before construction-document issue",
+    ],
+    bulletRequires: [
+      /geotechnical|\bsoils?\b|boreholes?|ground\s+(?:investigation|conditions?)|foundation/i,
+      /structural\s+(?:design|analysis|engineering|calculations?|assessment|audit|condition)|seismic|retrofit|strengthening|\bETABS\b|\bSAP2000\b/i,
+      /\b(?:structural|detailed|architectural|building|engineering|foundation)\s+design\b|\bdesign\s+of\s+(?:a|an|the)\b/i,
     ],
   },
   {
@@ -809,10 +821,15 @@ export function detectThemes(tenderText: string): ProposalTheme[] {
   // is the first place the tender's own text is available, so it is where the
   // tokens resolve: a source that names EBCS gets EBCS, and a source that does
   // not gets the instrument described by its function instead.
-  return scored.map((s) => ({
-    ...s.theme,
-    methodologyBullets: s.theme.methodologyBullets.map((b) => resolveJurisdictionTokens(b, tenderText)),
-  }));
+  return scored
+    .map((s) => ({
+      ...s.theme,
+      methodologyBullets: s.theme.methodologyBullets
+        .filter((_b, i) => !s.theme.bulletRequires?.[i] || s.theme.bulletRequires[i]!.test(subject))
+        .map((b) => resolveJurisdictionTokens(b, tenderText)),
+    }))
+    // A theme left with nothing to say for this assignment is not one of its themes.
+    .filter((theme) => theme.methodologyBullets.length > 0);
 }
 
 export const INTERIOR_FIT_OUT_SECTOR = "Interior Design / Fit-Out & Space Planning";

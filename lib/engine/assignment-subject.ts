@@ -96,3 +96,43 @@ export function buildingSectorLabel(text: string | null | undefined): string {
 export function isBuildingSectorLabel(sector: string | null | undefined): boolean {
   return sector === BUILDING_DESIGN_SECTOR || sector === BUILDING_SUPERVISION_SECTOR || sector === BUILDING_DESIGN_AND_SUPERVISION_SECTOR;
 }
+
+/**
+ * What kind of work the deliverables are, for the review and quality wording
+ * that follows from it. A three-stage "schematic / developed / pre-issue"
+ * design review was written into every proposal: a geotechnical
+ * investigation, a structural condition assessment, a road-supervision
+ * contract and a quantity-surveying service all promised floor plans and MEP
+ * routing at 30% (2026-10-08 tender-type matrix).
+ */
+export type ReviewDiscipline = "DESIGN" | "SUPERVISION" | "STUDY" | "CONTRACT_ADMINISTRATION" | "GENERAL";
+
+const CONTRACT_ADMIN_WORK = /\bquantity\s+survey(?:ing|ors?)?\b|\bcontract\s+administration\b|\bcost\s+(?:control|management|consultancy)\b|\bfinal\s+account\b/i;
+const STUDY_WORK = /\b(?:geotechnical|soil|ground|site|condition|structural|traffic|topographic(?:al)?|baseline|household|socio-?economic)\s+(?:investigations?|assessments?|surveys?|audits?|appraisals?)\b|\b(?:pre-?)?feasibility\s+stud(?:y|ies)\b|\b(?:market|diagnostic|baseline)\s+stud(?:y|ies)\b|\bimpact\s+assessments?\b|\bESIA\b|\b(?:investigat|assess|audit)(?:e|es|ing)\s+the\s+(?:structural\s+)?(?:condition|ground|soil)\b/i;
+
+function disciplineOfSubject(subject: string): ReviewDiscipline {
+  if (DESIGN_WORK.test(subject)) return "DESIGN";
+  if (CONTRACT_ADMIN_WORK.test(subject) && !/\b(?:construction|site|works)\s+supervision\b|\bresident\s+engineer\b/i.test(subject)) return "CONTRACT_ADMINISTRATION";
+  if (SUPERVISION_WORK.test(subject)) return "SUPERVISION";
+  // A study that also designs or supervises is not only a study.
+  if (STUDY_WORK.test(subject) && !/\bdesign\b/i.test(subject)) return "STUDY";
+  return "GENERAL";
+}
+
+/** The tender's title decides when it states the work; otherwise its text. */
+export function reviewDisciplineOf(title: string | null | undefined, text?: string | null): ReviewDiscipline {
+  const byTitle = disciplineOfSubject(assignmentSubjectText(title ?? ""));
+  if (byTitle !== "GENERAL") return byTitle;
+  return disciplineOfSubject(assignmentSubjectText(text ?? ""));
+}
+
+/** The three review stages, in the words that fit the work. */
+export function threeStageReview(discipline: ReviewDiscipline): { name: string; stages: string; slashed: string } {
+  switch (discipline) {
+    case "DESIGN": return { name: "Three-stage design review", stages: "schematic, developed and pre-issue", slashed: "schematic / developed / pre-issue" };
+    case "SUPERVISION": return { name: "Three-stage inspection review", stages: "inspection plan, works inspection and certification, and completion", slashed: "inspection plan / inspection and certification / completion" };
+    case "STUDY": return { name: "Three-stage technical review", stages: "investigation programme, draft findings and final report", slashed: "investigation programme / draft findings / final report" };
+    case "CONTRACT_ADMINISTRATION": return { name: "Three-stage cost review", stages: "cost baseline, interim valuation and final account", slashed: "cost baseline / interim valuation / final account" };
+    default: return { name: "Three-stage review", stages: "inception, draft and pre-issue", slashed: "inception / draft / pre-issue" };
+  }
+}

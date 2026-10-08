@@ -14,7 +14,7 @@ import { recordTypeForDisplay } from "./vault-prose";
  */
 
 import type { ExpertRecord } from "./benchmark-tables";
-import { isHealthcareSector } from "./assignment-subject";
+import { isHealthcareSector, threeStageReview, type ReviewDiscipline } from "./assignment-subject";
 
 function safeArr(value: unknown): string[] {
   if (Array.isArray(value)) return value.map(String).filter(Boolean);
@@ -104,7 +104,7 @@ export function buildUnderstandingSection(opts: {
 // D.2 Value-Added Services (sector-aware bullets)
 // ───────────────────────────────────────────────────────────────────────────
 
-export function buildValueAddedServices(opts: { primarySector: string; companyName: string }): string {
+export function buildValueAddedServices(opts: { primarySector: string; companyName: string; reviewDiscipline?: ReviewDiscipline }): string {
   const sector = opts.primarySector.toLowerCase();
   let bullets: string[];
 
@@ -210,7 +210,7 @@ export function buildValueAddedServices(opts: { primarySector: string; companyNa
     `**EMR certificate registry** — all site EMR certificates filed in a structured registry; supports regulator and public-interest queries without re-measurement.`,
   ];
   else bullets = [
-    `**Three-stage design review** — schematic, developed and pre-issue review by named senior reviewers.`,
+    `**${threeStageReview(opts.reviewDiscipline ?? "GENERAL").name}** — ${threeStageReview(opts.reviewDiscipline ?? "GENERAL").stages} review by named senior reviewers.`,
     // Same internal-name leak as mobilization-and-checklist.ts: the control is
     // real and worth stating, but "the firm's vault" is this application's word
     // for its evidence store, not the bidder's word for its records.
