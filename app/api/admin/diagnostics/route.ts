@@ -4,6 +4,7 @@ import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../.
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { isAIEnabled, isAIConfigured, hasOnlyUnreachableProviderKeys } from "../../../../lib/env-check";
 import { detailedLivenessPayload } from "../../../../lib/liveness";
+import { getQueueHealth } from "../../../../lib/queue-health";
 
 function sanitizeDiagnosticMessage(value: string | null | undefined): string | null {
   if (!value) return null;
@@ -144,10 +145,13 @@ export async function GET() {
   // callers by the public /api/health endpoint; it is admin-only now. Failure
   // to compute it must not take down the rest of the diagnostics view.
   const runtime = await detailedLivenessPayload().catch(() => null);
+  // The post-release scheduler test reads this: the actor's own queue.
+  const queue = dbOk ? await getQueueHealth(prisma, actor.id).catch(() => null) : null;
 
   return NextResponse.json({
     timestamp: new Date().toISOString(),
     runtime,
+    queue,
     database: { ok: dbOk, error: dbError ? "Database connectivity check failed; details redacted." : null },
     ai: { enabled: isAIEnabled(), configured: isAIConfigured() },
     knowledge: {

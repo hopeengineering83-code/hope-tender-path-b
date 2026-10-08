@@ -7,7 +7,7 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 
 const vercel = JSON.parse(readFileSync("vercel.json", "utf8")) as { crons?: Array<{ path: string; schedule: string }> };
 const drain = readFileSync(".github/workflows/drain-ai-job-queue.yml", "utf8");
@@ -32,6 +32,26 @@ describe("the queue scheduler is Vercel-native", () => {
   it("the GitHub drain is manual only — no schedule", () => {
     assert.doesNotMatch(codeOnly(drain), /^\s*schedule:/m);
     assert.match(codeOnly(drain), /workflow_dispatch:/);
+  });
+
+  // Release check. GitHub runs schedules only from the default branch, so the
+  // Hobby-era */5 drain keeps running on `main` until this release reaches it.
+  // Once it does, no workflow may bring a scheduled queue driver back under
+  // another name: the queue has one scheduler, Vercel Cron.
+  it("no scheduled workflow drives the job queue or the AI Analyze retry", () => {
+    const dir = ".github/workflows";
+    for (const file of readdirSync(dir).filter((f) => /\.ya?ml$/.test(f))) {
+      const code = codeOnly(readFileSync(`${dir}/${file}`, "utf8"));
+      if (!/^\s*schedule:/m.test(code)) continue;
+      assert.doesNotMatch(code, /\/api\/ai-jobs\/run-next|\/api\/cron\/ai-analyze-retry/, `${file} is scheduled and drives the queue`);
+    }
+  });
+
+  it("the release runbook says merging removes main's scheduled drain", () => {
+    const runbook = readFileSync("docs/PRODUCTION_RELIABILITY_RUNBOOK.md", "utf8");
+    assert.match(runbook, /removes the scheduled GitHub drain/);
+    assert.match(runbook, /CRON_SECRET/);
+    assert.match(runbook, /no duplicate/i);
   });
 });
 
