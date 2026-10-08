@@ -834,7 +834,7 @@ async function runCanonicalValidation(
   // does not relax it. A document whose bytes genuinely fail still fails.
   const docs = await prisma.generatedDocument.findMany({
     where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
-    orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
+    orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }],
     select: {
       id: true, name: true, exactFileName: true, exactOrder: true,
       documentType: true, format: true, generationStatus: true,

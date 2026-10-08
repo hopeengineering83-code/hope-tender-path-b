@@ -457,7 +457,7 @@ export async function runExportGapRepair(
 
   const docs = await prisma.generatedDocument.findMany({
     where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
-    orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
+    orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }],
     select: { id: true, name: true, exactFileName: true, exactOrder: true, documentType: true, format: true, generationStatus: true, validationStatus: true, reviewStatus: true, reviewNotes: true, contentSummary: true, fileContent: true, storagePath: true },
   });
 
@@ -600,7 +600,7 @@ export async function runExportGapRepair(
 
   const repairedDocs = await prisma.generatedDocument.findMany({
     where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
-    orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
+    orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }],
     select: { id: true, name: true, exactFileName: true, exactOrder: true, documentType: true, format: true, generationStatus: true, validationStatus: true, reviewStatus: true, storagePath: true },
   });
   const readiness = await checkFullExportReadiness({ tenderId, docs: repairedDocs as any[], requireFileContent: false });

@@ -501,7 +501,7 @@ export async function loadSubmissionPlanCompleteness(
         },
       },
       generatedDocuments: {
-        orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
+        orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }],
         select: {
           id: true,
           name: true,

@@ -1047,7 +1047,7 @@ export async function getFinalPackageReadinessModel(
         // the current package.
         generatedDocuments: {
           where: { generationStatus: { not: "SUPERSEDED" } },
-          orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
+          orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }],
         },
         expertMatches: { include: { expert: { select: VAULT_REVIEW_CONSUMER_SELECT.EXPERT } } },
         projectMatches: { include: { project: { select: VAULT_REVIEW_CONSUMER_SELECT.PROJECT } } },

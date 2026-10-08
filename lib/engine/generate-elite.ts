@@ -4395,7 +4395,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
       // non-SUPERSEDED when an active row with the same name exists.
       generationStatus: { not: "SUPERSEDED" },
     },
-    orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
+    orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }],
   });
   let reuseTarget = target && isMainProposalSlotName(target.exactFileName ?? target.name);
 

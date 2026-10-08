@@ -176,7 +176,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       },
       generatedDocuments: {
         where: { generationStatus: { not: "SUPERSEDED" } },
-        orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
+        orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }],
         select: { id: true, name: true, exactFileName: true, generationStatus: true, validationStatus: true, reviewStatus: true, documentType: true, format: true, exactOrder: true, storagePath: true },
       },
     },
@@ -342,7 +342,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // before rebuilding the DOCX. All other batch fetches exclude fileContent.
   const refreshedAll = await prisma.generatedDocument.findMany({
     where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
-    orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
+    orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }],
     select: {
       id: true,
       tenderId: true,
@@ -482,7 +482,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // failures for documents that were just verified above.
   const finalAll = await prisma.generatedDocument.findMany({
     where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
-    orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
+    orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }],
     select: {
       id: true,
       tenderId: true,

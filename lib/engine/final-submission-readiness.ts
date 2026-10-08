@@ -572,7 +572,7 @@ export async function getFinalSubmissionReadiness(
       },
       generatedDocuments: {
         where: { generationStatus: { not: "SUPERSEDED" } },
-        orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
+        orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }],
         select: {
           id: true,
           name: true,

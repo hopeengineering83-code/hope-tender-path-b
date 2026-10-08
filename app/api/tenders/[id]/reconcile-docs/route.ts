@@ -46,7 +46,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       requirements: { orderBy: { createdAt: "asc" } },
       generatedDocuments: {
         where: { generationStatus: { not: "SUPERSEDED" } },
-        orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
+        orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }],
       },
     },
   });

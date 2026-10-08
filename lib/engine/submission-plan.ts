@@ -66,7 +66,29 @@ export type TenderRequirementLike = {
   pageLimit?: number | null;
   restrictions?: string | null;
   sectionReference?: string | null;
+  /** When the requirement was extracted: the tender's own sequence. */
+  createdAt?: Date | string | null;
 };
+
+/**
+ * Requirements in one canonical order: extraction time, then id. Every
+ * database read already asks for this order; sorting here as well makes the
+ * plan a function of the requirements themselves, so no caller, cache or test
+ * double that hands them over in another order can change a file's identity
+ * (canonicalId), its provenance list (sourceRequirementIds) or its position.
+ */
+export function canonicalRequirementOrder<R extends { id: string; createdAt?: Date | string | null }>(requirements: readonly R[]): R[] {
+  const time = (r: R) => {
+    const t = r.createdAt == null ? Number.NaN : new Date(r.createdAt).getTime();
+    return Number.isFinite(t) ? t : Number.POSITIVE_INFINITY;
+  };
+  return [...requirements].sort((a, b) => {
+    const ta = time(a);
+    const tb = time(b);
+    if (ta !== tb) return ta < tb ? -1 : 1;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  });
+}
 
 export type TenderLike = {
   id: string;
@@ -396,7 +418,7 @@ export function buildSubmissionPlanWithDerivedFallback(tender: TenderLike): Subm
   if (plan.files.length > 0 || (tender.requirements ?? []).length === 0) return plan;
 
   const derivedEntries = buildDerivedDraftPlan({
-    requirements: (tender.requirements ?? []).map((r) => ({
+    requirements: canonicalRequirementOrder(tender.requirements ?? []).map((r) => ({
       title: r.title,
       description: r.description,
       requirementType: r.requirementType,
@@ -433,7 +455,7 @@ export function buildSubmissionPlanWithDerivedFallback(tender: TenderLike): Subm
 }
 
 export function buildSubmissionPlan(tender: TenderLike): SubmissionPlan {
-  const requirements = tender.requirements ?? [];
+  const requirements = canonicalRequirementOrder(tender.requirements ?? []);
   const files = new Map<string, SubmissionPlanFile>();
   const restrictions = restrictionText(requirements);
 
@@ -544,8 +566,17 @@ export function buildSubmissionPlan(tender: TenderLike): SubmissionPlan {
         ...sections.flatMap(([, file]) => file.sourceRequirementIds.map((id) => requirementById.get(id)!)),
         ...narrativeRows,
       ];
-      const eoiText = [tender.title, tender.tenderCategory, ...requirements.map((row) => `${row.title} ${row.description ?? ""}`)].join(" ");
-      const isEoi = /expressions?\s+of\s+interest|\beoi\b/i.test(eoiText);
+      // An expression of interest is a shortlisting submission. A tender that
+      // asks for a technical or a financial proposal wants the proposal, even
+      // when one of its forms is an "expression of interest letter": that row
+      // used to rename an RFP's technical proposal "Expression of Interest".
+      const EOI = /expressions?\s+of\s+interest|\beoi\b/i;
+      const asksForProposal = requirements.some((row) => {
+        const text = `${row.title ?? ""} ${row.description ?? ""}`;
+        return /\btechnical\s+proposal\b/i.test(text) || requiresSubmittedFinancialProposal(row.title, text.toLowerCase());
+      });
+      const isEoi = EOI.test(`${tender.title ?? ""} ${tender.tenderCategory ?? ""}`)
+        || (!asksForProposal && requirements.some((row) => EOI.test(`${row.title} ${row.description ?? ""}`)));
       const baseName = isEoi ? "Expression of Interest" : "Technical Proposal";
       const format = inferFormat(baseName, sectionRows.map((row) => `${row.description ?? ""} ${row.restrictions ?? ""}`).join(" "));
       for (const [key] of sections) files.delete(key);
