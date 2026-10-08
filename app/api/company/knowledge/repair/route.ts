@@ -17,9 +17,12 @@ import {
   publicVaultIdentifier,
   redactVaultText,
   safeVaultFileLabel,
+  fillVaultSourceText,
   sourceByteIntegrityIsVerified,
-  VAULT_REVIEW_CONSUMER_SELECT,
+  withSourceText,
+  VAULT_REVIEW_STATUS_SELECT,
 } from "../../../../../lib/vault-review-provenance";
+import { fillStoredText } from "../../../../../lib/stored-text-cache";
 import { buildSupportReviewInboxRecord } from "../../../../../lib/vault-review-inbox";
 
 export const maxDuration = 60;
@@ -96,17 +99,17 @@ async function buildDiagnostics(
   },
 ) {
   const [
-    docs,
-    expertStates,
-    projectStates,
-    expertPageItems,
-    projectPageItems,
-    legalStates,
-    financialStates,
-    complianceStates,
-    legalPageItems,
-    financialPageItems,
-    compliancePageItems,
+    docsWithoutText,
+    expertStatesRaw,
+    projectStatesRaw,
+    expertPageItemsRaw,
+    projectPageItemsRaw,
+    legalStatesRaw,
+    financialStatesRaw,
+    complianceStatesRaw,
+    legalPageItemsRaw,
+    financialPageItemsRaw,
+    compliancePageItemsRaw,
   ] = await Promise.all([
     prisma.companyDocument.findMany({
       where: { companyId },
@@ -114,7 +117,6 @@ async function buildDiagnostics(
         id: true,
         originalFileName: true,
         category: true,
-        extractedText: true,
         aiExtractionStatus: true,
         contentSha256: true,
         contentByteLength: true,
@@ -125,11 +127,11 @@ async function buildDiagnostics(
     }),
     prisma.expert.findMany({
       where: { companyId, deletedAt: null },
-      select: VAULT_REVIEW_CONSUMER_SELECT.EXPERT,
+      select: VAULT_REVIEW_STATUS_SELECT.EXPERT,
     }),
     prisma.project.findMany({
       where: { companyId, deletedAt: null },
-      select: VAULT_REVIEW_CONSUMER_SELECT.PROJECT,
+      select: VAULT_REVIEW_STATUS_SELECT.PROJECT,
     }),
     prisma.expert.findMany({
       where: { companyId, deletedAt: null },
@@ -151,7 +153,6 @@ async function buildDiagnostics(
           select: {
             id: true,
             companyId: true,
-            extractedText: true,
             contentSha256: true,
             contentByteLength: true,
             integrityStatus: true,
@@ -184,7 +185,6 @@ async function buildDiagnostics(
           select: {
             id: true,
             companyId: true,
-            extractedText: true,
             contentSha256: true,
             contentByteLength: true,
             integrityStatus: true,
@@ -198,38 +198,57 @@ async function buildDiagnostics(
     }),
     prisma.legalRecord.findMany({
       where: { companyId },
-      select: VAULT_REVIEW_CONSUMER_SELECT.LEGAL,
+      select: VAULT_REVIEW_STATUS_SELECT.LEGAL,
     }),
     prisma.financialRecord.findMany({
       where: { companyId },
-      select: VAULT_REVIEW_CONSUMER_SELECT.FINANCIAL,
+      select: VAULT_REVIEW_STATUS_SELECT.FINANCIAL,
     }),
     prisma.companyComplianceRecord.findMany({
       where: { companyId },
-      select: VAULT_REVIEW_CONSUMER_SELECT.COMPLIANCE,
+      select: VAULT_REVIEW_STATUS_SELECT.COMPLIANCE,
     }),
     prisma.legalRecord.findMany({
       where: { companyId },
-      select: { id: true, ...VAULT_REVIEW_CONSUMER_SELECT.LEGAL },
+      select: { id: true, ...VAULT_REVIEW_STATUS_SELECT.LEGAL },
       orderBy: [{ trustLevel: "asc" }, { createdAt: "desc" }],
       skip: (pagination.legalPage - 1) * RECORD_PAGE_SIZE,
       take: RECORD_PAGE_SIZE,
     }),
     prisma.financialRecord.findMany({
       where: { companyId },
-      select: { id: true, ...VAULT_REVIEW_CONSUMER_SELECT.FINANCIAL },
+      select: { id: true, ...VAULT_REVIEW_STATUS_SELECT.FINANCIAL },
       orderBy: [{ trustLevel: "asc" }, { createdAt: "desc" }],
       skip: (pagination.financialPage - 1) * RECORD_PAGE_SIZE,
       take: RECORD_PAGE_SIZE,
     }),
     prisma.companyComplianceRecord.findMany({
       where: { companyId },
-      select: { id: true, ...VAULT_REVIEW_CONSUMER_SELECT.COMPLIANCE },
+      select: { id: true, ...VAULT_REVIEW_STATUS_SELECT.COMPLIANCE },
       orderBy: [{ trustLevel: "asc" }, { createdAt: "desc" }],
       skip: (pagination.compliancePage - 1) * RECORD_PAGE_SIZE,
       take: RECORD_PAGE_SIZE,
     }),
   ]);
+  // The verification page polls this every 30 s. Every source text arrives
+  // through the stored-text cache — once per text version, not once per poll
+  // and per record list as the relation selects used to bring it.
+  await fillStoredText(prisma, "CompanyDocument", docsWithoutText as Array<{ id: string; extractedText?: string | null }>);
+  await fillVaultSourceText(prisma, [
+    ...expertStatesRaw, ...projectStatesRaw, ...expertPageItemsRaw, ...projectPageItemsRaw,
+    ...legalStatesRaw, ...financialStatesRaw, ...complianceStatesRaw, ...legalPageItemsRaw, ...financialPageItemsRaw, ...compliancePageItemsRaw,
+  ]);
+  const docs = docsWithoutText as Array<(typeof docsWithoutText)[number] & { extractedText: string | null }>;
+  const expertStates = withSourceText(expertStatesRaw);
+  const projectStates = withSourceText(projectStatesRaw);
+  const expertPageItems = withSourceText(expertPageItemsRaw);
+  const projectPageItems = withSourceText(projectPageItemsRaw);
+  const legalStates = withSourceText(legalStatesRaw);
+  const financialStates = withSourceText(financialStatesRaw);
+  const complianceStates = withSourceText(complianceStatesRaw);
+  const legalPageItems = withSourceText(legalPageItemsRaw);
+  const financialPageItems = withSourceText(financialPageItemsRaw);
+  const compliancePageItems = withSourceText(compliancePageItemsRaw);
 
   const expertReviewStates = expertStates.map((record) => ({
     ...record,

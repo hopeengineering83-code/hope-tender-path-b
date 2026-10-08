@@ -107,6 +107,38 @@ export const VAULT_REVIEW_CONSUMER_SELECT = {
   },
 } as const;
 
+const VAULT_SOURCE_DOCUMENT_STATUS_SELECT = { ...VAULT_SOURCE_DOCUMENT_SELECT, extractedText: false } as const;
+
+/**
+ * The expert and project records of VAULT_REVIEW_CONSUMER_SELECT for a polled
+ * status read: the source document comes without its text, which
+ * fillVaultSourceText then supplies through the stored-text cache instead of
+ * downloading it on every poll. The authority checks receive exactly the same
+ * fields.
+ */
+export const VAULT_REVIEW_STATUS_SELECT = {
+  EXPERT: { ...VAULT_REVIEW_CONSUMER_SELECT.EXPERT, sourceDocument: { select: VAULT_SOURCE_DOCUMENT_STATUS_SELECT } },
+  PROJECT: { ...VAULT_REVIEW_CONSUMER_SELECT.PROJECT, sourceDocument: { select: VAULT_SOURCE_DOCUMENT_STATUS_SELECT } },
+  LEGAL: { ...VAULT_REVIEW_CONSUMER_SELECT.LEGAL, sourceDocument: { select: VAULT_SOURCE_DOCUMENT_STATUS_SELECT } },
+  FINANCIAL: { ...VAULT_REVIEW_CONSUMER_SELECT.FINANCIAL, sourceDocument: { select: VAULT_SOURCE_DOCUMENT_STATUS_SELECT } },
+  COMPLIANCE: { ...VAULT_REVIEW_CONSUMER_SELECT.COMPLIANCE, sourceDocument: { select: VAULT_SOURCE_DOCUMENT_STATUS_SELECT } },
+} as const;
+
+/** A record read with VAULT_REVIEW_STATUS_SELECT, once fillVaultSourceText has run. */
+export type WithSourceText<R> = R extends { sourceDocument: infer D }
+  ? Omit<R, "sourceDocument"> & { sourceDocument: (NonNullable<D> & { extractedText: string | null }) | null }
+  : R;
+/** Type the records fillVaultSourceText has filled. */
+export function withSourceText<R>(records: R[]): Array<WithSourceText<R>> {
+  return records as unknown as Array<WithSourceText<R>>;
+}
+
+/** Supply the source text of records read with VAULT_REVIEW_STATUS_SELECT. */
+export async function fillVaultSourceText(db: unknown, records: ReadonlyArray<{ sourceDocument?: { id: string } | null } | null | undefined>): Promise<void> {
+  const { fillStoredText } = await import("./stored-text-cache");
+  await fillStoredText(db, "CompanyDocument", records.map((record) => record?.sourceDocument as { id: string; extractedText?: string | null } | null | undefined));
+}
+
 type VaultReviewAuthorityRecord = {
   companyId: string;
   trustLevel?: string | null;

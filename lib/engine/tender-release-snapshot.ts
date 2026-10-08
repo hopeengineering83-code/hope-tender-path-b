@@ -21,10 +21,12 @@ import { buildReleaseSnapshotEligibility, describeGateBlockers, describeMetadata
 import { EXTRACTION_OVERRIDE_MAX_AGE_MS } from "./readiness-overrides";
 import { selectCanonicalTenderFiles } from "../tender/canonical-source-files";
 import {
+  fillVaultSourceText,
   isDurablyReviewed,
   isDurablySourceVerified,
-  VAULT_REVIEW_CONSUMER_SELECT,
+  VAULT_REVIEW_STATUS_SELECT,
 } from "../vault-review-provenance";
+import { fillStoredText } from "../stored-text-cache";
 
 export type SnapshotExtractionFile = {
   fileId: string;
@@ -124,12 +126,24 @@ function firstBlocker(values: string[]): string | null {
   return values.length > 0 ? values[0] : null;
 }
 
+type WithText<T> = T & { extractedText: string | null };
+type WithSourceText<R> = R extends { sourceDocument: infer D } ? Omit<R, "sourceDocument"> & { sourceDocument: D extends null ? null : WithText<NonNullable<D>> | null } : R;
+/** The snapshot's tender row once its stored texts are filled in. */
+type WithStoredText<T extends { files: unknown[]; expertMatches: Array<{ expert: unknown }>; projectMatches: Array<{ project: unknown }> }> =
+  Omit<T, "files" | "expertMatches" | "projectMatches"> & {
+    files: Array<WithText<T["files"][number]>>;
+    expertMatches: Array<Omit<T["expertMatches"][number], "expert"> & { expert: WithSourceText<T["expertMatches"][number]["expert"]> }>;
+    projectMatches: Array<Omit<T["projectMatches"][number], "project"> & { project: WithSourceText<T["projectMatches"][number]["project"]> }>;
+  };
+
 export async function getTenderReleaseSnapshot(
   prisma: PrismaClient,
   tenderId: string,
   userId: string,
 ): Promise<TenderReleaseSnapshot | null> {
-  const tender = await prisma.tender.findFirst({
+  // Polled every few seconds: stored texts come through the stored-text cache
+  // (see lib/stored-text-cache.ts), never in this query.
+  const loaded = await prisma.tender.findFirst({
     where: { id: tenderId, userId },
     select: {
       id: true,
@@ -193,6 +207,7 @@ export async function getTenderReleaseSnapshot(
         // never matched a multi-file tender's promoted analysis.
         select: {
           ...ANALYSIS_HASH_FILE_SELECT,
+          extractedText: false,
           pageStatusJson: true,
         },
       },
@@ -247,15 +262,20 @@ export async function getTenderReleaseSnapshot(
       },
       expertMatches: {
         where: { isSelected: true },
-        include: { expert: { select: VAULT_REVIEW_CONSUMER_SELECT.EXPERT } },
+        include: { expert: { select: VAULT_REVIEW_STATUS_SELECT.EXPERT } },
       },
       projectMatches: {
         where: { isSelected: true },
-        include: { project: { select: VAULT_REVIEW_CONSUMER_SELECT.PROJECT } },
+        include: { project: { select: VAULT_REVIEW_STATUS_SELECT.PROJECT } },
       },
     },
   });
-  if (!tender) return null;
+  if (!loaded) return null;
+  await Promise.all([
+    fillStoredText(prisma, "TenderFile", loaded.files as Array<{ id: string; extractedText?: string | null }>),
+    fillVaultSourceText(prisma, [...loaded.expertMatches.map((m) => m.expert), ...loaded.projectMatches.map((m) => m.project)]),
+  ]);
+  const tender = loaded as unknown as WithStoredText<NonNullable<typeof loaded>>;
 
   // All release gates must evaluate the same authoritative representation set
   // used by source-readiness, AI Analyze and Engine. Pending/weak duplicate

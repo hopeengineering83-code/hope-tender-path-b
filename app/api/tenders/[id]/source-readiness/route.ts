@@ -3,6 +3,7 @@ import { requireRole, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { assessCanonicalTenderSourceReadiness } from "../../../../../lib/tender/canonical-source-files";
 import { getTenderReleaseSnapshot } from "../../../../../lib/engine/tender-release-snapshot";
+import { fillStoredText } from "../../../../../lib/stored-text-cache";
 
 export const dynamic = "force-dynamic";
 
@@ -32,7 +33,6 @@ export async function GET(
           totalPages: true,
           extractedPages: true,
           failedPages: true,
-          extractedText: true,
           createdAt: true,
         },
       },
@@ -45,7 +45,9 @@ export async function GET(
     );
   }
 
-  const readiness = assessCanonicalTenderSourceReadiness(tender.files);
+  // The text arrives through the stored-text cache, not on every read.
+  await fillStoredText(prisma, "TenderFile", tender.files as Array<{ id: string; extractedText?: string | null }>);
+  const readiness = assessCanonicalTenderSourceReadiness(tender.files as Array<(typeof tender.files)[number] & { extractedText: string | null }>);
   const snapshot = await getTenderReleaseSnapshot(prisma, tenderId, actor.id).catch(() => null);
 
   return NextResponse.json({

@@ -1,10 +1,13 @@
 import type { PrismaClient } from "@prisma/client";
 import { prisma } from "./prisma";
 import {
+  fillVaultSourceText,
   isDurablyReviewed,
   isDurablySourceVerified,
-  VAULT_REVIEW_CONSUMER_SELECT,
+  VAULT_REVIEW_STATUS_SELECT,
+  withSourceText,
 } from "./vault-review-provenance";
+import { fillStoredText } from "./stored-text-cache";
 import { canUseVaultRecordSafely } from "./vault-runtime-authority";
 
 function hasUsefulText(text: string | null | undefined): boolean {
@@ -171,7 +174,7 @@ export async function getCompanyIngestionReadiness(
   opts: IngestionReadinessOptions = {},
   client: PrismaClient = prisma,
 ): Promise<CompanyIngestionReadiness> {
-  const [company, docs, expertRecords, projectRecords, legalRecords, financialRecords, complianceRecords] = await Promise.all([
+  const [company, docsWithoutText, expertRecordsWithoutText, projectRecordsWithoutText, legalRecords, financialRecords, complianceRecords] = await Promise.all([
     client.company.findUnique({
       where: { id: companyId },
       select: {
@@ -187,14 +190,21 @@ export async function getCompanyIngestionReadiness(
     }),
     client.companyDocument.findMany({
       where: { companyId },
-      select: { extractedText: true, aiExtractionStatus: true, aiExtractionError: true },
+      select: { id: true, aiExtractionStatus: true, aiExtractionError: true },
     }),
-    client.expert.findMany({ where: { companyId, deletedAt: null }, select: VAULT_REVIEW_CONSUMER_SELECT.EXPERT }),
-    client.project.findMany({ where: { companyId, deletedAt: null }, select: VAULT_REVIEW_CONSUMER_SELECT.PROJECT }),
+    client.expert.findMany({ where: { companyId, deletedAt: null }, select: VAULT_REVIEW_STATUS_SELECT.EXPERT }),
+    client.project.findMany({ where: { companyId, deletedAt: null }, select: VAULT_REVIEW_STATUS_SELECT.PROJECT }),
     client.legalRecord.count({ where: { companyId } }),
     client.financialRecord.count({ where: { companyId } }),
     client.companyComplianceRecord.count({ where: { companyId } }),
   ]);
+  // Re-read whenever a tender's workflow moves: texts come through the
+  // stored-text cache instead of being downloaded on every read.
+  await fillStoredText(client, "CompanyDocument", docsWithoutText as Array<{ id: string; extractedText?: string | null }>);
+  await fillVaultSourceText(client, [...expertRecordsWithoutText, ...projectRecordsWithoutText]);
+  const docs = docsWithoutText as Array<(typeof docsWithoutText)[number] & { extractedText: string | null }>;
+  const expertRecords = withSourceText(expertRecordsWithoutText);
+  const projectRecords = withSourceText(projectRecordsWithoutText);
 
   const experts: ReadinessExpert[] = expertRecords.map((record) => ({
     trustLevel: record.trustLevel,
