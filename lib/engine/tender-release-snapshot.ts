@@ -210,6 +210,8 @@ export async function getTenderReleaseSnapshot(
         },
       },
       requirements: {
+        // Plans are built from requirements; every reader takes them in one order.
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
         select: {
           id: true,
           title: true,

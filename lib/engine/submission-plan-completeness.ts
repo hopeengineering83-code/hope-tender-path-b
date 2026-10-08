@@ -485,6 +485,7 @@ export async function loadSubmissionPlanCompleteness(
       exactFileOrder: true,
       pageLimit: true,
       requirements: {
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
         select: {
           id: true,
           title: true,

@@ -418,7 +418,7 @@ export async function assertTenderReadyToDraftBuildPlan(
       // (validateBuildPlanForConfirmation) loads full rows; a narrower load
       // here let the draft and its verification plan different files from
       // the same tender (restrictions feed file notes and format).
-      requirements: { select: { id: true, title: true, description: true, requirementType: true, priority: true, exactFileName: true, exactOrder: true, requiredQuantity: true, pageLimit: true, restrictions: true, sectionReference: true, sourceTenderFileId: true, sourcePageNumber: true, sourceExactQuote: true } },
+      requirements: { orderBy: [{ createdAt: "asc" }, { id: "asc" }], select: { id: true, title: true, description: true, requirementType: true, priority: true, exactFileName: true, exactOrder: true, requiredQuantity: true, pageLimit: true, restrictions: true, sectionReference: true, sourceTenderFileId: true, sourcePageNumber: true, sourceExactQuote: true } },
       // Load metadata overrides so validateCriticalMetadataEvidenceForBuildPlan
       // can validate EFFECTIVE values (override ?? raw), mirroring the canonical hash.
       metadataOverrides: { select: { field: true, fieldState: true, overrideValue: true, reason: true, confirmationBasis: true, authorityClass: true, confirmedAt: true } },
@@ -577,7 +577,7 @@ export async function computeTenderBuildPlanHash(prisma: PrismaClient, tenderId:
       // even when the columns are populated, diverging from the validator.
       referenceSourceFileId: true, referenceSourcePage: true, referenceSourceQuote: true,
       files: { where: { deletionStatus: "ACTIVE" }, orderBy: { createdAt: "asc" }, select: { id: true, originalFileName: true, extractedText: true, deletionStatus: true, totalPages: true } },
-      requirements: { orderBy: { createdAt: "asc" }, select: { id: true, title: true, description: true, requirementType: true, priority: true, exactFileName: true, exactOrder: true, sourceTenderFileId: true, sourcePageNumber: true, sourceExactQuote: true } },
+      requirements: { orderBy: [{ createdAt: "asc" }, { id: "asc" }], select: { id: true, title: true, description: true, requirementType: true, priority: true, exactFileName: true, exactOrder: true, sourceTenderFileId: true, sourcePageNumber: true, sourceExactQuote: true } },
     },
   });
   if (!tender) return null;
@@ -681,7 +681,7 @@ export async function buildDraftBuildPlan(prisma: PrismaClient, tenderId: string
 
 export async function validateBuildPlanForConfirmation(prisma: PrismaClient, tenderId: string, userId: string, items: BuildPlanItem[]): Promise<BuildPlanValidation> {
   const blockers: string[] = [];
-  const tender = await prisma.tender.findFirst({ where: { id: tenderId, userId }, include: { files: true, requirements: true, metadataOverrides: { select: { field: true, fieldState: true, overrideValue: true, reason: true, confirmationBasis: true, authorityClass: true, confirmedAt: true } } } });
+  const tender = await prisma.tender.findFirst({ where: { id: tenderId, userId }, include: { files: true, requirements: { orderBy: [{ createdAt: "asc" }, { id: "asc" }] }, metadataOverrides: { select: { field: true, fieldState: true, overrideValue: true, reason: true, confirmationBasis: true, authorityClass: true, confirmedAt: true } } } });
   if (!tender) return { ok: false, blockers: ["Tender not found or not owned by actor."] };
   const activeFiles = new Map(tender.files.filter((f: any) => f.deletionStatus === "ACTIVE").map((f: any) => [f.id, f]));
   const reqs = new Map(tender.requirements.map((r: any) => [r.id, r]));
@@ -805,7 +805,7 @@ export async function validateBuildPlanItemsAtRuntime(
   const blockers: string[] = [];
   const tender = await prisma.tender.findFirst({
     where: { id: tenderId, userId },
-    include: { files: true, requirements: true },
+    include: { files: true, requirements: { orderBy: [{ createdAt: "asc" }, { id: "asc" }] } },
   });
   if (!tender) return { ok: false, blockers: ["Tender not found or not owned by actor."] };
 

@@ -1031,7 +1031,7 @@ export async function getFinalPackageReadinessModel(
         submissionMethod: true,
         category: true,
         analysisExtractionStatus: true,
-        requirements: { include: { complianceMatrixRows: true } },
+        requirements: { orderBy: [{ createdAt: "asc" }, { id: "asc" }], include: { complianceMatrixRows: true } },
         files: {
           where: { deletionStatus: "ACTIVE" },
           select: { id: true, extractedText: true, totalPages: true },

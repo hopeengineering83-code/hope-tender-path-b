@@ -438,7 +438,7 @@ async function buildBuildPlanState(
     const { buildSubmissionPlan } = await import("./submission-plan");
     const tender = await (prisma as any).tender.findFirst({
       where: { id: tenderId },
-      select: { id: true, title: true, exactFileNaming: true, exactFileOrder: true, pageLimit: true, requirements: { select: { id: true, title: true, description: true, requirementType: true, priority: true } } },
+      select: { id: true, title: true, exactFileNaming: true, exactFileOrder: true, pageLimit: true, requirements: { orderBy: [{ createdAt: "asc" }, { id: "asc" }], select: { id: true, title: true, description: true, requirementType: true, priority: true } } },
     });
     if (tender) {
       const plan = buildSubmissionPlan(tender as any);

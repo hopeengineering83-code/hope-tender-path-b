@@ -355,7 +355,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const tender = await prisma.tender.findFirst({
     where: { id, userId },
     include: {
-      requirements: true,
+      requirements: { orderBy: [{ createdAt: "asc" }, { id: "asc" }] },
       files: {
         select: { id: true, originalFileName: true, extractedText: true, extractionScore: true, totalPages: true, extractedPages: true, ocrPages: true, failedPages: true, deletionStatus: true },
       },

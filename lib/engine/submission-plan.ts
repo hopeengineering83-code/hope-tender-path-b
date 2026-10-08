@@ -223,6 +223,26 @@ function fileKey(fileName: string): string {
   return normalize(fileName);
 }
 
+/**
+ * The type of a file several requirements contribute to, independent of the
+ * order they are read in.
+ *
+ * Keeping whichever contributor arrived first made the type depend on row
+ * order, and requirements are read without one: the Pharo plan (2026-10-08)
+ * was confirmed as "Technical Proposal.pdf / ANNEX", the same 14 rows came
+ * back in another order after finalization updated them, the recomputed scope
+ * said "COMPANY_PROFILE", and the export gate refused a correct plan as "not
+ * in current tender-controlled scope". A file named as the main proposal is
+ * that proposal; any other merged file takes the lowest type name, which is
+ * the same whichever order the rows arrive in.
+ */
+function mergedDocumentType(fileName: string, a: string, b: string): string {
+  const base = fileName.replace(/\.[a-z0-9]{2,5}$/i, "");
+  if (/expression[\s._-]*of[\s._-]*interest|\beoi\b/i.test(base)) return "EXPRESSION_OF_INTEREST";
+  if (/\btechnical[\s._-]*proposal\b/i.test(base)) return "TECHNICAL_PROPOSAL";
+  return a <= b ? a : b;
+}
+
 function addFile(files: Map<string, SubmissionPlanFile>, file: SubmissionPlanFile) {
   const key = fileKey(file.exactFileName);
   const existing = files.get(key);
@@ -233,6 +253,7 @@ function addFile(files: Map<string, SubmissionPlanFile>, file: SubmissionPlanFil
 
   files.set(key, {
     ...existing,
+    documentType: mergedDocumentType(existing.exactFileName, existing.documentType, file.documentType),
     required: existing.required || file.required,
     exactOrder: Math.min(existing.exactOrder, file.exactOrder),
     sourceRequirementIds: Array.from(new Set([...existing.sourceRequirementIds, ...file.sourceRequirementIds])),
