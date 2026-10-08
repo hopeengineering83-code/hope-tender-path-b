@@ -77,6 +77,18 @@ function clean(value: string | null | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim();
 }
 
+/**
+ * A labelled value read out of a table row. Extracted Word/PDF tables come
+ * through as "Project Title | Architectural Consultancy … | Reference | …", so
+ * a label followed by a cell separator captured "| Architectural …" — the
+ * separator became the first character of the tender's title — and a longer
+ * row would carry the next cell's label and value into it as well. The cell
+ * separator ends a value the way a line break does.
+ */
+function cellValue(raw: string): string {
+  return clean(raw).replace(/^[|:\-–—]+\s*/, "").split(/\s+\|\s+/)[0]!.replace(/\s*\|\s*$/, "").trim();
+}
+
 
 function pageForIndex(text: string, index: number): number | null {
   const before = text.slice(0, Math.max(0, index));
@@ -91,7 +103,7 @@ function firstLabelledValue(text: string, patterns: RegExp[]): GroundedString {
   for (const pattern of patterns) {
     const match = pattern.exec(text);
     if (!match?.[1]) continue;
-    const raw = clean(match[1]);
+    const raw = cellValue(match[1]);
     const value = cutAtNextFieldLabel(raw).split(/[,;]/)[0].replace(/[.;,]+$/, "").trim().slice(0, 240);
     if (!value) continue;
     return {
@@ -114,7 +126,9 @@ function sourceMap(entries: Array<[string, GroundedString]>): Record<string, { p
 function firstMatch(text: string, patterns: RegExp[]): string | null {
   for (const pattern of patterns) {
     const match = text.match(pattern);
-    if (match?.[1]) return clean(match[1]).replace(/[.;,]+$/, "").slice(0, 240);
+    if (!match?.[1]) continue;
+    const value = cellValue(match[1]).replace(/[.;,]+$/, "").slice(0, 240);
+    if (value) return value;
   }
   return null;
 }
@@ -122,7 +136,9 @@ function firstMatch(text: string, patterns: RegExp[]): string | null {
 function firstMatchGroup(text: string, patterns: RegExp[], group: number): string | null {
   for (const pattern of patterns) {
     const match = text.match(pattern);
-    if (match?.[group]) return clean(match[group]).replace(/[.;,]+$/, "").slice(0, 240);
+    if (!match?.[group]) continue;
+    const value = cellValue(match[group]).replace(/[.;,]+$/, "").slice(0, 240);
+    if (value) return value;
   }
   return null;
 }
