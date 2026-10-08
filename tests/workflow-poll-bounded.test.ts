@@ -64,7 +64,9 @@ describe("the terminal-state poll does not run at in-flight speed forever", () =
 
   it("defines a distinct idle cadence", () => {
     assert.match(panel, /const POLL_INTERVAL_MS = 3_000;/);
-    assert.match(panel, /const IDLE_POLL_INTERVAL_MS = 8_000;/);
+    // 30s idle: every poll is a database read, and an idle open tab at 8s was
+    // most of the Preview database's monthly transfer allowance (2026-10-08).
+    assert.match(panel, /const IDLE_POLL_INTERVAL_MS = 30_000;/);
   });
 
   it("uses the fast cadence only while a downstream job is actually active", () => {

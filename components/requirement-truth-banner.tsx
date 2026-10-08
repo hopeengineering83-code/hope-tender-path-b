@@ -24,10 +24,14 @@ type WorkflowCenterPayload = {
  * state changes, so source, analysis, matching, generation, review and package
  * views do not remain on different revisions after an action completes.
  */
+const ACTIVE_POLL_MS = 8_000;
+const IDLE_POLL_MS = 30_000;
+
 export function RequirementTruthBanner({ tenderId }: { tenderId: string }) {
   const router = useRouter();
   const [status, setStatus] = useState<string | null>(null);
   const [refreshAvailable, setRefreshAvailable] = useState(false);
+  const [inProgress, setInProgress] = useState(false);
   const baselineFingerprint = useRef<string | null>(null);
 
   const refreshWorkspace = useCallback(() => {
@@ -49,6 +53,7 @@ export function RequirementTruthBanner({ tenderId }: { tenderId: string }) {
       if (!response.ok) throw new Error(json.error ?? `workflow-center ${response.status}`);
 
       setStatus(json.snapshot?.analysis?.state ?? null);
+      setInProgress(workflowHasInProgressStage(json));
       const nextFingerprint = canonicalWorkflowFingerprint(json);
 
       if (baselineFingerprint.current === null) {
@@ -75,11 +80,17 @@ export function RequirementTruthBanner({ tenderId }: { tenderId: string }) {
 
   useEffect(() => {
     void loadCanonicalWorkflow();
+  }, [loadCanonicalWorkflow]);
+
+  // Fast while a stage is running, slow otherwise: every poll is a database
+  // read, and an idle tab polling every 8s was most of the database's monthly
+  // transfer allowance. Nothing at all in a hidden tab.
+  useEffect(() => {
     const interval = window.setInterval(() => {
       if (!document.hidden) void loadCanonicalWorkflow();
-    }, 8_000);
+    }, inProgress ? ACTIVE_POLL_MS : IDLE_POLL_MS);
     return () => window.clearInterval(interval);
-  }, [loadCanonicalWorkflow]);
+  }, [loadCanonicalWorkflow, inProgress]);
 
   const applyDeferredRefresh = () => {
     setRefreshAvailable(false);

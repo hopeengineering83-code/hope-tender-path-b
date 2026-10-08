@@ -142,9 +142,9 @@ export async function getTenderReleaseState(
   tenderId: string,
   userId: string,
 ): Promise<TenderReleaseState | null> {
-  const [snapshot, rawWorkflowDecision, finalSubmission] = await Promise.all([
-    getTenderReleaseSnapshot(prisma, tenderId, userId),
-    getCanonicalTenderWorkflowDecision(prisma, userId, tenderId),
+  const snapshot = await getTenderReleaseSnapshot(prisma, tenderId, userId);
+  const [rawWorkflowDecision, finalSubmission] = await Promise.all([
+    getCanonicalTenderWorkflowDecision(prisma, userId, tenderId, snapshot),
     getFinalSubmissionReadiness(prisma, { tenderId, userId }),
   ]);
   if (!snapshot || !finalSubmission) return null;

@@ -211,9 +211,16 @@ export async function getJob(jobId: string): Promise<{
   steps: Array<{ stepIndex: number; stepName: string; status: string; message: string | null; startedAt: Date | null; finishedAt: Date | null }>;
 } | null> {
   await prismaReady;
+  // Only what is returned. The status page polls this every few seconds while
+  // a job runs; the full row also carries the job input and the staged
+  // analysis, which can be hundreds of kilobytes and are never returned here.
   const job = await prisma.aiJob.findUnique({
     where: { id: jobId },
-    include: { steps: { orderBy: { stepIndex: "asc" } } },
+    select: {
+      id: true, status: true, jobType: true, tenderId: true, errorMessage: true, output: true,
+      startedAt: true, finishedAt: true, createdAt: true,
+      steps: { orderBy: { stepIndex: "asc" }, select: { stepIndex: true, stepName: true, status: true, message: true, startedAt: true, finishedAt: true } },
+    },
   });
   if (!job) return null;
   let parsedOutput: Record<string, unknown> | null = null;

@@ -59,9 +59,10 @@ const POLL_INTERVAL_MS = 3_000;
 /**
  * Cadence when nothing is in flight. Matches the page-level sentinel in
  * requirement-truth-banner.tsx so the same page does not poll the same endpoint
- * on two different clocks.
+ * on two different clocks. Every poll is a database read; at 8s an idle open
+ * tab was most of the database's monthly transfer allowance.
  */
-const IDLE_POLL_INTERVAL_MS = 8_000;
+const IDLE_POLL_INTERVAL_MS = 30_000;
 
 /**
  * How long a QUEUED Engine job may wait before the wait itself is the story.

@@ -610,7 +610,7 @@ export function buildCanonicalWorkflowDecision(input: {
 // whole point of "one canonical workflow decision across all panels".
 
 import type { PrismaClient } from "@prisma/client";
-import { getTenderReleaseSnapshot } from "./tender-release-snapshot";
+import { getTenderReleaseSnapshot, type TenderReleaseSnapshot } from "./tender-release-snapshot";
 import { computeEngineSourceRevision } from "./engine-source-revision";
 import { filterFinalExportCandidateDocuments, isValidationPassed } from "./document-output-state";
 
@@ -618,8 +618,16 @@ export async function getCanonicalTenderWorkflowDecision(
   prisma: PrismaClient,
   userId: string,
   tenderId: string,
+  /**
+   * The snapshot the caller already loaded for this tender and user in the
+   * same request. Loading it twice doubled the database transfer of every
+   * tender-page poll.
+   */
+  preloadedSnapshot?: TenderReleaseSnapshot | null,
 ): Promise<CanonicalWorkflowDecision | null> {
-  const snapshot = await getTenderReleaseSnapshot(prisma, tenderId, userId);
+  const snapshot = preloadedSnapshot !== undefined
+    ? preloadedSnapshot
+    : await getTenderReleaseSnapshot(prisma, tenderId, userId);
   if (!snapshot) return null;
 
   // ─── Analysis state ─────────────────────────────────────────────────────

@@ -28,6 +28,12 @@ export type DocumentLike = {
    * paths should still pass fileContent or storagePath for byte validation.
    */
   hasInlineFileContent?: boolean | null;
+  /**
+   * The first characters of the stored base64 body, for status surfaces that
+   * must tell a PDF from a DOCX without downloading the body. Enough for the
+   * magic-number checks below, which read the first 12 characters only.
+   */
+  fileContentHead?: string | null;
   storagePath?: string | null;
   /**
    * The canonical narrative-quality verdict for this document, when the caller
@@ -296,7 +302,7 @@ export function deriveDocumentOutputState(doc: DocumentLike): DocumentOutputStat
   if (val === "NEEDS_REVALIDATION") return "NEEDS_REVALIDATION";
   if (gen === "PLANNED" || want === "markdown" || want === "control") return "CONTROL_RECORD_ONLY";
 
-  const content = (doc.fileContent ?? "").trim();
+  const content = (doc.fileContent ?? doc.fileContentHead ?? "").trim();
   const hasInlineContent = hasRestoredInlineFileContent(doc);
   const hasStorageContent = (doc.storagePath ?? "").trim().length > 0;
 

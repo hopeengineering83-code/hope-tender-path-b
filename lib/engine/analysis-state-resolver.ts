@@ -357,9 +357,20 @@ export async function resolveTenderAnalysisState(
     prismaClient.tenderRequirement
       .count({ where: { tenderId, sourceExactQuote: { not: null }, ...(userId ? { tender: { userId } } : {}) } })
       .then((n) => n > 0),
+    // Only the fields read below. `include: { files: true }` pulled every
+    // tender file's stored bytes and extracted text to read one small JSON
+    // column; this runs twice on every tender-page poll (see
+    // tests/a-tender-page-poll-does-not-download-stored-files-db.test.ts).
     prismaClient.tender.findFirst({
       where: { id: tenderId, ...(userId ? { userId } : {}) },
-      include: { files: true },
+      select: {
+        clientName: true,
+        procuringEntityName: true,
+        deadline: true,
+        submissionMethod: true,
+        notes: true,
+        files: { select: { pageStatusJson: true } },
+      },
     }),
   ]);
 

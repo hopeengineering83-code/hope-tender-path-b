@@ -47,10 +47,12 @@ export async function GET(
     // net for a queued job nothing claimed (lib/ai-jobs/stalled-job-nudge.ts).
     await nudgeStalledTenderJob(req, tenderId, actor.id).catch(() => null);
 
-    const [snapshot, workflow, rawDecision] = await Promise.all([
-      getTenderReleaseSnapshot(prisma, tenderId, actor.id),
+    // One snapshot per poll: the decision reads the same snapshot instead of
+    // loading its own copy.
+    const snapshot = await getTenderReleaseSnapshot(prisma, tenderId, actor.id);
+    const [workflow, rawDecision] = await Promise.all([
       getCanonicalTenderWorkflowState(prisma, actor.id, tenderId),
-      getCanonicalTenderWorkflowDecision(prisma, actor.id, tenderId),
+      getCanonicalTenderWorkflowDecision(prisma, actor.id, tenderId, snapshot),
     ]);
 
     if (!snapshot) {
