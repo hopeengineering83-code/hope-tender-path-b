@@ -78,6 +78,17 @@ with no runner name did it (`gh api -X POST …/actions/workflows/lockfile-refre
 `web_fetch_vercel_url`, which is how the 503 and the healthy state were
 confirmed here.
 
+2026-10-08 instance: the owner's redeploy first failed to BUILD, not to start:
+the Vercel build's runtime dependency audit refused Next.js 15.5.25 over two
+cache-poisoning advisories published the day before (GHSA-mcj8-r9mp-w47p,
+GHSA-4jqv-mc3x-m676). Fixed by the patch bump to 15.5.27 (`93aa4daf`); the
+audit policy was not relaxed. A build that fails in `scripts/audit-dependencies.mjs`
+is that, not the database. Then the usual signature on `ep-damp-dawn-b4uu53wo`:
+fingerprint pooled `6904b6e89c7c` / direct `8689bebe2fce`, health run
+37797403019 (55 bootstrap tables, no `_prisma_migrations`, `User.deletedAt`
+missing, 4 `Role` rows, 431 drift statements). The previous database had died
+two days after provisioning — see section E.
+
 Step 7 of the sequence is section B below. On a new database there is no
 tender yet; `confirm=inspect` then skips only its tender-scoped steps and
 still runs the provider-chain sweep (before 2026-09-26 it failed at "Resolve
@@ -155,3 +166,43 @@ or RUNNING (`components/matching-selected-evidence-panel.tsx`, test
 deployments the workaround is a page reload. The earlier cousin (2026-09-23,
 "Engine readiness could not be verified … Failed to fetch") is fixed the same
 way for a failed check.
+
+## E. "Neon monthly limit reached" within days of a new database
+
+**Symptom.** A freshly provisioned Preview database stops answering after a
+day or two (`Can't reach database server at ep-…-pooler…`), and the Neon
+console says the project's monthly limit is reached. Swapping to a new Neon
+project only restarts the clock.
+
+**Root cause (2026-10-08).** Not the cron and not compute hours: the
+**data-transfer (egress) allowance**. The tender page polls
+`/api/tenders/[id]/workflow-center` from two components every 8 s (3 s during
+a run). Measured through a byte-counting proxy, one poll moved **~18.6 MB**
+out of Postgres for an ordinary tender, because `workflow-state` included every
+tender file and every generated document — superseded ones too — with their
+stored bodies, and the analysis-state resolver included every tender file's
+body to read one JSON column, twice per poll. One open tender tab was
+gigabytes an hour against a free allowance of a few GB a month. The previous
+database (`ep-wandering-credit`, provisioned 10-05) died at 2026-10-07 21:02Z,
+right after a day of acceptance runs with tender pages open.
+
+**Fixed in `d4118aa8`:** one poll is ~0.55 MB on the same tender (34× less);
+idle polling is 30 s; the snapshot is loaded once per poll; nothing polls from
+a hidden tab. `tests/a-tender-page-poll-does-not-download-stored-files-db.test.ts`
+caps the bytes one poll may read and fails on the old code. Any new status
+read must select metadata only: never `include: { files: true }` or
+`generatedDocuments: true` on a polled path.
+
+**Other, smaller drivers (owner options, not code):**
+
+- The **default branch's** scheduled workflow "Drain AiJob queue" (`main`,
+  `*/5` cron, throttled by GitHub to every 4–7 h) still POSTs to the Preview
+  worker and wakes the Preview database each time. This branch removed that
+  schedule, but GitHub runs schedules from `main`. Disable that workflow's
+  schedule in the Actions tab if the Preview should sleep; it also drains
+  Production's queue, so keep it if Production depends on it.
+- Generated documents are stored inline in Postgres and superseded versions
+  are kept, so each regeneration adds ~1–2 MB toward the free 0.5 GB storage.
+- Neon's paid Launch plan removes the free-plan transfer and storage ceilings
+  if the Preview will see heavy daily use.
+
