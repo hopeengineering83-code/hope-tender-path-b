@@ -198,14 +198,27 @@ caps the bytes one poll may read and fails on the old code. Any new status
 read must select metadata only: never `include: { files: true }` or
 `generatedDocuments: true` on a polled path.
 
+**Second driver, fixed 2026-10-08 (later, `74e3b54a`):** with an ordinary
+Company Vault (a CV compilation and a project portfolio of ~0.4 MB of text
+each) the same poll still moved **~976 KB**: every poll re-checked the selected
+experts' and projects' provenance against their source documents' full text,
+and the vault verification page re-read every source text once per record
+list, every 30 s. Status reads now take extracted text through
+`lib/stored-text-cache.ts` — Postgres returns `md5(text)` and the text moves
+only when the server instance does not already hold that exact version. A
+warm poll is **36 KB** on the wire. `tests/a-poll-does-not-download-the-vault-db.test.ts`
+pins it.
+
 **Other, smaller drivers (owner options, not code):**
 
 - The **default branch's** scheduled workflow "Drain AiJob queue" (`main`,
   `*/5` cron, throttled by GitHub to every 4–7 h) still POSTs to the Preview
   worker and wakes the Preview database each time. This branch removed that
-  schedule, but GitHub runs schedules from `main`. Disable that workflow's
-  schedule in the Actions tab if the Preview should sleep; it also drains
-  Production's queue, so keep it if Production depends on it.
+  schedule, but GitHub runs schedules from `main`; merging this release into
+  `main` removes it (docs/PRODUCTION_RELIABILITY_RUNBOOK.md, "Release
+  disposition of the scheduler"). Until then, disable that workflow's schedule
+  in the Actions tab if the Preview should sleep; it also drains Production's
+  queue, so keep it if Production depends on it.
 - Generated documents are stored inline in Postgres and superseded versions
   are kept, so each regeneration adds ~1–2 MB toward the free 0.5 GB storage.
 - Neon's paid Launch plan removes the free-plan transfer and storage ceilings
