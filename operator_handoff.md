@@ -213,6 +213,19 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-10-08 UTC — Claude Code (Neon swap recovered; Neon quota root cause fixed)
+
+Branch `release/consolidated-recovery-20260717`, PR #1175 (draft, unmerged). Started at `ebfd7f6e`; commits `93aa4daf`, `d4118aa8`, `821cd9de`, plus this entry.
+
+- **Owner actions done:** `PREVIEW_DATABASE_URL_MIGRATION` = unpooled string, Vercel `DATABASE_URL` (Preview) = pooled string, Preview redeployed.
+- **Redeploy failed to build** (`dpl_GB9Sd47…`): the build's runtime dependency audit refused Next.js 15.5.25 (GHSA-mcj8-r9mp-w47p, GHSA-4jqv-mc3x-m676, published 10-07). Patch bump to 15.5.27 (`93aa4daf`); policy unchanged. Dev-only `braces` (GHSA-vfj7-8cjw-p6xm, no patched release) is outside both runtime audits (`--omit=dev` in CI, `NODE_ENV=production` on Vercel).
+- **Database recovered (runbook A):** `ep-damp-dawn-b4uu53wo`, fingerprint pooled `6904b6e89c7c` / direct `8689bebe2fce`. Health run 37797403019 (bootstrap schema, 4 Role rows only), provision run 37797908914 (54/54 migrations, zero drift, owner ADMIN + company), `/api/health` healthy, ready run 37798622798 (sign-in, pages and upload APIs 200; vault empty), inspect run 37798747542 (AI Analyze eligible: Gemini, Groq, Z.ai; generation verified: Gemini, Groq).
+- **Neon quota root cause (runbook section E):** the previous database (`ep-wandering-credit`, provisioned 10-05) stopped at 2026-10-07 21:02Z. One `/workflow-center` poll moved ~18.6 MB out of Postgres (workflow-state included every file and generated-document body, superseded too; the analysis-state resolver included file bodies to read one JSON column; the snapshot loaded twice), polled every 8 s from two components. Fixed in `d4118aa8`: ~0.55 MB per poll, idle polling 30 s, snapshot once per poll, `getJob` narrowed. Test `tests/a-tender-page-poll-does-not-download-stored-files-db.test.ts` fails on the old code.
+- **Still waking the Preview DB:** `main`'s scheduled "Drain AiJob queue" workflow POSTs to the Preview worker every 4–7 h (schedules run from the default branch). Not changed — it is on `main` and also drains Production.
+- **Tests:** full suite on real PostgreSQL at `d4118aa8`: 12,975 pass / 0 fail.
+- **Owner actions now:** re-upload Company Vault documents + Brand Assets, then tender files. Optional: SMTP (`SMTP_HOST`, `SMTP_USER`, `SMTP_PASS`, `EMAIL_FROM`) for password-reset email — readiness reports it missing.
+- **Merge status:** not merged. DO NOT MERGE OR PROMOTE PRODUCTION without the owner's explicit instruction.
+
 ### 2026-10-07 UTC (evening) — Claude Code (cold-start pricing, owner rate card, package order, Pharo acceptance)
 
 Branch `release/consolidated-recovery-20260717`, PR #1175 (draft, unmerged). Started at `7c2e30eb`; commits `11e21664` (pricing registry, cost model, rate card), `943f756b` (package positions follow the plan).

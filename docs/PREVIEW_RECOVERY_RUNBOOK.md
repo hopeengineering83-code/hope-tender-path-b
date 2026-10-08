@@ -86,8 +86,13 @@ audit policy was not relaxed. A build that fails in `scripts/audit-dependencies.
 is that, not the database. Then the usual signature on `ep-damp-dawn-b4uu53wo`:
 fingerprint pooled `6904b6e89c7c` / direct `8689bebe2fce`, health run
 37797403019 (55 bootstrap tables, no `_prisma_migrations`, `User.deletedAt`
-missing, 4 `Role` rows, 431 drift statements). The previous database had died
-two days after provisioning — see section E.
+missing, 4 `Role` rows, 431 drift statements), provision run 37797908914
+(54/54 migrations, zero drift, critical-schema ok, owner ADMIN + company
+created), `/api/health` healthy at 15:08Z, ready run 37798622798 (sign-in, 6
+pages and 5 upload APIs 200, storage = private Vercel Blob, SMTP not
+configured), inspect run 37798747542 (AI Analyze eligible on Gemini, Groq,
+Z.ai; generation verified on Gemini, Groq). The previous database had died two
+days after provisioning — see section E.
 
 Step 7 of the sequence is section B below. On a new database there is no
 tender yet; `confirm=inspect` then skips only its tender-scoped steps and
