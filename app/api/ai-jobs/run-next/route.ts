@@ -1,3 +1,4 @@
+import { secretMatches } from "../../../../lib/secret-compare";
 import { NextResponse } from "next/server";
 import { logger } from "../../../../lib/observability";
 import { requireRole, unauthorizedResponse } from "../../../../lib/auth";
@@ -43,11 +44,11 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   const workerSecret = req.headers.get("x-worker-secret");
   const aiJobsSecret = process.env.AI_JOBS_WORKER_SECRET;
-  const isWorkerSecret = Boolean(aiJobsSecret && aiJobsSecret.length >= 16 && workerSecret === aiJobsSecret);
+  const isWorkerSecret = Boolean(aiJobsSecret && aiJobsSecret.length >= 16 && secretMatches(workerSecret, aiJobsSecret));
 
   const authHeader = req.headers.get("authorization") ?? "";
   const cronSecret = process.env.CRON_SECRET;
-  const isVercelCron = Boolean(cronSecret && cronSecret.length >= 16 && authHeader === `Bearer ${cronSecret}`);
+  const isVercelCron = Boolean(cronSecret && cronSecret.length >= 16 && secretMatches(authHeader, `Bearer ${cronSecret}`));
   const isAutomatedCaller = isWorkerSecret || isVercelCron;
 
   let userId: string | null = null;
