@@ -47,6 +47,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       rates: numberMap(body.rates),
       quantities: numberMap(body.quantities),
       exclude: Array.isArray(body.exclude) ? body.exclude.filter((k): k is string => typeof k === "string").slice(0, 500) : undefined,
+      saveToRateCard: body.saveToRateCard === true,
     },
   });
   if (!result.ok) {
@@ -55,6 +56,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (result.finalize === "REQUEUED") scheduleRequestScopedWorkerWake(req, "AUTO_FINALIZE");
   return NextResponse.json({
     approved: { scenario: result.scenario, offerTotal: result.offerTotal, currency: result.currency, lineCount: result.lineCount },
+    rateCard: result.rateCard,
     finalize: result.finalize,
   });
 }

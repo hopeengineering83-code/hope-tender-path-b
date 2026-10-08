@@ -34,12 +34,6 @@ type Estimate = {
   benchmarksUsed?: BenchmarkRef[];
 };
 
-/** The rate-card category for an estimate line, so an entered rate prices the same line on the next tender. */
-const LINE_CATEGORY: Record<string, string> = {
-  "field-transport": "TRANSPORT", "per-diem": "PER_DIEM", "enumerators": "ENUMERATOR", "workshops": "WORKSHOP",
-  "boreholes": "DRILLING", "laboratory": "LABORATORY", "survey": "SURVEY", "site-vehicle": "EQUIPMENT", "reports": "PRINTING",
-};
-
 const CONFIDENCE_STYLE: Record<Confidence, string> = {
   HIGH: "bg-emerald-50 text-emerald-700 border-emerald-200",
   MEDIUM: "bg-sky-50 text-sky-700 border-sky-200",
@@ -103,26 +97,8 @@ export function PricingIntelligencePanel({ tenderId, canMutate = false }: { tend
     setMessage(null);
     const numeric = (m: Record<string, string>) => Object.fromEntries(Object.entries(m).filter(([, v]) => v !== "" && Number(v) > 0).map(([k, v]) => [k, Number(v)]));
     try {
-      // Rates the owner typed for lines the evidence could not price go to the
-      // rate card too, so the next tender prices them without asking again.
-      const typed = scenario.lines.filter((l) => !excluded[l.key] && l.rate === null && Number(rates[l.key]) > 0 && (l.category === "PERSONNEL" ? l.unit === "DAY" : LINE_CATEGORY[l.key]));
-      if (saveToRateCard && typed.length > 0) {
-        const today = new Date().toISOString().slice(0, 10);
-        await fetch("/api/company/pricing-benchmarks", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            entries: typed.map((l) => ({
-              category: l.category === "PERSONNEL" ? "PERSONNEL_FEE" : LINE_CATEGORY[l.key],
-              serviceKey: l.category === "PERSONNEL" ? undefined : l.key.replace(/-/g, "_"),
-              label: l.label.split(" — ")[0],
-              unit: l.unit, currency: estimate?.currency, median: Number(rates[l.key]),
-              source: "Rate entered by the owner when approving a tender price",
-              sourceType: "OWNER_RATE_CARD", confidence: "HIGH", effectiveDate: today, lastVerified: today,
-            })),
-          }),
-        }).catch(() => null);
-      }
+      // Rates typed for lines the evidence could not price are filed in the
+      // rate card by the server, by role and seniority, in the same approval.
       const res = await fetch(`/api/tenders/${tenderId}/pricing/approve`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -131,6 +107,7 @@ export function PricingIntelligencePanel({ tenderId, canMutate = false }: { tend
           rates: numeric(rates),
           quantities: numeric(quantities),
           exclude: Object.entries(excluded).filter(([, v]) => v).map(([k]) => k),
+          saveToRateCard,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -138,7 +115,8 @@ export function PricingIntelligencePanel({ tenderId, canMutate = false }: { tend
         const list = Array.isArray(data.unpriced) ? ` ${data.unpriced.map((u: { label: string }) => u.label).join("; ")}` : "";
         throw new Error(`${data.error ?? "Approval failed."}${list}`);
       }
-      setMessage(`Approved ${scenario.label}: ${money(data.approved.offerTotal, data.approved.currency)}. The financial proposal is being written and packaged automatically.`);
+      const filed = Number(data.rateCard?.saved ?? 0);
+      setMessage(`Approved ${scenario.label}: ${money(data.approved.offerTotal, data.approved.currency)}. The financial proposal is being written and packaged automatically.${filed > 0 ? ` ${filed} rate(s) you entered are now in your rate card for future tenders.` : ""}`);
       emitTenderWorkflowSync({ tenderId, source: "pricing-approve" });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Approval failed.");
@@ -281,6 +259,7 @@ export function PricingIntelligencePanel({ tenderId, canMutate = false }: { tend
             <input type="checkbox" checked={saveToRateCard} onChange={(e) => setSaveToRateCard(e.target.checked)} />
             Save rates I enter to the rate card for future tenders
           </label>
+          <a className="text-xs text-slate-600 underline" href="/dashboard/company/rate-card">Manage the rate card</a>
           {adjusted.unpriced > 0 ? <span className="text-xs text-rose-700">Enter a rate for {adjusted.unpriced} line(s) or untick them.</span> : null}
         </div>
       ) : null}

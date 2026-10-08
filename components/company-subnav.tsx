@@ -11,6 +11,7 @@ const COMPANY_TABS_BASE: SectionSubnavTab[] = [
   { href: "/dashboard/company/readiness", label: "Profile Readiness" },
   { href: "/dashboard/company/review", label: "Automatic Verification" },
   { href: "/dashboard/company/plan-b-import", label: "Legacy Data Import" },
+  { href: "/dashboard/company/rate-card", label: "Pricing Rate Card" },
   { href: "/dashboard/assets", label: "Brand Assets" },
   { href: "/dashboard/setup", label: "Setup Wizard" },
   { href: "/dashboard/settings", label: "Settings" },

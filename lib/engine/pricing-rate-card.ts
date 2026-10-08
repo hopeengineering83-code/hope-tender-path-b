@@ -76,14 +76,99 @@ export async function addRateCardEntries(userId: string, entries: unknown[], db:
   }
 }
 
-export async function deleteRateCardEntry(userId: string, id: string, db: any = defaultPrisma): Promise<{ ok: boolean; status: number }> {
+/** Remove one entry; returns what was removed so the audit trail can say. */
+export async function deleteRateCardEntry(userId: string, id: string, db: any = defaultPrisma): Promise<{ ok: boolean; status: number; removed?: PricingBenchmark }> {
   const company = await db.company.findUnique({ where: { userId }, select: { id: true } });
   if (!company) return { ok: false, status: 404 };
   try {
+    const row = await db.pricingBenchmark.findFirst({ where: { id, companyId: company.id } });
+    if (!row) return { ok: false, status: 404 };
     const result = await db.pricingBenchmark.deleteMany({ where: { id, companyId: company.id } });
-    return result.count > 0 ? { ok: true, status: 200 } : { ok: false, status: 404 };
+    return result.count > 0 ? { ok: true, status: 200, removed: toBenchmark(row) } : { ok: false, status: 404 };
   } catch (error) {
     if (tableMissing(error)) return { ok: false, status: 503 };
+    throw error;
+  }
+}
+
+export type RateCardUpdate =
+  | { ok: true; before: PricingBenchmark; after: PricingBenchmark }
+  | { ok: false; status: number; code: string; error: string };
+
+/**
+ * Change one entry: the merged entry passes the same validator as an import,
+ * so an edit can no more drop the source or date than an import can. The
+ * caller records before and after in the audit trail.
+ */
+export async function updateRateCardEntry(userId: string, id: string, changes: Record<string, unknown>, db: any = defaultPrisma): Promise<RateCardUpdate> {
+  const company = await db.company.findUnique({ where: { userId }, select: { id: true } });
+  if (!company) return { ok: false, status: 404, code: "COMPANY_NOT_FOUND", error: "Set up the company profile first." };
+  try {
+    const row = await db.pricingBenchmark.findFirst({ where: { id, companyId: company.id } });
+    if (!row) return { ok: false, status: 404, code: "NOT_FOUND", error: "Rate-card entry not found." };
+    const before = toBenchmark(row);
+    const editable = ["label", "serviceKey", "seniority", "unit", "currency", "market", "low", "median", "high", "rateBasis", "effectiveDate", "source", "sourceUrl", "sourceType", "confidence", "notes", "lastVerified"];
+    const merged: Record<string, unknown> = { ...before };
+    for (const key of editable) if (key in changes) merged[key] = changes[key];
+    // A changed rate with no new spread becomes a single figure, rather than
+    // a new median sitting inside the old rate's low/high.
+    if ("median" in changes && !("low" in changes) && !("high" in changes)) {
+      merged.low = changes.median;
+      merged.high = changes.median;
+    }
+    const v = validateBenchmark(merged);
+    if (!v.ok) return { ok: false, status: 422, code: "INVALID_ENTRY", error: v.error };
+    const updated = await db.pricingBenchmark.update({ where: { id: row.id }, data: v.value });
+    return { ok: true, before, after: toBenchmark(updated) };
+  } catch (error) {
+    if (tableMissing(error)) return { ok: false, status: 503, code: "RATE_CARD_UNAVAILABLE", error: "Rate card unavailable until the database migration runs." };
+    throw error;
+  }
+}
+
+export type OwnerRateEntry = {
+  category: PricingBenchmark["category"];
+  serviceKey: string;
+  seniority: PricingBenchmark["seniority"];
+  label: string;
+  unit: string;
+  currency: string;
+  market: string;
+  rate: number;
+  source: string;
+};
+
+/**
+ * File rates the owner entered at approval. One entry per slot (market,
+ * category, role/service, seniority, unit, currency): a newer rate for the
+ * same slot replaces the older one rather than piling up beside it, so the
+ * card always holds the owner's latest word. Tolerates a database without the
+ * table: the approval itself never depends on this.
+ */
+export async function saveOwnerRates(userId: string, entries: readonly OwnerRateEntry[], db: any = defaultPrisma, now = new Date()): Promise<{ saved: PricingBenchmark[]; unavailable: boolean }> {
+  if (entries.length === 0) return { saved: [], unavailable: false };
+  const company = await db.company.findUnique({ where: { userId }, select: { id: true } }).catch(() => null);
+  if (!company) return { saved: [], unavailable: false };
+  const today = now.toISOString().slice(0, 10);
+  const saved: PricingBenchmark[] = [];
+  try {
+    for (const e of entries) {
+      const v = validateBenchmark({
+        category: e.category, serviceKey: e.serviceKey, seniority: e.seniority ?? "", label: e.label, unit: e.unit, currency: e.currency,
+        market: e.market, median: e.rate, low: e.rate, high: e.rate, rateBasis: "FEE", source: e.source, sourceType: "OWNER_RATE_CARD",
+        confidence: "HIGH", effectiveDate: today, lastVerified: today,
+      });
+      if (!v.ok) continue;
+      const slot = { companyId: company.id, market: v.value.market, category: v.value.category, serviceKey: v.value.serviceKey, seniority: v.value.seniority ?? null, unit: v.value.unit, currency: v.value.currency };
+      const existing = await db.pricingBenchmark.findFirst({ where: slot, orderBy: { updatedAt: "desc" }, select: { id: true } });
+      const row = existing
+        ? await db.pricingBenchmark.update({ where: { id: existing.id }, data: v.value })
+        : await db.pricingBenchmark.create({ data: { ...v.value, companyId: company.id, createdById: userId } });
+      saved.push(toBenchmark(row));
+    }
+    return { saved, unavailable: false };
+  } catch (error) {
+    if (tableMissing(error)) return { saved, unavailable: true };
     throw error;
   }
 }

@@ -18,7 +18,8 @@ import { prisma as defaultPrisma } from "../prisma";
 import { logAction } from "../audit";
 import { resumeAutoFinalizeAfterOwnerInput } from "../ai-jobs/auto-finalize-continuation-job";
 import { loadPricingEstimate } from "./pricing-intelligence-loader";
-import { approvedLineNotes, type PricingEstimate, type PricingScenarioId } from "./pricing-intelligence";
+import { approvedLineNotes, rateCardSlotFor, type PricingEstimate, type PricingScenarioId } from "./pricing-intelligence";
+import { saveOwnerRates, type OwnerRateEntry } from "./pricing-rate-card";
 import { computeWorkbookTotals } from "./financial-proposal";
 import { isFinancialProposalFile } from "./owner-pricing-stop";
 
@@ -29,10 +30,15 @@ export type PricingApprovalRequest = {
   quantities?: Record<string, number>;
   /** Lines the owner removes from the offer. */
   exclude?: string[];
+  /**
+   * File the rates the owner entered for lines no evidence priced in the rate
+   * card, so the same line on a later tender is priced without asking again.
+   */
+  saveToRateCard?: boolean;
 };
 
 export type PricingApprovalResult =
-  | { ok: true; scenario: PricingScenarioId; offerTotal: number; currency: string; lineCount: number; finalize: string; estimate: PricingEstimate }
+  | { ok: true; scenario: PricingScenarioId; offerTotal: number; currency: string; lineCount: number; finalize: string; estimate: PricingEstimate; rateCard: { saved: number; unavailable: boolean } }
   | { ok: false; status: number; code: string; error: string; unpriced?: Array<{ key: string; label: string }> };
 
 const MAX_RATE = 1_000_000_000_000;
@@ -138,6 +144,22 @@ export async function approvePricingEstimate(
   });
 
   const totals = computeWorkbookTotals(lines.map((l) => ({ category: l.line.category, label: l.line.label, quantity: l.quantity, unit: l.line.unit, rate: l.rate as number })), settings);
+
+  // Rates the owner typed for lines the evidence could not price. A rate that
+  // only adjusts an evidence-priced line is already kept as an approved rate.
+  const tenderTitle = await db.tender.findFirst({ where: { id: tenderId, userId }, select: { title: true } }).then((t: { title: string } | null) => t?.title ?? "a tender").catch(() => "a tender");
+  const ownerRates: OwnerRateEntry[] = request.saveToRateCard
+    ? lines.flatMap((l) => {
+        if (l.line.rate !== null || !(Number(request.rates?.[l.line.key]) > 0)) return [];
+        const slot = rateCardSlotFor(l.line);
+        if (!slot) return [];
+        return [{
+          ...slot, unit: l.line.unit, currency: estimate.currency, market: estimate.market ?? "ET", rate: l.rate as number,
+          source: `Rate entered by ${args.actorLabel} when approving the price for "${tenderTitle.slice(0, 160)}"`,
+        }];
+      })
+    : [];
+  const rateCard = await saveOwnerRates(userId, ownerRates, db, approvedAt);
   await logAction({
     userId,
     action: "PRICING_ESTIMATE_APPROVED",
@@ -151,9 +173,19 @@ export async function approvePricingEstimate(
       adjustedLines: lines.filter((l) => l.rate !== l.line.rate || l.quantity !== l.line.quantity).map((l) => l.line.key),
       excludedLines: Array.from(exclude),
       estimate: { status: estimate.status, generatedAt: estimate.generatedAt, evidenceUsed: estimate.evidenceUsed, lowConfidence: estimate.lowConfidence },
+      rateCardSaved: rateCard.saved.map((b) => ({ id: b.id, category: b.category, serviceKey: b.serviceKey, seniority: b.seniority ?? null, unit: b.unit, currency: b.currency, market: b.market, median: b.median })),
     },
   }, db);
+  if (rateCard.saved.length > 0) {
+    await logAction({
+      userId,
+      action: "PRICING_RATE_CARD_UPDATED",
+      entityType: "PricingBenchmark",
+      description: `Filed ${rateCard.saved.length} rate(s) entered at price approval in the rate card`,
+      metadata: { tenderId, saved: rateCard.saved.map((b) => ({ id: b.id, category: b.category, label: b.label, seniority: b.seniority ?? null, unit: b.unit, currency: b.currency, market: b.market, median: b.median, source: b.source })) },
+    }, db);
+  }
 
   const resumed = await resumeAutoFinalizeAfterOwnerInput({ tenderId, userId, reason: "PRICING_ESTIMATE_APPROVED" }, db);
-  return { ok: true, scenario: scenario.id, offerTotal: totals.offerTotal, currency: estimate.currency, lineCount: lines.length, finalize: resumed.state, estimate };
+  return { ok: true, scenario: scenario.id, offerTotal: totals.offerTotal, currency: estimate.currency, lineCount: lines.length, finalize: resumed.state, estimate, rateCard: { saved: rateCard.saved.length, unavailable: rateCard.unavailable } };
 }

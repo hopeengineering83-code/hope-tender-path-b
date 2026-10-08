@@ -28,7 +28,7 @@
  * (pricing-intelligence-loader.ts) gathers the evidence.
  */
 
-import { SEED_BENCHMARKS, BENCHMARK_STALE_AFTER_MONTHS, benchmarkAgeMonths, classifyRole, findBenchmark, seniorityOf, type BenchmarkCategory, type PricingBenchmark } from "./pricing-benchmarks";
+import { SEED_BENCHMARKS, BENCHMARK_STALE_AFTER_MONTHS, benchmarkAgeMonths, classifyRole, findBenchmark, marketOf, seniorityOf, type BenchmarkCategory, type BenchmarkSeniority, type PricingBenchmark } from "./pricing-benchmarks";
 
 export type PricingConfidence = "HIGH" | "MEDIUM" | "LOW" | "NONE";
 export type PricingScenarioId = "AGGRESSIVE" | "BALANCED" | "CONSERVATIVE";
@@ -59,8 +59,12 @@ export type PricingEvidenceInput = {
     endDate?: string | Date | null;
     selected?: boolean;
   }>;
-  /** Rates the owner approved on other tenders. */
-  priorRates: Array<{ label: string; category: string; unit: string; rate: number; currency: string; date: string | Date; tenderTitle?: string | null }>;
+  /**
+   * Rates the owner approved on other tenders, with the country of the tender
+   * each was approved for, the scenario it was approved in, and whether the
+   * owner typed or adjusted that rate.
+   */
+  priorRates: Array<{ label: string; category: string; unit: string; rate: number; currency: string; date: string | Date; tenderTitle?: string | null; country?: string | null; scenario?: string | null; ownerAdjusted?: boolean }>;
   companyDefaultCurrency?: string | null;
   /** The benchmark registry: the shipped public figures plus the owner's own. Defaults to the shipped figures. */
   benchmarks?: readonly PricingBenchmark[];
@@ -86,6 +90,8 @@ export type EstimateLine = {
   confidence: PricingConfidence;
   assumptions: string[];
   expertId?: string | null;
+  /** A personnel line's seniority (title and years), so a rate entered for it is filed for that seniority. */
+  seniority?: BenchmarkSeniority | null;
   /**
    * How the billed rate is built when it starts from a cost (a salary, an
    * allowance): cost per unit, then overhead and margin. Absent for a rate
@@ -94,7 +100,7 @@ export type EstimateLine = {
   build?: { costRate: number; overheadPct: number; marginPct: number } | null;
 };
 
-export type PricingWarning = { code: "STALE_BENCHMARK" | "WEAK_COMPARATOR" | "FOREIGN_CURRENCY" | "MISSING_QUANTITY" | "ABNORMAL_MARGIN" | "BELOW_COST" | "BUDGET_EXCEEDED" | "NO_RATE"; message: string };
+export type PricingWarning = { code: "STALE_BENCHMARK" | "STALE_RATE" | "WEAK_COMPARATOR" | "FOREIGN_CURRENCY" | "MISSING_QUANTITY" | "ABNORMAL_MARGIN" | "BELOW_COST" | "BUDGET_EXCEEDED" | "NO_RATE"; message: string };
 
 export type EvaluationModel = {
   model: "QCBS" | "LCS" | "QBS" | "FIXED_BUDGET" | "UNKNOWN";
@@ -125,6 +131,8 @@ export type PricingScenario = {
 export type PricingEstimate = {
   tenderId: string;
   status: "COMPLETE" | "PARTIAL" | "INSUFFICIENT_EVIDENCE";
+  /** The tender's market (country code), when its country is known. */
+  market: string | null;
   currency: string;
   currencyBasis: string;
   vatPercent: number;
@@ -152,6 +160,9 @@ export type PricingEstimate = {
 };
 
 const WORKING_DAYS_PER_MONTH = 22;
+/** An approved rate up to this age is HIGH-confidence evidence; older, MEDIUM, then LOW. */
+const PRIOR_RATE_HIGH_MONTHS = 18;
+const PRIOR_RATE_MEDIUM_MONTHS = 36;
 const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 const CONF_ORDER: PricingConfidence[] = ["NONE", "LOW", "MEDIUM", "HIGH"];
 const weaker = (a: PricingConfidence, b: PricingConfidence): PricingConfidence =>
@@ -480,17 +491,24 @@ const SCENARIOS: Array<{ id: PricingScenarioId; label: string; description: stri
  * selection from their names. Nothing is assumed when the tender says nothing.
  */
 export function evaluationModelOf(text: string): EvaluationModel {
-  for (const s of sentences(text)) {
-    if (/\b(?:least[\s-]+cost|lowest\s+(?:evaluated\s+)?(?:price|cost|bid)|\bLCS\b)/i.test(s)) return { model: "LCS", technicalWeight: null, financialWeight: null, basis: `stated by the tender: "${snippet(s)}"` };
-    if (/\b(?:quality[\s-]+based\s+selection|\bQBS\b)/i.test(s)) return { model: "QBS", technicalWeight: 100, financialWeight: 0, basis: `stated by the tender: "${snippet(s)}"` };
-    if (/\bfixed[\s-]+budget\b|\bFBS\b/i.test(s)) return { model: "FIXED_BUDGET", technicalWeight: null, financialWeight: null, basis: `stated by the tender: "${snippet(s)}"` };
-  }
-  const t = /\btechnical\b[^.%]{0,80}?(\d{1,3})\s*%|(\d{1,3})\s*%\s*(?:for\s+)?(?:the\s+)?technical/i.exec(text.replace(/\s+/g, " "));
-  const f = /\bfinancial\b[^.%]{0,80}?(\d{1,3})\s*%|(\d{1,3})\s*%\s*(?:for\s+)?(?:the\s+)?financial/i.exec(text.replace(/\s+/g, " "));
+  // Stated weights decide first: a QCBS tender names "the lowest price" too,
+  // in its financial-score formula ("the lowest price receives 100 points").
+  const flat = text.replace(/\s+/g, " ");
+  const t = /\btechnical\b[^.%]{0,80}?(\d{1,3})\s*%|(\d{1,3})\s*%\s*(?:for\s+)?(?:the\s+)?technical/i.exec(flat);
+  const f = /\bfinancial\b[^.%]{0,80}?(\d{1,3})\s*%|(\d{1,3})\s*%\s*(?:for\s+)?(?:the\s+)?financial/i.exec(flat);
   const tw = t ? Number(t[1] ?? t[2]) : null;
   const fw = f ? Number(f[1] ?? f[2]) : null;
   if (tw !== null && fw !== null && tw + fw === 100) {
+    if (fw === 0) return { model: "QBS", technicalWeight: 100, financialWeight: 0, basis: `technical ${tw}% / financial ${fw}%, stated by the tender` };
     return { model: "QCBS", technicalWeight: tw, financialWeight: fw, basis: `technical ${tw}% / financial ${fw}%, stated by the tender` };
+  }
+  for (const s of sentences(text)) {
+    // "The Client is not bound to accept the lowest bid" reserves a right; it
+    // is not a selection method.
+    if (/\bnot\s+(?:be\s+)?(?:bound|obliged|obligated|required)\s+to\s+accept\b|\bnot\s+necessarily\s+(?:accept|award)/i.test(s)) continue;
+    if (/\b(?:least[\s-]+cost|lowest\s+(?:evaluated\s+)?(?:price|cost|bid)|\bLCS\b)/i.test(s)) return { model: "LCS", technicalWeight: null, financialWeight: null, basis: `stated by the tender: "${snippet(s)}"` };
+    if (/\b(?:quality[\s-]+based\s+selection|\bQBS\b)/i.test(s)) return { model: "QBS", technicalWeight: 100, financialWeight: 0, basis: `stated by the tender: "${snippet(s)}"` };
+    if (/\bfixed[\s-]+budget\b|\bFBS\b/i.test(s)) return { model: "FIXED_BUDGET", technicalWeight: null, financialWeight: null, basis: `stated by the tender: "${snippet(s)}"` };
   }
   return { model: "UNKNOWN", technicalWeight: null, financialWeight: null, basis: "the tender states no evaluation weights" };
 }
@@ -503,7 +521,7 @@ function perDiemTier(text: string): { key: string; basis: string } {
   return { key: "per_diem_addis_ababa", basis: "no field location stated; Addis Ababa rate assumed" };
 }
 
-const RULE_BENCHMARK: Record<string, BenchmarkCategory> = {
+const RULE_BENCHMARK: Readonly<Record<string, BenchmarkCategory>> = {
   "field-transport": "TRANSPORT",
   "per-diem": "PER_DIEM",
   "enumerators": "ENUMERATOR",
@@ -514,6 +532,22 @@ const RULE_BENCHMARK: Record<string, BenchmarkCategory> = {
   "site-vehicle": "EQUIPMENT",
   "reports": "PRINTING",
 };
+
+/**
+ * Where a rate the owner enters for an estimate line is filed in the rate
+ * card, so the same line on a later tender finds it: personnel day rates by
+ * role and seniority, described work by its own key. Null for a line the
+ * rate card does not hold (a lump-sum fee).
+ */
+export function rateCardSlotFor(line: Pick<EstimateLine, "key" | "category" | "label" | "unit" | "seniority">): { category: BenchmarkCategory; serviceKey: string; seniority: BenchmarkSeniority | null; label: string } | null {
+  if (line.category === "PERSONNEL") {
+    if (line.unit !== "DAY") return null;
+    const title = line.label.split(" — ")[0]!.trim();
+    return { category: "PERSONNEL_FEE", serviceKey: classifyRole(title), seniority: line.seniority ?? seniorityOf(title), label: title };
+  }
+  const category = RULE_BENCHMARK[line.key];
+  return category ? { category, serviceKey: line.key.replace(/-/g, "_"), seniority: null, label: line.label } : null;
+}
 
 /** Build the estimate. */
 export function estimateTenderPrice(input: PricingEvidenceInput): PricingEstimate {
@@ -530,6 +564,7 @@ export function estimateTenderPrice(input: PricingEvidenceInput): PricingEstimat
     }
   };
   const evaluation = evaluationModelOf(text);
+  const market = marketOf(input.tender.country);
 
   // ── Currency, tax, validity ────────────────────────────────────────────
   const budgetFromText = statedBudget(text);
@@ -595,6 +630,8 @@ export function estimateTenderPrice(input: PricingEvidenceInput): PricingEstimat
   };
   const drafts: Draft[] = [];
   const team = input.experts.length > 0 ? input.experts : [];
+  const expertYears = new Map(team.map((e) => [`expert:${e.id}`, e.yearsExperience ?? null]));
+  const expertYearsOf = (key: string) => expertYears.get(key) ?? null;
   if (team.length > 0) evidenceUsed.push(`${team.length} expert(s) selected for this tender set the personnel lines.`);
   team.forEach((expert, index) => {
     const role = (expert.title || "Expert").trim();
@@ -611,6 +648,7 @@ export function estimateTenderPrice(input: PricingEvidenceInput): PricingEstimat
       quantityConfidence: stated ? "HIGH" : weaker("MEDIUM", durationConfidence),
       assumptions: stated ? [] : [`Input assumed at ${Math.round(allocation * 100)}% of the period (${LEADER_RE.test(role) || index === 0 ? "team lead" : index < 4 ? "key expert" : "support expert"}).`],
       expertId: expert.id,
+      seniority: seniorityOf(role, expert.yearsExperience),
       weight: days * seniorityWeight(role, expert.yearsExperience, index),
     });
   });
@@ -632,6 +670,7 @@ export function estimateTenderPrice(input: PricingEvidenceInput): PricingEstimat
       quantityBasis: stated ? `input stated by the tender: "${stated.quote}"` : `${Math.round(allocation * 100)}% of ${workingDays} working days in the ${durationMonths}-month period`,
       quantityConfidence: stated ? "HIGH" : weaker("MEDIUM", durationConfidence),
       assumptions: [`Role named by the tender; no expert is selected for it yet.`, ...(stated ? [] : [`Input assumed at ${Math.round(allocation * 100)}% of the period.`])],
+      seniority: seniorityOf(role),
       weight: days * seniorityWeight(role, null, index),
     });
   });
@@ -676,6 +715,24 @@ export function estimateTenderPrice(input: PricingEvidenceInput): PricingEstimat
   }
 
   // ── Direct rate evidence: tender-prescribed, then the firm's own approved rates
+  // An approved rate is reused only in the same currency and, where both are
+  // known, the same country: a Nairobi day rate does not price Addis Ababa.
+  //
+  // A rate approved inside the Competitive or Conservative scenario carries
+  // that scenario's adjustment. Reused as-is and adjusted again, it moved a
+  // step on every tender — down 5% per least-cost bid, compounding. Unless the
+  // owner typed it, it is reused at its balanced equivalent.
+  const priorRates = input.priorRates
+    .filter((r) => {
+      if (!(r.rate > 0) || r.currency.toUpperCase() !== currency) return false;
+      const rateMarket = marketOf(r.country);
+      return !market || !rateMarket || rateMarket === market;
+    })
+    .map((r) => {
+      const scenario = SCENARIOS.find((sc) => sc.id === r.scenario);
+      if (r.ownerAdjusted || !scenario || scenario.factor === 1) return { ...r, approvedAs: null as string | null };
+      return { ...r, rate: r.rate / scenario.factor, approvedAs: `${r.rate.toLocaleString("en-US")} in the ${scenario.label} scenario` };
+    });
   for (const d of drafts) {
     if (d.rateKeyword) {
       const fixed = prescribedRate(text, d.rateKeyword);
@@ -684,18 +741,18 @@ export function estimateTenderPrice(input: PricingEvidenceInput): PricingEstimat
         continue;
       }
     }
-    const candidates = input.priorRates
-      .filter((r) => r.currency.toUpperCase() === currency && r.unit === d.unit && r.rate > 0)
+    const candidates = priorRates
+      .filter((r) => r.unit === d.unit)
       .map((r) => ({ r, sim: d.category === "PERSONNEL" ? labelSimilarity(d.label.split(" — ")[0]!, r.label.split(" — ")[0]!) : labelSimilarity(d.label, r.label) }))
-      .filter((c) => c.sim >= 0.5 && (d.category !== "PERSONNEL" || c.r.category === "PERSONNEL"))
+      .filter((c) => c.sim >= 0.5 && c.r.category === d.category)
       .sort((a, b) => new Date(b.r.date).getTime() - new Date(a.r.date).getTime());
     if (candidates.length === 0 && d.category === "PERSONNEL" && d.unit === "DAY") {
       // No approved rate for this role by name. The owner's approved day rates
       // for the same tier (team lead vs other experts) are the firm's own
       // pricing for comparable seniority — weaker evidence, marked MEDIUM.
       const leader = LEADER_RE.test(d.label);
-      const tier = input.priorRates
-        .filter((r) => r.category === "PERSONNEL" && r.unit === "DAY" && r.rate > 0 && r.currency.toUpperCase() === currency)
+      const tier = priorRates
+        .filter((r) => r.category === "PERSONNEL" && r.unit === "DAY" && monthsBetween(new Date(r.date), input.now) <= PRIOR_RATE_MEDIUM_MONTHS)
         .filter((r) => LEADER_RE.test(r.label) === leader)
         .sort((a, b) => a.rate - b.rate);
       if (tier.length > 0) {
@@ -717,12 +774,15 @@ export function estimateTenderPrice(input: PricingEvidenceInput): PricingEstimat
       const ageMonths = monthsBetween(new Date(best.date), input.now);
       d.evidenceRate = {
         rate: best.rate,
-        basis: `rate the owner approved for "${best.label}"${best.tenderTitle ? ` on "${best.tenderTitle}"` : ""}`,
+        basis: `rate the owner approved for "${best.label}"${best.tenderTitle ? ` on "${best.tenderTitle}"` : ""}${best.approvedAs ? ` (${best.approvedAs}, reused at its balanced equivalent)` : ""}`,
         source: "Owner-approved rate on a previous tender",
         date: toIsoDate(best.date),
-        confidence: ageMonths <= 18 ? "HIGH" : "MEDIUM",
+        confidence: ageMonths <= PRIOR_RATE_HIGH_MONTHS ? "HIGH" : ageMonths <= PRIOR_RATE_MEDIUM_MONTHS ? "MEDIUM" : "LOW",
         scalable: true,
       };
+      if (ageMonths > PRIOR_RATE_HIGH_MONTHS) {
+        warnings.push({ code: "STALE_RATE", message: `${d.label}: the approved rate it reuses is ${Math.round(ageMonths)} months old (${toIsoDate(best.date)}); prices may have moved since — confirm it.` });
+      }
     }
   }
   const directCount = drafts.filter((d) => d.evidenceRate).length;
@@ -736,10 +796,35 @@ export function estimateTenderPrice(input: PricingEvidenceInput): PricingEstimat
     let bm: PricingBenchmark | null = null;
     if (d.category === "PERSONNEL" && d.unit === "DAY") {
       const title = d.label.split(" — ")[0]!;
-      bm = findBenchmark(benchmarks, { category: "PERSONNEL_FEE", serviceKey: classifyRole(title), seniority: seniorityOf(title), currency, unit: "DAY" });
+      bm = findBenchmark(benchmarks, { category: "PERSONNEL_FEE", serviceKey: classifyRole(title), seniority: seniorityOf(title, expertYearsOf(d.key)), currency, unit: "DAY", market });
     } else if (RULE_BENCHMARK[d.key]) {
       const category = RULE_BENCHMARK[d.key]!;
-      bm = findBenchmark(benchmarks, { category, serviceKey: category === "PER_DIEM" ? tier.key : d.key.replace(/-/g, "_"), currency, unit: d.unit });
+      bm = findBenchmark(benchmarks, { category, serviceKey: category === "PER_DIEM" ? tier.key : d.key.replace(/-/g, "_"), currency, unit: d.unit, market });
+    }
+    if (!bm && d.key === "enumerators") {
+      // No enumerator rate is held. An enumerator is a short-term entry-level
+      // hire: the public entry salary with the statutory employer pension, per
+      // working day, is a documented floor. Passed through at cost, LOW.
+      const entry = findBenchmark(benchmarks, { category: "PERSONNEL_SALARY", serviceKey: "professional", seniority: "JUNIOR", currency, unit: "MONTH", market });
+      const charges = findBenchmark(benchmarks, { category: "STATUTORY_RATE", serviceKey: "employer_pension", currency, unit: "PERCENT", market });
+      if (entry) {
+        recordBenchmark(entry);
+        if (charges) recordBenchmark(charges);
+        const cost = (entry.median * (1 + (charges ? charges.median / 100 : 0))) / WORKING_DAYS_PER_MONTH;
+        const rate = roundEstimatedRate(cost);
+        d.evidenceRate = {
+          rate,
+          basis: `cost-built at cost: ${entry.label} ${currency} ${entry.median.toLocaleString("en-US")}/month${charges ? ` + ${charges.median}% employer pension` : ""} ÷ ${WORKING_DAYS_PER_MONTH} days ≈ ${currency} ${rate.toLocaleString("en-US")}/day (${entry.source}) — a public entry-pay floor; local enumerator rates may be higher`,
+          source: "Cost model (public salary scale)",
+          date: entry.effectiveDate,
+          confidence: "LOW",
+          scalable: false,
+          atCost: true,
+        };
+        d.assumptions.push("Enumerators paid the public entry-level day cost and reimbursed at cost: no overhead or margin is added.");
+        benchmarked += 1;
+      }
+      continue;
     }
     if (!bm) continue;
     recordBenchmark(bm);
@@ -764,14 +849,13 @@ export function estimateTenderPrice(input: PricingEvidenceInput): PricingEstimat
   // seniority plus the statutory employer pension, over the working days of a
   // month. The scenario then adds overhead and margin. Transparent and LOW:
   // a public scale is a floor for private consultancy pay.
-  const pension = findBenchmark(benchmarks, { category: "STATUTORY_RATE", serviceKey: "employer_pension", currency, unit: "PERCENT" });
+  const pension = findBenchmark(benchmarks, { category: "STATUTORY_RATE", serviceKey: "employer_pension", currency, unit: "PERCENT", market });
   const dayCost = (title: string, years?: number | null) => {
-    const salary = findBenchmark(benchmarks, { category: "PERSONNEL_SALARY", serviceKey: classifyRole(title), seniority: seniorityOf(title, years), currency, unit: "MONTH" });
+    const salary = findBenchmark(benchmarks, { category: "PERSONNEL_SALARY", serviceKey: classifyRole(title), seniority: seniorityOf(title, years), currency, unit: "MONTH", market });
     if (!salary) return null;
     const charges = pension ? pension.median / 100 : 0;
     return { cost: round2((salary.median * (1 + charges)) / WORKING_DAYS_PER_MONTH), salary, charges };
   };
-  const expertYears = new Map(team.map((e) => [`expert:${e.id}`, e.yearsExperience ?? null]));
 
   // ── Envelope from comparable past contracts ────────────────────────────
   const tenderWords = new Set(normalizeLabel(`${input.tender.title} ${input.tender.category ?? ""}`));
@@ -814,7 +898,7 @@ export function estimateTenderPrice(input: PricingEvidenceInput): PricingEstimat
       const base = {
         key: d.key, category: d.category, label: d.label, quantity: d.quantity, unit: d.unit,
         quantityBasis: d.quantityBasis, quantityConfidence: d.quantityConfidence,
-        assumptions: [...d.assumptions], expertId: d.expertId ?? null,
+        assumptions: [...d.assumptions], expertId: d.expertId ?? null, seniority: d.seniority ?? null,
       };
       if (d.evidenceRate) {
         const ev = d.evidenceRate;
@@ -972,7 +1056,9 @@ export function estimateTenderPrice(input: PricingEvidenceInput): PricingEstimat
     if (l.confidence === "LOW") lowConfidence.push(`${l.label}: ${l.rateBasis}; ${l.quantityBasis}.`);
     if (l.confidence === "NONE") {
       lowConfidence.push(`${l.label}: no rate evidence — the owner must enter the rate.`);
-      warnings.push({ code: "NO_RATE", message: `${l.label}: no defensible rate; enter it before approving (or add it to the rate card once).` });
+      warnings.push({ code: "NO_RATE", message: l.category === "SUBCONSULTANT"
+        ? `${l.label}: specialist subcontracted work with no rate held; enter the subcontractor's quoted price before approving (and add it to the rate card once).`
+        : `${l.label}: no defensible rate; enter it before approving (or add it to the rate card once).` });
     }
     if (l.quantityConfidence === "LOW") warnings.push({ code: "MISSING_QUANTITY", message: `${l.label}: quantity assumed — ${l.quantityBasis}.` });
   }
@@ -1006,6 +1092,7 @@ export function estimateTenderPrice(input: PricingEvidenceInput): PricingEstimat
   return {
     tenderId: input.tender.id,
     status,
+    market,
     currency, currencyBasis,
     vatPercent, vatBasis,
     withholdingPct, withholdingBasis,

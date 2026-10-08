@@ -200,25 +200,58 @@ export function seniorityOf(title: string, years?: number | null): BenchmarkSeni
 }
 
 const SENIORITY_ORDER: BenchmarkSeniority[] = ["JUNIOR", "MID", "SENIOR", "EXPERT"];
+const PERSONNEL_CATEGORIES: ReadonlySet<BenchmarkCategory> = new Set(["PERSONNEL_FEE", "PERSONNEL_SALARY"]);
+
+const MARKETS: Array<{ code: string; test: RegExp }> = [
+  { code: "ET", test: /\bethiopia/i },
+  { code: "KE", test: /\bkenya/i },
+  { code: "UG", test: /\buganda/i },
+  { code: "TZ", test: /\btanzania/i },
+  { code: "RW", test: /\brwanda/i },
+  { code: "SS", test: /\bsouth\s+sudan/i },
+  { code: "SD", test: /\bsudan/i },
+  { code: "SO", test: /\bsomali/i },
+  { code: "DJ", test: /\bdjibouti/i },
+  { code: "ER", test: /\beritrea/i },
+];
+
+/** The market code for a country as a tender records it ("Ethiopia", "ET"); null when unknown. */
+export function marketOf(country: string | null | undefined): string | null {
+  const value = String(country ?? "").trim();
+  if (!value) return null;
+  if (/^[A-Za-z]{2}$/.test(value)) return value.toUpperCase();
+  return MARKETS.find((m) => m.test.test(value))?.code ?? null;
+}
 
 /**
  * The best benchmark for a need: same market, currency, category and unit;
  * the role/service key exactly, else a generic "professional" entry; the same
  * seniority, else the nearest. Owner entries outrank seed entries; newer
  * outranks older.
+ *
+ * A personnel rate is for one seniority. An entry more than one step from the
+ * role's seniority does not price it — a team leader's day rate is not a
+ * junior's — and an entry with no seniority prices only its own named role,
+ * never every role through the generic key.
  */
 export function findBenchmark(
   list: readonly PricingBenchmark[],
-  need: { category: BenchmarkCategory; serviceKey: string; currency: string; unit?: string; seniority?: BenchmarkSeniority | null; market?: string },
+  need: { category: BenchmarkCategory; serviceKey: string; currency: string; unit?: string; seniority?: BenchmarkSeniority | null; market?: string | null },
 ): PricingBenchmark | null {
-  const candidates = list.filter((b) =>
-    b.category === need.category
-    && b.currency.toUpperCase() === need.currency.toUpperCase()
-    && (!need.unit || b.unit === need.unit)
-    && (!need.market || b.market === need.market)
-    && (b.serviceKey === need.serviceKey || b.serviceKey === "professional"));
-  if (candidates.length === 0) return null;
   const want = need.seniority ? SENIORITY_ORDER.indexOf(need.seniority) : -1;
+  const candidates = list.filter((b) => {
+    if (b.category !== need.category || b.currency.toUpperCase() !== need.currency.toUpperCase()) return false;
+    if (need.unit && b.unit !== need.unit) return false;
+    if (need.market && b.market.toUpperCase() !== need.market.toUpperCase()) return false;
+    const exact = b.serviceKey === need.serviceKey;
+    if (!exact && b.serviceKey !== "professional") return false;
+    if (PERSONNEL_CATEGORIES.has(need.category) && want >= 0) {
+      if (!b.seniority) return exact && need.serviceKey !== "professional";
+      if (Math.abs(SENIORITY_ORDER.indexOf(b.seniority) - want) > 1) return false;
+    }
+    return true;
+  });
+  if (candidates.length === 0) return null;
   const score = (b: PricingBenchmark) =>
     (b.origin === "OWNER" ? 1_000 : 0)
     + (b.serviceKey === need.serviceKey ? 100 : 0)

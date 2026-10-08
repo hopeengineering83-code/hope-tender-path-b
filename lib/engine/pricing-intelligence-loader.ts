@@ -60,7 +60,7 @@ export async function loadPricingEstimate(tenderId: string, userId: string, db: 
     where: { rate: { gt: 0 }, workbook: { tenderId: { not: tenderId }, tender: { userId } } },
     orderBy: { updatedAt: "desc" },
     take: 500,
-    select: { label: true, category: true, unit: true, rate: true, updatedAt: true, workbook: { select: { currency: true, tender: { select: { title: true } } } } },
+    select: { label: true, category: true, unit: true, rate: true, notes: true, updatedAt: true, workbook: { select: { currency: true, scenario: true, tender: { select: { title: true, country: true } } } } },
   }).catch(() => []);
 
   const tenderText = [
@@ -80,7 +80,8 @@ export async function loadPricingEstimate(tenderId: string, userId: string, db: 
       .map((r: { title: string; description: string | null }) => r.description ?? r.title),
     historicalProjects,
     priorRates: priorLines.map((l: any) => ({
-      label: l.label, category: l.category, unit: l.unit, rate: l.rate, currency: l.workbook?.currency ?? "", date: l.updatedAt, tenderTitle: l.workbook?.tender?.title ?? null,
+      label: l.label, category: l.category, unit: l.unit, rate: l.rate, currency: l.workbook?.currency ?? "", date: l.updatedAt, tenderTitle: l.workbook?.tender?.title ?? null, country: l.workbook?.tender?.country ?? null,
+      scenario: l.workbook?.scenario ?? null, ownerAdjusted: /Adjusted by the owner at approval/.test(String(l.notes ?? "")),
     })),
     companyDefaultCurrency: company?.settings?.defaultCurrency ?? null,
     benchmarks: await loadBenchmarks(userId, db),

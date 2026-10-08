@@ -84,7 +84,8 @@ describe("Pricing Intelligence", () => {
     assert.match(leader.rateBasis, /Earlier WASH study/);
     const engineer = bal!.lines.find((l) => /Water Engineer/.test(l.label))!;
     assert.equal(engineer.rate, 8_000, "same-currency rate only");
-    assert.equal(engineer.rateConfidence, "MEDIUM", "an old rate is weaker evidence");
+    assert.equal(engineer.rateConfidence, "LOW", "a rate approved more than three years ago is weak evidence");
+    assert.ok(est.warnings.some((w) => w.code === "STALE_RATE" && /Water Engineer/.test(w.message)), "and the owner is told to confirm it");
     assert.ok(agg!.lines.find((l) => /Team Leader/.test(l.label))!.rate! < 12_000);
     assert.ok(con!.lines.find((l) => /Team Leader/.test(l.label))!.rate! > 12_000);
     assert.equal(est.status, "PARTIAL", "lines with no evidence stay unpriced");

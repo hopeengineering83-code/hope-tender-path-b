@@ -48,6 +48,15 @@ export function pricedLines(lines: readonly PricedLine[]): PricedLine[] {
   return lines.filter((l) => lineAmount(l) > 0);
 }
 
+// The client reads words, not the workbook's stored codes.
+const CATEGORY_LABEL: Record<string, string> = {
+  PERSONNEL: "Personnel", REIMBURSABLE: "Reimbursable expenses", SUBCONSULTANT: "Subcontracted services",
+  EQUIPMENT: "Equipment and vehicles", TRAVEL: "Travel and transport", OTHER: "Other",
+};
+const UNIT_LABEL: Record<string, string> = { DAY: "Day", MONTH: "Month", LUMP_SUM: "Lump sum", EACH: "Each", KM: "km" };
+const categoryLabel = (code: string) => CATEGORY_LABEL[String(code).toUpperCase()] ?? String(code).replace(/_/g, " ").toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
+const unitLabel = (code: string) => UNIT_LABEL[String(code).toUpperCase()] ?? String(code).replace(/_/g, " ").toLowerCase();
+
 const money = (n: number, currency: string) => `${currency} ${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const text = (t: string, bold = false) => new Paragraph({ children: [new TextRun({ text: t, bold, size: 22, font: "Calibri" })], spacing: { after: 120, line: 276 } });
 const cell = (t: string, opts: { bold?: boolean; right?: boolean } = {}) => new TableCell({
@@ -69,7 +78,7 @@ export async function buildFinancialProposalDocx(opts: {
   const cur = opts.settings.currency || "ETB";
   const header = new TableRow({ tableHeader: true, children: ["#", "Item", "Category", "Quantity", "Unit", "Rate", "Amount"].map((h) => cell(h, { bold: true })) });
   const rows = lines.map((l, i) => new TableRow({ children: [
-    cell(String(i + 1)), cell(l.label), cell(l.category), cell(String(l.quantity), { right: true }), cell(l.unit), cell(money(Number(l.rate) || 0, cur), { right: true }), cell(money(lineAmount(l), cur), { right: true }),
+    cell(String(i + 1)), cell(l.label), cell(categoryLabel(l.category)), cell(String(l.quantity), { right: true }), cell(unitLabel(l.unit)), cell(money(Number(l.rate) || 0, cur), { right: true }), cell(money(lineAmount(l), cur), { right: true }),
   ] }));
   const summary: Array<[string, number]> = [["Subtotal", t.subtotal]];
   if (t.contingency > 0) summary.push([`Contingency (${opts.settings.contingencyPct}%)`, t.contingency]);
