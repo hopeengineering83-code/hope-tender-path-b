@@ -2583,6 +2583,15 @@ export type AIBidWriterInput = {
   compliance: string;
   differentiators: string;
   /**
+   * The evaluator-criteria alignment report (semantic-match-aligner.ts).
+   * Prompt-only working material: it tells the writer which experts and
+   * projects answer which scored criterion. It is never printed. It used to
+   * ride in `differentiators`, which the deterministic Value-Added section
+   * prints, and reached the client's proposal verbatim as
+   * "## SEMANTIC MATCH-TO-CRITERIA ALIGNMENT …" (2026-10-08).
+   */
+  criteriaAlignment?: string;
+  /**
    * The Cover Letter and Executive Summary composed from the records
    * (generate-elite.ts recordBasedOpeningSections). The cover-and-summary
    * section's deterministic fallback uses it when present: that fallback only
@@ -5240,7 +5249,10 @@ ${params.compliance.slice(0, 5_000)}
 
 KEY DIFFERENTIATORS TO WEAVE INTO THE NARRATIVE:
 ${params.differentiators}
-${params.criterionEvidenceMap && params.criterionEvidenceMap.trim().length > 0
+${params.criteriaAlignment ? `
+CRITERIA ALIGNMENT (internal analysis — use it to decide what to emphasise and which records answer which criterion; never copy it, its headings or its scores into the proposal):
+${params.criteriaAlignment.slice(0, 2_000)}
+` : ""}${params.criterionEvidenceMap && params.criterionEvidenceMap.trim().length > 0
   ? `
 ---
 

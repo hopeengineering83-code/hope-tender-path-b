@@ -422,6 +422,7 @@ ${input.evaluationMethodology.slice(0, 4_500)}
 
 ## KEY DIFFERENTIATORS
 ${input.differentiators.slice(0, 1_500)}
+${input.criteriaAlignment ? `\n## CRITERIA ALIGNMENT (internal analysis — use it to decide what to emphasise and which records answer which criterion; never copy it, its headings or its scores into the proposal)\n${input.criteriaAlignment.slice(0, 2_000)}\n` : ""}
 
 ## COMPANY EVIDENCE (use this — do NOT invent anything)
 ${input.companyProfile.slice(0, 3_500)}
@@ -811,6 +812,7 @@ ${input.submissionNotes.slice(0, 2_500)}
 
 ## KEY DIFFERENTIATORS
 ${input.differentiators.slice(0, 2_000)}
+${input.criteriaAlignment ? `\n## CRITERIA ALIGNMENT (internal analysis — use it to decide what to emphasise and which records answer which criterion; never copy it, its headings or its scores into the proposal)\n${input.criteriaAlignment.slice(0, 2_000)}\n` : ""}
 
 ## COMPANY EVIDENCE (especially certifications, ISO, professional bodies)
 ${input.companyProfile.slice(0, 3_500)}
@@ -1640,6 +1642,8 @@ function buildAdditionalAndDeclarationFallback(input: AIBidWriterInput): string 
     .split("\n")
     .map((d) => d.trim())
     .filter((d) => d.length > 10)
+    // A markdown heading is structure, never a differentiator.
+    .filter((d) => !/^#/.test(d))
     .filter((d) => !/^[A-Z][A-Z0-9 &/()-]{3,}:\s/.test(d))
     .filter((d) => !/^(?:Wider company evidence|Company document|Legal evidence|Financial evidence|Compliance evidence)\b/i.test(d))
     .slice(0, 5);

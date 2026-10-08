@@ -2384,12 +2384,10 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
         ].filter(Boolean).join("\n"),
         projects: [...projectLines, ...projectEvidenceLines].join("\n"),
         compliance: [...BENCHMARK_CONTEXT_LINES, ...complianceLines].join("\n"),
+        // The semantic alignment report is prompt-only: the writer reads it,
+        // nothing prints it (lib/ai.ts AIBidWriterInput.criteriaAlignment).
+        ...(alignmentBlock ? { criteriaAlignment: alignmentBlock } : {}),
         differentiators: [
-          // Semantic alignment block — present only when
-          // TENDER_DEEP_REASONING is enabled AND comprehension+alignment
-          // both succeeded. Placed FIRST so Claude reads
-          // criterion-anchored rationales before legacy differentiators.
-          ...(alignmentBlock ? [alignmentBlock, ""] : []),
           ...BENCHMARK_CONTEXT_LINES,
           ...intelligence.differentiators,
           ...companyEvidenceLines.slice(0, 8),
