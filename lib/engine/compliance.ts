@@ -2,6 +2,24 @@ import { requiresSubmittedFinancialProposal } from "./submission-plan-classifier
 import type { CompanyKnowledgeSnapshot, ComplianceResult, MatchingResult, RequirementDraft } from "./types";
 import { isPackagingOrFormatRequirement, isSubmissionInstructionRequirement } from "./packaging-requirement-rule";
 import { assessMandatoryQualifications, decidingAssessment, formatQualificationAssessment, QUALIFICATION_NOT_MET, QUALIFICATION_NOT_PROVEN } from "./mandatory-qualification-check";
+import { eligibilitySubjectOf } from "./eligibility-subject";
+
+/**
+ * The evidence family that answers a requirement. An ELIGIBILITY row is
+ * answered by what it names, not by its category: "Availability of a
+ * multidisciplinary team" by the selected experts, "proven experience" by the
+ * project references, "understanding of the regulations" by the proposal —
+ * the registration record only when it asks for a registration.
+ */
+function evidenceTypeOf(req: RequirementDraft): string {
+  if (req.requirementType !== "ELIGIBILITY") return req.requirementType;
+  switch (eligibilitySubjectOf(`${req.title ?? ""} ${req.description ?? ""}`)) {
+    case "TEAM": return "EXPERT";
+    case "EXPERIENCE": return "PROJECT_EXPERIENCE";
+    case "UNDERSTANDING": return "METHODOLOGY";
+    default: return req.requirementType;
+  }
+}
 
 function clamp01(value: number): number { return Math.max(0, Math.min(1, value)); }
 
@@ -220,8 +238,9 @@ export function buildCompliance(
     let evidenceReference: string | undefined;
 
     const requirementDocument = findRequirementSupportDocument(knowledge, req);
+    const evidenceFamily = evidenceTypeOf(req);
 
-    if (req.requirementType === "EXPERT") {
+    if (evidenceFamily === "EXPERT") {
       const denominator = Math.max(req.requiredQuantity || 1, 1);
       const strongSelected = selectedExperts.length;
       const seniorRelevant = highScoringExperts.length;
@@ -236,7 +255,7 @@ export function buildCompliance(
         .map((match) => nameOrId(expertNameById, match.expertId))
         .slice(0, 3)
         .join(", ") || undefined;
-    } else if (req.requirementType === "PROJECT_EXPERIENCE") {
+    } else if (evidenceFamily === "PROJECT_EXPERIENCE") {
       const denominator = Math.max(req.requiredQuantity || 1, 1);
       const strongSelected = selectedProjects.length;
       const seniorRelevant = highScoringProjects.length;
@@ -251,7 +270,7 @@ export function buildCompliance(
         .map((match) => nameOrId(projectNameById, match.projectId))
         .slice(0, 3)
         .join(", ") || undefined;
-    } else if (["LEGAL", "ELIGIBILITY", "REGISTRATION"].includes(req.requirementType)) {
+    } else if (["LEGAL", "ELIGIBILITY", "REGISTRATION"].includes(evidenceFamily)) {
       supportStrength = legalCount > 0 ? 1 : 0;
       supportStatus = supportStrength >= 0.75 ? "SUPPORTED" : supportStrength > 0 ? "EVIDENCE_PENDING_REVIEW" : "UNSUPPORTED";
       evidenceSummary = legalCount > 0 ? `${legalCount} relevant legal/company registration evidence source(s) available.` : "No relevant legal/company registration evidence was found in the Company Vault.";
@@ -305,7 +324,7 @@ export function buildCompliance(
       evidenceType = supportStrength >= 1 ? "COMPANY_DOCUMENT" : "UNMAPPED";
       evidenceSource = supportStrength >= 1 ? "Company profile/support documents" : "No company profile found";
       evidenceReference = profileDocument?.originalFileName;
-    } else if (isProposalResponseRequirement(req.requirementType)) {
+    } else if (isProposalResponseRequirement(evidenceFamily)) {
       const draftingEvidenceExists = Boolean(requirementDocument) || selectedEvidenceCount > 0;
       // This engine stage has no generated-document input. It must not claim
       // that a proposal response exists or grant FULL coverage merely because
@@ -381,12 +400,12 @@ export function buildCompliance(
     } else if (req.priority === "MANDATORY" && supportStrength < 0.5) {
       gaps.push({
         requirementId: item.id,
-        severity: nonCriticalRequirement(req.requirementType) ? "HIGH" : "CRITICAL",
+        severity: nonCriticalRequirement(evidenceFamily) ? "HIGH" : "CRITICAL",
         title: `${req.title} — evidence gap`,
         description: `${req.description} Current evidence status: ${supportStatus}. ${evidenceSummary}`,
         mitigationPlan: "Upload evidence, review matching candidates, or confirm manual proposal coverage before export.",
       });
-    } else if (req.priority === "MANDATORY" && supportStrength < 0.9 && !nonCriticalRequirement(req.requirementType)) {
+    } else if (req.priority === "MANDATORY" && supportStrength < 0.9 && !nonCriticalRequirement(evidenceFamily)) {
       gaps.push({
         requirementId: item.id,
         severity: "MEDIUM",

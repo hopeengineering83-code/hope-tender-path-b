@@ -24,6 +24,7 @@ import {
 } from "./package-conformance";
 import { generatedDocumentVisibleText } from "./generated-document-text";
 import { assessMandatoryQualifications, decidingAssessment, type QualificationEvidence } from "./mandatory-qualification-check";
+import { eligibilitySubjectOf } from "./eligibility-subject";
 
 /**
  * Persisted automatic requirement-evidence rows carry this prefix in notes.
@@ -320,7 +321,14 @@ export function inferAutomaticEvidenceKinds(
   if (/\b(audited|financial statement|turnover|revenue|balance sheet|bank reference|financial capacity)\b/.test(text)) {
     kinds.add("FINANCIAL_STATEMENT");
   }
-  if (type === "ELIGIBILITY" || /\b(legal eligibility|registration|incorporation|trade licen[cs]e|business licen[cs]e|grade certificate|good standing)\b/.test(text)) {
+  // An eligibility row is answered by what it names (eligibility-subject.ts):
+  // a team by CVs, a track record by projects, an understanding by the
+  // proposal's own text — a registration only when it asks for one.
+  const eligibilitySubject = type === "ELIGIBILITY" ? eligibilitySubjectOf(text) : null;
+  if (eligibilitySubject === "TEAM") kinds.add("EXPERT_CV");
+  if (eligibilitySubject === "EXPERIENCE") kinds.add("PROJECT_REFERENCE");
+  if (eligibilitySubject === "UNDERSTANDING") kinds.add("METHODOLOGY_NARRATIVE");
+  if (eligibilitySubject === "REGISTRATION" || /\b(legal eligibility|registration|incorporation|trade licen[cs]e|business licen[cs]e|grade certificate|good standing)\b/.test(text)) {
     kinds.add("LEGAL_REGISTRATION");
   }
   if (/\b(tax clearance|tin certificate|vat certificate|tax identification)\b/.test(text)) {
