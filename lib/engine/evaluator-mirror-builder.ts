@@ -69,6 +69,7 @@ export function hasEvaluatorMirrorHeading(markdown: string): boolean {
  * (which is more abstract than requirement phrasing).
  */
 const DECLARATION_CRITERION = /\b(?:litigation|non-?performing|non-?performance|debar|eligib|declaration|disclosure|conflict\s+of\s+interest)/;
+const SOCIAL_VALUE_CRITERION = /\b(?:social\s+value|local\s+content|capacity\s+building|community\s+benefit|gender|inclusion)\b/;
 const COMPANY_RECORD_CRITERION = /\b(?:legal\s+status|supplier\s+certificates?|company\s+documents?|registration|incorporation|tax|financial\s+(?:standing|statements?|reports?)|audited|turnover)\b/;
 
 function inferAnswerSection(criterion: string): string {
@@ -84,10 +85,18 @@ function inferAnswerSection(criterion: string): string {
   // (2026-10-01, a telecom-tower EOI).
   if (DECLARATION_CRITERION.test(c)) return "Declaration";
   if (COMPANY_RECORD_CRITERION.test(c)) return "Section D Professional Certifications and Affiliations";
+  // Social value and local capacity are answered by the commitments in
+  // Section D, not by the company profile "capacity" sent them to.
+  if (SOCIAL_VALUE_CRITERION.test(c)) return "Section D Additional Information";
   if (/portfolio/.test(c)) return "Section B.2 Project Portfolio";
   if (/team|expert|personnel|cv|qualification|multidisciplinary|staff/.test(c)) return "Section A.5 Proposed Project Team and A.6 Team-to-Project Experience Mapping";
   if (/experience|similar|reference|track.record/.test(c)) return "Section B.2 Project Portfolio and B.1 Client References";
-  if (/understanding|design|methodology|technical.approach|work.plan|scope/.test(c)) return "Section C.2 Understanding of the Assignment and C.4 Scope-by-Scope Delivery Plan";
+  // The methodology and the work plan — the headings the proposal prints.
+  // "C.4 Scope-by-Scope Delivery Plan" is a heading no current proposal has,
+  // so a 40-point methodology criterion pointed at "Understanding" alone, or
+  // at nothing.
+  if (/methodology|technical.approach|work.plan/.test(c)) return "Section C.3 Technical Methodology and C.4 Work Plan and Deliverables";
+  if (/understanding|design|scope/.test(c)) return "Section C.2 Understanding of the Assignment and C.3 Technical Methodology";
   if (/team|expert|personnel|cv|qualification|multidisciplinary/.test(c)) return "Section A.4 Proposed Project Team + A.5 Team-to-Project Mapping";
   if (/experience|portfolio|similar|reference|track.record/.test(c)) return "Section B.1 Client References + B.2 Project Portfolio";
   if (/methodology|technical.approach|work.plan|understanding|scope/.test(c)) return "Section C.1 Understanding + C.2 Technical Methodology";
@@ -153,7 +162,10 @@ function specificEvidence(criterion: string, input: EvaluatorMirrorBuilderInput)
   // "relevant experience": what the references show the firm doing, at what
   // scale, not only which references they are. Two criteria answered with the
   // same sentence would tell the evaluator the second was not read.
-  if (/portfolio|quality/.test(c) && projects.length > 0) {
+  // "Quality of technical methodology" is a methodology question, not a
+  // portfolio one: it was answered with the firm's floor areas.
+  const methodologyCriterion = /methodology|technical.approach|work.plan/.test(c);
+  if ((/portfolio/.test(c) || (/quality/.test(c) && !methodologyCriterion)) && projects.length > 0) {
     const services = new Map<string, string>();
     for (const p of projects) {
       for (const item of recordedProjectServices(p)) {
@@ -164,7 +176,9 @@ function specificEvidence(criterion: string, input: EvaluatorMirrorBuilderInput)
     const areas = [...(projects.map((p) => (p.summary ?? "").match(/\(([\d,.]+)\s*m²\)|([\d,.]+)\s*m²/)).filter(Boolean) as RegExpMatchArray[])]
       .map((m) => Number((m[1] ?? m[2]).replace(/,/g, "")))
       .filter((n) => Number.isFinite(n) && n > 0);
-    const scale = areas.length > 0 ? ` of ${Math.min(...areas).toLocaleString("en-US")}–${Math.max(...areas).toLocaleString("en-US")} m²` : "";
+    const low = Math.min(...areas);
+    const high = Math.max(...areas);
+    const scale = areas.length === 0 ? "" : low === high ? ` of ${low.toLocaleString("en-US")} m²` : ` of ${low.toLocaleString("en-US")}–${high.toLocaleString("en-US")} m²`;
     const named = [...services.values()].slice(0, 8).join(", ");
     return `${projects.length} ${projects.length === 1 ? "project" : "projects"}${scale}${named ? `, across which the firm's recorded services include ${named}` : ""}; each is detailed on its own project card.`;
   }
@@ -196,6 +210,8 @@ function inferEvidenceAnchor(criterion: string, input: EvaluatorMirrorBuilderInp
   if (specific) return specific;
   if (DECLARATION_CRITERION.test(c)) return "The company's signed declaration, submitted as a separate document in this package";
   if (COMPANY_RECORD_CRITERION.test(c)) return "The company's registration, tax and financial records";
+  if (/methodology|technical.approach|work.plan/.test(c)) return "The technical methodology, work plan and deliverables set out in Section C";
+  if (SOCIAL_VALUE_CRITERION.test(c)) return "The commitments stated in Section D";
   const project = input.topProjectName?.trim();
   const expert = input.topExpertName?.trim();
   if (/team|expert|personnel|cv/.test(c) && expert) return `Lead expert ${expert} on a comparable previous project (see Section A.5)`;
@@ -213,7 +229,11 @@ function inferEvidenceAnchor(criterion: string, input: EvaluatorMirrorBuilderInp
  */
 function findWeight(criterion: string, weights: EvaluationWeightLite[]): string {
   if (weights.length === 0) return "—";
-  const distinctive = (s: string) => s.toLowerCase().match(/[a-z]{3,}/g) ?? [];
+  // The criterion's own weight when the tender printed one beside it.
+  const own = weights.find((w) => w.criterion.trim().toLowerCase() === criterion.trim().toLowerCase());
+  if (own) return own.weight;
+  const FUNCTION_WORDS = new Set(["and", "the", "for", "with", "from", "into", "its", "their", "this", "that", "are", "all", "any"]);
+  const distinctive = (s: string) => (s.toLowerCase().match(/[a-z]{3,}/g) ?? []).filter((t) => !FUNCTION_WORDS.has(t));
   const cTokens = new Set(distinctive(criterion));
   let bestScore = 0;
   let best = "";
@@ -225,7 +245,10 @@ function findWeight(criterion: string, weights: EvaluationWeightLite[]): string 
       best = w.weight;
     }
   }
-  return bestScore >= 1 ? best : "—";
+  // One shared word is not the same criterion: "Company profile and
+  // organisational capacity" took "Social Value and Local Capacity
+  // Building"'s 10 points through "capacity".
+  return bestScore >= 2 ? best : "—";
 }
 
 /**

@@ -78,7 +78,12 @@ function resolveOne(code: string, title: string, headings: readonly Heading[]): 
   return bestScore >= 0.6 ? best : null;
 }
 
-const POINTER = /(?:Sections?\s+)?\b([A-H](?:\.\d+)*)\s+([A-Z][^+]*?)(?=\s*(?:\+|\band\s+(?:Section\s+)?[A-H](?:\.\d+)*\s+[A-Z]|$))/g;
+// "Section C: Technical Approach" is a pointer too — the structure seal writes
+// a top-level section that way — and "… and Section C: Technical Approach"
+// ends the pointer before it. Without the colon the two ran together into one
+// unmatchable title and the cell read "Not presented in this proposal" beside
+// a methodology the proposal presents (2026-10-10 probe).
+const POINTER = /(?:Sections?\s+)?\b([A-H](?:\.\d+)*):?\s+([A-Z][^+]*?)(?=\s*(?:\+|\band\s+(?:Section\s+)?[A-H](?:\.\d+)*:?\s+[A-Z]|$))/g;
 
 /** Rewrite one location cell against the document's real headings. */
 export function resolveLocationCell(cell: string, headings: readonly Heading[]): string {

@@ -256,7 +256,13 @@ export async function runTenderEngine(
         })),
         exactFileNaming: parseStringArray(tender.exactFileNaming),
         exactFileOrder: parseStringArray(tender.exactFileOrder),
-      };
+        // Carried forward, not dropped: the engine writes this field back to
+        // the tender, and without it every Run Engine erased the evaluation
+        // criteria and weights AI Analyze had extracted — so generation, the
+        // AI rerank, the bid strategy and the pricing model all read a tender
+        // that "states no evaluation weights".
+        evaluationMethodology: tender.evaluationMethodology ?? null,
+      } as typeof analysis;
       progress("engine.analyze", `Reused ${promotedRequirements.length} grounded requirement(s); no duplicate AI extraction call was made`);
     } else {
       // FIX 6: Engine must NEVER re-analyze the tender. The previous code

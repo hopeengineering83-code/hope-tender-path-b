@@ -33,6 +33,8 @@ type Fixture = {
   forbidden: RegExp;
   /** Sector families a numbered heading may name for this tender. */
   ownSectors: string[];
+  /** The tender's evaluation criteria with weights, as AI Analyze records them in evaluationMethodology. */
+  evaluation?: string[];
   /** Owner pricing workbook lines, for a tender that asks for a financial proposal. */
   pricing?: Array<{ category: string; label: string; quantity: number; unit: string; rate: number }>;
 };
@@ -322,6 +324,13 @@ const FIXTURES: Fixture[] = [
     text: [
       "Metro Savings Bank invites consultants for the architectural, structural and MEP design of a G+8 head office building with one basement, including tender documents.",
     ],
+    evaluation: [
+      "Technical evaluation criteria:",
+      "1. Specific Experience of the Consultant: 20 points",
+      "2. Adequacy of the Proposed Methodology and Work Plan: 40 points",
+      "3. Qualifications of Key Experts: 30 points",
+      "4. Social Value and Local Capacity Building: 10 points",
+    ],
     requirements: [
       { title: "Office Building Design Experience", type: "PROJECT_EXPERIENCE", quote: "At least one multi-storey office building designed.", priority: "MANDATORY" },
       { title: "Lead Architect", type: "EXPERT", quote: "A lead architect.", priority: "MANDATORY" },
@@ -360,6 +369,8 @@ function genericFindings(text: string, fixture: Fixture): string[] {
   hit("article", /\ba (?:[AEIOU][a-z]+) (?:requirement|project|assignment)\b/);
   hit("cross-sector", fixture.forbidden);
   hit("site visit claimed", /Site visit attendance confirmed/i);
+  hit("stock claim", /supported by a completion certificate|delivered on schedule and within budget|client satisfaction records|ISO 14001-aligned|minimum 60 % locally sourced|brings a minimum of 10 years of directly relevant experience/i);
+  hit("criterion left unanswered", /Not presented in this proposal/i);
   if (hasUnprovenClaim(text)) out.push("unproven claim the final gate refuses (phantom attachment or relationship claim)");
   hit("duplicated deliverable phrase", /design quantity and resource schedules?,?\s+(?:and\s+)?quantity schedules|quantity schedules,?\s+(?:and\s+)?design quantity and resource/i);
   hit("repeated evidence kind", /\b(from (?:company document|project reference|expert CV|proposal narrative|legal\/registration record))(?: \([^)|]*\))?; \1\b/);
@@ -427,12 +438,13 @@ async function runFixture(fixture: Fixture, outDir: string): Promise<{ id: strin
     } });
 
     const requirements = [...COMMON_REQUIREMENTS, ...fixture.requirements];
-    const tenderText = [`[Page 1] ${fixture.reference}`, fixture.title, `Issuing Authority: ${fixture.client}`, ...fixture.text,
+    const tenderText = [`[Page 1] ${fixture.reference}`, fixture.title, `Issuing Authority: ${fixture.client}`, ...fixture.text, ...(fixture.evaluation ?? []),
       "[Page 2] Requirements", ...requirements.map((r) => r.quote), "Submission is by email to procurement@client.example."].join("\n");
     const tender = await prisma.tender.create({ data: {
       userId: user.id, title: fixture.title, clientName: fixture.client, reference: fixture.reference, deadline: new Date("2031-09-30T12:00:00Z"),
       submissionMethod: "EMAIL", submissionEmails: "procurement@client.example",
       analysisExtractionStatus: "FULL_EXTRACTION_AI_ANALYZED", analysisSummary: fixture.text[0]!.slice(0, 300), status: "AI_ANALYZED",
+      evaluationMethodology: fixture.evaluation?.join("\n") ?? null,
     } });
     const source = await prisma.tenderFile.create({ data: {
       tenderId: tender.id, fileName: "tender.pdf", originalFileName: "tender.pdf", mimeType: "application/pdf", size: Buffer.byteLength(tenderText),

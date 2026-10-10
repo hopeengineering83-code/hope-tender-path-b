@@ -1636,6 +1636,15 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
     intelligence.evaluationWeights = groundedCriteria
       .filter((c) => c.weight)
       .map((c) => ({ criterion: c.criterion, weight: c.weight as string, rawMatch: c.criterion }));
+  } else if (intelligence.evaluationWeights.length > 0) {
+    // A weight is read with the criterion it is printed beside, in the
+    // tender's wording, so those are the tender's criteria. Section F used
+    // the keyword detector's sector defaults instead and paired weights by a
+    // shared word: "Company profile and organisational capacity — 10 points"
+    // took Social Value's weight through "capacity", and "Quality of
+    // technical methodology" stood in for the tender's "Adequacy of the
+    // Proposed Methodology and Work Plan" (2026-10-10 probe).
+    intelligence.evaluationCriteria = [...new Set(intelligence.evaluationWeights.map((w) => w.criterion))];
   }
   // Cleaned tender title (sanitized via cleanTenderTitle inside
   // buildProposalIntelligence). Used everywhere a user-facing label is
@@ -3312,14 +3321,14 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
   // Methodology 20%"), ensure each criterion has a dedicated
   // sub-section heading the evaluator can score against directly.
   // The AI has been prompted to emit these (via the prompt directive
-  // injected into evaluationMethodology); this post-pass injects
-  // substantive content for any criterion the AI missed, sector-matched
-  // so the evaluator can score against the heading immediately.
+  // injected into evaluationMethodology). A criterion without its own
+  // heading is reported, not filled with stock text: Section F maps every
+  // criterion and its weight to the section that answers it.
   //
   // Does nothing when intelligence.evaluationWeights is empty.
   const rubricResult = ensureRubricHeadings(humanizedMarkdown, intelligence.evaluationWeights, intelligence.primarySector);
   if (rubricResult.missingCriteria.length > 0) {
-    logger.info(`[generate-elite] Rubric post-pass: injected ${rubricResult.missingCriteria.length} missing rubric sub-section stub(s) for criteria: ${rubricResult.missingCriteria.join("; ")}`);
+    logger.info(`[generate-elite] Rubric post-pass: ${rubricResult.missingCriteria.length} weighted criterion/criteria have no heading of their own; Section F maps them: ${rubricResult.missingCriteria.join("; ")}`);
   }
   humanizedMarkdown = rubricResult.markdown;
 
