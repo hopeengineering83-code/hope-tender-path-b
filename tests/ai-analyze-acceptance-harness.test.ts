@@ -342,13 +342,15 @@ describe("PATH 3: All AI providers unavailable — REGEX_FALLBACK_UNAPPROVED", (
   it("fallback-diagnostics classifier redacts API keys from the message (no raw key leakage)", () => {
     const d = buildAnalysisFallbackDiagnostics("Auth error: sk-ant-api03-real-key-1234567890abcdef");
     assert.doesNotMatch(d.message, /sk-ant-api03/);
-    assert.match(d.message, /\[REDACTED\]/);
+    // The shared redactor writes [KEY_REDACTED]; the inline patterns this
+    // replaced wrote [REDACTED]. What matters is that the key is gone.
+    assert.match(d.message, /REDACTED/);
   });
 
   it("fallback-diagnostics classifier redacts Gemini keys (AIza...)", () => {
     const d = buildAnalysisFallbackDiagnostics("Invalid key: AIzaSyABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789");
     assert.doesNotMatch(d.message, /AIzaSyAB/);
-    assert.match(d.message, /\[REDACTED\]/);
+    assert.match(d.message, /REDACTED/);
   });
 
   it("fallback-diagnostics classifier redacts Bearer tokens", () => {
@@ -559,10 +561,14 @@ describe("PATH 5: Resume behavior — only unfinished chunks resume", () => {
 
   it("checkpoint error messages are redacted (no API key leakage in errorMessage)", () => {
     const checkpointSrc = read("lib/ai-analyze-checkpoints.ts");
-    // cleanErrorMessage must redact sk-*, AIza*, Bearer *
-    assert.match(checkpointSrc, /sk-\[a-zA-Z0-9_-\]/);
-    assert.match(checkpointSrc, /AIza\[a-zA-Z0-9_-\]/);
-    assert.match(checkpointSrc, /Bearer\\s\+/);
+    // cleanErrorMessage must delegate to the canonical redactSecrets() helper
+    // from lib/sanitize-error.ts. Previously this checked for inline sk-/AIza/
+    // Bearer regexes — consolidated to a single helper so patterns cannot diverge.
+    assert.match(checkpointSrc, /redactSecrets/);
+    assert.ok(
+      checkpointSrc.includes("from \"./sanitize-error\""),
+      "must import redactSecrets from ./sanitize-error",
+    );
   });
 
   it("the AI Analyze route uses getCompletedChunkResults to skip already-succeeded chunks (source-shape)", () => {

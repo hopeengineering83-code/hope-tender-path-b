@@ -1,60 +1,78 @@
-name: Dependency security audit
+name: Dependency Security Audit
 
 on:
+  push:
   pull_request:
-    branches:
-      - integration/production-engine-2026-06
-      - release/production-engine-2026-06
-  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: dependency-audit-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  production-dependencies:
-    name: Production dependency advisories
+  dependency-audit:
+    name: Reject high and critical dependency vulnerabilities
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - name: Checkout
+      - name: Checkout exact head
         uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Setup repository Node version
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
 
-      - name: Install lockfile dependencies without lifecycle scripts
+      - name: Install locked dependencies without lifecycle scripts
         run: npm ci --ignore-scripts
 
-      - name: Capture production dependency audit
-        id: audit
+      - name: Capture exact npm audit evidence
         shell: bash
         run: |
           set +e
           npm audit --omit=dev --json > npm-audit.json
-          status=$?
-          echo "audit_exit=$status" >> "$GITHUB_OUTPUT"
-          exit 0
-
-      - name: Enforce no high or critical production advisories
-        run: |
+          set -e
           node <<'NODE'
-          const fs = require('fs');
-          const audit = JSON.parse(fs.readFileSync('npm-audit.json', 'utf8'));
-          const counts = audit.metadata?.vulnerabilities ?? {};
-          console.log(JSON.stringify({ vulnerabilities: counts }, null, 2));
-          if ((counts.high ?? 0) > 0 || (counts.critical ?? 0) > 0) {
-            console.error(`Blocking release: ${counts.high ?? 0} high and ${counts.critical ?? 0} critical production advisories.`);
+          const fs = require('node:fs');
+          const report = JSON.parse(fs.readFileSync('npm-audit.json', 'utf8'));
+          const vulnerabilities = Object.values(report.vulnerabilities ?? {});
+          const blocking = vulnerabilities
+            .filter((item) => item && (item.severity === 'high' || item.severity === 'critical'))
+            .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+
+          console.log(`npm audit metadata: ${JSON.stringify(report.metadata?.vulnerabilities ?? {})}`);
+          for (const item of blocking) {
+            const via = Array.isArray(item.via)
+              ? item.via.map((entry) => typeof entry === 'string'
+                ? entry
+                : `${entry.source ?? 'advisory'}:${entry.title ?? entry.name ?? 'unknown'}`)
+              : [];
+            console.log(JSON.stringify({
+              package: item.name,
+              severity: item.severity,
+              direct: item.isDirect === true,
+              range: item.range,
+              nodes: item.nodes ?? [],
+              effects: item.effects ?? [],
+              via,
+              fixAvailable: item.fixAvailable ?? false,
+            }));
+          }
+
+          if (blocking.length > 0) {
+            console.error(`Dependency security gate failed: ${blocking.length} high/critical production package finding(s).`);
             process.exit(1);
           }
           NODE
 
-      - name: Upload audit report
+      - name: Upload credential-free audit report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: npm-production-audit
+          name: npm-audit-${{ github.sha }}
           path: npm-audit.json
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 14

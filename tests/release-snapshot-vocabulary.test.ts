@@ -235,12 +235,14 @@ describe("resolver — USER_CONFIRMED without source evidence", () => {
   });
 });
 
-// ─── NOT_APPLICABLE and NOT_STATED cannot unblock critical fields ─────────────
+// ─── NOT_APPLICABLE and NOT_STATED are accepted for every field ───────────────
+//
+// Owner policy ABSENT_TENDER_FACT_IS_NOT_REQUIRED (2026-09-24): a detail the
+// tender does not state is not required. These overrides used to leave a
+// critical field BLOCKED; they now record the absence and nothing blocks.
 
-describe("resolver — NOT_APPLICABLE / NOT_STATED cannot unblock critical fields", () => {
-  it("NOT_APPLICABLE on clientName (always-critical) sets BLOCKED — blocks FINAL export only", () => {
-    // Authority model: NOT_APPLICABLE on a critical field blocks FINAL export only.
-    // Draft work proceeds (the user confirmed the tender doesn't state it).
+describe("resolver — NOT_APPLICABLE / NOT_STATED record an absent fact without blocking", () => {
+  it("NOT_APPLICABLE on clientName is accepted — blocks nothing", () => {
     const r = resolveCanonicalFieldState({
       tender: makeTender({ clientName: null, procuringEntityName: null, clientNameSourceFileId: null, clientNameSourcePage: null, clientNameSourceQuote: null }),
       overrides: [{
@@ -255,12 +257,12 @@ describe("resolver — NOT_APPLICABLE / NOT_STATED cannot unblock critical field
       activeTenderFileIds: new Set(["file1"]),
     });
     const f = r.fields.find((x) => x.fieldKey === "clientName")!;
-    assert.equal(f.status, "BLOCKED");
-    assert.equal(r.hasExportBlocker, true); // Final IS blocked
+    assert.equal(f.status, "NOT_APPLICABLE");
+    assert.equal(f.blockerReason, null);
+    assert.equal(r.hasExportBlocker, false);
   });
 
-  it("NOT_STATED on deadline (IGNORED_WITH_REASON) blocks FINAL export only — draft proceeds", () => {
-    // Authority model: IGNORED_WITH_REASON on a critical field blocks FINAL export only.
+  it("NOT_STATED on deadline (IGNORED_WITH_REASON) is accepted — blocks nothing", () => {
     const r = resolveCanonicalFieldState({
       tender: makeTender({ deadline: null, deadlineSourceFileId: null, deadlineSourcePage: null, deadlineSourceQuote: null }),
       overrides: [{
@@ -276,6 +278,7 @@ describe("resolver — NOT_APPLICABLE / NOT_STATED cannot unblock critical field
     });
     const f = r.fields.find((x) => x.fieldKey === "deadline")!;
     assert.equal(f.status, "NOT_STATED");
-    assert.equal(r.hasExportBlocker, true); // Final IS blocked
+    assert.equal(f.blockerReason, null);
+    assert.equal(r.hasExportBlocker, false);
   });
 });

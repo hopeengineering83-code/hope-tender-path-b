@@ -7,6 +7,7 @@
 // Auth: Bearer token in Authorization header must match ADMIN_SECRET env var.
 // Never exposes API keys, raw provider bodies, or prompts.
 
+import { secretMatches } from "@/lib/secret-compare";
 import { NextRequest, NextResponse } from "next/server";
 import { getProviderHealthSummary } from "@/lib/engine/provider-health-store";
 
@@ -17,7 +18,7 @@ export async function GET(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
   const adminSecret = process.env.ADMIN_SECRET;
 
-  if (!adminSecret || authHeader !== `Bearer ${adminSecret}`) {
+  if (!adminSecret || adminSecret.length < 16 || !secretMatches(authHeader, `Bearer ${adminSecret}`)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

@@ -18,7 +18,7 @@ type Role = (typeof ROLES)[number];
 const ROLE_COLORS: Record<Role, string> = {
   ADMIN: "bg-red-100 text-red-700",
   PROPOSAL_MANAGER: "bg-blue-100 text-blue-700",
-  REVIEWER: "bg-amber-100 text-amber-700",
+  REVIEWER: "bg-amber-100 text-amber-800",
   VIEWER: "bg-slate-100 text-slate-600",
 };
 
@@ -37,6 +37,7 @@ export default function UsersPage() {
   const [status, setStatus] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState({ name: "", email: "", password: "", role: "PROPOSAL_MANAGER" });
+  const [showPassword, setShowPassword] = useState(false);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [editId, setEditId] = useState<string | null>(null);
@@ -191,7 +192,26 @@ export default function UsersPage() {
           <div className="grid gap-3 sm:grid-cols-2">
             <input className="min-h-11 min-w-0 rounded-lg border px-3 py-2 text-sm" placeholder="Full name (optional)" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} />
             <input className="min-h-11 min-w-0 rounded-lg border px-3 py-2 text-sm" placeholder="Email address" type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} />
-            <input className="min-h-11 min-w-0 rounded-lg border px-3 py-2 text-sm" placeholder="Password (minimum 8 characters)" type="password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} />
+            <div className="relative">
+              <input
+                aria-label="Password (minimum 8 characters)"
+                className="min-h-11 min-w-0 w-full rounded-lg border px-3 py-2 pr-12 text-sm"
+                placeholder="Password (minimum 8 characters)"
+                type={showPassword ? "text" : "password"}
+                value={form.password}
+                onChange={(event) => setForm({ ...form, password: event.target.value })}
+                autoComplete="new-password"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((s) => !s)}
+                className="absolute inset-y-0 right-0 flex items-center px-3 text-xs font-medium text-slate-600 hover:text-slate-900"
+                aria-label={showPassword ? "Hide password" : "Show password"}
+                tabIndex={-1}
+              >
+                {showPassword ? "Hide" : "Show"}
+              </button>
+            </div>
             <select aria-label="Role" className="min-h-11 min-w-0 rounded-lg border bg-white px-3 py-2 text-sm" value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value })}>
               {ROLES.map((role) => <option key={role} value={role}>{roleLabel(role)}</option>)}
             </select>
@@ -266,7 +286,7 @@ export default function UsersPage() {
         <ul className="space-y-1">
           <li><span className="font-medium text-red-700">ADMIN</span> — full access, including user administration.</li>
           <li><span className="font-medium text-blue-700">PROPOSAL MANAGER</span> — manages tenders, analysis, generation, and export.</li>
-          <li><span className="font-medium text-amber-700">REVIEWER</span> — reviews documents and adds comments.</li>
+          <li><span className="font-medium text-amber-800">REVIEWER</span> — reviews documents and adds comments.</li>
           <li><span className="font-medium text-slate-700">VIEWER</span> — read-only access.</li>
         </ul>
       </div>

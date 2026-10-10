@@ -98,7 +98,10 @@ export function deriveSourceDrivenTenderDetail(
   // Determine what the tender requires based on its actual content
   const requiresEmailEndpoint = submissionMethod === "EMAIL" || submissionMethod === "HYBRID";
   const requiresPhysicalAddress = submissionMethod === "PHYSICAL" || submissionMethod === "HYBRID";
-  const requiresDeadline = true; // Deadlines are generally required for final submission
+  // A deadline the tender does not state is not required of the bid (owner
+  // policy ABSENT_TENDER_FACT_IS_NOT_REQUIRED). A stated deadline is shown and
+  // used; an absent one is not asked for.
+  const requiresDeadline = false;
   const hasPreBidMeeting = !!(tender.preBidMeetingDate || tender.preBidMeetingLocation);
   const hasBidBond = !!tender.bidBondAmount;
   const hasMandatorySiteVisit = !!tender.mandatorySiteVisit;

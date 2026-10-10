@@ -9,6 +9,12 @@ import {
   validateCompanyAsset,
 } from "../../../../../lib/company-asset-security";
 
+function safeAssetDownloadName(id: string, originalFileName: string): string {
+  const extensionMatch = originalFileName.match(/\.([a-zA-Z0-9]{1,12})$/);
+  const extension = extensionMatch ? `.${extensionMatch[1].toLowerCase()}` : "";
+  return `company-asset-${id.slice(0, 8)}${extension}`;
+}
+
 function privateText(message: string, status: number) {
   return new Response(message, {
     status,
@@ -35,6 +41,7 @@ export async function GET(
   const asset = await prisma.companyAsset.findFirst({
     where: { id, companyId: company.id, isActive: true },
     select: {
+      id: true,
       assetType: true,
       fileContent: true,
       storagePath: true,
@@ -45,10 +52,10 @@ export async function GET(
     },
   });
   if (
-      !asset ||
-      isCompanyAssetPendingDeletion(asset.metadata) ||
-      (!asset.fileContent && !asset.storagePath)
-    ) return privateText("Not found", 404);
+    !asset ||
+    isCompanyAssetPendingDeletion(asset.metadata) ||
+    (!asset.fileContent && !asset.storagePath)
+  ) return privateText("Not found", 404);
 
   let buffer: Buffer;
   try {
@@ -79,7 +86,7 @@ export async function GET(
     return privateText("Stored asset failed security validation and must be replaced", 422);
   }
 
-  const safeFileName = sanitizeCompanyAssetFileName(validation.safeFileName).replace(/["\\]/g, "_");
+  const safeFileName = sanitizeCompanyAssetFileName(safeAssetDownloadName(asset.id, validation.safeFileName)).replace(/["\\]/g, "_");
   const disposition = isInlineSafeCompanyAssetMime(validation.normalizedMime) ? "inline" : "attachment";
 
   return new Response(new Uint8Array(buffer), {

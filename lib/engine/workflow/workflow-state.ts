@@ -3,7 +3,8 @@ import { computeTenderReadinessState } from "../../tender-readiness-state";
 import { computeCanonicalModuleStates } from "../canonical-readiness-state";
 import { isExtractionAcceptableForGeneration, isExtractionAcceptableForExport } from "../extraction-quality-gate";
 import { getCurrentConfirmedBuildPlan, type BuildPlanItem } from "../build-plan";
-import { deriveSubmissionPlanStatus } from "../submission-plan";
+import { deriveSubmissionPlanStatus, findExtraGeneratedDocuments, findMissingGeneratedDocuments } from "../submission-plan";
+import { filterFinalExportCandidateDocuments } from "../document-output-state";
 import { detectAnalysisSource, ANALYSIS_APPROVAL_GAP_TITLE } from "../analysis-source";
 
 function traced(r: { sourceTenderFileId?: string | null; sourcePageNumber?: number | null }): boolean {
@@ -55,29 +56,36 @@ export type CanonicalWorkflowState = {
   readyForExport: boolean;
 };
 
+/**
+ * Which required plan files are satisfied, per the one shared rule.
+ *
+ * This used to compare raw lowercased file names, which is strictly weaker
+ * than the shared rule in submission-plan.ts: that one strips the extension
+ * and collapses non-alphanumerics, so "Technical Proposal.docx",
+ * "Technical-Proposal.docx" and "Technical_Proposal.docx" are one key. The
+ * local compare treated the last two as different files, so the canonical
+ * workflow decision reported a required document missing when it already
+ * existed and parked on GENERATE_DOCUMENTS permanently.
+ *
+ * It also accepted any generationStatus GENERATED row, ignoring
+ * isFinalExportCandidateDocument, so a row marked NOT_EXPORTABLE or
+ * REPLACE_WITH_ORIGINAL satisfied its plan file here while the final-ZIP gate
+ * refused it — wrong in the opposite direction.
+ *
+ * Filtering to export candidates first mirrors final-submission-readiness.ts,
+ * which is the gate this decision must agree with.
+ */
 export function validateGeneratedDocsAgainstPlan(
   plan: any,
   generatedDocs: any[]
 ): { ok: boolean; missing: string[]; extras: string[] } {
-  const plannedFiles = plan.files.filter((f: any) => f.required);
-  const plannedNames = new Set(plannedFiles.map((f: any) => (f.exactFileName || "").toLowerCase()).filter(Boolean));
+  const exportable = filterFinalExportCandidateDocuments(generatedDocs as any[]);
 
-  const generatedNames = new Set(
-    generatedDocs
-      .filter(d => d.generationStatus === "GENERATED")
-      .map(d => (d.exactFileName || d.name || "").toLowerCase())
-      .filter(Boolean)
-  );
+  const missing = findMissingGeneratedDocuments(plan, exportable as any[])
+    .map((file: any) => file.exactFileName);
 
-  const missing = plannedFiles
-    .filter((f: any) => f.exactFileName && !generatedNames.has(f.exactFileName.toLowerCase()))
-    .map((f: any) => f.exactFileName);
-
-  const extras = generatedDocs
-    .filter(d => d.generationStatus === "GENERATED" &&
-                 (d.exactFileName || d.name) &&
-                 !plannedNames.has((d.exactFileName || d.name).toLowerCase()))
-    .map(d => d.exactFileName || d.name);
+  const extras = findExtraGeneratedDocuments(plan, exportable as any[])
+    .map((doc: any) => doc.exactFileName || doc.name);
 
   return {
     ok: missing.length === 0 && extras.length === 0,
@@ -91,12 +99,17 @@ export async function getCanonicalTenderWorkflowState(
   userId: string,
   tenderId: string
 ): Promise<CanonicalWorkflowState> {
+  // Every column except stored bytes and extracted text. The tender page polls
+  // this every few seconds; selecting the bodies made one poll download every
+  // tender file and every generated document ever written for the tender,
+  // superseded ones included (~12 MB for an ordinary tender), and exhausted the
+  // database's monthly transfer allowance within a day of normal use.
   const tender = await prisma.tender.findFirst({
     where: { id: tenderId, userId },
     include: {
-      files: true,
+      files: { omit: { fileContent: true, extractedText: true } },
       requirements: true,
-      generatedDocuments: true,
+      generatedDocuments: { omit: { fileContent: true } },
       complianceGaps: true,
     },
   });
@@ -104,6 +117,33 @@ export async function getCanonicalTenderWorkflowState(
   if (!tender) {
     throw new Error("Tender not found");
   }
+
+  // Byte presence and the format signature, without the body: what
+  // document-output-state needs to classify a document (it reads the first
+  // 12 base64 characters to tell a PDF from a DOCX).
+  // A client that ignores `omit` still hands back the body; take its head
+  // directly and query only for rows that came back without one.
+  const loadedBody = (doc: object): string | null => {
+    const body = (doc as { fileContent?: unknown }).fileContent;
+    return typeof body === "string" ? body : null;
+  };
+  // A client without raw SQL (a minimal test double) reads as before: rows
+  // without a body are rows without bytes.
+  const needHeads = tender.generatedDocuments.some((doc) => loadedBody(doc) === null)
+    && typeof (prisma as { $queryRaw?: unknown }).$queryRaw === "function";
+  const heads = needHeads
+    ? await prisma.$queryRaw<Array<{ id: string; head: string | null }>>`
+        SELECT id, left("fileContent", 16) AS head
+        FROM "GeneratedDocument"
+        WHERE "tenderId" = ${tenderId}
+      `
+    : [];
+  const headById = new Map(heads.map((row) => [row.id, row.head]));
+  const generatedDocuments = tender.generatedDocuments.map((doc) => {
+    const body = loadedBody(doc);
+    const head = body !== null ? body.slice(0, 16) : headById.get(doc.id) ?? null;
+    return { ...doc, fileContentHead: head, hasInlineFileContent: Boolean(head && head.trim()) };
+  });
 
   const readiness = computeTenderReadinessState(tender as any);
 
@@ -124,7 +164,7 @@ export async function getCanonicalTenderWorkflowState(
     ...readiness,
     hasAnalysis: analysisSource !== "UNKNOWN",
     hasRequirements: tender.requirements.length > 0,
-    hasDocuments: tender.generatedDocuments.length > 0,
+    hasDocuments: generatedDocuments.length > 0,
     analysisIsApprovedFallback,
   } as any);
 
@@ -151,7 +191,7 @@ export async function getCanonicalTenderWorkflowState(
   const untracedMandatory = mandatoryRequirements.filter(r => !traced(r as any));
   const completeTraceability = mandatoryRequirements.length > 0 && untracedMandatory.length === 0;
 
-  const planValidation = validateGeneratedDocsAgainstPlan(plan, tender.generatedDocuments);
+  const planValidation = validateGeneratedDocsAgainstPlan(plan, generatedDocuments);
   const hasUnresolvedCriticalGaps = tender.complianceGaps.some(g => !g.isResolved && g.severity === "CRITICAL");
 
   // Determine stage and next action
@@ -167,8 +207,8 @@ export async function getCanonicalTenderWorkflowState(
   } else if (extractionStatus === "OCR_REQUIRED" || (canonicalModules.extraction === "BLOCKED" && !tender.requirements.length)) {
     nextAction = "RUN_OCR";
     actionEndpoint = `/api/tenders/${tenderId}/run-ocr`;
-    label = "Run OCR";
-    reason = "Extraction is not reliable enough for analysis. Run OCR to improve quality.";
+    label = "Upload a clearer source";
+    reason = "Extraction is not reliable enough for analysis. Upload a clearer, text-based copy to improve quality.";
   } else if (canonicalModules.analysis !== "READY" && !analysisIsApprovedFallback) {
     nextAction = "RUN_AI_ANALYZE";
     actionEndpoint = `/api/tenders/${tenderId}/ai-analyze`;
@@ -179,9 +219,10 @@ export async function getCanonicalTenderWorkflowState(
     label = "Edit Tender Details";
     reason = "Tender metadata is incomplete.";
   } else if (mandatoryRequirements.length > 0 && !completeTraceability) {
-    nextAction = "REVIEW_REQUIREMENTS";
-    label = "Review Requirements";
-    reason = `${untracedMandatory.length} mandatory requirement(s) lack source traceability.`;
+    nextAction = "RUN_AI_ANALYZE";
+    actionEndpoint = `/api/tenders/${tenderId}/ai-analyze`;
+    label = "Re-run AI Analyze";
+    reason = `${untracedMandatory.length} mandatory requirement(s) lack verified source traceability. Re-run AI Analyze against the verified source; if they remain unprovable, upload a better source or correct the requirement from genuine source evidence.`;
   } else if (!planApproved) {
     nextAction = "BUILD_SUBMISSION_PLAN";
     actionEndpoint = `/api/tenders/${tenderId}/build-plan`;

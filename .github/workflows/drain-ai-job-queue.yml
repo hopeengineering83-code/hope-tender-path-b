@@ -1,4 +1,10 @@
-# G10 — Free external cron for the AiJob queue
+# G10 — Manual / emergency drain for the AiJob queue
+#
+# HISTORY: written for the Vercel Hobby plan, which allowed only daily crons,
+# so this workflow drained the queue every 5 minutes. The project is on Vercel
+# Pro now and vercel.json schedules the drain natively every minute, so the
+# schedule below was removed (2026-10-07). The notes that follow describe the
+# original Hobby-era setup and still apply to manual runs.
 #
 # Vercel Hobby plans allow only ONE cron invocation per day, which is too
 # slow for an interactive queue. GitHub Actions schedules run every 5 min
@@ -42,11 +48,11 @@
 name: Drain AiJob queue
 
 on:
-  schedule:
-    # Every 5 minutes. GitHub Actions cron uses UTC and may drift.
-    - cron: "*/5 * * * *"
-  # Allow manual triggering from the Actions tab for ad-hoc draining or
-  # for testing the secret wiring after the initial setup above.
+  # MANUAL / EMERGENCY ONLY. The normal scheduler is Vercel Cron (vercel.json:
+  # /api/ai-jobs/run-next every minute, /api/cron/ai-analyze-retry every 5
+  # minutes), which authenticates with CRON_SECRET. This workflow no longer
+  # runs on a schedule: run it from the Actions tab only to drain the queue by
+  # hand, e.g. while CRON_SECRET is being configured.
   workflow_dispatch:
 
 # Don't pile up if a previous run is still going (rare — each curl is <1s).
@@ -62,6 +68,55 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
+      # AI_ANALYZE is the one pipeline stage isDurableRetryJobType does NOT
+      # cover (that list is EXTRACT_TEXT, VAULT_INGEST, ENGINE_RUN,
+      # PROPOSAL_GENERATION, AUTO_FINALIZE). Its recovery lives in
+      # lib/ai-analyze/retry-service.ts behind /api/cron/ai-analyze-retry —
+      # which was registered with no scheduler at all: not in vercel.json's
+      # crons, not here. A failed AI analysis was therefore never retried, so
+      # one transient provider hiccup stranded the tender permanently while the
+      # UI still reported "processing automatically".
+      #
+      # That route already accepts X-Worker-Secret precisely so "an external
+      # scheduler can poll this more frequently than the platform's cron
+      # minimum" — its own words. This is that scheduler. It runs first so any
+      # job it re-arms is claimable by the drain below on the same tick.
+      - name: GET /api/cron/ai-analyze-retry
+        env:
+          WORKER_SECRET: ${{ secrets.AI_JOBS_WORKER_SECRET }}
+          RETRY_URL: https://hope-tender-path-b.vercel.app/api/cron/ai-analyze-retry
+        run: |
+          if [ -z "$WORKER_SECRET" ]; then
+            echo "::error::AI_JOBS_WORKER_SECRET repo secret is empty."
+            exit 1
+          fi
+
+          response=$(curl -sS \
+            --connect-timeout 30 \
+            --max-time 65 \
+            -H "X-Worker-Secret: $WORKER_SECRET" \
+            -w "\n---STATUS:%{http_code}---" \
+            "$RETRY_URL" \
+            || echo "---STATUS:000---")
+
+          status=$(echo "$response" | grep -oE "STATUS:[0-9]+" | cut -d: -f2)
+          body=$(echo "$response" | sed -E "s/---STATUS:[0-9]+---//")
+          echo "HTTP $status"
+          echo "Body: $body"
+
+          # Auth errors mean the secret wiring is broken — worth surfacing.
+          if [ "$status" = "401" ] || [ "$status" = "403" ]; then
+            echo "::error::Retry scheduler rejected auth. Check AI_JOBS_WORKER_SECRET matches between this repo and Vercel, then redeploy."
+            exit 1
+          fi
+
+          # Everything else is non-fatal: the drain step below still needs to
+          # run, and the next tick is only 5 minutes away.
+          if [ "$status" != "200" ]; then
+            echo "::warning::Retry scheduler returned $status — transient, continuing to the drain step."
+          fi
+          exit 0
+
       - name: POST /api/ai-jobs/run-next
         env:
           WORKER_SECRET: ${{ secrets.AI_JOBS_WORKER_SECRET }}
@@ -140,4 +195,60 @@ jobs:
           fi
 
           echo "::warning::Unexpected HTTP status $status from worker. Body: $body"
+          exit 0
+
+      # ─── Preview deployment drain ────────────────────────────────────────
+      #
+      # Every step above targets PRODUCTION only. The Preview deployment had no
+      # worker driver at all, so a job enqueued there stayed QUEUED forever:
+      # Vercel runtime logs for the preview environment showed ZERO
+      # /api/ai-jobs/run-next invocations over six hours while the browser
+      # polled /engine-readiness every three seconds. Pressing Run Engine
+      # created the job and nothing ever claimed it, so the UI reported
+      # "Engine running…" indefinitely with zero selected evidence.
+      #
+      # The branch preview URL is stable for this release branch, so the same
+      # secret-authenticated drain works against it.
+      #
+      # Deliberately non-fatal in every outcome. Preview is not the release
+      # surface, its secret may not be configured, and the deployment may be
+      # absent or rebuilding — none of which should turn the Production drain
+      # red or spam the owner. Failures are surfaced as warnings only.
+      - name: POST /api/ai-jobs/run-next (preview)
+        continue-on-error: true
+        env:
+          WORKER_SECRET: ${{ secrets.AI_JOBS_WORKER_SECRET }}
+          PREVIEW_WORKER_URL: https://hope-tender-path-b-git-0db72a-hopeengineering83-codes-projects.vercel.app/api/ai-jobs/run-next
+        run: |
+          if [ -z "$WORKER_SECRET" ]; then
+            echo "::warning::AI_JOBS_WORKER_SECRET is empty — skipping the preview drain."
+            exit 0
+          fi
+
+          response=$(curl -sS \
+            --connect-timeout 30 \
+            --max-time 65 \
+            -X POST \
+            -H "X-Worker-Secret: $WORKER_SECRET" \
+            -H "Content-Type: application/json" \
+            -w "\n---STATUS:%{http_code}---" \
+            "$PREVIEW_WORKER_URL" \
+            || echo "---STATUS:000---")
+
+          status=$(echo "$response" | grep -oE "STATUS:[0-9]+" | cut -d: -f2)
+          body=$(echo "$response" | sed -E "s/---STATUS:[0-9]+---//")
+          echo "Preview HTTP $status"
+          echo "Preview body: $body"
+
+          if [ "$status" = "401" ] || [ "$status" = "403" ]; then
+            echo "::warning::Preview worker rejected auth. Set AI_JOBS_WORKER_SECRET for the Preview environment in Vercel and redeploy, or preview jobs will never run."
+            exit 0
+          fi
+
+          if [ "$status" != "200" ]; then
+            echo "::warning::Preview worker returned $status — preview queue not drained on this tick."
+            exit 0
+          fi
+
+          echo "Preview queue drained."
           exit 0

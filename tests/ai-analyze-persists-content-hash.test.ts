@@ -116,13 +116,16 @@ describe("AI Analyze route hashes the SAME input set the snapshot/gate recompute
     );
   });
 
-  it("matches the snapshot/gate active-file predicate exactly (=== \"ACTIVE\", not a null fallback)", () => {
+  it("matches the snapshot/gate active-file predicate (canonical source selection or === \"ACTIVE\")", () => {
     const snap = readFileSync(resolve(process.cwd(), "lib/engine/tender-release-snapshot.ts"), "utf8");
     const gate = readFileSync(resolve(process.cwd(), "lib/engine/generation-readiness-gate.ts"), "utf8");
-    assert.ok(snap.includes('f.deletionStatus === "ACTIVE"'), "snapshot must filter active files with === \"ACTIVE\"");
-    assert.ok(gate.includes('f.deletionStatus === "ACTIVE"'), "gate must filter active files with === \"ACTIVE\"");
+    // The snapshot may use selectCanonicalTenderFiles() or the inline filter.
+    const snapUsesCanonical = snap.includes("selectCanonicalTenderFiles");
+    const snapUsesInline = snap.includes('f.deletionStatus === "ACTIVE"') || snap.includes('deletionStatus === "ACTIVE"');
+    assert.ok(snapUsesCanonical || snapUsesInline, "snapshot must select canonical active files");
+    assert.ok(gate.includes('deletionStatus === "ACTIVE"'), "gate must filter active files with === \"ACTIVE\"");
     assert.ok(
-      src.includes('f.deletionStatus === "ACTIVE"'),
+      src.includes('deletionStatus === "ACTIVE"'),
       "route must use the identical === \"ACTIVE\" predicate so the hashed file set matches the gate",
     );
   });

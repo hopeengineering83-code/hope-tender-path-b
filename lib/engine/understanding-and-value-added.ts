@@ -1,3 +1,5 @@
+import { isCurrentRecordStatus } from "./record-status";
+import { recordTypeForDisplay } from "./vault-prose";
 /**
  * Five evaluator-facing additions packaged into one module:
  *
@@ -12,6 +14,7 @@
  */
 
 import type { ExpertRecord } from "./benchmark-tables";
+import { isHealthcareSector, threeStageReview, type ReviewDiscipline } from "./assignment-subject";
 
 function safeArr(value: unknown): string[] {
   if (Array.isArray(value)) return value.map(String).filter(Boolean);
@@ -40,7 +43,7 @@ export function buildUnderstandingSection(opts: {
   const sector = opts.primarySector.toLowerCase();
   let sectorParagraph: string;
 
-  if (/health|hospital|medical|clinic/.test(sector)) {
+  if (isHealthcareSector(sector)) {
     sectorParagraph =
       `${opts.clientName} requires an end-to-end consultancy partner who brings not only design capability but strategic healthcare thinking: advising on suitable premises before a building is selected, designing a complete facility to Health Authority standards and international quality benchmarks, coordinating all MEP disciplines including medical gas and radiation safety, managing regulatory approvals, and supervising works through to operational readiness. The clinical departments each carry specific spatial, MEP, IPC, and regulatory requirements; a generic building consultancy is not sufficient.`;
   } else if (/water|borehole|hydraulic|sanitary/.test(sector)) {
@@ -84,18 +87,16 @@ export function buildUnderstandingSection(opts: {
       `${opts.clientName} requires a telecoms engineering partner who brings spectrum licensing expertise, calibrated RF coverage simulation, backhaul design rigour, and a site-acceptance test protocol that gives commercial confidence before launch. Coverage that underperforms against simulation, backhaul that saturates at peak load, or spectrum not licensed in time to support the rollout date are the three most common value-destroying outcomes in broadband network programmes.`;
   } else {
     sectorParagraph =
-      `${opts.clientName} requires a disciplined consultancy partner who maps each scope item to a deliverable, a responsible expert, and a quality gate. The winning proposal must demonstrate scope understanding through evidence, not generic capability statements.`;
+      `${opts.clientName} requires a disciplined consultancy partner who maps each scope item to a deliverable, a responsible expert, and a quality gate. This proposal therefore demonstrates scope understanding through evidence rather than generic capability statements.`;
   }
 
-  const evaluatorAnchor = opts.evaluationCriteria.length > 0
-    ? `The winning proposal must demonstrate, for each evaluation criterion, a specific evidence anchor (named project, expert, license, certification, or institutional capability). The evaluation criteria detected for this assignment are addressed below in Section C.2 (Technical Methodology), Section A.4 (Proposed Project Team), Section B (Relevant Experience), and Section D.1 (Value Framework).`
-    : `The winning proposal must demonstrate, for each scope item, a specific evidence anchor (named project, expert, license, certification, or institutional capability) drawn from the firm's reviewed knowledge vault.`;
-
+  // No closing paragraph about the proposal itself. It promised "a specific
+  // evidence anchor" for every criterion and pointed at section numbers that
+  // had moved (run 36074770709: "Section A.4 (Proposed Project Team)").
+  // Where each criterion is answered is Section F's job.
   return [
     "## C.1 Understanding of the Assignment",
     sectorParagraph,
-    "",
-    evaluatorAnchor,
   ].join("\n\n");
 }
 
@@ -103,14 +104,17 @@ export function buildUnderstandingSection(opts: {
 // D.2 Value-Added Services (sector-aware bullets)
 // ───────────────────────────────────────────────────────────────────────────
 
-export function buildValueAddedServices(opts: { primarySector: string; companyName: string }): string {
+export function buildValueAddedServices(opts: { primarySector: string; companyName: string; reviewDiscipline?: ReviewDiscipline }): string {
   const sector = opts.primarySector.toLowerCase();
   let bullets: string[];
 
-  if (/health|hospital|medical|clinic/.test(sector)) bullets = [
-    `**Clinical workflow audit** — patient, staff, supply, and waste flow mapping with bottleneck analysis. Provided as a free input to facility design even when not explicitly requested.`,
+  if (isHealthcareSector(sector)) bullets = [
+    `**Clinical workflow audit** — patient, staff, supply, and waste flow mapping with bottleneck analysis. Carried into the facility design as an input.`,
     `**Medical equipment readiness review** — coordination with biomedical specialist on equipment-power, shielding, and gas requirements before procurement decisions are taken, reducing late-stage retrofit costs.`,
-    `**Health Authority licensing pre-check** — pre-submission internal review of design package against current Health Authority licensing checklist, included as a project deliverable.`,
+    // The words "internal review" made a later client-text pass cut this line
+    // to "— pre-submission", and "Health Authority" named a body the tender
+    // may not.
+    `**Licensing pre-check** — the design package is checked against the health-facility licensing checklist before each authority submission.`,
     `**O&M training pack** — facility operator training materials provided at handover, including HVAC operation, medical-gas system operation, and IPC protocol enforcement.`,
     `**Post-occupancy evaluation** — six-month post-occupancy audit (workflow, IPC compliance, HVAC performance) offered as an optional extension for continuous improvement.`,
   ];
@@ -194,7 +198,7 @@ export function buildValueAddedServices(opts: { primarySector: string; companyNa
   else if (/kyc|aml|core.*banking|microfinance|ifrs|basel|prudential|fintech/.test(sector)) bullets = [
     `**Regulatory compliance knowledge base** — searchable wiki of applicable regulations, mapped to system controls, handed over as part of the training package.`,
     `**Automated regulatory reporting templates** — Basel, IFRS, or AML return templates pre-validated against regulator's published format; reduces manual reporting effort.`,
-    `**Source code escrow** — third-party source code escrow available during warranty period; protects client from vendor lock-in at no additional cost.`,
+    `**Source code escrow** — third-party source code escrow available during warranty period; protects the client from vendor lock-in.`,
     `**Penetration test report and remediation evidence** — pre-go-live security review with full remediation evidence; supports regulatory and audit submission.`,
     `**90-day post-go-live hypercare** — named support contact with SLA-defined response times for 90 days after go-live; included in the engagement scope.`,
   ];
@@ -206,16 +210,19 @@ export function buildValueAddedServices(opts: { primarySector: string; companyNa
     `**EMR certificate registry** — all site EMR certificates filed in a structured registry; supports regulator and public-interest queries without re-measurement.`,
   ];
   else bullets = [
-    `**Three-stage internal review** — schematic, developed, pre-issue review by named senior reviewers, beyond the contractual deliverable scope.`,
-    `**Source-evidence verification on every claim** — every named project, expert, certification, or capability is verified against original source evidence in the firm's vault before publication.`,
+    `**${threeStageReview(opts.reviewDiscipline ?? "GENERAL").name}** — ${threeStageReview(opts.reviewDiscipline ?? "GENERAL").stages} review by named senior reviewers.`,
+    // Same internal-name leak as mobilization-and-checklist.ts: the control is
+    // real and worth stating, but "the firm's vault" is this application's word
+    // for its evidence store, not the bidder's word for its records.
+    `**Source-evidence verification on every claim** — every named project, expert, certification, or capability is verified against the original source document before it appears in this proposal.`,
     `**Final compliance pass** — pre-submission compliance audit against the tender's exact file naming, ordering, and format rules.`,
     `**Documented institutional knowledge** — handover documentation including process maps, decision records, and lessons learned.`,
-    `**Post-handover advisory** — 30-day post-handover advisory window at no extra cost.`,
+    `**Post-handover advisory** — 30-day post-handover advisory window.`,
   ];
 
   return [
     "## D.2 Value-Added Services",
-    `Beyond the minimum scope, ${opts.companyName} brings the following capabilities at no additional charge:`,
+    `Beyond the minimum scope, ${opts.companyName} brings the following capabilities to this assignment:`,
     "",
     ...bullets.map((b) => `- ${b}`),
   ].join("\n");
@@ -225,7 +232,21 @@ export function buildValueAddedServices(opts: { primarySector: string; companyNa
 // D.3 Professional Certifications and Affiliations (aggregated from experts)
 // ───────────────────────────────────────────────────────────────────────────
 
-export function buildCertificationsSection(opts: { experts: ExpertRecord[]; companyName: string }): string {
+export interface CompanyRecordForCertification {
+  title?: string | null;
+  recordType?: string | null;
+  complianceType?: string | null;
+  authority?: string | null;
+  referenceNumber?: string | null;
+  status?: string | null;
+}
+
+export function buildCertificationsSection(opts: {
+  experts: ExpertRecord[];
+  companyName: string;
+  legalRecords?: CompanyRecordForCertification[];
+  complianceRecords?: CompanyRecordForCertification[];
+}): string {
   const allCerts = new Set<string>();
   for (const expert of opts.experts) {
     safeArr(expert.certifications).forEach((c) => {
@@ -234,21 +255,39 @@ export function buildCertificationsSection(opts: { experts: ExpertRecord[]; comp
   }
   const sortedCerts = Array.from(allCerts).sort();
 
-  if (sortedCerts.length === 0) {
-    return [
-      "## D.3 Professional Certifications and Affiliations",
-      `_Source-evidence action: ensure each reviewed expert record carries the full list of professional certifications, licenses, and registrations before final submission._`,
-    ].join("\n\n");
-  }
+  // The firm's own registrations, certifications and compliance records, each
+  // one reviewed record with the reference it carries. Only records the firm
+  // currently holds are listed, and the stored status is not printed (see
+  // record-status.ts). This is the one place they are listed: A.3 used to
+  // print the first six of them as well.
+  const cell = (value?: string | null) => (value ?? "").replace(/\|/g, "/").trim() || "—";
+  const corporate = [...(opts.legalRecords ?? []), ...(opts.complianceRecords ?? [])]
+    .filter((record) => (record.title ?? "").trim().length > 2 && isCurrentRecordStatus(record.status))
+    .slice(0, 12);
 
-  return [
-    "## D.3 Professional Certifications and Affiliations",
-    `${opts.companyName} maintains documented professional certifications and registrations across the proposed team. Original certificates are attached as Appendix C alongside the curricula vitae.`,
-    "",
-    "| Certification / License / Registration |",
-    "|---|",
-    ...sortedCerts.map((c) => `| ${c.replace(/\|/g, "/")} |`),
-  ].join("\n");
+  if (corporate.length === 0 && sortedCerts.length === 0) return "";
+
+  const lines: string[] = ["## D.3 Professional Certifications and Affiliations"];
+  if (corporate.length > 0) {
+    lines.push(
+      `${opts.companyName} holds the following registrations, certifications and compliance records. Copies can be provided on request.`,
+      "",
+      "| Certification / License / Registration | Type | Reference |",
+      "|---|---|---|",
+      ...corporate.map((record) => `| ${cell(record.title)} | ${cell(recordTypeForDisplay(record.recordType ?? record.complianceType))} | ${cell(record.referenceNumber)} |`),
+    );
+  }
+  if (sortedCerts.length > 0) {
+    lines.push(
+      "",
+      `Professional registrations held by the proposed team, as their records state them. Original certificates can be provided on request, with the curricula vitae.`,
+      "",
+      "| Certification / License / Registration |",
+      "|---|",
+      ...sortedCerts.map((c) => `| ${c.replace(/\|/g, "/")} |`),
+    );
+  }
+  return lines.join("\n");
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -264,15 +303,20 @@ export function buildInHouseCapabilitiesSection(opts: {
   const capabilities: string[] = [];
   const allText = opts.evidenceLines.join("\n").toLowerCase();
 
-  // Detect capability signals from evidence text
+  // Detect capability signals from evidence text. Each line states only what
+  // its signal shows. A firm whose records name a "Quality Management System
+  // manual" was delivered as holding an "ISO 9001:2015-aligned QMS"; "ems"
+  // matched inside "systems" and printed an "ISO 14001-aligned EMS"; any
+  // mention of "employees" made every proposed expert "permanent staff, not
+  // sub-consultants". No record held any of those.
   if (/drilling rig|drill.*depth|geotechnical.*lab/i.test(allText)) {
     capabilities.push("**In-house geotechnical capability** — drilling rigs and laboratory testing, eliminating sub-contractor coordination delays at site assessment stage.");
   }
-  if (/iso 9001|iso 45001|quality management system|qms/i.test(allText)) {
-    capabilities.push("**Quality Management System** — ISO 9001:2015-aligned QMS with documented design-review gates, document control, and audit trail.");
+  if (/iso 9001|quality management system|\bqms\b/i.test(allText)) {
+    capabilities.push("**Quality Management System** — the firm's own quality management system, applied to the review and document control of this assignment's deliverables.");
   }
-  if (/environmental.*management|ems|iso 14001/i.test(allText)) {
-    capabilities.push("**Environmental Management System** — ISO 14001-aligned EMS or equivalent, supporting donor-grade environmental compliance.");
+  if (/environmental management system|\bems\b|iso 14001/i.test(allText)) {
+    capabilities.push("**Environmental Management System** — the firm's own environmental management system, applied to the environmental aspects of this assignment.");
   }
   if (/fidic|world bank|undp|usaid|british council/i.test(allText)) {
     capabilities.push("**International institutional delivery track record** — projects delivered to FIDIC and donor-standard documentation rules.");
@@ -280,8 +324,8 @@ export function buildInHouseCapabilitiesSection(opts: {
   if (/proprietary|in-house.*platform|custom.*platform|project management.*platform/i.test(allText)) {
     capabilities.push("**Proprietary project management platform** — drawing register, approval workflow tracking, and progress reporting in client-compatible formats.");
   }
-  if (/permanent.*staff|employees|in-house.*team/i.test(allText)) {
-    capabilities.push("**Permanent in-house team** — proposed experts are permanent staff, not sub-consultants — ensuring continuity from feasibility to handover.");
+  if (/permanent\s+(?:staff|employees)/i.test(allText)) {
+    capabilities.push("**Permanent in-house team** — the firm's records describe its staff as permanent, supporting continuity from feasibility to handover.");
   }
   // Service-line capabilities
   if (opts.serviceLines.length > 0) {
@@ -318,7 +362,9 @@ export function buildConflictOfInterestSection(opts: { companyName: string; clie
     "",
     `- The firm has no current contractual or commercial relationship with ${opts.clientName} that would constitute a conflict of interest with the impartial delivery of this assignment.`,
     `- The proposed team members have not participated in the drafting of this tender's specifications, evaluation criteria, or terms of reference.`,
-    `- The firm and its proposed team members are not under any current debarment, suspension, sanction, or compliance condition imposed by any government, multilateral institution, or industry regulator.`,
+    // No debarment statement: the firm's debarment, litigation and
+    // non-performance history is stated in its own signed declaration, which
+    // the package waits for (2026-10-01).
     `- The firm will disclose, immediately and in writing, any change to the above during the course of this engagement.`,
     "",
     `This declaration is made in good faith and is supported by documentary evidence available on request.`,

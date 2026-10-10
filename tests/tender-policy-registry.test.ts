@@ -88,9 +88,12 @@ describe("registry — conditionally-critical fields", () => {
 // ─── 4. Deadline can never be marked Not Applicable ───────────────────────────
 
 describe("registry — NEVER_NOT_APPLICABLE", () => {
-  it("forbids marking the deadline Not Applicable", () => {
-    assert.equal(NEVER_NOT_APPLICABLE.has("deadline"), true);
-    assert.equal(canBeNotApplicable("deadline"), false);
+  // Superseded by owner policy ABSENT_TENDER_FACT_IS_NOT_REQUIRED (2026-10-06:
+  // a tender with no stated deadline could not mark it not stated). A STATED
+  // deadline is still never dismissed; the override route refuses that.
+  it("allows an unstated deadline to be marked not stated", () => {
+    assert.equal(NEVER_NOT_APPLICABLE.has("deadline"), false);
+    assert.equal(canBeNotApplicable("deadline"), true);
   });
 
   it("allows non-critical fields to be marked Not Applicable", () => {

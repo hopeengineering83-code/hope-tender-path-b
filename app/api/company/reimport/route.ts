@@ -2,20 +2,20 @@ import { logger } from "../../../../lib/observability";
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../lib/prisma";
-import { importCompanyKnowledgeFromDocuments } from "../../../../lib/company-knowledge-import-safe";
-import { runCompanyKnowledgeSafetyImport } from "../../../../lib/company-knowledge-safety-import";
+import { enqueueJob } from "../../../../lib/ai-jobs";
 import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "../../../../lib/rate-limit";
-import { extractTextFromBuffer, getFileTypeLabel, isMeaningfulExtraction } from "../../../../lib/extract-text";
 import { ensureCompanyForUser } from "../../../../lib/company-workspace";
-import { getStorageAdapter } from "../../../../lib/storage";
-import { cleanupSupportDocImportedRecords } from "../../../../lib/company-support-doc-cleanup";
 import { extractRequestId } from "../../../../lib/request-id";
-import { logAction } from "../../../../lib/audit";
-import { COMPANY_DOCUMENT_PENDING_DELETE_MARKER } from "../../../../lib/company-document-durable-deletion";
 
-export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
+// Re-extracting text/OCR for every company document and then re-running
+// ingestion used to happen entirely inline in this request (see git history
+// for the removed loop, now lib/company-vault-reextraction.ts). A vault with
+// many/large scanned PDFs could exceed the platform's request time budget.
+// This route now only enqueues a VAULT_INGEST job (reExtractAll: true) and
+// returns immediately; the worker (or the GitHub Actions drain cron) does
+// the actual work. Poll GET /api/ai-jobs/[id] for status/results.
 export async function POST(req: Request) {
   let actor;
   try {
@@ -40,141 +40,21 @@ export async function POST(req: Request) {
     await prismaReady;
     const company = await ensureCompanyForUser(prisma, actor.id);
 
-    const docs = await prisma.companyDocument.findMany({
-      where: {
-        companyId: company.id,
-        // SECURITY (round-2 audit GAP-R2C-4): EXCLUDE PENDING_DELETE documents.
-        // A document marked PENDING_DELETE has been logically deleted by the
-        // user but the storage file deletion may not have completed yet (502
-        // retryable, tombstoned row with fileContent still set). If we
-        // re-extract and re-import such a document, we RE-CREATE the draft
-        // experts/projects that the deletion had already destroyed — silently
-        // undoing the user's deletion.
-        //
-        // The documents list route (app/api/company/documents/route.ts:36)
-        // already filters this marker. The reimport route was missing it.
-        NOT: { metadata: { contains: COMPANY_DOCUMENT_PENDING_DELETE_MARKER } },
-        OR: [{ fileContent: { not: null } }, { storagePath: { not: "" } }],
-      },
-      select: {
-        id: true,
-        originalFileName: true,
-        mimeType: true,
-        fileContent: true,
-        storagePath: true,
-        metadata: true,
-      },
-    });
-
-    let reextracted = 0;
-    const failedFiles: Array<{ name: string; error: string }> = [];
-    for (const doc of docs) {
-      if (!doc.fileContent && !doc.storagePath) continue;
-      try {
-        const buffer = doc.fileContent
-          ? Buffer.from(doc.fileContent, "base64")
-          : await getStorageAdapter().getFile({
-              storagePath: doc.storagePath,
-              fileContent: null,
-              fileName: doc.originalFileName,
-            });
-        const extractedText = await extractTextFromBuffer(buffer, doc.mimeType, doc.originalFileName);
-        const fileType = getFileTypeLabel(doc.mimeType, doc.originalFileName);
-        const meaningful = isMeaningfulExtraction(extractedText);
-        let metadata: Record<string, unknown> = {};
-        try {
-          metadata = JSON.parse(doc.metadata || "{}") as Record<string, unknown>;
-        } catch {
-          metadata = {};
-        }
-
-        await prisma.companyDocument.update({
-          where: { id: doc.id },
-          data: {
-            extractedText: extractedText || null,
-            aiExtractionStatus: meaningful ? "PENDING" : "FAILED",
-            aiExtractionError: meaningful ? null : "No text extracted from document",
-            metadata: JSON.stringify({
-              ...metadata,
-              fileType,
-              reExtractedAt: new Date().toISOString(),
-              extracted: meaningful,
-              extractedChars: meaningful ? extractedText.length : 0,
-              extractionStatus: meaningful ? "EXTRACTED" : extractedText ? "WARNING" : "EMPTY",
-            }),
-          },
-        });
-        reextracted += 1;
-      } catch (error) {
-        logger.error("company reimport extraction failed", {
-          requestId,
-          documentId: doc.id,
-          errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
-        });
-        failedFiles.push({ name: doc.originalFileName, error: "Processing failed" });
-      }
-    }
-
-    // Do not delete existing records before the import succeeds. The primary
-    // and safety import complete first; one atomic cleanup then removes only
-    // records derived from support-only documents.
-    const primary = await importCompanyKnowledgeFromDocuments(company.id);
-    const aiRanSuccessfully = primary.aiUsed && primary.aiFailures === 0;
-    const emptyResult = {
-      docsScanned: 0,
-      expertsCreated: 0,
-      projectsCreated: 0,
-      expertNamesDetected: 0,
-      projectNamesDetected: 0,
-    };
-    const safety = aiRanSuccessfully
-      ? emptyResult
-      : await runCompanyKnowledgeSafetyImport(prisma, company.id);
-    const supportCleanup = await cleanupSupportDocImportedRecords(company.id);
-
-    const result = {
-      success: true,
-      docsReextracted: reextracted,
-      docsFailed: failedFiles.length,
-      failedFiles,
-      docsProcessed: primary.docsProcessed,
-      expertsCreated: primary.expertsCreated + safety.expertsCreated,
-      projectsCreated: primary.projectsCreated + safety.projectsCreated,
-      supportCleanup,
-      primaryImport: primary,
-      safetyImport: safety,
-    };
-
-    void logAction({
+    const job = await enqueueJob({
       userId: actor.id,
-      action: "COMPANY_KNOWLEDGE_REPAIR",
-      entityType: "Company",
-      entityId: company.id,
-      description: `Company knowledge reimport completed: ${result.expertsCreated} experts and ${result.projectsCreated} projects created; ${supportCleanup.expertsDeleted} support-derived experts and ${supportCleanup.projectsDeleted} support-derived projects removed.`,
-      metadata: {
-        docsReextracted: result.docsReextracted,
-        docsFailed: result.docsFailed,
-        expertsCreated: result.expertsCreated,
-        projectsCreated: result.projectsCreated,
-        supportCleanup,
-      },
-      requestId,
-    }).catch((error) => {
-      logger.warn("company reimport audit persistence failed", {
-        requestId,
-        errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
-      });
+      jobType: "VAULT_INGEST",
+      input: { companyId: company.id, reExtractAll: true, auditAction: "COMPANY_KNOWLEDGE_REPAIR" },
     });
 
-    return NextResponse.json(result);
+    return NextResponse.json({ status: "QUEUED", jobId: job.id, requestId });
   } catch (error) {
-    logger.error("company reimport failed", {
+    logger.error("company reimport enqueue failed", {
       requestId,
       errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
     });
     return NextResponse.json(
       {
-        error: "Company knowledge reimport failed. Retry or contact support with the request ID.",
+        error: "Company knowledge reimport could not be queued. Retry or contact support with the request ID.",
         code: "COMPANY_REIMPORT_FAILED",
         requestId,
       },

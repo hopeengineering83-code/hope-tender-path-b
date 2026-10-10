@@ -82,11 +82,18 @@ describe("MISSING_SOURCE marker blocked at export gates", () => {
     );
   });
 
-  it("validateDocumentQuality uses PLACEHOLDER_PATTERNS (which includes MISSING_SOURCE)", () => {
+  it("validateDocumentQuality uses the shared placeholder authority (which includes MISSING_SOURCE)", () => {
+    // Was a check for the raw PLACEHOLDER_PATTERNS import. That list spread in
+    // the field-value vocabulary, so this validator blocked a document on the
+    // tender's own sentence "…portal uploads are not available" while the
+    // quality gate scored the same bytes 100/PASSED. It now calls
+    // documentPlaceholderMatches(), which still matches MISSING_SOURCE and
+    // every other unambiguous marker anywhere — the behavioural test below is
+    // the real guarantee and is unchanged.
     const src = readFileSync("lib/engine/document-quality-validator.ts", "utf8");
     assert.ok(
-      src.includes("PLACEHOLDER_PATTERNS"),
-      "document-quality-validator must use shared PLACEHOLDER_PATTERNS",
+      src.includes("documentPlaceholderMatches"),
+      "document-quality-validator must use the shared documentPlaceholderMatches() authority",
     );
   });
 

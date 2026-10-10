@@ -104,9 +104,10 @@ export function createJob(params: Pick<Job, "userId" | "tenderId" | "type"> & { 
   return job;
 }
 
-export function getJob(id: string): Job | undefined {
+export function getInMemoryJob(id: string): Job | undefined {
   return jobs.get(id);
 }
+
 
 export function advanceJob(id: string, step: string): void {
   const job = jobs.get(id);
@@ -120,28 +121,33 @@ export function advanceJob(id: string, step: string): void {
   const label = stepEntry?.label ?? step;
 
   queueDurableWrite(id, async () => {
-    await prisma.aiJob.update({
-      where: { id },
-      data: { status: "RUNNING", startedAt: new Date(job.createdAt) },
-    });
-    await prisma.aiJobStep.updateMany({
-      where: { jobId: id, status: "RUNNING" },
-      data: { status: "SUCCEEDED", finishedAt: new Date() },
-    });
-    await prisma.aiJobStep.create({
-      data: {
-        jobId: id,
-        stepIndex,
-        stepName: step.slice(0, 120),
-        status: "RUNNING",
-        message: label.slice(0, 1_000),
-        startedAt: new Date(),
-      },
-    });
+    // Wrap the three writes in a transaction so a partial failure cannot
+    // leave the AiJob in RUNNING with stale step rows. The array form is
+    // safe here — the three writes are independent of each other's results.
+    await prisma.$transaction([
+      prisma.aiJob.update({
+        where: { id },
+        data: { status: "RUNNING", startedAt: new Date(job.createdAt) },
+      }),
+      prisma.aiJobStep.updateMany({
+        where: { jobId: id, status: "RUNNING" },
+        data: { status: "SUCCEEDED", finishedAt: new Date() },
+      }),
+      prisma.aiJobStep.create({
+        data: {
+          jobId: id,
+          stepIndex,
+          stepName: step.slice(0, 120),
+          status: "RUNNING",
+          message: label.slice(0, 1_000),
+          startedAt: new Date(),
+        },
+      }),
+    ]);
   });
 }
 
-export function completeJob(id: string, result: unknown): void {
+export function completeInMemoryJob(id: string, result: unknown): void {
   const job = jobs.get(id);
   if (!job) return;
   job.status = "DONE";
@@ -151,22 +157,27 @@ export function completeJob(id: string, result: unknown): void {
   for (const step of job.steps) if (!step.completedAt) step.completedAt = Date.now();
 
   queueDurableWrite(id, async () => {
-    await prisma.aiJobStep.updateMany({
-      where: { jobId: id, status: "RUNNING" },
-      data: { status: "SUCCEEDED", finishedAt: new Date() },
-    });
-    await prisma.aiJob.update({
-      where: { id },
-      data: {
-        status: "SUCCEEDED",
-        output: JSON.stringify(result ?? {}),
-        finishedAt: new Date(),
-      },
-    });
+    // Transaction: if the job.update fails after step.updateMany succeeds,
+    // all steps would show SUCCEEDED while the job is still RUNNING — the
+    // job appears "running forever" despite terminal steps. Wrap both.
+    await prisma.$transaction([
+      prisma.aiJobStep.updateMany({
+        where: { jobId: id, status: "RUNNING" },
+        data: { status: "SUCCEEDED", finishedAt: new Date() },
+      }),
+      prisma.aiJob.update({
+        where: { id },
+        data: {
+          status: "SUCCEEDED",
+          output: JSON.stringify(result ?? {}),
+          finishedAt: new Date(),
+        },
+      }),
+    ]);
   });
 }
 
-export function failJob(id: string, error: string): void {
+export function failInMemoryJob(id: string, error: string): void {
   const job = jobs.get(id);
   if (!job) return;
   job.status = "FAILED";
@@ -174,17 +185,21 @@ export function failJob(id: string, error: string): void {
   job.updatedAt = Date.now();
 
   queueDurableWrite(id, async () => {
-    await prisma.aiJobStep.updateMany({
-      where: { jobId: id, status: "RUNNING" },
-      data: { status: "FAILED", finishedAt: new Date() },
-    });
-    await prisma.aiJob.update({
-      where: { id },
-      data: {
-        status: "FAILED",
-        errorMessage: error.slice(0, 2_000),
-        finishedAt: new Date(),
-      },
-    });
+    // Transaction: same consistency risk as completeJob — step rows must
+    // not show FAILED while the job is still RUNNING.
+    await prisma.$transaction([
+      prisma.aiJobStep.updateMany({
+        where: { jobId: id, status: "RUNNING" },
+        data: { status: "FAILED", finishedAt: new Date() },
+      }),
+      prisma.aiJob.update({
+        where: { id },
+        data: {
+          status: "FAILED",
+          errorMessage: error.slice(0, 2_000),
+          finishedAt: new Date(),
+        },
+      }),
+    ]);
   });
 }

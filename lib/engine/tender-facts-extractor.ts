@@ -85,7 +85,11 @@ const VALIDITY_PATTERNS: RegExp[] = [
 
 const QUANTITY_CONTEXT_PATTERNS: RegExp[] = [
   // "25 workstations", "40-PAX meeting room", "3 private offices"
-  /\b(\d{1,4})[-\s]?(?:PAX|pax|workstations?|persons?|seats?|offices?|rooms?|m2|sqm|sq\.?\s*m|square\s+metres?|square\s+meters?|hectares?|kilometres?|kilometers?|km|metres?|meters?|m\b)([^.\n]{0,60})/gi,
+  // The value is the number and its unit only; what it describes is read
+  // from the surrounding words by quantityContext(). The trailing 60 chars
+  // this pattern used to swallow became part of the "value" and, cut
+  // mid-word, rendered as "454 sqm) in Addis Ababa (ce space (".
+  /(?<![\d,.])\b(\d{1,3}(?:,\d{3})+|\d{1,4})[-\s]?(?:PAX|pax|workstations?|persons?|seats?|offices?|rooms?|m2|sqm|sq\.?\s*m|square\s+metres?|square\s+meters?|hectares?|kilometres?|kilometers?|km|metres?|meters?|m\b)/gi,
   // "8 deliverables", "9 phases", "5 reports"
   /\b(\d{1,3})\s+(?:deliverables?|phases?|reports?|outputs?|milestones?|stages?|tasks?|activities?)\b/gi,
   // "ETB 7,500,000" or "USD 100,000"
@@ -112,12 +116,87 @@ const BRAND_PATTERNS: RegExp[] = [
   /\b[A-Z][A-Z0-9]{2,}\s+(?:Ethiopia|Foundation|International|Holdings?|Group|Ltd|PLC|Inc\.?|Limited|Corporation|Bank|Energy|Industries)\b/g,
 ];
 
+// A place is named. A bare kind of place ("Tower", "Building", "Region") is
+// not a location: a telecom-tower EOI printed "Site / Location: Tower" in its
+// Tender Specifics table (2026-09-30). The kind words therefore need a name in
+// front, and a name that is itself an industry word ("Telecommunications
+// Tower", "Office Building") is not one.
 const LOCATION_HINTS = [
-  /\b(?:Kirkos|Bole|Yeka|Lideta|Addis\s+Abeba|Addis\s+Ababa|Adama|Mekelle|Bahir\s+Dar|Hawassa|Dire\s+Dawa|Kebele|Sub\s*City|Sub-City|Woreda|District|Zone|Region|Province)\b/g,
-  /\b(?:Eagle\s+Plaza|Plaza|Tower|Centre|Building|Avenue|Road|Street)\b/g,
+  /\b(?:Kirkos|Bole|Yeka|Lideta|Addis\s+Abeba|Addis\s+Ababa|Adama|Mekelle|Bahir\s+Dar|Hawassa|Dire\s+Dawa)\b/g,
+  /\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\s+(?:Kebele|Sub\s*City|Sub-City|Woreda|District|Zone|Region|Province)\b/g,
+  /\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\s+(?:Plaza|Tower|Centre|Building|Avenue|Road|Street)\b/g,
 ];
 
+const NOT_A_PLACE_NAME = /^(?:the|this|that|a|an|each|every|any|all|new|existing|main|head|office|control|telecom|telecommunications?|communications?|mobile|radio|cell|lattice|water|steel|concrete|previous|tender|project|site|access|service|services|regional|district|national|federal|and|or|of|for|in|at|to|by|with|from)\b/i;
+
 // ─── Helpers ─────────────────────────────────────────────────────────────
+
+/** Alphanumeric tokens of a reference: "RFQ# 2026-024" → [rfq, 2026, 024]. */
+function referenceTokens(value: string): string[] {
+  return value.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+}
+
+/**
+ * True when `shorter` is `longer` with some of its tokens dropped from either
+ * end — the same reference without its label or prefix. Token-wise, so
+ * "2026-02" is not taken for "2026-024".
+ */
+function isReferenceRestatedBy(shorter: string, longer: string): boolean {
+  const a = referenceTokens(shorter);
+  const b = referenceTokens(longer);
+  if (a.length === 0 || a.length >= b.length) return false;
+  for (let offset = 0; offset + a.length <= b.length; offset++) {
+    if (a.every((token, i) => token === b[offset + i])) return true;
+  }
+  return false;
+}
+
+const CONTEXT_BOUNDARY = /[.;:!?\n]/;
+const CONTEXT_WORDS = 5;
+const LEADING_JOINER = /^(?:and|or|but|while|whereas)$/i;
+const TRAILING_JOINER = /^(?:and|or|but|of|the|a|an|to|for|with|in|on|at|by|from)$/i;
+
+function contextWords(value: string): string[] {
+  return value
+    .replace(/[()[\]{}<>|"“”]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(" ")
+    .filter((word) => /[\p{L}\p{N}]/u.test(word));
+}
+
+/**
+ * The words a quantity sits in, quoted from its own clause: up to five whole
+ * words either side, stopping at a neighbouring number and dropping brackets
+ * the cut would leave unbalanced. "office space (454 sqm) in Addis Ababa"
+ * gives "office space 454 sqm in Addis Ababa".
+ */
+function quantityContext(text: string, start: number, end: number): string {
+  let before = text.slice(Math.max(0, start - 90), start);
+  const lastBoundary = Math.max(-1, ...[...before].map((ch, i) => (CONTEXT_BOUNDARY.test(ch) ? i : -1)));
+  if (lastBoundary >= 0) before = before.slice(lastBoundary + 1);
+  else if (start > 90) before = before.replace(/^\S*\s/, "");
+  let after = text.slice(end, end + 90);
+  const firstBoundary = after.search(CONTEXT_BOUNDARY);
+  if (firstBoundary >= 0) after = after.slice(0, firstBoundary);
+  else if (end + 90 < text.length) after = after.replace(/\s\S*$/, "");
+
+  const lead: string[] = [];
+  for (const word of contextWords(before).reverse()) {
+    if (/\d/.test(word) || lead.length >= CONTEXT_WORDS) break;
+    lead.unshift(word);
+  }
+  const tail: string[] = [];
+  for (const word of contextWords(after)) {
+    if (/\d/.test(word) || tail.length >= CONTEXT_WORDS) break;
+    tail.push(word);
+  }
+  while (lead.length > 0 && LEADING_JOINER.test(lead[0]!)) lead.shift();
+  while (tail.length > 0 && TRAILING_JOINER.test(tail[tail.length - 1]!)) tail.pop();
+  if (lead.length === 0 && tail.length === 0) return "";
+  const value = contextWords(text.slice(start, end)).join(" ");
+  return [...lead, value, ...tail].join(" ").replace(/[,;]+$/, "");
+}
 
 function uniq(arr: string[]): string[] {
   const seen = new Set<string>();
@@ -147,8 +226,61 @@ function extractAll(text: string, patterns: RegExp[], group = 1): string[] {
 
 // ─── Public API ──────────────────────────────────────────────────────────
 
-export function extractTenderFacts(tenderText: string): TenderFacts {
+/**
+ * Facts that AI Analyze has already established against the tender source and
+ * persisted as canonical. These are NOT a second fact authority — they are the
+ * existing one, passed in so this extractor stops competing with it.
+ *
+ * WHY THIS PARAMETER EXISTS
+ * A real owner run had AI Analyze correctly extract the client (Pharo
+ * Ventures), the deadline (2026-08-25), the submission method and the
+ * technical-only instruction. The proposal writer then logged:
+ *
+ *   Tender facts extracted: 3 RFP ID(s), 0 deadline(s),
+ *   0 deliverable code(s), 0 quantity(s)
+ *
+ * Zero deadlines, for a tender whose deadline was already known and grounded.
+ * The writer called this extractor on raw tender text and used nothing else,
+ * so a deadline written in a format DEADLINE_PATTERNS does not match was
+ * simply lost — and the proposal could not echo the one date the evaluator
+ * most expects to see.
+ *
+ * Regex over raw text is the right tool for the classes the canonical record
+ * does not carry (quantities, deliverable codes, file formats, locations). It
+ * is the wrong tool for facts already resolved and source-grounded upstream.
+ * So canonical values are seeded first and regex only supplements: it can add
+ * a fact the canonical record lacks, never override one it holds.
+ */
+export type CanonicalTenderFacts = {
+  /** Effective deadline, already resolved (overrides applied) upstream. */
+  deadlineDisplay?: string | null;
+  /** Effective reference / procurement number. */
+  referenceNumber?: string | null;
+};
+
+export function extractTenderFacts(
+  tenderText: string,
+  canonical?: CanonicalTenderFacts,
+): TenderFacts {
+  const canonicalDeadlines = [canonical?.deadlineDisplay].filter((v): v is string => Boolean(v && v.trim()));
+  const canonicalRfpIds = [canonical?.referenceNumber].filter((v): v is string => Boolean(v && v.trim()));
+
   if (!tenderText || tenderText.length < 100) {
+    // Even with no usable tender text, canonical facts remain true and
+    // must still reach the proposal.
+    if (canonicalDeadlines.length > 0 || canonicalRfpIds.length > 0) {
+      return {
+        rfpIds: canonicalRfpIds,
+        deadlines: canonicalDeadlines,
+        validityPeriods: [],
+        locations: [],
+        quantities: [],
+        deliverableCodes: [],
+        fileFormats: [],
+        brandsOrWebsites: [],
+        rawCount: canonicalRfpIds.length + canonicalDeadlines.length,
+      };
+    }
     return {
       rfpIds: [],
       deadlines: [],
@@ -162,8 +294,27 @@ export function extractTenderFacts(tenderText: string): TenderFacts {
     };
   }
 
-  const rfpIds = extractAll(tenderText, RFP_PATTERNS).slice(0, 3);
-  const deadlines = extractAll(tenderText, DEADLINE_PATTERNS).slice(0, 3);
+  // Canonical first, regex second. uniq() keeps the canonical value at the
+  // head of the list and drops a regex match that merely repeats it, so the
+  // prompt block leads with the grounded fact.
+  const rfpIds = uniq([...canonicalRfpIds, ...extractAll(tenderText, RFP_PATTERNS)])
+    // A label followed by a source filename/table heading is not a procurement
+    // reference. The loose legacy regex accepted values such as
+    // "document.docx" and "Type" from flattened extraction tables.
+    .filter((value) =>
+      !/\.(?:docx?|pdf|xlsx?)$/i.test(value)
+      && !/^(?:type|row|document)$/i.test(value)
+      && !/\b(?:metadata|title|issuing|status|references?)\b/i.test(value)
+      // Procurement references are identifiers, not prose labels. Requiring a
+      // digit rejects flattened column headings such as "Status, issued,
+      // references" while retaining ordinary RFP/2026/014-style identifiers.
+      && /\d/.test(value),
+    )
+    // "2026-024" is the same reference as the grounded "RFQ# 2026-024"
+    // without its label; listed together they read as two references.
+    .filter((value, _index, all) => !all.some((other) => other !== value && isReferenceRestatedBy(value, other)))
+    .slice(0, 3);
+  const deadlines = uniq([...canonicalDeadlines, ...extractAll(tenderText, DEADLINE_PATTERNS)]).slice(0, 3);
   const validityPeriods = extractAll(tenderText, VALIDITY_PATTERNS).slice(0, 2);
 
   // Deliverable codes — collect, dedupe, sort numerically.
@@ -183,17 +334,14 @@ export function extractTenderFacts(tenderText: string): TenderFacts {
     .filter((s) => !/\.(?:pdf|docx?|xlsx?|jpg|png|gif)$/i.test(s))
     .slice(0, 5);
 
-  // Locations — scan for hint matches and keep the surrounding 2-4 words
+  // Locations — the matched hint itself is evidence. Surrounding extraction
+  // text may cross flattened table-cell boundaries and must not be presented
+  // as though it were one source-grounded location.
   const locations: string[] = [];
   for (const re of LOCATION_HINTS) {
     re.lastIndex = 0;
     for (const m of tenderText.matchAll(re)) {
-      const start = Math.max(0, (m.index ?? 0) - 30);
-      const end = Math.min(tenderText.length, (m.index ?? 0) + (m[0]?.length ?? 0) + 30);
-      const window = tenderText.slice(start, end).replace(/\s+/g, " ").trim();
-      // Pick the smallest reasonable substring that contains the hint
-      const trimmed = window.length > 80 ? window.slice(0, 80) + "…" : window;
-      locations.push(trimmed);
+      if (m[0] && !NOT_A_PLACE_NAME.test(m[0])) locations.push(m[0]);
     }
   }
   const dedupedLocations = uniq(locations).slice(0, 4);
@@ -204,20 +352,22 @@ export function extractTenderFacts(tenderText: string): TenderFacts {
   for (const re of QUANTITY_CONTEXT_PATTERNS) {
     re.lastIndex = 0;
     for (const m of tenderText.matchAll(re)) {
-      const start = Math.max(0, (m.index ?? 0) - 10);
-      const end = Math.min(tenderText.length, (m.index ?? 0) + (m[0]?.length ?? 0) + 60);
-      const window = tenderText.slice(start, end).replace(/\s+/g, " ").trim();
-      const value = m[0]?.replace(/^\W+/, "").replace(/\W+$/, "").trim() ?? "";
-      const context = window.replace(value, "").replace(/^\W+/, "").trim().slice(0, 70);
+      const value = m[0]?.replace(/^\W+/, "").replace(/\W+$/, "").replace(/\s+/g, " ").trim() ?? "";
       if (!value) continue;
+      const at = m.index ?? 0;
+      const context = quantityContext(tenderText, at, at + (m[0]?.length ?? 0));
       quantities.push({ value, context });
       if (quantities.length >= 12) break;
     }
     if (quantities.length >= 12) break;
   }
+  // One quote per value, and no submission-process period: the bid's own
+  // validity already has its row, and a delivered table printed "remain valid
+  // for at least 90 days" twice beside it (2026-10-05).
   const seenQty = new Set<string>();
   const dedupedQuantities = quantities.filter((q) => {
-    const k = `${q.value}::${q.context}`.toLowerCase();
+    if (/\b(?:valid(?:ity)?|deadline|clarification|bid\s+security|tender\s+security|submission)\b/i.test(q.context)) return false;
+    const k = q.value.toLowerCase().replace(/\s+/g, " ");
     if (seenQty.has(k)) return false;
     seenQty.add(k);
     return true;
@@ -263,7 +413,7 @@ export function formatFactsForPrompt(facts: TenderFacts): string {
   if (facts.quantities.length > 0) {
     lines.push(`- Distinctive quantities (echo at least 3-5 of these in C.1):`);
     for (const q of facts.quantities.slice(0, 8)) {
-      const ctx = q.context ? ` — ${q.context}` : "";
+      const ctx = q.context ? ` — "${q.context}"` : "";
       lines.push(`  • ${q.value}${ctx}`);
     }
   }
@@ -290,7 +440,8 @@ export function buildTenderSpecificsBlock(facts: TenderFacts): string {
   if (facts.fileFormats.length > 0) rows.push({ field: "Required File Formats / Software", value: facts.fileFormats.join(", ") });
   if (facts.brandsOrWebsites.length > 0) rows.push({ field: "Client Brand / Website", value: facts.brandsOrWebsites.join(" ; ") });
   if (facts.quantities.length > 0) {
-    const top5 = facts.quantities.slice(0, 5).map((q) => q.context ? `${q.value} (${q.context})` : q.value);
+    // The context already quotes the value in its own words.
+    const top5 = facts.quantities.slice(0, 5).map((q) => q.context ? `“${q.context}”` : q.value);
     rows.push({ field: "Distinctive Tender Quantities", value: top5.join(" ; ") });
   }
 

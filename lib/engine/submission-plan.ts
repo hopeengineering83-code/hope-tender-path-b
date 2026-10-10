@@ -1,4 +1,5 @@
-import { classifySubmissionPlanItem } from "./submission-plan-classifier";
+import { classifySubmissionPlanItem, financialProposalNameInTitle, plannedFileIsARule, requiresSubmittedFinancialProposal } from "./submission-plan-classifier";
+import { statedSingleSubmissionFile } from "./single-submission-file-rule";
 
 export type SubmissionPlanFormat = "DOCX" | "PDF" | "ZIP" | "XLSX" | "OTHER";
 
@@ -65,7 +66,29 @@ export type TenderRequirementLike = {
   pageLimit?: number | null;
   restrictions?: string | null;
   sectionReference?: string | null;
+  /** When the requirement was extracted: the tender's own sequence. */
+  createdAt?: Date | string | null;
 };
+
+/**
+ * Requirements in one canonical order: extraction time, then id. Every
+ * database read already asks for this order; sorting here as well makes the
+ * plan a function of the requirements themselves, so no caller, cache or test
+ * double that hands them over in another order can change a file's identity
+ * (canonicalId), its provenance list (sourceRequirementIds) or its position.
+ */
+export function canonicalRequirementOrder<R extends { id: string; createdAt?: Date | string | null }>(requirements: readonly R[]): R[] {
+  const time = (r: R) => {
+    const t = r.createdAt == null ? Number.NaN : new Date(r.createdAt).getTime();
+    return Number.isFinite(t) ? t : Number.POSITIVE_INFINITY;
+  };
+  return [...requirements].sort((a, b) => {
+    const ta = time(a);
+    const tb = time(b);
+    if (ta !== tb) return ta < tb ? -1 : 1;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  });
+}
 
 export type TenderLike = {
   id: string;
@@ -114,7 +137,7 @@ const QUANTITY_REQUIREMENT_TYPES = new Set<SubmissionPlanQuantityRule["requireme
   "DECLARATION",
 ]);
 
-function parseStringArray(value?: string | null): string[] {
+export function parseStringArray(value?: string | null): string[] {
   if (!value) return [];
   try {
     const parsed = JSON.parse(value);
@@ -144,6 +167,18 @@ function inferFormat(fileName: string, fallback?: string | null): SubmissionPlan
   if (/\.xlsx\b|\.xls\b|\bexcel\b|\bspreadsheet\b/.test(text)) return "XLSX";
   if (/\.docx\b|\.doc\b|\bword\b|\bdocx\b/.test(text)) return "DOCX";
   return "DOCX";
+}
+
+/**
+ * Canonical format inference shared by the submission-plan producer and the
+ * final-package manifest. Keeping one classifier prevents the plan and the
+ * exported ZIP from recording contradictory formats for the same filename.
+ */
+export function inferSubmissionPlanFormat(
+  fileName: string,
+  fallback?: string | null,
+): SubmissionPlanFormat {
+  return inferFormat(fileName, fallback);
 }
 
 function fileNameWithExtension(fileName: string, format: SubmissionPlanFormat): string {
@@ -187,6 +222,12 @@ export function inferEnvelope(
   const financialRx = /\bfinancial\b|commercial[\s-]+offer|price[\s-]+(schedule|proposal|form)|bill[\s-]+of[\s-]+quantit|rate[\s-]+card|cost[\s-]+proposal|budget[\s-]+proposal|pricing|fee[\s-]+schedule|boq\b|b\.o\.q\b|lump[\s-]+sum[\s-]+offer|schedule[\s-]+of[\s-]+rates/i;
   if (financialRx.test(text)) return "FINANCIAL";
 
+  // Explicit technical deliverables outrank a generic FORM requirement type.
+  // Otherwise "Technical Proposal.pdf" extracted as requirementType=FORM is
+  // incorrectly classified into the ADMIN envelope.
+  const technicalRx = /\btechnical[\s-]+proposal\b|\btechnical[\s-]+offer\b|\bmethodology\b|\btechnical[\s-]+approach\b|\bwork[\s-]+plan\b|\bimplementation[\s-]+plan\b|\bteam[\s-]+(?:cv|curriculum)|\bkey[\s-]+experts?\b/i;
+  if (technicalRx.test(`${fileName} ${description ?? ""}`.toLowerCase())) return "TECHNICAL";
+
   const adminRx = /\bregistration\b|\bdeclaration\b|\beligibility\b|\bbid\s+bond\b|\bbid\s+security\b|\bbank\s+guarantee\b|\btax\s+clearance\b|\bvat\s+cert|\btin\s+cert|\bincorporation\b|\bundertaking\b|\bintegrity\s+pact\b|\bannex\b|\bschedule\b|\bform\b|\bcompliance\s+(matrix|certif)|\bpower\s+of\s+attorney\b|\baudited\s+financial\b|\bbank\s+statement\b|\bbusiness\s+licen\b/i;
   if (adminRx.test(text)) return "ADMIN";
 
@@ -204,6 +245,26 @@ function fileKey(fileName: string): string {
   return normalize(fileName);
 }
 
+/**
+ * The type of a file several requirements contribute to, independent of the
+ * order they are read in.
+ *
+ * Keeping whichever contributor arrived first made the type depend on row
+ * order, and requirements are read without one: the Pharo plan (2026-10-08)
+ * was confirmed as "Technical Proposal.pdf / ANNEX", the same 14 rows came
+ * back in another order after finalization updated them, the recomputed scope
+ * said "COMPANY_PROFILE", and the export gate refused a correct plan as "not
+ * in current tender-controlled scope". A file named as the main proposal is
+ * that proposal; any other merged file takes the lowest type name, which is
+ * the same whichever order the rows arrive in.
+ */
+function mergedDocumentType(fileName: string, a: string, b: string): string {
+  const base = fileName.replace(/\.[a-z0-9]{2,5}$/i, "");
+  if (/expression[\s._-]*of[\s._-]*interest|\beoi\b/i.test(base)) return "EXPRESSION_OF_INTEREST";
+  if (/\btechnical[\s._-]*proposal\b/i.test(base)) return "TECHNICAL_PROPOSAL";
+  return a <= b ? a : b;
+}
+
 function addFile(files: Map<string, SubmissionPlanFile>, file: SubmissionPlanFile) {
   const key = fileKey(file.exactFileName);
   const existing = files.get(key);
@@ -214,6 +275,7 @@ function addFile(files: Map<string, SubmissionPlanFile>, file: SubmissionPlanFil
 
   files.set(key, {
     ...existing,
+    documentType: mergedDocumentType(existing.exactFileName, existing.documentType, file.documentType),
     required: existing.required || file.required,
     exactOrder: Math.min(existing.exactOrder, file.exactOrder),
     sourceRequirementIds: Array.from(new Set([...existing.sourceRequirementIds, ...file.sourceRequirementIds])),
@@ -225,6 +287,19 @@ function addFile(files: Map<string, SubmissionPlanFile>, file: SubmissionPlanFil
     notes: [existing.notes, file.notes].filter(Boolean).join(" | ") || null,
   });
 }
+
+/**
+ * Positions the proposal first when no tender order places it: the tender
+ * declared no order here (the caller only folds when it names no files), so
+ * the remaining files keep their relative order one step later.
+ */
+function shiftForLeadingProposal(files: Map<string, SubmissionPlanFile>): number {
+  for (const [key, file] of Array.from(files.entries())) files.set(key, { ...file, exactOrder: file.exactOrder + 1 });
+  return 1;
+}
+
+/** Bidder-written narrative that is a section of the technical proposal. */
+const PROPOSAL_SECTION = /technical proposal|cover letter|executive summary|company profile|firm profile|qualification|capabilit|methodology|approach|work\s*plan|implementation plan|quality assurance|risk management|project team|team composition|key personnel|personnel|staffing|\bcvs?\b|curriculum vitae|expert|experience|portfolio|track record|project reference|similar projects|understanding|scope of (?:work|services)/;
 
 function buildFileFromRequirement(requirement: TenderRequirementLike, index: number): SubmissionPlanFile | null {
   const type = requirement.requirementType.toUpperCase();
@@ -243,7 +318,16 @@ function buildFileFromRequirement(requirement: TenderRequirementLike, index: num
   });
   if (!classifier.shouldBePlannedFile) return null;
 
+  // A row the tender words as "submit a financial proposal …" is required
+  // whatever priority label the model gave it: "SCORED" says the proposal is
+  // weighted, not that it is optional. A feasibility-study ToR asking for a
+  // technical and a financial proposal got a plan with no financial file
+  // because the row was SCORED (2026-10-06). The file is the deliverable the
+  // title names ("Financial Proposal"), not the row's heading.
+  const financialProposal = !requirement.exactFileName?.trim()
+    && requiresSubmittedFinancialProposal(requirement.title, `${requirement.title ?? ""} ${requirement.description ?? ""}`.toLowerCase());
   const baseName = requirement.exactFileName?.trim()
+    || (financialProposal ? financialProposalNameInTitle(requirement.title) : null)
     || requirement.title?.trim()
     || `${type.toLowerCase()}-${index + 1}`;
   const format = inferFormat(baseName, `${requirement.description ?? ""} ${requirement.restrictions ?? ""}`);
@@ -253,7 +337,7 @@ function buildFileFromRequirement(requirement: TenderRequirementLike, index: num
     canonicalId: `req-${requirement.id}`,
     exactFileName: fileNameWithExtension(baseName, format),
     documentType: documentTypeFromRequirement(requirement),
-    required: requirement.priority?.toUpperCase() === "MANDATORY" || Boolean(requirement.exactFileName),
+    required: requirement.priority?.toUpperCase() === "MANDATORY" || Boolean(requirement.exactFileName) || financialProposal,
     exactOrder: requirement.exactOrder ?? index + 1,
     format,
     envelope: inferEnvelope(requirement.requirementType, baseName, requirement.description),
@@ -275,7 +359,17 @@ function buildFilesFromExactNames(tender: TenderLike, startOrder: number): Submi
   const orderedNames = exactOrder.length > 0 ? exactOrder : exactNames;
   const sourceNames = orderedNames.length > 0 ? orderedNames : exactNames;
 
-  return sourceNames.map((name, index): SubmissionPlanFile => {
+  // A tender-stated name is still subject to the one rule-vs-file authority:
+  // a name that positively reads as a submission rule ("Email Submission")
+  // describes how to send the package and can never be produced, so it must
+  // not become a required file. Only the positive rule categories are dropped —
+  // the classifier's catch-all is not a reason to discard a name the tender gave.
+  const deliverableNames = sourceNames.filter((name) => {
+    const category = classifySubmissionPlanItem({ title: name, exactFileName: name }).category;
+    return category !== "SUBMISSION_RULE" && category !== "COMMERCIAL_SEPARATION_RULE";
+  });
+
+  return deliverableNames.map((name, index): SubmissionPlanFile => {
     const format = inferFormat(name);
     return {
       canonicalId: `exact-${slug(name)}`,
@@ -324,7 +418,7 @@ export function buildSubmissionPlanWithDerivedFallback(tender: TenderLike): Subm
   if (plan.files.length > 0 || (tender.requirements ?? []).length === 0) return plan;
 
   const derivedEntries = buildDerivedDraftPlan({
-    requirements: (tender.requirements ?? []).map((r) => ({
+    requirements: canonicalRequirementOrder(tender.requirements ?? []).map((r) => ({
       title: r.title,
       description: r.description,
       requirementType: r.requirementType,
@@ -361,19 +455,253 @@ export function buildSubmissionPlanWithDerivedFallback(tender: TenderLike): Subm
 }
 
 export function buildSubmissionPlan(tender: TenderLike): SubmissionPlan {
-  const requirements = tender.requirements ?? [];
+  const requirements = canonicalRequirementOrder(tender.requirements ?? []);
   const files = new Map<string, SubmissionPlanFile>();
   const restrictions = restrictionText(requirements);
 
+  // The tender's own list of file names is the authority on WHAT the
+  // deliverables are; a requirement title is a description of one.
+  //
+  // A requirement row that elaborates a deliverable the tender has already
+  // named must not become a SECOND file. The Pharo tender names exactly one —
+  // exactFileNaming ["Technical Proposal.pdf"] — and also carries a MANDATORY
+  // FORMAT requirement titled "Technical Proposal Structure", which says how
+  // that proposal must be structured. The planner turned the second into its
+  // own deliverable, "Technical Proposal Structure.docx"; generation then
+  // wrote the entire 11,590-word technical proposal into THAT file and
+  // superseded the correctly named one, so the package simultaneously reported
+  // EXTRA_FILES and "MISSING_REQUIRED_FILES: technical proposal.pdf" — the
+  // required deliverable existed, under a name the tender never asked for.
+  //
+  // Folding is by name containment against the declared list and applies only
+  // to rows with no exactFileName of their own, so a row that names its own
+  // file still gets one, and a genuinely different deliverable (an annex, a
+  // financial offer) is untouched: its base name neither contains nor is
+  // contained by a declared name. The row's requirement ids move to the file it
+  // describes, so nothing loses its provenance.
+  const declaredBaseNames = parseStringArray(tender.exactFileNaming)
+    .concat(parseStringArray(tender.exactFileOrder))
+    .map((name) => normalize(name.trim().replace(/\.[a-z0-9]+$/i, "")))
+    .filter(Boolean);
+  const elaboratesDeclaredFile = (requirement: TenderRequirementLike, file: SubmissionPlanFile): string | null => {
+    if ((requirement.exactFileName ?? "").trim()) return null;
+    const base = normalize(file.exactFileName.replace(/\.[a-z0-9]+$/i, ""));
+    if (!base) return null;
+    const byName = declaredBaseNames.find((declared) => declared !== base && (base.includes(declared) || declared.includes(base)));
+    if (byName) return byName;
+    // A row that states which declared file it belongs to is a part of that
+    // file, not a file beside it. AI Analyze returned "Cover Letter" and
+    // "Company Profile" as MANDATORY rows with sectionReference "Technical
+    // Proposal - Required Sections" on a tender that asks for one PDF; the
+    // planner made each its own .docx and the ZIP carried three files. A
+    // financial-envelope row is never folded into another file.
+    if (file.envelope === "FINANCIAL") return null;
+    const container = normalize(requirement.sectionReference ?? "");
+    if (!container) return null;
+    return declaredBaseNames.find((declared) => declared !== base && container.includes(declared)) ?? null;
+  };
+  const foldedRequirementIds = new Map<string, string[]>();
+
   requirements.forEach((requirement, index) => {
     const file = buildFileFromRequirement(requirement, index);
-    if (file) addFile(files, file);
+    if (!file) return;
+    const declaredBase = elaboratesDeclaredFile(requirement, file);
+    if (declaredBase) {
+      foldedRequirementIds.set(declaredBase, [...(foldedRequirementIds.get(declaredBase) ?? []), ...file.sourceRequirementIds]);
+      return;
+    }
+    addFile(files, file);
   });
 
-  buildFilesFromExactNames(tender, files.size + 1).forEach((file) => addFile(files, file));
+  // ── Unnamed proposal sections are sections of ONE proposal ──────────────
+  //
+  // 2026-09-29, Preview, a new tender that names no files: AI Analyze returned
+  // "Company Profile and Qualifications", "Technical Approach and
+  // Methodology", "Project Team Qualifications" and "Portfolio and
+  // Experience" as MANDATORY rows. The planner made the first two separate
+  // required .docx files. Proposal Generation then wrote the complete
+  // Technical Proposal (cover letter, Sections A–H, compliance matrix mapping
+  // each of those rows to a section), and auto-finalize retired it as "outside
+  // the confirmed plan", leaving the package as two short planned-file drafts.
+  //
+  // When the tender states no file names and no single-file rule, a
+  // bidder-written narrative item the row does not name as a file is a
+  // section of the one technical proposal, not a file beside it. Tender
+  // forms, original evidence, financial items and legal instruments (bid
+  // bond, power of attorney, JV/consortium agreement) are untouched, and a
+  // tender that names its files keeps them exactly as named.
+  if (declaredBaseNames.length === 0 && !statedSingleSubmissionFile(requirements)) {
+    const requirementById = new Map(requirements.map((requirement) => [requirement.id, requirement]));
+    const sections = Array.from(files.entries()).filter(([, file]) => {
+      if (file.envelope === "FINANCIAL" || file.templateRequired) return false;
+      if (file.sourceRequirementIds.length === 0) return false;
+      const rows = file.sourceRequirementIds.map((id) => requirementById.get(id));
+      if (rows.some((row) => !row || (row.exactFileName ?? "").trim())) return false;
+      const label = `${file.exactFileName} ${rows.map((row) => `${row!.title} ${row!.description ?? ""}`).join(" ")}`.toLowerCase();
+      if (/financial|commercial|price|pricing|bid bond|bid security|power of attorney|joint venture agreement|consortium agreement/.test(label)) return false;
+      return classifySubmissionPlanItem({ title: file.exactFileName, requirementType: file.documentType }).category === "REQUIRED_OUTPUT_FILE"
+        && PROPOSAL_SECTION.test(file.exactFileName.toLowerCase());
+    });
+    // A narrative row the planner did not make a file at all still needs the
+    // proposal that answers it. 2026-09-30, Preview, a 4-page EOI: "Company
+    // Profile and Tax Registration Documents" (a 25-page profile plus
+    // certificates) was classified as original evidence and "Previous
+    // Telecommunications Tower Experience" is SCORED, so the plan held three
+    // declarations and no EOI response; the profile and experience the tender
+    // scores had nowhere to go. The certificates in such a row remain vault
+    // evidence; the narrative is answered in the one proposal file.
+    const plannedIds = new Set(Array.from(files.values()).flatMap((file) => file.sourceRequirementIds));
+    const hasMainProposal = Array.from(files.values()).some((file) =>
+      /^(?:TECHNICAL_PROPOSAL|EXPRESSION_OF_INTEREST)$/.test(file.documentType)
+      || /\b(?:technical proposal|expression of interest)\b/i.test(file.exactFileName));
+    const narrativeRows = requirements.filter((requirement) => {
+      if (plannedIds.has(requirement.id) || (requirement.exactFileName ?? "").trim()) return false;
+      if (!/^(?:MANDATORY|CRITICAL|SCORED)$/i.test(requirement.priority ?? "")) return false;
+      const title = (requirement.title ?? "").toLowerCase();
+      if (/financial|commercial|price|pricing|bid bond|bid security|power of attorney|joint venture agreement|consortium agreement/.test(title)) return false;
+      return PROPOSAL_SECTION.test(title);
+    });
+    if (sections.length > 0 || (!hasMainProposal && narrativeRows.length > 0)) {
+      const sectionRows = [
+        ...sections.flatMap(([, file]) => file.sourceRequirementIds.map((id) => requirementById.get(id)!)),
+        ...narrativeRows,
+      ];
+      // An expression of interest is a shortlisting submission. A tender that
+      // asks for a technical or a financial proposal wants the proposal, even
+      // when one of its forms is an "expression of interest letter": that row
+      // used to rename an RFP's technical proposal "Expression of Interest".
+      const EOI = /expressions?\s+of\s+interest|\beoi\b/i;
+      const asksForProposal = requirements.some((row) => {
+        const text = `${row.title ?? ""} ${row.description ?? ""}`;
+        return /\btechnical\s+proposal\b/i.test(text) || requiresSubmittedFinancialProposal(row.title, text.toLowerCase());
+      });
+      const isEoi = EOI.test(`${tender.title ?? ""} ${tender.tenderCategory ?? ""}`)
+        || (!asksForProposal && requirements.some((row) => EOI.test(`${row.title} ${row.description ?? ""}`)));
+      const baseName = isEoi ? "Expression of Interest" : "Technical Proposal";
+      const format = inferFormat(baseName, sectionRows.map((row) => `${row.description ?? ""} ${row.restrictions ?? ""}`).join(" "));
+      for (const [key] of sections) files.delete(key);
+      const orders = [
+        ...sections.map(([, file]) => file.exactOrder),
+        ...narrativeRows.map((row) => row.exactOrder ?? Number.POSITIVE_INFINITY),
+      ].filter((order) => Number.isFinite(order));
+      addFile(files, {
+        canonicalId: `proposal-${slug(baseName)}`,
+        exactFileName: fileNameWithExtension(baseName, format),
+        documentType: isEoi ? "EXPRESSION_OF_INTEREST" : "TECHNICAL_PROPOSAL",
+        required: true,
+        exactOrder: orders.length > 0 ? Math.min(...orders) : shiftForLeadingProposal(files),
+        format,
+        envelope: "TECHNICAL",
+        sourceRequirementIds: Array.from(new Set(sectionRows.map((row) => row.id))),
+        pageLimit: tender.pageLimit ?? null,
+        templateRequired: false,
+        templateSourceFileId: null,
+        brandingAllowed: restrictionAllows(restrictions, "letterhead"),
+        signatureAllowed: restrictionAllows(restrictions, "signature"),
+        stampAllowed: restrictionAllows(restrictions, "stamp"),
+        grouping: null,
+        notes: "The tender names no separate files; these sections are parts of the one technical proposal.",
+      });
+    }
+  }
 
+  buildFilesFromExactNames(tender, files.size + 1).forEach((file) => {
+    const base = normalize(file.exactFileName.replace(/\.[a-z0-9]+$/i, ""));
+    const folded = foldedRequirementIds.get(base) ?? [];
+    addFile(files, folded.length > 0
+      ? { ...file, sourceRequirementIds: Array.from(new Set([...file.sourceRequirementIds, ...folded])) }
+      : file);
+  });
+
+  // ── "All documents … as a single PDF file named X" ────────────────────────
+  // See lib/engine/single-submission-file-rule.ts. Bidder-produced files in
+  // the non-financial scope are contents of X, not files beside it.
+  const singleFile = statedSingleSubmissionFile(requirements);
+  if (singleFile) {
+    const targetFormat = inferFormat(singleFile.fileName);
+    const targetKey = fileKey(fileNameWithExtension(singleFile.fileName, targetFormat));
+    const foldedIds: string[] = [...singleFile.requirementIds];
+    for (const [key, file] of Array.from(files.entries())) {
+      if (key === targetKey) continue;
+      // The row that STATES the rule is an instruction about the package, not
+      // a second file ("PDF Submission.pdf" beside the file it names).
+      const onlyStatesTheRule = file.sourceRequirementIds.length > 0
+        && file.sourceRequirementIds.every((id) => singleFile.requirementIds.includes(id));
+      if (onlyStatesTheRule) {
+        files.delete(key);
+        continue;
+      }
+      if (file.envelope === "FINANCIAL") continue;
+      const category = classifySubmissionPlanItem({
+        title: file.exactFileName,
+        requirementType: file.documentType,
+        exactFileName: file.exactFileName,
+      }).category;
+      if (category !== "REQUIRED_OUTPUT_FILE") continue;
+      foldedIds.push(...file.sourceRequirementIds);
+      files.delete(key);
+    }
+    const existing = files.get(targetKey);
+    addFile(files, existing
+      ? { ...existing, sourceRequirementIds: Array.from(new Set([...existing.sourceRequirementIds, ...foldedIds])) }
+      : {
+          canonicalId: `single-${slug(singleFile.fileName)}`,
+          exactFileName: fileNameWithExtension(singleFile.fileName, targetFormat),
+          documentType: "TECHNICAL_PROPOSAL",
+          required: true,
+          exactOrder: 1,
+          format: targetFormat,
+          envelope: "TECHNICAL",
+          sourceRequirementIds: Array.from(new Set(foldedIds)),
+          pageLimit: tender.pageLimit ?? null,
+          templateRequired: false,
+          templateSourceFileId: null,
+          brandingAllowed: restrictionAllows(restrictions, "letterhead"),
+          signatureAllowed: restrictionAllows(restrictions, "signature"),
+          stampAllowed: restrictionAllows(restrictions, "stamp"),
+          grouping: null,
+          notes: "The tender requires the whole submission as this one file; bidder-produced deliverables are its contents.",
+        });
+  }
+
+  // ── The tender's stated attachment order is authoritative ────────────────
+  //
+  // Files are contributed in two passes: one per requirement (ordered by the
+  // requirement's own position) and one for any remaining names in
+  // exactFileNaming/exactFileOrder. Sorting purely on the resulting exactOrder
+  // let requirement iteration order decide the package order, so a tender that
+  // says "Attachments must be named and ordered exactly as follows: 1.
+  // 01-Expression-Of-Interest.docx 2. 02-Company-Profile.docx 3.
+  // 03-Capability-Statement.docx" produced a confirmed Build Plan ordered
+  // 03, 01, 02 — whichever requirement happened to mention a file first.
+  //
+  // Generated documents copy the plan's exactOrder, so the package was
+  // assembled in the wrong order and the export gate refused it with
+  // FILE_ORDER ("Generated file order does not match tender order"). The
+  // ordering the client asked for is not a preference the planner may
+  // reinterpret, so when the tender declares one it decides the sequence;
+  // files it does not name keep their existing relative order behind it.
+  const declaredOrder = parseStringArray(tender.exactFileOrder).length > 0
+    ? parseStringArray(tender.exactFileOrder)
+    : parseStringArray(tender.exactFileNaming);
+  const declaredRank = new Map<string, number>();
+  declaredOrder.forEach((name, index) => {
+    const withExtension = fileNameWithExtension(name, inferFormat(name));
+    declaredRank.set(normalize(withExtension), index);
+    declaredRank.set(normalize(name), index);
+  });
+  const rankOf = (file: SubmissionPlanFile): number =>
+    declaredRank.get(normalize(file.exactFileName)) ?? Number.MAX_SAFE_INTEGER;
+
+  // The plan must never contain a file the stale-plan detector would reject,
+  // or every confirmed plan is stale the moment it is read. Same test, same
+  // fields — see plannedFileIsARule.
   const sortedFiles = Array.from(files.values())
-    .sort((a, b) => a.exactOrder - b.exactOrder || a.exactFileName.localeCompare(b.exactFileName))
+    .filter((file) => !plannedFileIsARule(file).rule)
+    .sort((a, b) =>
+      rankOf(a) - rankOf(b)
+      || a.exactOrder - b.exactOrder
+      || a.exactFileName.localeCompare(b.exactFileName))
     .map((file, index) => ({ ...file, exactOrder: index + 1 }));
 
   const warnings: string[] = [];
@@ -628,7 +956,7 @@ export function buildDerivedDraftPlan(tender: {
   }
 
   // Healthcare / hospital facility
-  if (/hospital|medical|health.?facilit/.test(combinedText)) {
+  if (/\bhospitals?\b|medical|health.?facilit/.test(combinedText)) {
     entries.push({
       name: "Healthcare Infrastructure Technical Proposal",
       documentType: "METHODOLOGY",

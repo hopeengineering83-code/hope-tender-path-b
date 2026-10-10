@@ -26,7 +26,12 @@ export function computeProvenPageNumber(
 
   // 1. Form feeds (\f) are hard page boundaries.
   const formFeeds = (before.match(/\f/g) || []).length;
-  if (formFeeds > 0) {
+  // A document containing form feeds has a hard page map from its first
+  // character: text before the first delimiter is page 1. Requiring a form
+  // feed *before* the match made page 1 uniquely unprovable while pages 2+
+  // were accepted from the same extraction. The PATH tender exposed this on
+  // mandatory first-page evidence.
+  if (text.includes("\f")) {
     const page = formFeeds + 1;
     if (knownTotal !== null && (page < 1 || page > knownTotal)) return null;
     return page;
@@ -61,6 +66,20 @@ export function computeProvenPageNumber(
   return null;
 }
 
+/**
+ * Punctuation a PDF text layer spaces unpredictably: "data - collection",
+ * "OECD - DAC", "New project ;", "( a )". A quote lifted from the page reads
+ * "data-collection", so whitespace touching one of these is not content. It
+ * never joins two letters or digits, so no word or number changes.
+ * (2026-10-06: a ToR's requirement quotes failed every gate on this alone.)
+ */
+const TIGHT_PUNCTUATION = /[-;,:.()[\]|/]/;
+
+/** Drop the whitespace touching TIGHT_PUNCTUATION in already-collapsed text. */
+export function tightenPunctuationSpacing(collapsed: string): string {
+  return collapsed.replace(/ ?([-;,:.()[\]|/]) ?/g, "$1");
+}
+
 /** Minimum normalized quote length worth locating (mirrors grounding floor). */
 const MIN_QUOTE_CHARS = 6;
 
@@ -84,14 +103,20 @@ function buildNormalizedIndexMap(text: string): { normalized: string; map: numbe
   const map: number[] = [];
   let pendingSpace = false;
   for (let i = 0; i < lower.length; i++) {
-    const ch = lower[i];
-    if (/\s/.test(ch)) {
+    const raw = lower[i];
+    const ch = /[\u2010-\u2015\u2212]/.test(raw) ? "-" : raw;
+    if (/\s/.test(ch) || /[•●▪◦\uf0b7]/.test(ch)) {
       if (normalized.length > 0) pendingSpace = true;
       continue;
     }
     if (pendingSpace) {
-      normalized += " ";
-      map.push(i);
+      // Same rule as tightenPunctuationSpacing, so a match here maps back to
+      // the same original offset the containment check found.
+      const last = normalized[normalized.length - 1] ?? "";
+      if (!TIGHT_PUNCTUATION.test(ch) && !TIGHT_PUNCTUATION.test(last)) {
+        normalized += " ";
+        map.push(i);
+      }
       pendingSpace = false;
     }
     normalized += ch;
@@ -126,7 +151,11 @@ export function locateQuoteProvenPage(
   totalPages: number | null | undefined,
 ): number | null {
   if (!originalText || !quote) return null;
-  const needle = quote.toLowerCase().replace(/\s+/g, " ").trim();
+  const needle = tightenPunctuationSpacing(quote.toLowerCase()
+    .replace(/[\u2010-\u2015\u2212]/g, "-")
+    .replace(/[•●▪◦\uf0b7]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim());
   if (needle.length < MIN_QUOTE_CHARS) return null;
   const { normalized, map } = buildNormalizedIndexMap(originalText);
   let idx = normalized.indexOf(needle);
@@ -148,4 +177,32 @@ export function locateQuoteProvenPage(
     idx = normalized.indexOf(needle, idx + 1);
   }
   return provenPage ?? null;
+}
+
+/**
+ * The page a quote sits on in a file's extracted text, or null when the quote
+ * is not in the text (or the page cannot be proven).
+ *
+ * 2026-09-30, Preview: a tender's reference number carried a quote the file
+ * contains and a file id, but the model returned no page. The Build Plan then
+ * refused Run Engine with "Critical metadata field reference has invalid
+ * source page" on every attempt, although the page was provable from the text.
+ */
+export function provenPageOfQuote(
+  text: string | null | undefined,
+  quote: string | null | undefined,
+  totalPages: number | null | undefined,
+): number | null {
+  const haystack = String(text ?? "");
+  const needle = String(quote ?? "").trim();
+  if (!haystack || needle.length < 4) return null;
+  let index = haystack.indexOf(needle);
+  if (index < 0) index = haystack.toLowerCase().indexOf(needle.toLowerCase());
+  if (index < 0) {
+    // Whitespace can differ between the quote and the extracted text.
+    const pattern = needle.split(/\s+/).map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+");
+    const match = new RegExp(pattern, "i").exec(haystack);
+    index = match ? match.index : -1;
+  }
+  return index < 0 ? null : computeProvenPageNumber(haystack, index, totalPages);
 }

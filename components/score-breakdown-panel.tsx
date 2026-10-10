@@ -76,13 +76,13 @@ function scoreColor(score: number): string {
 
 function scoreBadgeColor(score: number): string {
   if (score >= 70) return "text-green-700 bg-green-50";
-  if (score >= 40) return "text-amber-700 bg-amber-50";
+  if (score >= 40) return "text-amber-800 bg-amber-50";
   return "text-red-700 bg-red-50";
 }
 
 function severityBadge(action: CorrectiveAction) {
   if (action.severity === "HIGH") return "border-red-200 bg-red-50 text-red-700";
-  if (action.severity === "MEDIUM") return "border-amber-200 bg-amber-50 text-amber-700";
+  if (action.severity === "MEDIUM") return "border-amber-200 bg-amber-50 text-amber-800";
   return "border-gray-200 bg-gray-50 text-gray-700";
 }
 
@@ -170,12 +170,12 @@ function EntityCard({ entity }: { entity: EntityBreakdown }) {
               </span>
             )}
             {actions.length > 0 && (
-              <span className="rounded bg-amber-50 border border-amber-200 px-1.5 py-0.5 text-xs text-amber-700">
+              <span className="rounded bg-amber-50 border border-amber-200 px-1.5 py-0.5 text-xs text-amber-800">
                 {actions.length} action{actions.length === 1 ? "" : "s"}
               </span>
             )}
             {!hasDims && (
-              <span className="text-xs text-gray-400">No dimension scores — run AI Rematch</span>
+              <span className="text-xs text-gray-400">Dimension scores appear once matching completes</span>
             )}
           </div>
           {hasDims && !open && (
@@ -259,7 +259,7 @@ export default function ScoreBreakdownPanel({ tenderId }: { tenderId: string }) 
   if (!hasAnyMatches) {
     return (
       <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
-        <p className="text-sm text-gray-500">No expert or project matches yet. Run Engine or AI Rematch to generate dimension scores.</p>
+        <p className="text-sm text-gray-500">No expert or project matches yet. Matching runs automatically after analysis; scores appear here when it completes.</p>
       </div>
     );
   }
@@ -318,7 +318,7 @@ export default function ScoreBreakdownPanel({ tenderId }: { tenderId: string }) 
 
       {!data.hasDimensionData && (
         <div className="border-b border-amber-100 bg-amber-50 px-5 py-2 text-xs text-amber-800">
-          <WarningIcon className="inline h-4 w-4 text-amber-500" /> No 12-perspective dimension scores found. Run AI Rematch to populate detailed dimension scoring.
+          <WarningIcon className="inline h-4 w-4 text-amber-500" /> No 12-perspective dimension scores recorded for this match set. Detailed scoring is produced by the matching stage; it will appear once that stage runs against the current revision.
         </div>
       )}
 

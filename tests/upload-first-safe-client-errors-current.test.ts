@@ -5,20 +5,20 @@ import { readFileSync } from "node:fs";
 const source = readFileSync("lib/tender-upload-first.ts", "utf8");
 
 describe("upload-first public error safety", () => {
-  it("does not expose raw storage or extraction exception messages", () => {
+  it("does not expose raw storage exception messages and performs no request-time extraction", () => {
     assert.doesNotMatch(source, /storage failed — \$\{message\}/);
     assert.doesNotMatch(source, /text extraction failed — \$\{message\}/);
     assert.doesNotMatch(source, /const message = storageError instanceof Error \? storageError\.message/);
     assert.doesNotMatch(source, /const message = extractionError instanceof Error \? extractionError\.message/);
     assert.match(source, /secure storage is temporarily unavailable/);
-    assert.match(source, /Run OCR or re-extraction/);
+    assert.doesNotMatch(source, /extractTextFromBuffer|extractionError/);
+    assert.match(source, /WAIT_FOR_SOURCE_EXTRACTION/);
   });
 
   it("keeps exception detail only in server diagnostics", () => {
     assert.match(source, /logger\.error\("\[upload-first\] source storage failed"/);
-    assert.match(source, /logger\.warn\("\[upload-first\] source extraction failed"/);
     assert.match(source, /errorClass: storageError instanceof Error/);
-    assert.match(source, /errorClass: extractionError instanceof Error/);
+    assert.doesNotMatch(source, /source extraction failed|extractionError/);
   });
 
   it("returns a stable final error with request ID and no raw detail field", () => {

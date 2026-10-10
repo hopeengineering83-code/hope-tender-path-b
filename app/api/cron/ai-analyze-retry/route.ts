@@ -1,4 +1,6 @@
+import { secretMatches } from "../../../../lib/secret-compare";
 import { NextRequest, NextResponse } from "next/server";
+import { logger } from "../../../../lib/observability";
 import { prismaReady } from "../../../../lib/prisma";
 import { findJobsDueForRetry, rearmJobForRetry, isAnyProviderEligible } from "../../../../lib/ai-analyze/retry-service";
 
@@ -23,8 +25,8 @@ export async function GET(req: NextRequest) {
   const auth = req.headers.get("authorization") ?? "";
   const workerHeader = req.headers.get("x-worker-secret");
 
-  const isCron = Boolean(cronSecret && cronSecret.length >= 16 && auth === `Bearer ${cronSecret}`);
-  const isWorker = Boolean(workerSecret && workerSecret.length >= 16 && workerHeader === workerSecret);
+  const isCron = Boolean(cronSecret && cronSecret.length >= 16 && secretMatches(auth, `Bearer ${cronSecret}`));
+  const isWorker = Boolean(workerSecret && workerSecret.length >= 16 && secretMatches(workerHeader, workerSecret));
   if (!isCron && !isWorker) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -65,7 +67,7 @@ export async function GET(req: NextRequest) {
       rearmedJobIds,
     });
   } catch (error) {
-    console.error("[ai-analyze-retry] failed", error);
+    logger.error("[ai-analyze-retry] failed", { detail: error instanceof Error ? error.message : String(error) });
     return NextResponse.json({ error: "Retry failed. Check server logs." }, { status: 500 });
   }
 }

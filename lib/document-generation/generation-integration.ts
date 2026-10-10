@@ -142,7 +142,7 @@ export function buildServiceStreamMethodologyBlock(serviceStreams: CompanyServic
   const parts: string[] = [
     "### Service-Stream-Specific Methodology",
     "",
-    `The methodology below is tailored to the following identified service streams: ${streams.join(", ")}.`,
+    `The methodology below covers the ${streams.length === 1 ? "discipline" : "disciplines"} this assignment calls for.`,
     "",
   ];
 

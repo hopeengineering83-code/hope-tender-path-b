@@ -105,8 +105,24 @@ describe("Section C release safety", () => {
     assert.match(result.blockers.join("\n"), /empty|not generated, validated, and approved|not in the confirmed Build Plan/);
   });
 
+  it("accepts the required PDF while retaining its same-base editable DOCX source", async () => {
+    const pdfPlan = { ...planItem, exactFileName: "Technical Proposal.pdf", format: "PDF" as const };
+    const prisma = {
+      tender: { findFirst: async () => ({ id: "t1" }) },
+      generatedDocument: {
+        findMany: async () => ([
+          { id: "source", name: "Technical Proposal", exactFileName: "Technical Proposal.docx", exactOrder: 1, documentType: "TECHNICAL_PROPOSAL", format: "DOCX", generationStatus: "GENERATED", fileContent: "editable source", storagePath: null, validationStatus: "VALIDATED", reviewStatus: "PENDING" },
+          { id: "pdf", name: "Technical Proposal.pdf", exactFileName: "Technical Proposal.pdf", exactOrder: 1, documentType: "PDF", format: "PDF", generationStatus: "GENERATED", fileContent: "final pdf bytes", storagePath: null, validationStatus: "VALIDATED", reviewStatus: "PENDING" },
+        ]),
+      },
+    };
+    const result = await validateConfirmedPlanDocuments(prisma as any, "t1", "u1", [pdfPlan]);
+    assert.equal(result.ok, true, result.blockers.join("\n"));
+    assert.equal(result.exportReadyDocumentCount, 1);
+  });
+
   it("keeps Anthropic last in actual automatic runtime fallback", () => {
-    assert.deepEqual(CANONICAL_AI_PROVIDER_ORDER, ["zai", "cerebras", "mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"]);
+    assert.deepEqual(CANONICAL_AI_PROVIDER_ORDER, ["gemini", "groq", "mistral", "zai", "cerebras", "openrouter", "openai", "together", "deepseek", "anthropic"]);
   });
 
   it("FAIL-CLOSED: undefined hasCurrentConfirmedBuildPlan blocks (not just === false)", () => {

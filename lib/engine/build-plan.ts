@@ -1,8 +1,48 @@
 import { createHash } from "node:crypto";
+import { findSubmissionMethodClause } from "./submission-source-clauses";
+import { ANALYSIS_HASH_FILE_SELECT } from "./tender-analysis-content";
+import { provenPageOfQuote } from "./page-provenance";
+import { normalizeForContainment } from "./evidence-grounding";
 import type { PrismaClient } from "@prisma/client";
 import { buildSubmissionPlan, plannedSubmissionTargetFiles, type SubmissionPlanFile } from "./submission-plan";
 import { isEmailSubmissionMethod, isPhysicalSubmissionMethod, isPortalSubmissionMethod } from "./submission-method-policy";
 import { containsMetadataPlaceholder } from "./metadata-validators";
+import { isValidationPassed } from "./document-output-state";
+import { plannedFileIsARule } from "./submission-plan-classifier";
+
+/**
+ * Plan items a CONFIRMED BuildPlan carries that the current classification
+ * rules say must never have been a file at all.
+ *
+ * A confirmed plan's freshness hash is computed over the STORED items
+ * (computeTenderBuildPlanHash is called with `items`), so a correction to the
+ * classifier does not stale it: a plan confirmed while a requirement was
+ * mis-read as a deliverable keeps demanding that deliverable forever. The live
+ * tender's confirmed plan required "Financial Proposal Omission.docx" — a file
+ * invented from a requirement saying the financial proposal must be OMITTED —
+ * and every downstream gate then blocked on a missing document that must never
+ * be generated.
+ *
+ * Reported as staleness, not repaired in place: the authoritative way to change
+ * a confirmed plan is to rebuild and re-confirm it (Run Engine), which keeps the
+ * source evidence and the BuildPlan revision history intact. Fail closed — the
+ * stale plan authorises nothing until it is rebuilt.
+ */
+export function findNonDeliverablePlanItems(items: BuildPlanItem[]): Array<{ exactFileName: string; rationale: string }> {
+  const phantom: Array<{ exactFileName: string; rationale: string }> = [];
+  for (const item of items) {
+    const exactFileName = String(item.exactFileName ?? "").trim();
+    if (!exactFileName) continue;
+    // ONLY categories that positively mean "this is a rule, not a file" —
+    // see plannedFileIsARule. The classifier's catch-all
+    // (INTERNAL_COMPLIANCE_CONTROL) and attached originals are not phantoms;
+    // treating the catch-all as one fail-closed a confirmed plan containing a
+    // tersely-named item ("1.docx").
+    const verdict = plannedFileIsARule(item);
+    if (verdict.rule) phantom.push({ exactFileName, rationale: verdict.rationale });
+  }
+  return phantom;
+}
 
 export type BuildPlanItem = SubmissionPlanFile;
 export type BuildPlanValidation = { ok: boolean; blockers: string[] };
@@ -186,13 +226,17 @@ export function validateCriticalMetadataEvidenceForBuildPlan(
     draftOptional: boolean = false,
   ) {
     if (!value || !value.trim()) {
-      // In draft phase, non-critical metadata gaps are warnings, not blockers.
-      // The core tender task is requirement extraction and draft-proposal readiness,
-      // not metadata completeness. Final submission gates (Tool A) enforce strictness.
-      if (isDraft && draftOptional) {
-        return;
+      // Owner policy ABSENT_TENDER_FACT_IS_NOT_REQUIRED (tender-fact-authority):
+      // a detail the tender does not state is not required, in draft or final.
+      // Nothing to ground, nothing to block; the bid is built without it.
+      //
+      // The one exception is the delivery endpoint a STATED method depends on:
+      // an email submission with no address, or a hand delivery with no
+      // place, cannot be delivered at all. That stays a blocker.
+      void draftOptional;
+      if (fieldKey === "submissionEmails" || fieldKey === "submissionAddress") {
+        blockers.push(`Critical metadata field ${label} has no value.`);
       }
-      blockers.push(`Critical metadata field ${label} has no value.`);
       return;
     }
     // Reject placeholder values outright (TBD, N/A, Bid-Team to confirm, etc.)
@@ -218,8 +262,21 @@ export function validateCriticalMetadataEvidenceForBuildPlan(
       return;
     }
     if (typeof sourcePage !== "number" || sourcePage < 1) {
-      blockers.push(`Critical metadata field ${label} has invalid source page.`);
-      return;
+      // A page the text proves is as good as a page the model returned.
+      // 2026-09-30, Preview: a stated reference number had a file id and a
+      // contained quote but no page, and every Run Engine stopped here. The
+      // quote-containment check below still applies in full.
+      const fileForPage = activeFileMap.get(sourceFileId!);
+      const proven = provenPageOfQuote(
+        (fileForPage as { extractedText?: string | null } | undefined)?.extractedText,
+        sourceQuote,
+        (fileForPage as { totalPages?: number | null } | undefined)?.totalPages,
+      );
+      if (proven === null) {
+        blockers.push(`Critical metadata field ${label} has invalid source page.`);
+        return;
+      }
+      sourcePage = proven;
     }
     // ENFORCE sourcePage <= totalPages when totalPages exists
     const file = activeFileMap.get(sourceFileId!);
@@ -236,8 +293,9 @@ export function validateCriticalMetadataEvidenceForBuildPlan(
       }
       // QUOTE CONTAINMENT: normalized quote must be in the file's extracted text
       const file = activeFileMap.get(sourceFileId!);
-      const fileText = String(file?.extractedText ?? "").toLowerCase().replace(/\s+/g, " ").trim();
-      const normalizedQuote = quote.toLowerCase().replace(/\s+/g, " ").trim();
+      const fileText = normalizeForContainment(String(file?.extractedText ?? ""));
+      // One containment rule with the grounding check (dash variants, list glyphs).
+    const normalizedQuote = normalizeForContainment(quote);
       if (fileText.length === 0 || !fileText.includes(normalizedQuote)) {
         blockers.push(`Critical metadata field ${label} source quote is not contained in the referenced active TenderFile extracted text.`);
       }
@@ -302,16 +360,31 @@ export function validateCriticalMetadataEvidenceForBuildPlan(
     // Portal: require one fully grounded declared endpoint
     const hasEmail = effEmails && tender.submissionEmailSourceFileId && tender.submissionEmailSourcePage;
     const hasAddress = effAddress && tender.submissionAddressSourceFileId && tender.submissionAddressSourcePage;
-    if (!hasEmail && !hasAddress) {
-      blockers.push("Portal submission requires at least one fully grounded endpoint (email or address with source file + page).");
+    // A portal is its own endpoint: the grounded clause that states it is the
+    // delivery endpoint (the submissionMethod check above verifies its file,
+    // page and quote). An e-mail or address the tender never states for a
+    // portal is not required (ABSENT_TENDER_FACT_IS_NOT_REQUIRED).
+    const portalClauseGrounded = Boolean(tender.submissionMethodSourceFileId && tender.submissionMethodSourcePage && tender.submissionMethodSourceQuote)
+      && findSubmissionMethodClause("portal", tender.submissionMethodSourceQuote) !== null;
+    if (!hasEmail && !hasAddress && portalClauseGrounded) {
+      // Nothing further: the portal clause is the endpoint.
+    } else if (!hasEmail && !hasAddress) {
+      blockers.push("Portal submission requires its portal clause, or an email or address, grounded in the source (file + page + quote).");
     } else if (hasEmail) {
       checkField("submissionEmails", effEmails, tender.submissionEmailSourceFileId, tender.submissionEmailSourcePage, tender.submissionEmailSourceQuote, true, "submissionEmails");
       checkEmailSubjectIfPresent();
     } else {
       checkField("submissionAddress", effAddress, tender.submissionAddressSourceFileId, tender.submissionAddressSourcePage, tender.submissionAddressSourceQuote, true, "submissionAddress");
     }
+  } else if (!String(method ?? "").trim()) {
+    // No submission method stated in the tender: not required
+    // (ABSENT_TENDER_FACT_IS_NOT_REQUIRED). Any stated endpoint is still
+    // checked, so a present-but-ungrounded email or address cannot slip by.
+    if (effEmails?.trim()) checkField("submissionEmails", effEmails, tender.submissionEmailSourceFileId, tender.submissionEmailSourcePage, tender.submissionEmailSourceQuote, true, "submissionEmails");
+    if (effAddress?.trim()) checkField("submissionAddress", effAddress, tender.submissionAddressSourceFileId, tender.submissionAddressSourcePage, tender.submissionAddressSourceQuote, true, "submissionAddress");
   } else {
-    // Unknown/empty/malformed submission method: BLOCK — do not fall back.
+    // A method is STATED but unrecognisable ("Not", garbage): present but
+    // unusable, so it still blocks — do not fall back.
     blockers.push(`Unsupported or unknown submission method: "${method ?? ""}". Only email, physical, or portal methods are supported.`);
   }
 
@@ -340,8 +413,12 @@ export async function assertTenderReadyToDraftBuildPlan(
   const tender = await prisma.tender.findFirst({
     where: { id: tenderId, userId },
     include: {
-      files: { where: { deletionStatus: "ACTIVE" }, select: { id: true, originalFileName: true, extractedText: true, deletionStatus: true, extractionScore: true, totalPages: true, extractedPages: true, ocrPages: true, failedPages: true } },
-      requirements: { select: { id: true, title: true, description: true, requirementType: true, priority: true, exactFileName: true, exactOrder: true, sourceTenderFileId: true, sourcePageNumber: true, sourceExactQuote: true } },
+      files: { where: { deletionStatus: "ACTIVE" }, select: { ...ANALYSIS_HASH_FILE_SELECT, ocrPages: true } },
+      // Every field buildSubmissionPlan reads. The confirmation re-derivation
+      // (validateBuildPlanForConfirmation) loads full rows; a narrower load
+      // here let the draft and its verification plan different files from
+      // the same tender (restrictions feed file notes and format).
+      requirements: { orderBy: [{ createdAt: "asc" }, { id: "asc" }], select: { id: true, title: true, description: true, requirementType: true, priority: true, exactFileName: true, exactOrder: true, requiredQuantity: true, pageLimit: true, restrictions: true, sectionReference: true, sourceTenderFileId: true, sourcePageNumber: true, sourceExactQuote: true } },
       // Load metadata overrides so validateCriticalMetadataEvidenceForBuildPlan
       // can validate EFFECTIVE values (override ?? raw), mirroring the canonical hash.
       metadataOverrides: { select: { field: true, fieldState: true, overrideValue: true, reason: true, confirmationBasis: true, authorityClass: true, confirmedAt: true } },
@@ -377,8 +454,11 @@ export async function assertTenderReadyToDraftBuildPlan(
 
   // 5. Current analysis hash + completed chunks
   const { buildTenderAnalysisContent, computeAnalysisContentHash } = await import("./tender-analysis-content");
-  const company = await prisma.company.findUnique({ where: { userId }, select: { documents: { select: { originalFileName: true, category: true, extractedText: true } } } }).catch(() => null);
-  const currentContentHash = computeAnalysisContentHash(buildTenderAnalysisContent({ title: tender.title, description: tender.description, intakeSummary: tender.intakeSummary, files: tender.files as any[] }, company ?? undefined));
+  // analysisInputHash is rebound at successful promotion to the persisted tender
+  // source revision. Company Vault material remains part of the immutable
+  // provider-input snapshot, but Engine's automatic Vault verification must not
+  // make a just-current tender analysis stale before Build Plan verification.
+  const currentContentHash = computeAnalysisContentHash(buildTenderAnalysisContent({ title: tender.title, description: tender.description, intakeSummary: tender.intakeSummary, files: tender.files as any[] }));
   const latestJob = await prisma.aiJob.findFirst({ where: { tenderId, jobType: "AI_ANALYZE", tender: { userId } }, orderBy: { createdAt: "desc" }, select: { id: true, analysisInputHash: true } });
   if (latestJob?.analysisInputHash && latestJob.analysisInputHash !== currentContentHash) {
     return { ok: false, code: "ANALYSIS_HASH_MISMATCH", message: "Tender content changed since the last analysis. Re-run AI Analyze.", status: 422 };
@@ -417,8 +497,9 @@ export async function assertTenderReadyToDraftBuildPlan(
       return { ok: false, code: "REQUIREMENT_SOURCE_UNGROUNDED", message: `Mandatory requirement ${req.id} has no meaningful source quote.`, status: 422 };
     }
     const file = activeFileMap.get(req.sourceTenderFileId)!;
-    const fileText = String(file.extractedText ?? "").toLowerCase().replace(/\s+/g, " ").trim();
-    const normalizedQuote = quote.toLowerCase().replace(/\s+/g, " ").trim();
+    const fileText = normalizeForContainment(String(file.extractedText ?? ""));
+    // One containment rule with the grounding check (dash variants, list glyphs).
+    const normalizedQuote = normalizeForContainment(quote);
     if (!fileText.includes(normalizedQuote)) {
       return { ok: false, code: "REQUIREMENT_QUOTE_NOT_IN_FILE", message: `Mandatory requirement ${req.id} source quote is not contained in the referenced active TenderFile extracted text.`, status: 422 };
     }
@@ -446,8 +527,35 @@ function planItemKey(item: Pick<BuildPlanItem, "exactFileName" | "exactOrder" | 
   return `${Number(item.exactOrder)}::${normalizePlanName(item.exactFileName)}::${normalizeText(item.documentType)}`;
 }
 
+/**
+ * Identity used to match a PLAN ITEM to a GENERATED DOCUMENT.
+ *
+ * Deliberately the exact file name alone. planItemKey additionally folds in
+ * exactOrder and documentType, which is correct when comparing one plan against
+ * another (both sides come from the same builder) but wrong here: the plan's
+ * documentType is derived from the source requirement's type while the
+ * generator assigns its own classification to the row it writes. On a real run
+ * those disagree — a plan item typed EXPERIENCE against a document the
+ * generator typed PROJECT_REFERENCE_PACKAGE for the very same
+ * "01-Expression-Of-Interest.docx" — and the compound key then reported that
+ * one file BOTH as "not in the confirmed Build Plan" and as "missing", so the
+ * export failed with CONFIRMED_PLAN_DOCUMENTS_INCOMPLETE.
+ *
+ * The exact file name is the identity the tender prescribes and the name the
+ * client receives, so it is the correct thing to match on. Order and type are
+ * still validated in their own right by the plan-item checks.
+ */
+function planDocumentMatchKey(exactFileName: string | null | undefined): string {
+  return normalizePlanName(exactFileName ?? "");
+}
+
+// The draft preflight, AI Analyze's grounding and the panels all compare
+// through normalizeForContainment (dash variants, list glyphs). Confirmation
+// compared lowercase/whitespace only, so a quote over a bulleted list
+// ("Technical Proposal • Understanding of the assignment; …") passed the
+// draft and then refused the automatic Build Plan (2026-10-06).
 function quoteSupported(extractedText: unknown, quote: string): boolean {
-  return normalizeText(extractedText).includes(normalizeText(quote));
+  return normalizeForContainment(String(extractedText ?? "")).includes(normalizeForContainment(quote));
 }
 
 export async function computeTenderBuildPlanHash(prisma: PrismaClient, tenderId: string, userId: string, items?: BuildPlanItem[]): Promise<string | null> {
@@ -469,7 +577,7 @@ export async function computeTenderBuildPlanHash(prisma: PrismaClient, tenderId:
       // even when the columns are populated, diverging from the validator.
       referenceSourceFileId: true, referenceSourcePage: true, referenceSourceQuote: true,
       files: { where: { deletionStatus: "ACTIVE" }, orderBy: { createdAt: "asc" }, select: { id: true, originalFileName: true, extractedText: true, deletionStatus: true, totalPages: true } },
-      requirements: { orderBy: { createdAt: "asc" }, select: { id: true, title: true, description: true, requirementType: true, priority: true, exactFileName: true, exactOrder: true, sourceTenderFileId: true, sourcePageNumber: true, sourceExactQuote: true } },
+      requirements: { orderBy: [{ createdAt: "asc" }, { id: "asc" }], select: { id: true, title: true, description: true, requirementType: true, priority: true, exactFileName: true, exactOrder: true, sourceTenderFileId: true, sourcePageNumber: true, sourceExactQuote: true } },
     },
   });
   if (!tender) return null;
@@ -573,7 +681,7 @@ export async function buildDraftBuildPlan(prisma: PrismaClient, tenderId: string
 
 export async function validateBuildPlanForConfirmation(prisma: PrismaClient, tenderId: string, userId: string, items: BuildPlanItem[]): Promise<BuildPlanValidation> {
   const blockers: string[] = [];
-  const tender = await prisma.tender.findFirst({ where: { id: tenderId, userId }, include: { files: true, requirements: true, metadataOverrides: { select: { field: true, fieldState: true, overrideValue: true, reason: true, confirmationBasis: true, authorityClass: true, confirmedAt: true } } } });
+  const tender = await prisma.tender.findFirst({ where: { id: tenderId, userId }, include: { files: true, requirements: { orderBy: [{ createdAt: "asc" }, { id: "asc" }] }, metadataOverrides: { select: { field: true, fieldState: true, overrideValue: true, reason: true, confirmationBasis: true, authorityClass: true, confirmedAt: true } } } });
   if (!tender) return { ok: false, blockers: ["Tender not found or not owned by actor."] };
   const activeFiles = new Map(tender.files.filter((f: any) => f.deletionStatus === "ACTIVE").map((f: any) => [f.id, f]));
   const reqs = new Map(tender.requirements.map((r: any) => [r.id, r]));
@@ -618,10 +726,10 @@ export async function getCurrentConfirmedBuildPlan(prisma: PrismaClient, tenderI
   // Safe guard: if the prisma client doesn't have buildPlan (e.g., mock in unit tests),
   // return a blocked state instead of crashing.
   if (!(prisma as any).buildPlan || typeof (prisma as any).buildPlan.findFirst !== "function") {
-    return { ok: false as const, blocker: "No confirmed Build Plan exists." };
+    return { ok: false as const, blocker: "No source-verified Build Plan exists." };
   }
   const plan = await (prisma as any).buildPlan.findFirst({ where: { tenderId, status: "CONFIRMED", tender: { userId } }, orderBy: { updatedAt: "desc" } });
-  if (!plan) return { ok: false as const, blocker: "No confirmed Build Plan exists." };
+  if (!plan) return { ok: false as const, blocker: "No source-verified Build Plan exists." };
   // FAIL CLOSED on corrupted plan items — a plan whose contents cannot be
   // read must never authorize generation or export.
   let items: BuildPlanItem[];
@@ -630,8 +738,21 @@ export async function getCurrentConfirmedBuildPlan(prisma: PrismaClient, tenderI
     if (!Array.isArray(parsed)) throw new Error("itemsJson is not an array");
     items = parsed as BuildPlanItem[];
   } catch {
-    return { ok: false as const, blocker: "Confirmed Build Plan items are corrupted and cannot be read. Rebuild and re-confirm the Build Plan." };
+    return { ok: false as const, blocker: "Source-verified Build Plan items are corrupted and cannot be read. Run Engine to rebuild and verify the plan." };
   }
+  // A confirmed plan that still demands a file the current rules say is a RULE,
+  // not a deliverable, is stale regardless of what its hash says — the hash is
+  // computed over the stored items, so it cannot notice this on its own.
+  const phantomItems = findNonDeliverablePlanItems(items);
+  if (phantomItems.length > 0) {
+    return {
+      ok: false as const,
+      blocker: `Source-verified Build Plan contains ${phantomItems.length} planned file(s) that are submission rules, not deliverables: ${
+        phantomItems.map((p) => `"${p.exactFileName}" (${p.rationale})`).join("; ")
+      }. Run Engine to rebuild and re-confirm the plan.`,
+    };
+  }
+
   // Reduced unit-test prisma mocks don't model the tables that
   // computeTenderBuildPlanHash reads. Detect that EXPLICITLY (missing model
   // delegates) and only then skip hash verification. A real PrismaClient
@@ -649,10 +770,10 @@ export async function getCurrentConfirmedBuildPlan(prisma: PrismaClient, tenderI
   try {
     currentHash = await computeTenderBuildPlanHash(prisma, tenderId, userId, items);
   } catch {
-    return { ok: false as const, blocker: "Confirmed Build Plan freshness could not be verified (hash computation failed). Retry, or rebuild and re-confirm the Build Plan." };
+    return { ok: false as const, blocker: "Build Plan freshness could not be verified (hash computation failed). Run Engine to rebuild and source-verify the plan." };
   }
   const hashOk = plan.confirmedRevision === plan.revision && plan.confirmedContentHash === plan.contentHash && currentHash === plan.confirmedContentHash;
-  if (!hashOk) return { ok: false as const, blocker: "Confirmed Build Plan is stale or hash/revision mismatched." };
+  if (!hashOk) return { ok: false as const, blocker: "Source-verified Build Plan is stale or hash/revision mismatched. Run Engine to rebuild it." };
   // STRICT CRITICAL METADATA EVIDENCE: even if hash matches, reject if
   // metadata evidence is no longer valid (e.g., source file was deleted).
   const fullTender = await prisma.tender.findFirst({
@@ -662,7 +783,7 @@ export async function getCurrentConfirmedBuildPlan(prisma: PrismaClient, tenderI
   if (fullTender) {
     const metaValidation = validateCriticalMetadataEvidenceForBuildPlan(fullTender as any, fullTender.files as any[], (fullTender as any).metadataOverrides ?? []);
     if (!metaValidation.ok) {
-      return { ok: false as const, blocker: `Confirmed Build Plan metadata evidence is no longer valid: ${metaValidation.blockers.join("; ")}` };
+      return { ok: false as const, blocker: `Build Plan source evidence is no longer valid: ${metaValidation.blockers.join("; ")}` };
     }
   }
   return { ok: true as const, plan, items, currentHash };
@@ -684,7 +805,7 @@ export async function validateBuildPlanItemsAtRuntime(
   const blockers: string[] = [];
   const tender = await prisma.tender.findFirst({
     where: { id: tenderId, userId },
-    include: { files: true, requirements: true },
+    include: { files: true, requirements: { orderBy: [{ createdAt: "asc" }, { id: "asc" }] } },
   });
   if (!tender) return { ok: false, blockers: ["Tender not found or not owned by actor."] };
 
@@ -753,7 +874,10 @@ export async function validateConfirmedPlanDocuments(prisma: PrismaClient, tende
   if (!tender) return { ok: false, blockers: ["Tender not found or not owned by actor."], exportReadyDocumentCount: 0 };
 
   const requiredItems = items.filter((item) => item.required);
-  const requiredKeys = new Set(requiredItems.map(planItemKey));
+  const requiredKeys = new Set(requiredItems.map((item) => planDocumentMatchKey(item.exactFileName)));
+  const requiredBaseNames = new Set(
+    requiredItems.map((item) => planDocumentMatchKey(item.exactFileName).replace(/\.[a-z0-9]+$/i, "")),
+  );
   const docs = await prisma.generatedDocument.findMany({
     where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
     select: { id: true, name: true, documentType: true, exactFileName: true, exactOrder: true, format: true, fileContent: true, storagePath: true, generationStatus: true, validationStatus: true, reviewStatus: true },
@@ -761,26 +885,36 @@ export async function validateConfirmedPlanDocuments(prisma: PrismaClient, tende
   let exportReadyDocumentCount = 0;
   const docsByKey = new Map<string, typeof docs>();
   for (const doc of docs) {
-    const key = planItemKey({ exactFileName: doc.exactFileName ?? doc.name, exactOrder: doc.exactOrder ?? -1, documentType: doc.documentType });
+    const key = planDocumentMatchKey(doc.exactFileName ?? doc.name);
     const bucket = docsByKey.get(key) ?? [];
     bucket.push(doc);
     docsByKey.set(key, bucket);
-    if (!requiredKeys.has(key) && doc.generationStatus === "GENERATED") blockers.push(`Generated document ${doc.name} is not in the confirmed Build Plan.`);
+    const isRetainedAlternateFormatSource = requiredBaseNames.has(key.replace(/\.[a-z0-9]+$/i, ""));
+    if (!requiredKeys.has(key) && !isRetainedAlternateFormatSource && doc.generationStatus === "GENERATED") {
+      blockers.push(`Generated document ${doc.name} is not in the confirmed Build Plan.`);
+    }
   }
 
   for (const item of requiredItems) {
-    const key = planItemKey(item);
+    const key = planDocumentMatchKey(item.exactFileName);
     const matches = docsByKey.get(key) ?? [];
     const ready = matches.filter((doc) =>
       doc.generationStatus === "GENERATED" &&
       generatedDocumentHasContent(doc) &&
-      ["VALIDATED", "APPROVED", "READY_FOR_EXPORT"].includes(doc.validationStatus) &&
-      ["APPROVED", "READY_FOR_EXPORT", "REPLACE_WITH_ORIGINAL"].includes(doc.reviewStatus),
+      (
+        // Routine generated outputs become machine-export-eligible when the
+        // canonical validator passes. Human reviewStatus remains an audit and
+        // legal-release authority; it is not a second per-document pipeline
+        // gate. Tender-issued originals remain eligible only through their
+        // explicit REPLACE_WITH_ORIGINAL path.
+        isValidationPassed(doc.validationStatus) ||
+        doc.reviewStatus === "REPLACE_WITH_ORIGINAL"
+      ),
     );
     if (matches.length === 0) blockers.push(`Required plan file ${item.exactOrder} ${item.exactFileName} is missing.`);
     if (matches.length > 1) blockers.push(`Required plan file ${item.exactOrder} ${item.exactFileName} has duplicate generated rows.`);
     if (matches.some((doc) => !generatedDocumentHasContent(doc))) blockers.push(`Required plan file ${item.exactOrder} ${item.exactFileName} is empty.`);
-    if (matches.length > 0 && ready.length !== 1) blockers.push(`Required plan file ${item.exactOrder} ${item.exactFileName} is not generated, validated, and approved for export.`);
+    if (matches.length > 0 && ready.length !== 1) blockers.push(`Required plan file ${item.exactOrder} ${item.exactFileName} is not generated and machine-validated for export, or is still awaiting its genuine tender-issued original.`);
     exportReadyDocumentCount += ready.length;
   }
 

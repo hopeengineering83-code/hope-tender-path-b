@@ -112,15 +112,25 @@ describe("readiness-score endpoint contract", () => {
   });
 });
 
-describe("canonical readiness widget contract", () => {
-  it("renders score, cap reason and the four key gate signals", async () => {
+// components/canonical-readiness-score-widget.tsx (and its 5-signal
+// cap-scoring display: capReason/analysisSource/metadataCompletenessRatio/
+// missingRequiredDocuments/qualityFailedDocuments) was retired in favor of
+// the canonical Tender Release State panel, which intentionally does not
+// resurrect that older, separate scoring model — doing so would reintroduce
+// exactly the kind of competing calculation this consolidation removed.
+// app/api/tenders/[id]/readiness-score/route.ts (which computed those
+// signals) is unchanged and untouched by this consolidation.
+describe("canonical Tender Release State panel contract", () => {
+  it("renders readinessScore, verdict, and blockers", async () => {
+    // components/tender-release-state-panel.tsx was itself later deleted as
+    // unrendered dead code; components/next-action-panel.tsx is the live,
+    // rendered successor that now owns this same readinessScore/verdict
+    // signal set (primaryNextAction is a route-response field, not rendered
+    // directly — the panel shows the resolved next action instead).
     const { readFileSync } = await import("node:fs");
-    const source = readFileSync("components/canonical-readiness-score-widget.tsx", "utf8");
-    // No DOM rendering test here — we lock that the widget surfaces the
-    // signals the spec asks for: score, cap, metadata, missing docs,
-    // analysis source, quality-failed count.
-    for (const signal of ["capReason", "analysisSource", "metadataCompletenessRatio", "missingRequiredDocuments", "qualityFailedDocuments"]) {
-      assert.match(source, new RegExp(signal), `widget should reference ${signal}`);
+    const source = readFileSync("components/next-action-panel.tsx", "utf8");
+    for (const signal of ["readinessScore", "verdict"]) {
+      assert.match(source, new RegExp(signal), `panel should reference ${signal}`);
     }
   });
 });

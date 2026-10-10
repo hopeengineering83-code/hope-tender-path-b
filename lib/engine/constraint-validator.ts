@@ -45,7 +45,7 @@ export type ConstraintViolation = {
   location: string | null;
   /** Severity. CRITICAL violations should block export when surfaced through the validate pipeline. */
   severity: "CRITICAL" | "WARNING";
-  /** One-sentence remediation hint for the rewriter / human reviewer. */
+  /** One-sentence remediation hint for the rewriter. */
   suggestion: string;
 };
 

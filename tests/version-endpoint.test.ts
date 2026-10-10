@@ -4,7 +4,7 @@
 //   1. The version route returns ok + required fields.
 //   2. The response does not expose secrets.
 //   3. Feature flags include the expected post-#625 features.
-//   4. CollapsiblePanel component contract (controlled, props present).
+//   4. BuildVersionBadge module contract.
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -76,14 +76,13 @@ describe("/api/version endpoint contract", () => {
   });
 });
 
-// ── 2. CollapsiblePanel component contract ───────────────────────────────────
+// ── 2. Build version badge component contract ────────────────────────────────
+//
+// The CollapsiblePanel smoke test that used to live here was removed with the
+// component: nothing in the app rendered it, so the test only proved a dead
+// module still parsed.
 
-describe("CollapsiblePanel component contract", () => {
-  it("CollapsiblePanel module exports a function", async () => {
-    const mod = await import("../components/collapsible-panel.js");
-    assert.strictEqual(typeof mod.CollapsiblePanel, "function", "CollapsiblePanel must be exported");
-  });
-
+describe("BuildVersionBadge component contract", () => {
   it("BuildVersionBadge module exports a function", async () => {
     const mod = await import("../components/build-version-badge.js");
     assert.strictEqual(typeof mod.BuildVersionBadge, "function", "BuildVersionBadge must be exported");

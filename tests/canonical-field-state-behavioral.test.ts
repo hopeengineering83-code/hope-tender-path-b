@@ -95,11 +95,13 @@ describe("canonical resolver — behavioral gate decisions", () => {
     assert.notEqual(field(r, "deadline").blockerReason, null);
   });
 
-  it("blocks FINAL export when a critical field (clientName) is missing with no override — draft proceeds", () => {
-    // Authority model: missing critical field blocks FINAL export only.
+  it("an absent critical field (clientName) is NOT_STATED and blocks nothing (owner policy)", () => {
+    // ABSENT_TENDER_FACT_IS_NOT_REQUIRED: a detail the tender does not state
+    // is not required. The proposal is prepared without it.
     const r = resolve(cleanTender({ clientName: null, procuringEntityName: null, clientNameSourcePage: null, clientNameSourceQuote: null, clientNameSourceFileId: null }));
-    assert.equal(r.hasExportBlocker, true); // Final IS blocked
-    assert.notEqual(field(r, "clientName").blockerReason, null);
+    assert.equal(field(r, "clientName").status, "NOT_STATED");
+    assert.equal(field(r, "clientName").blockerReason, null);
+    assert.equal(r.hasExportBlocker, false);
   });
 
   it("blocks FINAL export when a critical field contains a placeholder — draft proceeds", () => {
@@ -109,22 +111,21 @@ describe("canonical resolver — behavioral gate decisions", () => {
     assert.ok(field(r, "clientName").blockerReason !== null);
   });
 
-  it("blocks FINAL export when deadline is marked NOT_APPLICABLE (never-N/A field) — draft proceeds", () => {
-    // Authority model: NOT_APPLICABLE on a never-N/A field blocks FINAL export only.
-    // Draft work proceeds (the tender can still be analyzed, requirements extracted, etc.).
+  it("deadline marked NOT_APPLICABLE is accepted (owner policy: an unstated deadline is not required)", () => {
     const r = resolve(cleanTender(), {
       overrides: [{ field: "deadline", fieldState: "NOT_APPLICABLE", overrideValue: null, reason: "x", overriddenBy: "u", createdAt: new Date() }],
     });
-    assert.ok(field(r, "deadline").blockerReason !== null);
-    assert.equal(r.hasExportBlocker, true); // Final IS blocked
+    assert.equal(field(r, "deadline").status, "NOT_APPLICABLE");
+    assert.equal(field(r, "deadline").blockerReason, null);
+    assert.equal(r.hasExportBlocker, false);
   });
 
-  it("blocks FINAL export when an always-critical field is marked NOT_APPLICABLE — draft proceeds", () => {
-    // Authority model: NOT_APPLICABLE on a critical field blocks FINAL export only.
+  it("a critical field marked NOT_APPLICABLE is accepted (owner policy)", () => {
     const r = resolve(cleanTender({ clientName: null, procuringEntityName: null }), {
       overrides: [{ field: "clientName", fieldState: "NOT_APPLICABLE", overrideValue: null, reason: "x", overriddenBy: "u", createdAt: new Date() }],
     });
-    assert.equal(r.hasExportBlocker, true); // Final IS blocked
+    assert.equal(field(r, "clientName").blockerReason, null);
+    assert.equal(r.hasExportBlocker, false);
   });
 
   it("USER_EDITED on a critical field is a candidate — does NOT block draft, blocks final export only", () => {
@@ -204,7 +205,7 @@ describe("canonical resolver — extended panel fields + chip mapping", () => {
     const naCritical = resolve(cleanTender({ clientName: null, procuringEntityName: null }), {
       overrides: [{ field: "clientName", fieldState: "NOT_APPLICABLE" as any, overrideValue: null, reason: "x", overriddenBy: "u", createdAt: new Date() }],
     });
-    assert.equal(canonicalToClientChip(field(naCritical, "clientName")), "BLOCKED");
+    assert.equal(canonicalToClientChip(field(naCritical, "clientName")), "NOT_APPLICABLE");
 
     const confirmed = resolve(cleanTender({ clientName: null, procuringEntityName: null }), {
       overrides: [{ field: "clientName", fieldState: "USER_CONFIRMED" as any, overrideValue: "Nairobi County", reason: "ok", overriddenBy: "u", createdAt: new Date() }],

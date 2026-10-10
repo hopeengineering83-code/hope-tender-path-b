@@ -53,3 +53,18 @@ test-results/
 build-results/
 playwright-report/
 test-results-e2e/
+# Written by the "Browser smoke…" and "Upload credential-free exact-head
+# acceptance evidence" CI steps. browser-results/playwright.log is raw test
+# stdout and acceptance-evidence/ holds generated DOCX/PDF/ZIP and screenshots
+# — both are uploaded as workflow artifacts, never committed.
+browser-results/
+acceptance-evidence/
+.env*
+.ci-env.sh
+.start-drive-server.sh
+.gemini-key.sh
+# Local diagnostic session token printed by pipeline-drive-seed.mjs. It is a
+# real credential for the harness user — never commit it.
+.drive-cookie
+.one-drive.sh
+.drive-out.txt

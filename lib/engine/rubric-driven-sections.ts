@@ -28,10 +28,10 @@
  *      into the AI prompts so Claude organizes its output around
  *      the tender's actual criteria, not generic A/B/C/D.
  *
- *   2. Add a deterministic post-pass that, after AI generation,
- *      ensures the rubric criteria appear as top-level OR sub-section
- *      headings somewhere in the proposal (so the evaluator's
- *      scoring rubric maps line-by-line).
+ *   2. Report, after generation, the criteria the proposal gives no
+ *      heading of their own. Nothing is injected for them: Section F
+ *      maps every criterion, with its weight, to the section that
+ *      answers it (see the post-pass below).
  *
  * The canonical A/B/C/D structure is preserved as the SUPERSTRUCTURE.
  * Rubric-named sub-sections are inserted INSIDE the matching parent
@@ -245,121 +245,41 @@ export function buildRubricPromptDirective(evaluationWeights: EvaluationWeight[]
 
 // ─── Deterministic post-pass ─────────────────────────────────────────────────
 //
-// After the AI generates the proposal, ensure every rubric criterion
-// has a heading present. If any are missing, inject a substantive
-// paragraph (not a stub placeholder) inside the appropriate parent
-// section so the evaluator can score against the heading immediately.
-
-function buildCriterionContent(
-  criterion: string,
-  parentSection: RubricSection,
-  weight: string,
-  primarySector: string,
-): string {
-  const c = criterion.toLowerCase();
-  const sector = primarySector.toLowerCase();
-
-  if (parentSection === "SECTION_A") {
-    if (/personnel|team|expert|staff|cv/.test(c)) {
-      return `The proposed team has been assembled specifically for this assignment. Each key expert holds current professional registration, brings a minimum of 10 years of directly relevant experience, and has a documented track record on comparable ${sector} assignments. CVs and role responsibilities are provided in Annex A. The Team Leader holds overall accountability for deliverable quality and client communication.`;
-    }
-    return `Our firm maintains current registration and licensing with the relevant professional bodies, has operated for more than a decade in the ${sector} sector, and carries full professional-indemnity and public-liability insurance. A copy of our current registration certificate is included in the submission. Our company profile details financial standing, headcount, and the organizational structure supporting this assignment.`;
-  }
-
-  if (parentSection === "SECTION_B") {
-    return `Our project portfolio includes directly comparable ${sector} assignments completed within the last five years. Each reference is supported by a completion certificate, client contact, and documented scope of services. Projects were delivered on schedule and within budget, as evidenced by the client satisfaction records in Section B. Contract values, durations, and client contacts are provided for each reference project.`;
-  }
-
-  if (parentSection === "SECTION_C") {
-    if (/quality|qa|qms|risk/.test(c)) {
-      return `Quality management follows a three-gate review cycle: 30 % Conceptual Design, 60 % Design Development, and 100 % Pre-Issue. Each gate requires sign-off by the Project Principal and an independent Technical Director who was not involved in production. Non-conformances are logged, tracked to close-out, and reported in monthly progress reports. This QA regime has been applied across all comparable ${sector} assignments in our portfolio.`;
-    }
-    if (/understanding|scope/.test(c)) {
-      return `The scope of this assignment has been carefully reviewed against the Terms of Reference. Key scope elements — deliverable list, data requirements, stakeholder consultation obligations, and reporting schedule — have been mapped to the proposed work plan. Any ambiguities identified during the proposal stage have been flagged as assumptions in Section C and will be resolved at the inception meeting.`;
-    }
-    return `The technical methodology systematically addresses every scope item: (1) inception and scope confirmation with the client, (2) baseline data collection and site reconnaissance, (3) technical analysis and option development, (4) detailed design and specification, (5) peer review and client validation, and (6) final deliverable package issuance. Each stage produces defined deliverables with documented quality sign-offs and is aligned to the evaluation criterion of "${criterion}" (weight ${weight}).`;
-  }
-
-  // SECTION_D — value-added, social value, sustainability, innovation
-  if (/social.*value|community|gender|inclusion|diversity/.test(c)) {
-    return `Social value commitments for this assignment include: (a) priority employment of local professional and technical staff throughout the delivery period; (b) a structured skills-transfer programme engaging client-nominated counterpart staff in methodology sessions; and (c) stakeholder engagement meetings at key milestone stages to ensure community input is documented and addressed. These commitments are monitored against agreed KPIs and reported in monthly progress updates.`;
-  }
-  if (/sustainab|environment|esg|climate|carbon/.test(c)) {
-    return `Environmental and sustainability measures embedded in our approach include resource-efficient design (minimising material waste through BIM-coordinated drawings), a construction-phase environmental management plan covering noise, dust, and waste disposal, a carbon-footprint estimate for design alternatives, and compliance with applicable environmental regulations. Our firm maintains an ISO 14001-aligned environmental management system across all project activities.`;
-  }
-  if (/local.*content|knowledge.*transfer|capacity.*build/.test(c)) {
-    return `Local content and capacity-building commitments include: minimum 60 % locally sourced professional staff on this assignment; three structured knowledge-transfer workshops for client technical staff during the delivery period; and a post-delivery technical support period of three months to support in-house adoption of deliverables. All workshop materials and session records will be submitted to the client as part of the close-out package.`;
-  }
-  return `Our value proposition for "${criterion}" (weight ${weight}) is grounded in sector depth, demonstrated evidence, and a commitment to client outcomes. Specific evidence supporting this criterion — including project references, team credentials, and quality records — is provided throughout this proposal and cross-referenced to the evaluation scoring sheet for the evaluator's convenience.`;
-}
+// After generation, report which rubric criteria have no heading of their own.
+// Nothing is written into the proposal for them.
+//
+// This pass used to inject a stock paragraph per missing criterion, and the
+// stock text made claims no record supports: "each key expert ... brings a
+// minimum of 10 years", "projects were delivered on schedule and within budget,
+// as evidenced by the client satisfaction records", "full professional-
+// indemnity and public-liability insurance", "an ISO 14001-aligned
+// environmental management system", "minimum 60 % locally sourced professional
+// staff". A deterministic draft carries no "EXP 01"-style headings, so every
+// weighted criterion got one — two of them after the signature block, where the
+// case-sensitive parent match ("# Section C: Technical Approach" against
+// "# SECTION C: TECHNICAL APPROACH") failed (2026-10-10, weighted-criteria
+// probe). Each criterion is mapped to the section that answers it, with its
+// weight, by Section F (evaluator-mirror-builder.ts) — from what the proposal
+// actually presents.
 
 /**
- * Inspect the generated markdown and ensure every rubric criterion
- * has a corresponding heading. Returns the (possibly modified)
- * markdown plus a list of criteria that were missing.
+ * The rubric criteria that have no heading in the generated markdown. The
+ * markdown is returned unchanged.
  */
 export function ensureRubricHeadings(
   markdown: string,
   evaluationWeights: EvaluationWeight[],
-  primarySector = "general consulting",
+  _primarySector = "general consulting",
 ): { markdown: string; missingCriteria: string[] } {
   const criteria = buildRubricCriteria(evaluationWeights);
   if (criteria.length === 0) return { markdown, missingCriteria: [] };
 
-  const headings = buildRubricHeadings(criteria);
   const missingCriteria: string[] = [];
-  const additions: Record<RubricSection, string[]> = {
-    SECTION_A: [],
-    SECTION_B: [],
-    SECTION_C: [],
-    SECTION_D: [],
-  };
-
-  // For each rubric heading, look for ANY appearance of the short
-  // code + number in the markdown (e.g., "SV 01"). If absent, schedule
-  // a stub injection.
-  for (const h of headings) {
+  for (const h of buildRubricHeadings(criteria)) {
     const codeNumber = h.heading.split(" ").slice(0, 2).join(" "); // e.g., "SV 01"
     // Accept space OR hyphen between code and number (SV 01, SV-01, SV01).
     const re = new RegExp(`\\b${codeNumber.replace(/\s+/g, "[\\s\\-]*")}\\b`, "i");
-    if (!re.test(markdown)) {
-      missingCriteria.push(h.criterion);
-      const content = buildCriterionContent(h.criterion, h.parentSection, h.weight, primarySector);
-      additions[h.parentSection].push(`## ${h.heading}\n\n${content}`);
-    }
+    if (!re.test(markdown)) missingCriteria.push(h.criterion);
   }
-
-  if (missingCriteria.length === 0) return { markdown, missingCriteria: [] };
-
-  // Inject the missing rubric stubs at the END of each parent section.
-  // We locate the parent section heading (e.g., "# Section D:
-  // Additional Information") and append the stubs BEFORE the next
-  // top-level heading.
-  let out = markdown;
-  for (const section of ["SECTION_D", "SECTION_C", "SECTION_B", "SECTION_A"] as const) {
-    const stubs = additions[section];
-    if (stubs.length === 0) continue;
-    const parentLabel = PARENT_SECTION_LABEL[section];
-    const stubsBlock = `\n\n${stubs.join("\n\n")}\n`;
-
-    // Try to find the parent heading
-    const sectionRe = new RegExp(`^# ${parentLabel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "m");
-    const match = out.match(sectionRe);
-    if (!match || match.index === undefined) {
-      // Parent section not found — append at end
-      out = out + stubsBlock;
-      continue;
-    }
-
-    // Find the next top-level heading after the parent
-    const startIdx = match.index + match[0].length;
-    const restAfter = out.slice(startIdx);
-    const nextHeadingMatch = restAfter.match(/^# /m);
-    const insertAt = nextHeadingMatch && nextHeadingMatch.index !== undefined
-      ? startIdx + nextHeadingMatch.index
-      : out.length;
-    out = out.slice(0, insertAt) + stubsBlock + out.slice(insertAt);
-  }
-
-  return { markdown: out, missingCriteria };
+  return { markdown, missingCriteria };
 }

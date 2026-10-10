@@ -66,6 +66,39 @@ export function hasSelfScoreHeading(markdown: string): boolean {
   return re.test(markdown);
 }
 
+/**
+ * Remove every Section H / Self-Score section from a markdown document.
+ *
+ * The deterministic builder in this file is the single owner of Section H:
+ * upstream producers (the AI writer, and the quality-repair addenda, which
+ * inserts its own Section H whenever none is present) each emit a version
+ * scored from whatever context they had. When more than one survives, the
+ * client document carries two self-score tables in a row with different
+ * predicted totals — a real proposal shipped "Predicted overall technical
+ * score: 45/100" immediately followed by "69 / 100". Strip them all, then
+ * append the deterministic one.
+ */
+export function stripSelfScoreSections(markdown: string): string {
+  const lines = markdown.split("\n");
+  const out: string[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    if (hasSelfScoreHeading(lines[i])) {
+      const level = lines[i].match(/^(#+)\s/)?.[1].length ?? 2;
+      i += 1;
+      while (i < lines.length) {
+        const m = lines[i].match(/^(#+)\s/);
+        if (m && m[1].length <= level) break;
+        i += 1;
+      }
+      continue;
+    }
+    out.push(lines[i]);
+    i += 1;
+  }
+  return out.join("\n");
+}
+
 function findWeight(criterion: string, weights: EvaluationWeightLite[]): string {
   if (weights.length === 0) return "—";
   const distinctive = (s: string) => s.toLowerCase().match(/[a-z]{3,}/g) ?? [];

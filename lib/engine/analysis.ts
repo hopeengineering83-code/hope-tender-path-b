@@ -33,7 +33,16 @@ function cleanWhitespace(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
+// A criterion that awards points is scored, however it is phrased: "The
+// methodology shall be evaluated out of 30 points" reads "shall" and was
+// classed MANDATORY, so a scored criterion the firm answers weakly became a
+// hard compliance gap. Only a stated consequence — disqualification, rejection,
+// a pass mark — makes a scored line a gate.
+const AWARDS_POINTS = /\b\d{1,3}\s*(?:points?|marks?|pts)\b|\b(?:points?|marks?)\s*[:(]?\s*\d{1,3}\b|\b(?:shall|will)\s+be\s+(?:evaluated|scored|assessed)\b|\bscored\b|\bweight(?:ed|ing)?\b/i;
+const STATES_A_GATE = /\b(?:mandatory|compulsory|obligatory|disqualif\w*|non\s*-?responsive|reject\w*|pass\s*\/\s*fail|eliminat\w*|minimum\s+(?:technical\s+)?score|shall\s+not\s+be\s+(?:considered|evaluated))\b/i;
+
 function inferPriority(text: string): string {
+  if (AWARDS_POINTS.test(text) && !STATES_A_GATE.test(text)) return "SCORED";
   return /(must|mandatory|required|shall|attach|exact|compulsory|obligatory|non\s*-?responsive|disqualified|minimum requirement|eligibility)/i.test(text)
     ? "MANDATORY"
     : /(score|scored|weighted|points?|marks?|evaluation|preferred|desirable|advantage|methodology|technical merit)/i.test(text)
@@ -285,7 +294,12 @@ export function normalizeStrategicRequirements(requirements: RequirementDraft[])
 
   for (const req of requirements) {
     if (isNoiseLine(req.description)) continue;
-    const key = strategicFamily(req);
+    // Scored criteria are bundled apart from mandatory ones. One bundle took
+    // the strongest priority of its members, so "Specific experience: 20
+    // points" merged with a page limit became a MANDATORY requirement. A named
+    // output file stays one bundle: it is one deliverable.
+    const family = strategicFamily(req);
+    const key = family.startsWith("FILE:") || req.priority === "MANDATORY" ? family : `${family}|NOT_MANDATORY`;
     if (!grouped.has(key)) orderedKeys.push(key);
     grouped.set(key, [...(grouped.get(key) ?? []), req]);
   }
@@ -313,8 +327,9 @@ export function normalizeStrategicRequirements(requirements: RequirementDraft[])
       ? samples[0]
       : `Senior-level requirement bundle consolidating ${sourceCount} extracted tender instruction(s). Key evidence interpreted: ${samples.join(" | ")}`;
 
+    const [family, split] = key.split("|");
     strategic.push({
-      title: strategicTitle(key, first.requirementType),
+      title: `${strategicTitle(family!, first.requirementType)}${split && grouped.has(family!) ? " (scored criteria)" : ""}`,
       description: description.slice(0, 3500),
       requirementType: first.requirementType,
       priority,

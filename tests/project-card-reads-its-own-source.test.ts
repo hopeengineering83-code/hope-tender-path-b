@@ -1,0 +1,231 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+
+import { extractProjectAmounts } from "../lib/engine/project-fact-extractor";
+
+/**
+ * The delivered proposal's single portfolio card — the most important piece of
+ * evidence in the whole document — read:
+ *
+ *   Client            Gimba City, South Wollo Zone, Amhara Region,
+ *   Location & Scale  —
+ *   Duration          Dates on file
+ *
+ * while that record's own source text states "(7,000 m²)", "2015-2018 E.C.",
+ * and three separate amounts. The company authority these records came from
+ * declares the gap outright — projectSectorMissing: 114,
+ * projectServiceAreasEmpty: 114 — and states as policy that "structured fields
+ * are an index only. rawText is the factual source".
+ *
+ * THE DANGEROUS PART is the money. A single record states:
+ *
+ *   1. Construction Cost: 550,074,678.02 ETB
+ *   2. Feasibility Study, Geotechnical & New Design Cost: 1,100,000 ETB
+ *   3. Contract Administration & Construction Supervision Cost: 110,000 ETB/month
+ *
+ * Three amounts, three different things. Presenting the first under "Contract
+ * Value" on a CONSULTANCY proposal overstates the firm's contract by roughly
+ * five hundred times, in a document an evaluator may check against the client's
+ * own records. Each amount therefore carries the role its own label gives it.
+ */
+
+const REAL_RECORD = [
+  "14 G+6 General Hospital – Dr Abdul Seid / Gimba City, South Wollo Zone, Amhara Region, Ethiopia (7,000 m²)",
+  "Ref: 1591/18 Date: 19/01/2018 E.C. Author: Tariku Abebaw (Building Officer, Gimba City Admin)",
+  "1. Construction Cost: 550,074,678.02 ETB",
+  "2. Feasibility Study, Geotechnical & New Design Cost: 1,100,000 ETB",
+  "3. Contract Administration & Construction Supervision Cost: 110,000 ETB/month",
+  "2015-2018 E.C.",
+].join(" ");
+
+test("a construction cost is never mistaken for the consultancy's fee", () => {
+  const amounts = extractProjectAmounts(REAL_RECORD);
+  const construction = amounts.find((a) => a.role === "CONSTRUCTION");
+  const fee = amounts.find((a) => a.role === "CONSULTANCY_FEE");
+
+  assert.ok(construction, "construction cost should be recognised");
+  assert.equal(construction!.value, 550074678.02);
+
+  assert.ok(fee, "consultancy fee should be recognised");
+  assert.equal(fee!.value, 1100000);
+
+  // The distinction is the whole point.
+  assert.notEqual(construction!.value, fee!.value);
+});
+
+test("a per-month amount is a rate, however it is labelled", () => {
+  const amounts = extractProjectAmounts(REAL_RECORD);
+  const rate = amounts.find((a) => a.perMonth);
+  assert.ok(rate);
+  assert.equal(rate!.role, "SUPERVISION_RATE");
+  assert.equal(rate!.value, 110000);
+});
+
+test("the source's own label is carried, not invented", () => {
+  const fee = extractProjectAmounts(REAL_RECORD).find((a) => a.role === "CONSULTANCY_FEE");
+  assert.match(fee!.label, /Feasibility Study, Geotechnical & New Design/);
+});
+
+test("roles are read from labels, in any sector", () => {
+  const cases: Array<[string, string, number]> = [
+    ["Road rehabilitation. Construction Cost: 240,000,000 ETB.", "CONSTRUCTION", 240000000],
+    ["Water supply scheme. Detailed Design Cost: 2,400,000 ETB.", "CONSULTANCY_FEE", 2400000],
+    ["Site supervision. Supervision Cost: 90,000 ETB/month.", "SUPERVISION_RATE", 90000],
+    ["Geotechnical investigation. Consultancy Fee: 780,000 ETB.", "CONSULTANCY_FEE", 780000],
+    ["Master plan. Feasibility Study Cost: 1,500,000 ETB.", "CONSULTANCY_FEE", 1500000],
+  ];
+  for (const [text, role, value] of cases) {
+    const found = extractProjectAmounts(text).find((a) => a.value === value);
+    assert.ok(found, text);
+    assert.equal(found!.role, role, text);
+  }
+});
+
+test("an amount with no informative label is not promoted to a fee", () => {
+  const amounts = extractProjectAmounts("Reference cost: 4,000,000 ETB recorded on file.");
+  const found = amounts.find((a) => a.value === 4000000);
+  assert.ok(found);
+  assert.equal(found!.role, "UNLABELLED");
+});
+
+test("small numbers and page furniture are not amounts", () => {
+  assert.deepEqual(extractProjectAmounts("Ref: 8087/2013, Date: 07/01/2013 E.C. Page 4 of 36"), []);
+  assert.deepEqual(extractProjectAmounts("Cost: 250 ETB"), []);
+  assert.deepEqual(extractProjectAmounts(""), []);
+});
+
+test("the portfolio card presents the fee and the works value separately", async () => {
+  const { readFileSync } = await import("node:fs");
+  const source = readFileSync("lib/engine/benchmark-tables.ts", "utf8");
+  assert.match(source, /Consultancy Fee/);
+  assert.match(source, /Construction Value of Works/);
+  // The monthly supervision rate must not reach a technical-envelope document.
+  assert.doesNotMatch(source, /SUPERVISION_RATE.*rows\.push/s);
+  // And the largest-amount heuristic must not feed the value row.
+  assert.match(source, /derived\.contractValue is deliberately NOT used/);
+});
+
+/**
+ * The delivered card read "Services Provided —" because the structured
+ * serviceAreas column is empty on all 114 records of the owner's vault and the
+ * fallback took the summary's FIRST SENTENCE, which for these records is the
+ * project name and its reference number. The services are named plainly in the
+ * same text.
+ */
+test("services are read from the record's own words, in every sector", async () => {
+  const { extractServicesProvided } = await import("../lib/engine/project-fact-extractor");
+
+  const building = extractServicesProvided(
+    "Complete New Design & Supervision: Feasibility study, Soil investigation, Laboratory testing, "
+    + "New Architectural design, New Structural design, Complete MEP Design (Electrical, Sanitary, "
+    + "Mechanical), Material specification, Bill of Quantity preparation, Tender document preparation, "
+    + "Construction supervision.",
+  );
+  assert.ok(building.includes("Feasibility study"));
+  assert.ok(building.includes("Geotechnical investigation"));
+  assert.ok(building.includes("Architectural design"));
+  assert.ok(building.includes("Construction supervision"));
+
+  const road = extractServicesProvided("Topographic survey, pavement design, drainage design, tender documentation, site supervision.");
+  assert.deepEqual(road, ["Topographic survey", "Pavement design", "Drainage design", "Tender documentation", "Construction supervision"]);
+
+  const water = extractServicesProvided("Borehole yield testing, hydraulic design of the reticulation network, commissioning.");
+  assert.ok(water.includes("Yield testing"));
+  assert.ok(water.includes("Hydraulic design"));
+  assert.ok(water.includes("Commissioning"));
+
+  const planning = extractServicesProvided("Master planning, urban design and environmental and social impact assessment.");
+  assert.ok(planning.includes("Master planning"));
+  assert.ok(planning.includes("Urban design"));
+  assert.ok(planning.includes("Environmental and social assessment"));
+});
+
+test("nothing is invented — a service not named is not listed", () => {
+  return import("../lib/engine/project-fact-extractor").then(({ extractServicesProvided }) => {
+    const found = extractServicesProvided("Architectural design of a regional office building.");
+    assert.deepEqual(found, ["Architectural design"]);
+    assert.deepEqual(extractServicesProvided(""), []);
+    assert.deepEqual(extractServicesProvided("Ref: 8087/2013, Date: 07/01/2013 E.C."), []);
+  });
+});
+
+test("an empty cell is omitted rather than rendered as a dash", async () => {
+  const { readFileSync } = await import("node:fs");
+  const source = readFileSync("lib/engine/benchmark-tables.ts", "utf8");
+  assert.match(source, /if \(inferredServices\.trim\(\)\.length > 0\) \{/);
+  assert.match(source, /\.filter\(\(part\) => part\.length > 0\)/);
+});
+
+/**
+ * WHERE THE DELIVERED CARD ACTUALLY COMES FROM
+ * --------------------------------------------
+ * The Section B card an evaluator reads is written by the model from the
+ * template in lib/ai.ts ("| Location & Scale | [location] — [measurable scale
+ * ...] |"), not by buildProjectPortfolioCards. projectProofLine IS the writer's
+ * knowledge of the record, so a slot the model cannot fill from this line comes
+ * out as a dash — which is exactly what the artifact showed:
+ *
+ *   Location & Scale   Ethiopia — —
+ *   Services Provided  —
+ *
+ * Fixing the deterministic builder alone did not change the delivered card; the
+ * proof-line had to carry the facts.
+ */
+test("the writer's project line names scale, duration and services", async () => {
+  const { projectProofLine } = await import("../lib/engine/proposal-intelligence");
+  const line = projectProofLine({
+    name: "G+6 General Hospital",
+    clientName: "Gimba City Admin",
+    country: null,
+    sector: null,
+    contractValue: null,
+    currency: null,
+    serviceAreas: JSON.stringify([]),
+    summary: "Ethiopia (7,000 m²). 1. Construction Cost: 550,074,678.02 ETB 2. Feasibility Study, "
+      + "Geotechnical & New Design Cost: 1,100,000 ETB. 2015-2018 E.C. Feasibility study, Soil "
+      + "investigation, New Architectural design, New Structural design, Construction supervision.",
+  } as Parameters<typeof projectProofLine>[0]);
+
+  assert.match(line, /Ethiopia/);
+  assert.match(line, /2015-2018/);
+  assert.match(line, /Services: .*Architectural design/);
+  assert.match(line, /Construction supervision/);
+});
+
+test("the writer is never handed one unlabelled number", async () => {
+  const { projectProofLine } = await import("../lib/engine/proposal-intelligence");
+  const line = projectProofLine({
+    name: "Road Rehabilitation",
+    clientName: "Roads Authority",
+    country: null,
+    sector: null,
+    contractValue: null,
+    currency: null,
+    serviceAreas: JSON.stringify([]),
+    summary: "Construction Cost: 240,000,000 ETB. Detailed Design Cost: 2,400,000 ETB. "
+      + "Pavement design and drainage design.",
+  } as Parameters<typeof projectProofLine>[0]);
+
+  // Both amounts appear, each under the role its own label gives it.
+  assert.match(line, /Consultancy fee ETB 2\.4M/);
+  assert.match(line, /Construction value of works ETB 240/);
+  // The larger number must never be presented as the firm's fee.
+  assert.doesNotMatch(line, /Consultancy fee ETB 240/);
+});
+
+test("a record whose columns are populated still uses them", async () => {
+  const { projectProofLine } = await import("../lib/engine/proposal-intelligence");
+  const line = projectProofLine({
+    name: "Water Supply Scheme",
+    clientName: "Water Bureau",
+    country: "Ethiopia",
+    sector: "Water and sanitation",
+    contractValue: 3_000_000,
+    currency: "ETB",
+    serviceAreas: JSON.stringify(["Hydraulic design", "Yield testing"]),
+    summary: "Borehole yield testing and reticulation design.",
+  } as Parameters<typeof projectProofLine>[0]);
+
+  assert.match(line, /Water and sanitation/);
+  assert.match(line, /Services: Hydraulic design, Yield testing/);
+});

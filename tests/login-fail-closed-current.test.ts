@@ -21,9 +21,15 @@ describe("login fail-closed authentication boundary", () => {
     assert.match(source, /await bcrypt\.compare\(password, DUMMY_PASSWORD_HASH\)/);
   });
 
-  it("returns one generic invalid-credentials response for every account state", () => {
-    assert.match(source, /if \(!user \|\| !user\.passwordHash \|\| !passwordOk\)/);
-    assert.match(source, /return NextResponse\.json\(INVALID_CREDENTIALS, \{ status: 401 \}\)/);
+  it("returns one generic invalid-credentials code for every account state", () => {
+    // "Every account state" now includes deactivated (audit C-5): a soft-deleted
+    // user must be refused, and refused indistinguishably from a wrong password.
+    // All four conditions share one branch — a dedicated branch for the
+    // deactivated case would hand an unauthenticated caller a way to enumerate
+    // which accounts have been deactivated.
+    assert.match(source, /if \(!user \|\| !user\.passwordHash \|\| !passwordOk \|\| user\.deletedAt\)/);
+    assert.match(source, /return loginResult\(req, nativeForm, "INVALID_CREDENTIALS", 401\)/);
+    assert.match(source, /INVALID_CREDENTIALS: "The email or password is incorrect\."/);
     assert.doesNotMatch(source, /User password is not initialized/);
     assert.doesNotMatch(source, /stored password hash is invalid/i);
   });
@@ -40,7 +46,14 @@ describe("login fail-closed authentication boundary", () => {
     assert.match(source, /errorClass: error instanceof Error \? error\.constructor\.name : "UnknownError"/);
     assert.match(source, /success audit was not persisted/);
     assert.match(source, /void logAction\(/);
-    assert.match(source, /return NextResponse\.json\(\{ success: true \}\)/);
+    assert.match(source, /return withPrivateAuthHeaders\(NextResponse\.json\(\{ success: true \}\)\)/);
+  });
+
+  it("applies private no-store and no-referrer headers to every JSON or redirect result", () => {
+    assert.match(source, /function withPrivateAuthHeaders/);
+    assert.match(source, /Cache-Control", "no-store, max-age=0"/);
+    assert.match(source, /Referrer-Policy", "no-referrer"/);
+    assert.match(source, /NextResponse\.redirect\(target, 303\)/);
   });
 
   it("keeps Git-triggered Vercel deployment enabled (repo policy)", () => {

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireUser, unauthorizedResponse, forbiddenResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
+import { computeWorkbookTotals } from "../../../../../lib/engine/financial-proposal";
 
 export const dynamic = "force-dynamic";
 
@@ -35,11 +36,12 @@ async function loadWorkbook(tenderId: string): Promise<WorkbookSummary | null> {
   });
   if (!workbook) return null;
 
-  const subtotal = workbook.lines.reduce((sum, line) => sum + (line.total || (line.quantity || 0) * (line.rate || 0)), 0);
-  const contingency = subtotal * (workbook.contingencyPct / 100);
-  const withholding = (subtotal + contingency) * (workbook.withholdingPct / 100);
-  const vat = (subtotal + contingency) * (workbook.vatPercent / 100);
-  const grandTotal = subtotal + contingency + vat - withholding;
+  // One computation for the page and the financial proposal document. The
+  // grand total is the offer price; withholding is what the client deducts
+  // from payments, shown beside it, never subtracted from the offer.
+  const totals = computeWorkbookTotals(workbook.lines, workbook);
+  const { subtotal, contingency, withholding, vat } = totals;
+  const grandTotal = totals.offerTotal;
 
   return {
     id: workbook.id,

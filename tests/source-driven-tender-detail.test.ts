@@ -55,7 +55,7 @@ describe("source-driven tender detail — facts come from the source", () => {
     assert.equal(detail.submissionMethod, "EMAIL", "submission method should be inferred as EMAIL");
     assert.equal(detail.requiresEmailEndpoint, true, "email tender requires email endpoint");
     assert.equal(detail.requiresPhysicalAddress, false, "email tender does NOT require physical address");
-    assert.equal(detail.requiresDeadline, true, "deadline is always required for final submission");
+    assert.equal(detail.requiresDeadline, false, "a deadline the tender does not state is not required (ABSENT_TENDER_FACT_IS_NOT_REQUIRED)");
 
     // Should have facts for all extracted fields
     const factKeys = detail.facts.map((f) => f.key);
@@ -368,16 +368,19 @@ describe("source-driven tender detail — coverage ratio", () => {
   });
 
   it("coverage < 1.0 when a required-for-final fact is missing", () => {
+    // The endpoint a stated email method depends on is the one absent fact
+    // that stays required (ABSENT_TENDER_FACT_IS_NOT_REQUIRED keeps it); an
+    // unstated deadline no longer counts.
     const tender = {
       id: "t1",
       title: "Test Tender",
       clientName: "Test Client",
-      deadline: null,
+      deadline: new Date("2024-12-31"),
       submissionMethod: "Email submission",
-      submissionEmails: "test@example.com",
+      submissionEmails: null,
     };
     const detail = deriveSourceDrivenTenderDetail(tender);
-    assert.ok(detail.missingRelevantCount >= 1, "deadline should be missing relevant");
+    assert.ok(detail.missingRelevantCount >= 1, "the submission email should be missing relevant");
     assert.ok(detail.coverageRatio < 1, "coverage should be < 1");
   });
 

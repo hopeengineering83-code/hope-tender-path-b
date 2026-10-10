@@ -220,12 +220,14 @@ describe("operation gate — FINAL_SUBMISSION_READY (strict)", () => {
     assert.equal(r.blockers.length, 0);
   });
 
-  it("blocks when clientName is missing", () => {
+  // Owner policy ABSENT_TENDER_FACT_IS_NOT_REQUIRED: absent is not required.
+  it("does not block when clientName is not stated in the tender", () => {
     const r = resolveTenderOperationGate(makeInput("FINAL_SUBMISSION_READY", {
       tender: makeTender({ clientName: null }),
     }));
-    assert.equal(r.ok, false);
-    assert.ok(r.blockers.some((b) => b.includes("clientName")));
+    assert.equal(r.ok, true);
+    assert.ok(!r.blockers.some((b) => b.includes("clientName")));
+    assert.ok(r.warnings.some((w) => w.includes("clientName")));
   });
 
   it("blocks when title is missing", () => {
@@ -236,20 +238,24 @@ describe("operation gate — FINAL_SUBMISSION_READY (strict)", () => {
     assert.ok(r.blockers.some((b) => b.includes("title")));
   });
 
-  it("blocks when deadline is missing", () => {
+  // Owner policy ABSENT_TENDER_FACT_IS_NOT_REQUIRED: absent is not required.
+  it("does not block when deadline is not stated in the tender", () => {
     const r = resolveTenderOperationGate(makeInput("FINAL_SUBMISSION_READY", {
       tender: makeTender({ deadline: null }),
     }));
-    assert.equal(r.ok, false);
-    assert.ok(r.blockers.some((b) => b.includes("deadline")));
+    assert.equal(r.ok, true);
+    assert.ok(!r.blockers.some((b) => b.includes("deadline")));
+    assert.ok(r.warnings.some((w) => w.includes("deadline")));
   });
 
-  it("blocks when submissionMethod is missing", () => {
+  // Owner policy ABSENT_TENDER_FACT_IS_NOT_REQUIRED: absent is not required.
+  it("does not block when submissionMethod is not stated in the tender", () => {
     const r = resolveTenderOperationGate(makeInput("FINAL_SUBMISSION_READY", {
       tender: makeTender({ submissionMethod: null }),
     }));
-    assert.equal(r.ok, false);
-    assert.ok(r.blockers.some((b) => b.includes("submissionMethod")));
+    assert.equal(r.ok, true);
+    assert.ok(!r.blockers.some((b) => b.includes("submissionMethod")));
+    assert.ok(r.warnings.some((w) => w.includes("submissionMethod")));
   });
 
   it("blocks when no requirements are extracted", () => {
@@ -265,7 +271,7 @@ describe("operation gate — FINAL_SUBMISSION_READY (strict)", () => {
       buildPlan: null,
     }));
     assert.equal(r.ok, false);
-    assert.ok(r.blockers.some((b) => b.includes("BuildPlan")));
+    assert.ok(r.blockers.some((b) => b.includes("Build Plan")));
   });
 
   it("blocks when BuildPlan is present but not ok", () => {
@@ -405,9 +411,9 @@ describe("operation gate — submission endpoint validation", () => {
         submissionAddress: null,
       }),
     }));
-    // submissionMethod null → blockers will include submissionMethod critical check
-    assert.equal(r.ok, false);
-    // But there should be no endpoint-specific blocker
+    // An unstated method is not required (ABSENT_TENDER_FACT_IS_NOT_REQUIRED)
+    // and no endpoint is required of it.
+    assert.ok(!r.blockers.some((b) => b.includes("submissionMethod")));
     const endpointBlockers = r.blockers.filter((b) => b.includes("endpoint"));
     assert.equal(endpointBlockers.length, 0);
   });
@@ -471,15 +477,26 @@ describe("operation gate — overrides", () => {
     assert.equal(r.ok, true, "USER_EDITED override on submissionEmails should resolve endpoint blocker");
   });
 
-  it("FINAL: NOT_APPLICABLE override does NOT resolve critical field blocker", () => {
+  it("FINAL: NOT_APPLICABLE override does NOT clear a placeholder critical value", () => {
+    const r = resolveTenderOperationGate(makeInput("FINAL_SUBMISSION_READY", {
+      tender: makeTender({ clientName: "TBD" }),
+      overrides: [
+        { field: "clientName", fieldState: "NOT_APPLICABLE" },
+      ],
+    }));
+    // "Not stated" cannot wave through a value that is present but false.
+    assert.equal(r.ok, false);
+    assert.ok(r.blockers.some((b) => b.includes("clientName")));
+  });
+
+  it("FINAL: a client the tender does not state is not required (ABSENT_TENDER_FACT_IS_NOT_REQUIRED)", () => {
     const r = resolveTenderOperationGate(makeInput("FINAL_SUBMISSION_READY", {
       tender: makeTender({ clientName: null }),
       overrides: [
         { field: "clientName", fieldState: "NOT_APPLICABLE" },
       ],
     }));
-    // NOT_APPLICABLE is not a resolving state for critical fields
-    assert.equal(r.ok, false);
+    assert.ok(!r.blockers.some((b) => b.includes("clientName")));
   });
 
   it("FINAL: IGNORED_WITH_REASON override on submissionEmails does NOT resolve the EMAIL endpoint blocker", () => {
@@ -614,6 +631,8 @@ describe("operation gate — architectural guarantees", () => {
       buildPlan: null,
     }));
     assert.equal(r.ok, false);
-    assert.ok(r.blockers.length >= 4, "should have multiple blockers");
+    // title, requirements and Build Plan; an unstated client, deadline or
+    // method is a warning (ABSENT_TENDER_FACT_IS_NOT_REQUIRED).
+    assert.ok(r.blockers.length >= 3, "should have multiple blockers");
   });
 });

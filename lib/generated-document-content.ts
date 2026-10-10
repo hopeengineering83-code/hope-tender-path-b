@@ -103,8 +103,16 @@ export async function readGeneratedDocumentContent(
         mimeType,
         source: "storage",
       };
-    } catch {
+    } catch (e) {
       // Storage read failed — fall through to legacy fileContent if available.
+      // Surface the failure so storage outages don't silently degrade document
+      // generation to legacy fileContent (which may be stale or absent).
+      // Previously bare `catch {}` — storage read failures were invisible.
+      logger.warn("[generated-document-content] storage read failed — falling through to legacy fileContent", {
+        detail: e,
+        filename,
+        docId: doc.id,
+      });
     }
   }
 

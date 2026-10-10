@@ -47,8 +47,8 @@ the current list of stale/diverged PRs and active blockers.
 | ORM | Prisma 6.19 |
 | Database | PostgreSQL (Neon, Supabase, Railway) |
 | Auth | bcryptjs + HMAC-signed sessions, Postgres-backed |
-| AI (preferred) | Anthropic Claude when `ANTHROPIC_API_KEY` is set (model chain configurable via `ANTHROPIC_PROPOSAL_MODELS`) |
-| AI (fallback) | Google Gemini (`gemini-2.5-pro` by default) — used when Claude not configured, and for CV/project extraction |
+| AI (first tier) | Google Gemini (`gemini-2.5-flash` by default; `gemini-2.0-flash` for fast/extraction) — rank 1 in the automatic chain |
+| AI (last resort) | Anthropic Claude, rank 10 and emergency-only, so Anthropic rate limits cannot block the app (model chain configurable via `ANTHROPIC_PROPOSAL_MODELS`) |
 | Document I/O | `docx` (write), `mammoth` + `pdf-parse` + `pdf2json` + `pdfjs-dist` (read), `xlsx`, `jszip` |
 | Validation | `zod` |
 | PWA | manifest + service worker (`public/sw.js`) |
@@ -202,19 +202,10 @@ hope-tender-path-b/
 │   ├── proposal-proof-density.ts     # Proof-density measurement
 │   ├── proposal-strengthening-sections.ts # Evaluator-decision narrative
 │   ├── proof-density-repair-guidance.ts
-│   ├── controlled-proposal-assembler.ts # Strips AI traces line by line
 │   ├── benchmark-output-polisher.ts
-│   ├── client-language-finalizer.ts
-│   ├── markdown-heading-dedupe.ts
+│   ├── internal-review-stripper.ts  # Removes bid-team-only material
 │   ├── apply-active-letterhead.ts    # Apply brand assets if AppSettings allow
 │   ├── docx-letterhead-template.ts
-│   │
-│   │ ── Reserved / experimental (not currently invoked) ────────────────
-│   ├── fallback-abcd-structure.ts
-│   ├── fallback-proof-opening.ts
-│   ├── quick-draft-benchmark.ts
-│   ├── quick-draft-evidence-context.ts
-│   └── quick-draft-provisional-evidence.ts
 │
 ├── components/                       # Reusable UI
 │   ├── login-form.tsx
@@ -474,31 +465,38 @@ SESSION_SECRET="<64-character random hex>"
 
 # ── AI providers — set at least one key ─────────────────────────────────────
 # The single source of truth for the canonical automatic provider order is
-# lib/ai-provider-registry.ts. The order is:
-#   Z.ai GLM → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic/Claude
-# The first five are the currently-working providers. Anthropic/Claude is the
-# last-resort (emergency-only) provider. See docs/ai-provider-order.md.
+# lib/ai-provider-catalog.cjs (CANONICAL_AI_PROVIDER_ORDER). The order is:
+#   Gemini → Groq → Mistral → Z.ai GLM → Cerebras → OpenRouter → OpenAI → Together → DeepSeek → Anthropic/Claude
+# Every configured provider participates automatically in this order: there is
+# no free-only mode, no minimum number of free providers, and no exclusion of
+# paid providers. Configured model identifiers are used exactly as given.
+# Anthropic/Claude is the last-resort (emergency-only) provider, followed by the
+# deterministic draft fallback. See docs/ai-provider-order.md.
 #
-# Vercel Hobby: at most 3 ACTUAL outbound provider attempts per request/chunk;
-# unconfigured/cooled-down/invalid-OpenRouter providers are skipped for free.
+# Up to 10 ACTUAL outbound provider attempts per request/chunk (the full chain);
+# unconfigured and cooled-down providers are skipped for free.
 
-# Z.ai GLM — first-tier, general OpenAI-compatible endpoint (NOT a Coding Plan).
-# ZAI_API_KEY="..."           # ZAI_BASE_URL default https://api.z.ai/api/paas/v4, model glm-4-flash
+# Gemini — first tier.
+# GEMINI_API_KEY="AIza..."    # AIza + 35 alphanumerics (39 chars total)
 
-# Cerebras — second-tier, OpenAI-compatible (uses max_completion_tokens).
-# CEREBRAS_API_KEY="..."      # default model gpt-oss-120b
-
-# Mistral / Groq — third & fourth tier (currently-working).
-# MISTRAL_API_KEY="..."
+# Groq — second tier. No default model; set GROQ_PROPOSAL_MODEL explicitly.
 # GROQ_API_KEY="gsk_..."
 
-# OpenRouter — fifth tier. MUST be an explicit ':free' model; 'openrouter/auto'
-# and any non-':free' model are rejected to prevent paid usage.
+# Mistral — third tier.
+# MISTRAL_API_KEY="..."
+
+# Z.ai GLM — fourth tier, general OpenAI-compatible endpoint (NOT a Coding Plan).
+# ZAI_API_KEY="..."           # ZAI_BASE_URL default https://api.z.ai/api/paas/v4, model glm-4.7-flash
+
+# Cerebras — fifth tier, OpenAI-compatible (uses max_completion_tokens).
+# CEREBRAS_API_KEY="..."      # default model gpt-oss-120b
+
+# OpenRouter — sixth tier. No default model and no ':free' requirement; set the
+# model explicitly to one the account is entitled to call.
 # OPENROUTER_API_KEY="sk-or-..."
-# OPENROUTER_PROPOSAL_MODEL="meta-llama/llama-3.3-70b-instruct:free"
+# OPENROUTER_PROPOSAL_MODEL="meta-llama/llama-3.3-70b-instruct"
 
 # Remaining supported providers (after OpenRouter, in order):
-# GEMINI_API_KEY="AIza..."    # AIza + 35 alphanumerics (39 chars total)
 # OPENAI_API_KEY="sk-..."
 # TOGETHER_API_KEY="..."
 # DEEPSEEK_API_KEY="..."
@@ -506,8 +504,9 @@ SESSION_SECRET="<64-character random hex>"
 
 # ── Optional ────────────────────────────────────────────────────────────────
 
-# Override default Gemini model (default: gemini-2.5-pro)
-# GEMINI_MODEL="gemini-2.0-flash"
+# Override the Gemini models. Registry defaults are gemini-2.5-flash for
+# proposal and analysis, gemini-2.0-flash for fast.
+# GEMINI_MODEL="gemini-2.5-flash"
 
 # Override extraction-only model (CV / project parsing)
 # GEMINI_EXTRACT_MODEL="gemini-2.0-flash"
@@ -532,7 +531,7 @@ The validator (`scripts/check-env.mjs`) rejects:
 ### Prerequisites
 - Node.js 20+
 - A PostgreSQL database (Neon free tier works)
-- An AI provider key — at least one from the canonical chain (Z.ai GLM, Cerebras, Mistral, Groq, OpenRouter, Gemini, OpenAI, Together, DeepSeek, or Anthropic/Claude). See docs/ai-provider-order.md.
+- An AI provider key — at least one from the canonical chain (Gemini, Groq, Mistral, Z.ai GLM, Cerebras, OpenRouter, OpenAI, Together, DeepSeek, or Anthropic/Claude). See docs/ai-provider-order.md.
 
 ### Local development
 ```bash
@@ -651,7 +650,7 @@ The user-stated guardrails map directly to existing code:
 | Do not invent data | `Expert.trustLevel` / `Project.trustLevel` enum + filter in `lib/engine/run-tender-engine.ts`; only `REVIEWED` flows to final |
 | Do not generate beyond tender scope | `lib/engine/scope-policy.ts` |
 | Do not leave placeholders | `lib/engine/validate.ts` `PLACEHOLDER_PATTERNS` + `BLOCK`-severity issue `PLACEHOLDER_IN_DOCUMENT` |
-| Do not expose AI traces | `lib/engine/controlled-proposal-assembler.ts:33` filter; `lib/engine/proposal-evaluator-matrix.ts:30` filter; `lib/engine/humanize.ts` rewrites |
+| Do not expose AI traces | `lib/engine/internal-review-stripper.ts`; `lib/engine/proposal-benchmark-guard.ts`; `lib/engine/humanize.ts` rewrites |
 | Do not force cover pages if prohibited | `AppSettings.allowBrandingDefault` + per-tender override; `lib/engine/apply-active-letterhead.ts` checks before applying |
 | Do not force signature/stamp if prohibited | `AppSettings.allowSignatureDefault` / `allowStampDefault` checked at generation |
 | Do not use unsupported company facts | trust-level system; `GeneratedDocument.draftExpertCount` records every draft source used so reviewers can audit |

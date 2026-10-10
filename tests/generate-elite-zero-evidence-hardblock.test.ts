@@ -44,7 +44,13 @@ test("generateTenderDocuments hard-blocks on zero reviewed evidence (requirement
   // The throw must be inside generateTenderDocuments.
   const fnIdx = src.indexOf("export async function generateTenderDocuments(");
   assert.ok(fnIdx > -1, "generateTenderDocuments must exist");
-  const fnBody = src.slice(fnIdx, fnIdx + 8000);
+  // Scan to the next top-level export rather than a fixed character budget.
+  // The budget was 8000 characters, which the guards sat just inside; adding a
+  // comment above them moved ZERO_REVIEWED_PROJECT_EVIDENCE to offset 8047 and
+  // this test failed while all three guards were still present and unchanged.
+  // A test that a comment can break is measuring the wrong thing.
+  const nextExport = src.indexOf("\nexport ", fnIdx + 1);
+  const fnBody = src.slice(fnIdx, nextExport > fnIdx ? nextExport : src.length);
 
   // GUARD 1: Requirement-specific expert evidence guard (round-2 strengthening).
   assert.ok(

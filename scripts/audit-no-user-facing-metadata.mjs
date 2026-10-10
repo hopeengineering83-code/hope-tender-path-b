@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 const roots = ["app", "components", "lib", "tests"];
 const forbidden = [
@@ -33,6 +33,7 @@ const files = execFileSync("git", ["ls-files", ...roots], { encoding: "utf8" })
   .trim()
   .split("\n")
   .filter(Boolean)
+  .filter((file) => existsSync(file))
   .filter((file) => /\.(tsx?|jsx?|mjs|cjs)$/.test(file));
 
 const findings = [];

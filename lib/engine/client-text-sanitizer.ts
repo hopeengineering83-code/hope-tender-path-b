@@ -89,7 +89,52 @@ const LEGACY_AI_PATTERNS = [
 
 // Em-dash normalization (was previously inlined in humanize.ts).
 function normalizeEmDashes(text: string): string {
-  return text.replace(/\s*—\s*/g, " — ");
+  return text.replace(/\s*\u2014\s*/g, " \u2014 ");
+}
+
+/**
+ * Separators a PDF font cannot map back, normalised to the ASCII character the
+ * writer meant.
+ *
+ * THE DELIVERED DEFECT
+ * --------------------
+ * Hosted run 34121462378 shipped a proposal whose extracted text reads
+ * "Dr\u0000 Abdul\u0000 Seid", "medical\u0000centre", "healthcare\u0000specific",
+ * "infection\u0000prevention", "clinical\u0000zone" and "well\u0000placed" — sixteen
+ * occurrences. The two runs before it had none.
+ *
+ * The model wrote a typographic separator rather than an ASCII one — a
+ * non-breaking hyphen, a soft hyphen, a figure dash, a narrow no-break space.
+ * The embedded font subset carries no ToUnicode entry for it, so the character
+ * survives into the PDF and comes back out of text extraction as U+0000. An
+ * evaluator's copy-paste, search and screen-reader all break on it, and any
+ * downstream text check sees a NUL where a word boundary should be.
+ *
+ * This is not about one model or one sector: any writer may emit these, and
+ * every tender's client-facing text passes through here, so the normalisation
+ * belongs at this shared boundary rather than in a per-sector pass. Each
+ * character maps to the plain ASCII equivalent a reader expects, so no word is
+ * joined or split that was not already joined or split.
+ */
+const UNMAPPABLE_SEPARATORS: ReadonlyArray<readonly [RegExp, string]> = [
+  // Hyphen-like: non-breaking hyphen, hyphen, figure dash, soft hyphen.
+  [/[\u2010\u2011\u2012]/g, "-"],
+  // Soft hyphen is an invisible line-break hint; it is never wanted in output.
+  [/\u00ad/g, ""],
+  // Space-like: no-break, narrow no-break, thin, figure, and hair spaces.
+  [/[\u00a0\u202f\u2009\u2007\u200a]/g, " "],
+  // Zero-width characters that survive into the glyph stream as nothing.
+  [/[\u200b\u200c\u200d\ufeff]/g, ""],
+];
+
+function normalizeUnmappableSeparators(text: string): string {
+  let out = text;
+  for (const [pattern, replacement] of UNMAPPABLE_SEPARATORS) {
+    out = out.replace(pattern, replacement);
+  }
+  // A NUL that already reached the text is a word boundary that was lost; a
+  // space is the only safe reading, and it never merges two words together.
+  return out.replace(/\u0000/g, " ");
 }
 
 function sanitizeSegment(segment: string): string {
@@ -100,6 +145,7 @@ function sanitizeSegment(segment: string): string {
     out = out.replace(pattern, "");
   }
 
+  out = normalizeUnmappableSeparators(out);
   out = normalizeEmDashes(out);
   out = out.replace(/[ \t]{2,}/g, " ");
   out = out.replace(/[ \t]+$/gm, "");

@@ -6,8 +6,8 @@ const manifestPanel = fs.readFileSync(
   "components/final-package-manifest-panel.tsx",
   "utf8",
 );
-const companyDocsPage = fs.readFileSync(
-  "app/dashboard/company/documents/page.tsx",
+const companyDocsApi = fs.readFileSync(
+  "app/api/company/documents/route.ts",
   "utf8",
 );
 const cleanupCron = fs.readFileSync(
@@ -26,28 +26,28 @@ describe("Neon usage safety — no large blob reads in manifest/document queries
     );
   });
 
-  it("company documents page does not select fileContent", () => {
+  it("company documents API does not select fileContent", () => {
     assert.ok(
-      !/fileContent\s*:\s*true/.test(companyDocsPage),
-      "company documents page must not select fileContent",
+      !/fileContent\s*:\s*true/.test(companyDocsApi),
+      "company documents API must not select fileContent",
     );
   });
 
-  it("company documents page has an explicit select clause on findMany", () => {
+  it("company documents API has an explicit select clause on findMany", () => {
     // Verify the explicit select is present — check both keywords appear in the file
-    assert.match(companyDocsPage, /findMany/);
+    assert.match(companyDocsApi, /findMany/);
     assert.match(
-      companyDocsPage,
+      companyDocsApi,
       /select\s*:\s*\{[\s\S]*?id\s*:\s*true/,
-      "company documents page findMany must have an explicit select clause",
+      "company documents API findMany must have an explicit select clause",
     );
   });
 
-  it("company documents page select includes metadata fields needed for display", () => {
-    assert.match(companyDocsPage, /originalFileName\s*:\s*true/);
-    assert.match(companyDocsPage, /size\s*:\s*true/);
-    assert.match(companyDocsPage, /category\s*:\s*true/);
-    assert.match(companyDocsPage, /createdAt\s*:\s*true/);
+  it("company documents API select includes metadata fields needed for display", () => {
+    assert.match(companyDocsApi, /originalFileName\s*:\s*true/);
+    assert.match(companyDocsApi, /size\s*:\s*true/);
+    assert.match(companyDocsApi, /category\s*:\s*true/);
+    assert.match(companyDocsApi, /createdAt\s*:\s*true/);
   });
 });
 

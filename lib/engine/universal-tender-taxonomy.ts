@@ -1,3 +1,5 @@
+import { HEALTHCARE_WORK } from "./assignment-subject";
+
 export type ServiceCapability =
   | "ARCHITECTURAL_DESIGN"
   | "INTERIOR_DESIGN"
@@ -104,7 +106,9 @@ const TENDER_FORM_PATTERNS: PatternMap<TenderForm> = {
 };
 
 const SECTOR_PATTERNS: PatternMap<SectorDomain> = {
-  HEALTHCARE: [/health/i, /hospital/i, /medical/i, /clinic/i, /patient/i, /pharmacy/i, /laboratory/i, /biomedical/i],
+  // Health work, not the word: "Health and Safety Plan" is a requirement in
+  // tenders for offices, roads and towers alike.
+  HEALTHCARE: [HEALTHCARE_WORK, /biomedical/i, /(?:medical|clinical|diagnostic|hospital|pathology|public\s+health)\s+laborator/i],
   EDUCATION: [/school/i, /university/i, /college/i, /education/i, /classroom/i, /campus/i],
   COMMERCIAL_INDUSTRIAL: [/commercial/i, /industrial/i, /factory/i, /manufactur/i, /retail/i, /mall/i, /hotel/i],
   RESIDENTIAL_HOUSING: [/residential/i, /housing/i, /apartment/i, /condominium/i, /real\s+estate/i],
@@ -117,9 +121,9 @@ const SECTOR_PATTERNS: PatternMap<SectorDomain> = {
   ICT_DIGITAL: [/ict/i, /digital/i, /software/i, /platform/i, /database/i, /erp/i, /mis/i, /information\s+system/i],
   LOGISTICS_WAREHOUSING: [/warehouse/i, /logistics/i, /cargo/i, /freight/i, /supply\s+chain/i, /storage/i],
   GENERAL_BUILDINGS: [/building/i, /facility/i, /office/i, /complex/i, /centre/i, /center/i],
-  MINING_EXTRACTIVE: [/mining/i, /\bjorc\b/i, /tailings/i, /ore\s+body/i, /mine\s+plan/i, /mineral\s+resource/i, /quarry/i, /extractive/i],
+  MINING_EXTRACTIVE: [/\bmining\b/i, /\bjorc\b/i, /tailings/i, /\bore\s+body\b/i, /\bmine\s+plan/i, /mineral\s+resource/i, /quarry/i, /extractive/i],
   PORT_MARITIME: [/\bport\b/i, /berth/i, /quay/i, /maritime/i, /dredging/i, /harbour/i, /\bisps\b/i, /nautical/i],
-  OIL_GAS: [/\bhazop\b/i, /p&id/i, /pipeline\s+design/i, /oil\s+facilit/i, /gas\s+facilit/i, /petrochemical/i, /upstream\s+petroleum/i, /refinery/i],
+  OIL_GAS: [/\bhazop\b/i, /p&id/i, /pipeline\s+design/i, /\boil\s+(?:and\s+gas\s+)?facilit/i, /(?<!medical\s)(?<!medical-)\bgas\s+(?:processing\s+|production\s+|compression\s+)?facilit/i, /petrochemical/i, /upstream\s+petroleum/i, /refinery/i],
   FINANCIAL_SERVICES: [/\bkyc\b/i, /\baml\b/i, /core\s+banking/i, /microfinance/i, /\bifrs\b/i, /\bbasel\b/i, /fintech/i, /payment\s+system/i, /prudential/i],
   TELECOMS_BROADBAND: [/spectrum/i, /broadband/i, /\blte\b/i, /\b5g\b/i, /base\s+station/i, /backhaul/i, /mobile\s+network/i, /telecoms\b/i, /\brf\b\s+plan/i],
 };

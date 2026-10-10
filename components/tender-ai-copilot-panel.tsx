@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { severityBadgeClassesCompact, severityToUISeverity } from "../lib/ui-tokens";
 
 type Priority = "HIGH" | "MEDIUM" | "LOW";
 type Owner = "TECHNICAL" | "COMPLIANCE" | "COMMERCIAL" | "PROPOSAL" | "MANAGEMENT";
@@ -15,11 +16,11 @@ type CopilotResponse = {
   confidence: Priority;
 };
 
-const SEVERITY_BADGE: Record<Priority, string> = {
-  HIGH: "bg-red-100 text-red-700",
-  MEDIUM: "bg-amber-100 text-amber-700",
-  LOW: "bg-slate-100 text-slate-600",
-};
+// SEVERITY_BADGE migrated to lib/ui-tokens.ts::severityBadgeClassesCompact(severityToUISeverity(...)).
+// Single source of truth for severity color mapping across all panels.
+// OWNER_BADGE remains local because OWNER isn't a severity — it's a category
+// (TECHNICAL/COMPLIANCE/COMMERCIAL/PROPOSAL/MANAGEMENT) and doesn't map to
+// the canonical 8-state UISeverity model.
 
 const OWNER_BADGE: Record<Owner, string> = {
   TECHNICAL: "bg-blue-100 text-blue-700",
@@ -64,7 +65,7 @@ export function TenderAICopilotPanel({ tenderId, canMutate = false }: { tenderId
       setResponse(data.response);
       setQuestion(trimmed);
     } catch (err) {
-      setError("Copilot failed".replace("failed", "failed. Refresh to retry."));
+      setError("Copilot failed.");
     } finally {
       setLoading(false);
     }
@@ -117,7 +118,7 @@ export function TenderAICopilotPanel({ tenderId, canMutate = false }: { tenderId
       setRecordedCount(count);
       router.refresh();
     } catch (err) {
-      setError("Failed to record controls".replace("failed", "failed. Refresh to retry."));
+      setError("Failed to record controls.");
     } finally {
       setRecording(false);
     }
@@ -132,7 +133,7 @@ export function TenderAICopilotPanel({ tenderId, canMutate = false }: { tenderId
           <h3 className="text-sm font-semibold text-slate-900">Tender AI Copilot</h3>
           <p className="mt-0.5 text-xs text-slate-500">Ask strategic questions about this tender using requirements, gaps, selected experts/projects, documents, controls, and audit context.</p>
         </div>
-        {response && <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${SEVERITY_BADGE[response.confidence]}`}>Confidence {response.confidence}{response.confidence === "LOW" && " (untrusted analysis)"}</span>}
+        {response && <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${severityBadgeClassesCompact(severityToUISeverity(response.confidence))}`}>Confidence {response.confidence}{response.confidence === "LOW" && " (untrusted analysis)"}</span>}
       </div>
 
       {error && <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">{error}</div>}
@@ -197,8 +198,8 @@ export function TenderAICopilotPanel({ tenderId, canMutate = false }: { tenderId
                 {response.risks.map((risk, i) => (
                   <li key={i} className="rounded-lg border border-amber-100 bg-amber-50 p-2.5 text-xs">
                     <div className="flex items-start gap-2">
-                      <span className={`mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${SEVERITY_BADGE[risk.severity]}`}>{risk.severity}</span>
-                      <div><p className="font-medium text-amber-900">{risk.title}</p><p className="mt-0.5 text-amber-700">{risk.detail}</p></div>
+                      <span className={`mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${severityBadgeClassesCompact(severityToUISeverity(risk.severity))}`}>{risk.severity}</span>
+                      <div><p className="font-medium text-amber-900">{risk.title}</p><p className="mt-0.5 text-amber-800">{risk.detail}</p></div>
                     </div>
                   </li>
                 ))}
@@ -213,7 +214,7 @@ export function TenderAICopilotPanel({ tenderId, canMutate = false }: { tenderId
                 {response.nextActions.map((action, i) => (
                   <li key={i} className="rounded-lg border border-slate-100 bg-white p-2.5 text-xs">
                     <div className="flex flex-wrap items-start gap-2">
-                      <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${SEVERITY_BADGE[action.priority]}`}>{action.priority}</span>
+                      <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${severityBadgeClassesCompact(severityToUISeverity(action.priority))}`}>{action.priority}</span>
                       <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${OWNER_BADGE[action.owner]}`}>{action.owner}</span>
                       <div className="min-w-0 flex-1"><p className="font-medium text-slate-900">{action.title}</p><p className="mt-0.5 text-slate-600">{action.detail}</p></div>
                     </div>

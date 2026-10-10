@@ -1,5 +1,5 @@
 import { logger } from "../../../../../lib/observability";
-// Human approval for a regex-fallback analysis.
+// Auto-approval for regex-fallback analysis.
 //
 // When all AI providers fail and the engine falls back to the regex
 // analyzer, `lib/engine/analysis-source.ts` blocks final proposal

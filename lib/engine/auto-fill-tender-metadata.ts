@@ -6,7 +6,7 @@
 
 import type { PrismaClient } from "@prisma/client";
 import { inferTenderMetadata } from "./tender-metadata";
-import { isValidClientName, isPlaceholderClientName } from "./metadata-validators";
+import { isValidClientName, isPlaceholderClientName, containsMetadataPlaceholder, containsMetadataScaffolding } from "./metadata-validators";
 import {
   extractReference,
   extractDeadline,
@@ -29,10 +29,20 @@ type TenderFileForAutoFill = {
 
 type TenderForAutoFill = {
   id: string;
+  title?: string | null;
+  description?: string | null;
+  intakeSummary?: string | null;
   clientName?: string | null;
+  procuringEntityName?: string | null;
+  donorAgency?: string | null;
+  implementingAgency?: string | null;
+  clientWebsite?: string | null;
+  submissionEmailSubject?: string | null;
   reference?: string | null;
   category?: string | null;
   country?: string | null;
+  budget?: number | null;
+  currency?: string | null;
   deadline?: Date | null;
   submissionMethod?: string | null;
   submissionAddress?: string | null;
@@ -41,6 +51,7 @@ type TenderForAutoFill = {
   clientContactTitle?: string | null;
   clientContactEmail?: string | null;
   clientContactPhone?: string | null;
+  clientAddress?: string | null;
   preBidMeetingDate?: Date | null;
   preBidMeetingLocation?: string | null;
   validityDays?: number | null;
@@ -50,6 +61,8 @@ type TenderForAutoFill = {
   numberOfCopiesRequired?: number | null;
   mandatorySiteVisit?: boolean | null;
   evaluationMethodology?: string | null;
+  technicalWeight?: number | null;
+  financialWeight?: number | null;
   files: TenderFileForAutoFill[];
 };
 
@@ -58,10 +71,11 @@ export type MetadataAutoFillResult = {
   skipped: string[];
 };
 
-function isEmptyOrPlaceholder(value: string | null | undefined): boolean {
-  if (!value || value.trim() === "") return true;
-  if (isPlaceholderClientName(value)) return true;
-  return false;
+function isEmptyOrPlaceholder(value: unknown): boolean {
+  if (value === null || value === undefined) return true;
+  if (typeof value !== "string") return false;
+  if (value.trim() === "") return true;
+  return isPlaceholderClientName(value);
 }
 
 function combineExtractedText(files: TenderFileForAutoFill[]): string {
@@ -76,9 +90,24 @@ function primaryFileName(files: TenderFileForAutoFill[]): string {
   return files[0]?.originalFileName ?? files[0]?.fileName ?? "tender";
 }
 
+/**
+ * Fields that make up the AI Analyze input (tender-analysis-content.ts hashes
+ * title + description + intakeSummary + source text). Writing any of them
+ * after an analysis marks that analysis stale and demands a new AI Analyze.
+ */
+export const ANALYSIS_INPUT_FIELDS = ["title", "description", "intakeSummary"] as const;
+
 export async function autoFillTenderMetadata(
   tender: TenderForAutoFill,
   prisma: PrismaClient,
+  options?: {
+    /**
+     * Leave the analysis-input fields untouched. Used when refilling facts
+     * after an analysis already exists (Run Engine): filling an empty
+     * description there would silently invalidate the owner's AI Analyze.
+     */
+    preserveAnalysisInputs?: boolean;
+  },
 ): Promise<MetadataAutoFillResult> {
   const combinedText = combineExtractedText(tender.files);
   if (combinedText.trim().length < 500) {
@@ -98,7 +127,7 @@ export async function autoFillTenderMetadata(
     validate?: (v: T) => boolean,
   ): void {
     if (inferred == null) { skipped.push(field); return; }
-    if (current != null && !isEmptyOrPlaceholder(current as unknown as string)) {
+    if (current != null && !isEmptyOrPlaceholder(current)) {
       skipped.push(field);
       return;
     }
@@ -107,9 +136,27 @@ export async function autoFillTenderMetadata(
     filled.push(field);
   }
 
+  if (
+    draft.title &&
+    (!tender.title || tender.title.trim() === "" || tender.title.startsWith("[REVIEW NEEDED]"))
+  ) {
+    patch.title = draft.title;
+    filled.push("title");
+  } else {
+    skipped.push("title");
+  }
+  tryFill("description", tender.description, draft.description);
+  tryFill("intakeSummary", tender.intakeSummary, draft.intakeSummary);
   tryFill("clientName", tender.clientName, draft.clientName, isValidClientName);
+  tryFill("procuringEntityName", tender.procuringEntityName, draft.procuringEntityName);
+  tryFill("donorAgency", tender.donorAgency, draft.donorAgency);
+  tryFill("implementingAgency", tender.implementingAgency, draft.implementingAgency);
+  tryFill("clientWebsite", tender.clientWebsite, draft.clientWebsite);
+  tryFill("submissionEmailSubject", tender.submissionEmailSubject, draft.submissionEmailSubject);
   tryFill("reference", tender.reference, draft.reference);
   tryFill("country", tender.country, draft.country);
+  tryFill("budget", tender.budget, draft.budget);
+  tryFill("currency", tender.currency, draft.currency);
   tryFill("deadline", tender.deadline, draft.deadline);
   tryFill("submissionMethod", tender.submissionMethod, draft.submissionMethod);
   tryFill("submissionAddress", tender.submissionAddress, draft.submissionAddress);
@@ -117,6 +164,7 @@ export async function autoFillTenderMetadata(
   tryFill("clientContactTitle", tender.clientContactTitle, draft.clientContactTitle);
   tryFill("clientContactEmail", tender.clientContactEmail, draft.clientContactEmail);
   tryFill("clientContactPhone", tender.clientContactPhone, draft.clientContactPhone);
+  tryFill("clientAddress", tender.clientAddress, draft.clientAddress);
   // Auto-fill pre-bid meeting date and location when extracted from the tender document
   if ((tender.preBidMeetingDate === null || tender.preBidMeetingDate === undefined) && draft.preBidMeetingDate) {
     patch["preBidMeetingDate"] = draft.preBidMeetingDate;
@@ -138,6 +186,8 @@ export async function autoFillTenderMetadata(
   tryFill("bidBondAmount", tender.bidBondAmount, draft.bidBondAmount);
   tryFill("bidBondCurrency", tender.bidBondCurrency, draft.bidBondCurrency);
   tryFill("numberOfCopiesRequired", tender.numberOfCopiesRequired, draft.numberOfCopiesRequired);
+  tryFill("technicalWeight", tender.technicalWeight, draft.technicalWeight);
+  tryFill("financialWeight", tender.financialWeight, draft.financialWeight);
   // mandatorySiteVisit is a boolean — write only when the current DB value is null
   // (booleans bypass isEmptyOrPlaceholder, which is string-only).
   if (tender.mandatorySiteVisit === null || tender.mandatorySiteVisit === undefined) {
@@ -180,6 +230,10 @@ export async function autoFillTenderMetadata(
   function trySecondPassScalar<T>(field: string, current: T | null | undefined, extracted: T | null | undefined): void {
     if (!shouldFillScalar(field, current)) return;
     if (extracted === null || extracted === undefined) return;
+    // A string the gate would refuse is not a fact. "Tender Reference: Not
+    // provided" yielded "Not", which then blocked the Build Plan as a
+    // placeholder; the same test the gate applies decides here.
+    if (typeof extracted === "string" && (containsMetadataPlaceholder(extracted) || containsMetadataScaffolding(extracted))) return;
     patch[field] = extracted as unknown;
     filled.push(field);
   }
@@ -236,6 +290,16 @@ export async function autoFillTenderMetadata(
     if (r.found) trySecondPassScalar("evaluationMethodology", tender.evaluationMethodology, r.methodologyText);
   }
 
+  if (options?.preserveAnalysisInputs) {
+    for (const field of ANALYSIS_INPUT_FIELDS) {
+      if (field in patch) {
+        delete patch[field];
+        const at = filled.indexOf(field);
+        if (at >= 0) filled.splice(at, 1);
+        skipped.push(field);
+      }
+    }
+  }
   if (Object.keys(patch).length > 0) {
     await prisma.tender.update({ where: { id: tender.id }, data: patch });
   }

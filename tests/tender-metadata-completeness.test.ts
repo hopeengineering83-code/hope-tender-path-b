@@ -61,7 +61,11 @@ describe("assessTenderMetadataCompleteness — screenshot regression (5/16 auto-
       hasSubmissionRules: false,
     });
     assert.equal(report.blockingForGeneration, false);
-    assert.ok(report.missingCritical.length >= 4);
+    // No requirements is critical; an unstated method, deadline or endpoint
+    // is advisory (ABSENT_TENDER_FACT_IS_NOT_REQUIRED).
+    assert.ok(report.missingCritical.some((f) => f.field === "requiredDocuments"));
+    assert.ok(!report.missingCritical.some((f) => f.field === "deadline" || f.field === "submissionMethod" || f.field === "submissionEndpoint"));
+    assert.ok(report.missingNonCritical.some((f) => f.field === "deadline"));
     assert.ok(report.placeholderCount >= 2);
     assert.ok(report.overallRatio < 0.5);
   });
@@ -129,7 +133,7 @@ describe("assessTenderMetadataCompleteness — procuringEntityName fallback for 
     assert.equal(report.blockingForGeneration, false);
   });
 
-  it("DOES block when both clientName and procuringEntityName are null", () => {
+  it("lists the client as advisory when both clientName and procuringEntityName are null", () => {
     const report = assessTenderMetadataCompleteness({
       clientName: null,
       procuringEntityName: null,
@@ -140,8 +144,9 @@ describe("assessTenderMetadataCompleteness — procuringEntityName fallback for 
       requirementCount: 10,
       hasEvaluationMethodology: true,
     });
-    assert.equal(report.missingCritical.some((f) => f.field === "clientName"), true,
-      "clientName must appear as missing when neither clientName nor procuringEntityName is set");
+    assert.equal(report.missingNonCritical.some((f) => f.field === "clientName"), true,
+      "an unstated client is advisory (ABSENT_TENDER_FACT_IS_NOT_REQUIRED)");
+    assert.equal(report.missingCritical.some((f) => f.field === "clientName"), false);
     assert.equal(report.blockingForGeneration, false);
   });
 
