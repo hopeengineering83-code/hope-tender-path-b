@@ -1037,7 +1037,7 @@ function groundingConfidence(
     return Math.max(modelConfidence, 0.5);
 }
 
-function mapToDraft(
+export function mapToDraft(
     req: AIRequirement,
     validTenderFileIds?: Set<string>,
     fileTextById?: Map<string, string>,
@@ -1061,7 +1061,10 @@ function mapToDraft(
         // string straight through let "EXPERIENCE" reach the column, which
         // silently sized the engine's project-selection limit to zero.
         requirementType: normalizeRequirementTypeOrDefault(req.requirementType),
-        priority: req.priority,
+        // One spelling. The promotion gate reads /mandatory|critical/i while the
+        // compliance engine compares === "MANDATORY", so a model's "Mandatory"
+        // was grounded as mandatory and then raised no gap when unmet.
+        priority: String(req.priority ?? "").trim().toUpperCase() || "INFORMATIONAL",
         requiredQuantity: req.requiredQuantity,
         pageLimit: req.pageLimit,
         // Only a file name the tender states; the model has returned stored

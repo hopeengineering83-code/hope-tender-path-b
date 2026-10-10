@@ -1,6 +1,7 @@
 import { requiresSubmittedFinancialProposal } from "./submission-plan-classifier";
 import type { CompanyKnowledgeSnapshot, ComplianceResult, MatchingResult, RequirementDraft } from "./types";
 import { isPackagingOrFormatRequirement, isSubmissionInstructionRequirement } from "./packaging-requirement-rule";
+import { assessMandatoryQualifications, decidingAssessment, formatQualificationAssessment, QUALIFICATION_NOT_MET, QUALIFICATION_NOT_PROVEN } from "./mandatory-qualification-check";
 
 function clamp01(value: number): number { return Math.max(0, Math.min(1, value)); }
 
@@ -155,6 +156,7 @@ export function buildCompliance(
   requirementIds: Array<{ id: string; requirement: RequirementDraft }>,
   knowledge: CompanyKnowledgeSnapshot,
   matching: MatchingResult,
+  firm: { companyName?: string | null; foundingYear?: number | null; now?: Date } = {},
 ): ComplianceResult {
   const selectedExperts = matching.expertMatches.filter((match) => match.isSelected);
   const selectedProjects = matching.projectMatches.filter((match) => match.isSelected);
@@ -194,6 +196,19 @@ export function buildCompliance(
 
   const matrices: ComplianceResult["matrices"] = [];
   const gaps: ComplianceResult["gaps"] = [];
+
+  // A record of the right kind is not proof of a stated figure: a turnover
+  // threshold, a count of similar assignments of a stated value, or years in
+  // business are checked against the figures on file (see
+  // mandatory-qualification-check.ts). Usable financial records only, as
+  // loaded; every project, with the ones matched as similar marked.
+  const selectedProjectIds = new Set(selectedProjects.map((match) => match.projectId));
+  const qualificationEvidence = {
+    companyName: firm.companyName,
+    foundingYear: firm.foundingYear,
+    financialRecords: knowledge.financialRecords,
+    projects: knowledge.projects.map((project) => ({ ...project, selected: selectedProjectIds.has(project.id) })),
+  };
 
   for (const item of requirementIds) {
     const req = item.requirement;
@@ -322,6 +337,20 @@ export function buildCompliance(
         ?? (selectedProjects[0] ? nameOrId(projectNameById, selectedProjects[0].projectId) : undefined);
     }
 
+    const qualification = decidingAssessment(assessMandatoryQualifications(req, qualificationEvidence, firm.now));
+    const strengthBeforeQualification = supportStrength;
+    if (qualification?.verdict === "FAIL") {
+      supportStrength = 0;
+      supportStatus = "UNSUPPORTED";
+      evidenceSummary = formatQualificationAssessment(qualification);
+    } else if (qualification?.verdict === "CONDITIONAL_PASS") {
+      supportStrength = Math.min(supportStrength, 0.6);
+      supportStatus = supportStrength > 0 ? "PARTIAL" : "UNSUPPORTED";
+      evidenceSummary = formatQualificationAssessment(qualification);
+    } else if (qualification) {
+      evidenceSummary = `${evidenceSummary} ${formatQualificationAssessment(qualification)}`;
+    }
+
     matrices.push({
       requirementTitle: req.title,
       requirementId: item.id,
@@ -334,7 +363,22 @@ export function buildCompliance(
       notes: req.priority === "MANDATORY" && supportStrength < 1 ? "Senior review required; generation is allowed when proposal response/evidence exists." : undefined,
     });
 
-    if (req.priority === "MANDATORY" && supportStrength < 0.5) {
+    if (qualification && qualification.verdict !== "PASS") {
+      // The owner's decision, stated: what the tender requires, what is on
+      // file, what is missing. A figure that falls short — or no evidence at
+      // all — blocks final export; a figure that cannot yet be confirmed asks
+      // for the evidence named.
+      const blocks = qualification.verdict === "FAIL" || strengthBeforeQualification < 0.5;
+      gaps.push({
+        requirementId: item.id,
+        severity: blocks ? "CRITICAL" : "HIGH",
+        title: `${req.title} — ${qualification.verdict === "FAIL" ? QUALIFICATION_NOT_MET : QUALIFICATION_NOT_PROVEN}`,
+        description: formatQualificationAssessment(qualification),
+        mitigationPlan: qualification.verdict === "FAIL"
+          ? "Upload genuine evidence that meets the stated figure (for example a joint-venture partner's records, where the tender allows joint ventures), or decide not to bid. The proposal does not state this requirement as met."
+          : `Upload the evidence named as missing: ${qualification.missing}`,
+      });
+    } else if (req.priority === "MANDATORY" && supportStrength < 0.5) {
       gaps.push({
         requirementId: item.id,
         severity: nonCriticalRequirement(req.requirementType) ? "HIGH" : "CRITICAL",

@@ -477,7 +477,7 @@ export async function runTenderEngine(
     });
 
     progress("engine.compliance", "Building compliance matrix and gap analysis");
-    let compliance = buildCompliance(createdRequirements, knowledge, matching);
+    let compliance = buildCompliance(createdRequirements, knowledge, matching, { companyName: company.name, foundingYear: company.foundingYear });
     let evidenceMatchingBlocker: { code: string; message: string } | null = null;
 
     const aiRematchFailed = (!mainEngineAIRematch.aiApplied && mainEngineAIRematch.warning !== null) || rematchSkippedForDeadline;

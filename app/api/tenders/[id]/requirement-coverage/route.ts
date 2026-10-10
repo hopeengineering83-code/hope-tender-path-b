@@ -124,6 +124,7 @@ const FACET_LABELS: Record<string, string> = {
   similarity: "comparable or similar scope",
   verifiedBytes: "verified source bytes",
   exactFileName: "the tender's exact file name",
+  statedFigure: "the turnover, contract value, number of assignments or period the tender states",
 };
 
 function humanizeFacet(facet: string): string {

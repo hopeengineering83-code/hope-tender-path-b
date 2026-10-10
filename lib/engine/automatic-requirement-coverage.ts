@@ -23,6 +23,7 @@ import {
   type PackageConformanceVerdict,
 } from "./package-conformance";
 import { generatedDocumentVisibleText } from "./generated-document-text";
+import { assessMandatoryQualifications, decidingAssessment, type QualificationEvidence } from "./mandatory-qualification-check";
 
 /**
  * Persisted automatic requirement-evidence rows carry this prefix in notes.
@@ -201,6 +202,10 @@ type LoadedCoverageContext = {
   // separation, single-file consolidation, file format, file naming — are
   // verified by observing these, never by text-matching a company record.
   packageFacts: PackageConformanceFacts;
+  // The figures a mandatory qualification is checked against: a linked
+  // financial record or project is not proof of a stated turnover, value or
+  // count (see mandatory-qualification-check.ts).
+  qualificationEvidence: QualificationEvidence;
 };
 
 function sha256(value: string): string {
@@ -947,14 +952,28 @@ function desiredRowsForContext(context: LoadedCoverageContext): {
       continue;
     }
 
+    // A record of the right kind does not meet a stated figure. When the
+    // figures on file fall short, no record is linked as evidence for it;
+    // when they cannot yet prove it, a link is at most PARTIAL and names the
+    // stated figure as what the record lacks.
+    const qualification = blocking
+      ? decidingAssessment(assessMandatoryQualifications(requirement, context.qualificationEvidence))
+      : null;
+    if (qualification?.verdict === "FAIL") {
+      remainingWithoutEligibleEvidence.push({ id: requirement.id, title: requirement.title });
+      continue;
+    }
+
     const selected = selectAutomaticEvidenceForRequirement(requirement, context.candidates);
     if (selected.length === 0) {
       if (blocking) remainingWithoutEligibleEvidence.push({ id: requirement.id, title: requirement.title });
       continue;
     }
 
+    const unproven = qualification?.verdict === "CONDITIONAL_PASS";
     for (const item of selected) {
       const metadata = metadataFor(requirement, item);
+      if (unproven) metadata.missingFacets = [...new Set([...(metadata.missingFacets ?? []), "statedFigure"])];
       rows.push({
         key: `${requirement.id}:${item.candidate.evidenceKey}`,
         tenderId: context.tender.id,
@@ -962,7 +981,7 @@ function desiredRowsForContext(context: LoadedCoverageContext): {
         evidenceType: item.candidate.recordType,
         evidenceSource: automaticEvidenceSource(item.candidate.recordType),
         evidenceReference: item.candidate.label,
-        supportLevel: item.supportLevel,
+        supportLevel: unproven ? "PARTIAL" : item.supportLevel,
         notes: serializeAutomaticRequirementEvidence(metadata),
       });
     }
@@ -1092,7 +1111,7 @@ async function loadCoverageContext(db: any, tenderId: string, userId: string): P
 
   const company = await db.company.findUnique({
     where: { userId },
-    select: { id: true },
+    select: { id: true, name: true, foundingYear: true },
   });
   if (!company) {
     return {
@@ -1104,6 +1123,7 @@ async function loadCoverageContext(db: any, tenderId: string, userId: string): P
       // Package rules do not depend on the company vault: the submission
       // package exists whether or not a company profile does.
       packageFacts: { documents: tender.generatedDocuments ?? [], planConfirmed: false },
+      qualificationEvidence: { financialRecords: [], projects: [] },
     };
   }
 
@@ -1365,6 +1385,12 @@ async function loadCoverageContext(db: any, tenderId: string, userId: string): P
       documents: tender.generatedDocuments ?? [],
       plannedFileNames,
       planConfirmed,
+    },
+    qualificationEvidence: {
+      companyName: company.name,
+      foundingYear: company.foundingYear,
+      financialRecords: financialRecords.filter((record: any) => canUseVaultRecord(record as ReviewRecordState, "GENERATION")),
+      projects: projects.map((project: any) => ({ ...project, selected: selectedProjectIds.has(project.id) })),
     },
   };
 }

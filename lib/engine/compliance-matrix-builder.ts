@@ -31,6 +31,7 @@
  * decide whether to append.
  */
 
+import { isQualificationShortfallGap } from "./mandatory-qualification-check";
 import { tenderAnnexPolicy } from "./annex-policy";
 import { isStrongSupportLevel, normalizeSupportLevel } from "./requirement-evidence-profile";
 import { clientSafeComplianceEvidence } from "./automatic-requirement-coverage";
@@ -336,6 +337,13 @@ export function buildComplianceMatrixSection(input: ComplianceMatrixBuilderInput
     // once from an engine row already rated FULL. Section E's other renderer
     // caps attachment rows the same way (statusForRequirement).
     if (proposalLocation === "Annex Schedule" && status === "FULLY MET") status = "PARTIALLY MET";
+
+    // A stated figure the firm's own figures fall short of — a turnover, a
+    // count of similar assignments of a stated value — is not met, whatever
+    // other evidence is linked to the row (mandatory-qualification-check.ts).
+    // Printed PARTIALLY MET, it told the evaluator a turnover the firm does not
+    // have was partly there.
+    if (((reqId && gapsByReqId.get(reqId)) || []).some(isQualificationShortfallGap)) status = "NOT MET";
 
     // Evidence cell — concatenate up to 2 evidence sources.
     const evidenceParts: string[] = [];
