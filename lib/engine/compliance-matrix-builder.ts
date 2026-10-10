@@ -32,6 +32,7 @@
  */
 
 import { isQualificationShortfallGap } from "./mandatory-qualification-check";
+import { eligibilitySubjectOf } from "./eligibility-subject";
 import { tenderAnnexPolicy } from "./annex-policy";
 import { isStrongSupportLevel, normalizeSupportLevel } from "./requirement-evidence-profile";
 import { clientSafeComplianceEvidence } from "./automatic-requirement-coverage";
@@ -103,7 +104,16 @@ export function mergeEvidencePieces(pieces: readonly string[]): string {
 }
 
 export function inferProposalLocation(req: RequirementLite): string {
-  const type = (req.requirementType ?? "").toUpperCase();
+  const declaredType = (req.requirementType ?? "").toUpperCase();
+  // An eligibility row is answered where its subject is (eligibility-subject.ts):
+  // "Healthcare Design Experience" in the portfolio, "Regulations
+  // Understanding" in the methodology — not in the company profile, beside
+  // evidence the matrix cites from those sections.
+  const subject = declaredType === "ELIGIBILITY" ? eligibilitySubjectOf(`${req.title ?? ""} ${req.description ?? ""}`) : null;
+  const type = subject === "TEAM" ? "EXPERT"
+    : subject === "EXPERIENCE" ? "PROJECT_EXPERIENCE"
+      : subject === "UNDERSTANDING" ? "METHODOLOGY"
+        : declaredType;
   const title = (req.title ?? "").toLowerCase();
   // A requirement about HOW the proposal is submitted is answered by the
   // submission itself, which the Cover Letter states. Read from the

@@ -88,3 +88,15 @@ describe("the engine cites the evidence the row names", () => {
     assert.equal(result.gaps.filter((g) => g.severity === "CRITICAL").length, 0, JSON.stringify(result.gaps));
   });
 });
+
+describe("Section E points each eligibility row at the section that answers it", () => {
+  it("experience → the portfolio, understanding → the methodology, team → the team, licence → the company", async () => {
+    const { inferProposalLocation } = await import("../lib/engine/compliance-matrix-builder");
+    const at = (id: string) => inferProposalLocation({ ...ROWS.find((r) => r.id === id)!, requirementType: "ELIGIBILITY" } as never);
+    assert.equal(at("experience"), "Section B.2 Project Portfolio");
+    assert.equal(at("portfolio"), "Section B.2 Project Portfolio");
+    assert.equal(at("regulations"), "Section C.2 Technical Methodology");
+    assert.equal(at("team"), "Section A.4 Proposed Project Team");
+    assert.equal(at("licence"), "Section A.1 Company Background");
+  });
+});
