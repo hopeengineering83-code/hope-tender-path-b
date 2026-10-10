@@ -62,7 +62,7 @@ import { tenderTotalDays } from "./canonical-work-plan";
 import { reconcilePortfolioReadingGuide, repairPortfolioCards } from "./portfolio-card-repair";
 import { applyClientRegister } from "./client-register";
 import { buildComplianceMatrixSection, hasComplianceMatrixHeading, stripComplianceMatrixSections } from "./compliance-matrix-builder";
-import { buildEvaluatorMirrorSection, hasEvaluatorMirrorHeading } from "./evaluator-mirror-builder";
+import { buildEvaluatorMirrorSection, hasEvaluatorMirrorHeading, stripEvaluatorMirrorSections } from "./evaluator-mirror-builder";
 import { hasWinThemesHeading } from "./win-themes-builder";
 import { buildSelfScoreSection, hasSelfScoreHeading, stripSelfScoreSections } from "./self-score-builder";
 import { extractTenderLanguageEchoes, formatEchoesForPrompt } from "./tender-language-echoes";
@@ -2683,7 +2683,13 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
     mapping: buildTeamToProjectMappingTable(experts, projects) !== "",
   }), { references: projects.length > 0, portfolio: projects.length > 0 });
   // Section E is always the canonical builder's (stripComplianceMatrixSections).
-  const matrixMarkdown = stripComplianceMatrixSections(stripInternalReviewSections(appendEvaluatorResponseMatrix(upstreamWithoutTeamTables, evaluatorMatrixInput)).markdown);
+  // Section F is the writer's when the writer wrote one; otherwise the one the
+  // evaluator appendix adds lists the tender's requirements as its criteria,
+  // and is removed so the canonical builder writes it from the tender's own
+  // evaluation criteria (stripEvaluatorMirrorSections).
+  const writerWroteSectionF = hasEvaluatorMirrorHeading(upstreamWithoutTeamTables);
+  const appendedMatrix = stripInternalReviewSections(appendEvaluatorResponseMatrix(upstreamWithoutTeamTables, evaluatorMatrixInput)).markdown;
+  const matrixMarkdown = stripComplianceMatrixSections(writerWroteSectionF ? appendedMatrix : stripEvaluatorMirrorSections(appendedMatrix));
   // The sector inferSector() read from what the assignment is. Testing the
   // raw tender text made an office tender "healthcare" on a donor's mission
   // statement or a "health and safety plan".

@@ -20,6 +20,7 @@ import { strict as assert } from "node:assert";
 import { ensureRubricHeadings } from "../lib/engine/rubric-driven-sections";
 import { buildEvaluatorMirrorSection } from "../lib/engine/evaluator-mirror-builder";
 import { reconcileSectionPointers } from "../lib/engine/section-pointer-reconciliation";
+import { resolveCanonicalFieldState, type CanonicalResolverInput } from "../lib/engine/canonical-field-state";
 
 const WEIGHTS = [
   { criterion: "Specific Experience of the Consultant", weight: "20 points", rawMatch: "Specific Experience of the Consultant: 20 points" },
@@ -157,5 +158,71 @@ describe("Run Engine keeps the tender's evaluation methodology — real PostgreS
       await prisma.company.deleteMany({ where: { userId: user.id } });
       await prisma.user.deleteMany({ where: { id: user.id } });
     }
+  });
+});
+
+// Once Run Engine kept the field, the hosted Pharo run (2026-10-10) found the
+// next defect behind it: the export readiness BLOCKED on "Field 'Evaluation
+// criteria': Value is a placeholder", because AI Analyze's reading of the
+// criteria says "Since percentage weights are not provided, the proposal must
+// address all criteria". A sentence is not a placeholder; a TBD still is.
+describe("the evaluation criteria are prose, and prose is not a placeholder", () => {
+  const PHARO_STYLE = "The evaluation will be based on five criteria: Relevant project experience, Quality and relevance of portfolio, Technical understanding, Strength of professional team, and Compliance with submission requirements. Since percentage weights are not provided, the proposal must comprehensively address all criteria to maximize scoring.";
+  const resolve = (evaluationMethodology: string) => resolveCanonicalFieldState({
+    tender: {
+      id: "t1", title: "Design of a Medical Center", reference: "REF-2026-001", clientName: "Example Authority", procuringEntityName: null,
+      deadline: new Date("2026-12-11"), currency: "ETB", country: "Testland", submissionMethod: "Email", submissionAddress: "bids@example.test",
+      submissionEmails: "bids@example.test", submissionEmailSubject: null, clientContactName: null, clientContactEmail: null, metadataContaminated: false,
+      evaluationMethodology,
+    } as CanonicalResolverInput["tender"],
+    overrides: [],
+    hasExtractedRequirements: true,
+    activeTenderFileIds: new Set(["file-active"]),
+  }).fields.find((f) => f.fieldKey === "evaluationCriteria")!;
+
+  it("a criteria summary that mentions weights 'are not provided' is export-eligible", () => {
+    const field = resolve(PHARO_STYLE);
+    assert.notEqual(field.status, "INTERNAL_PLACEHOLDER");
+    assert.equal(field.blockerReason, null);
+    assert.equal(field.exportEligible, true);
+  });
+
+  it("a placeholder in the field still blocks", () => {
+    for (const value of ["TBD", "Not provided", "Evaluation criteria: Bid-Team to confirm", "Weights: [not specified]"]) {
+      const field = resolve(value);
+      assert.equal(field.status, "INTERNAL_PLACEHOLDER", value);
+      assert.equal(field.exportEligible, false, value);
+    }
+  });
+});
+
+// The same hosted run: the model wrote some sections and no Section F, so the
+// evaluator appendix's last-resort Section F — the tender's REQUIREMENTS
+// listed as "each published evaluation criterion" — stood in for the
+// canonical one built from the tender's five evaluation criteria.
+describe("Section F comes from the tender's criteria, not from its requirement list", () => {
+  it("the appendix's requirement-based Section F is removed when the writer wrote none", async () => {
+    const { appendEvaluatorResponseMatrix } = await import("../lib/engine/proposal-evaluator-matrix");
+    const { stripEvaluatorMirrorSections, hasEvaluatorMirrorHeading } = await import("../lib/engine/evaluator-mirror-builder");
+    const writer = "# SECTION A: COMPANY PROFILE\n## A.1 Company Overview\nText.\n# SECTION C: TECHNICAL APPROACH\n## C.3 Technical Methodology\nText.";
+    const appended = appendEvaluatorResponseMatrix(writer, {
+      tenderTitle: "T", clientName: "C", requirements: ["Company Profile — overview", "Valid Business License — licence"],
+      expertLines: [], projectLines: [], companyEvidenceLines: [], projectEvidenceLines: [], complianceLines: [], differentiators: [], requirementPriorities: [],
+    } as never);
+    assert.equal(hasEvaluatorMirrorHeading(appended), true, "the appendix adds its own Section F");
+    const stripped = stripEvaluatorMirrorSections(appended);
+    assert.equal(hasEvaluatorMirrorHeading(stripped), false);
+    assert.match(stripped, /## C\.3 Technical Methodology\nText\./, "the writer's sections are untouched");
+  });
+
+  it("a Section F the writer wrote is kept; only the following sections survive a strip", async () => {
+    const { stripEvaluatorMirrorSections } = await import("../lib/engine/evaluator-mirror-builder");
+    const md = "## Section E: Compliance Matrix\nrows\n### SECTION F: EVALUATION CRITERIA RESPONSE MIRROR\n| a | b |\n## Section G: Why We Are Well Suited\nG body";
+    const out = stripEvaluatorMirrorSections(md);
+    assert.doesNotMatch(out, /RESPONSE MIRROR|\| a \| b \|/);
+    assert.match(out, /## Section G: Why We Are Well Suited\nG body/);
+    const { readFileSync } = await import("node:fs");
+    const generator = readFileSync("lib/engine/generate-elite.ts", "utf8");
+    assert.match(generator, /writerWroteSectionF \? appendedMatrix : stripEvaluatorMirrorSections\(appendedMatrix\)/, "the writer's own Section F is kept");
   });
 });

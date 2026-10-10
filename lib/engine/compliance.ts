@@ -202,7 +202,7 @@ export function buildCompliance(
   // business are checked against the figures on file (see
   // mandatory-qualification-check.ts). Usable financial records only, as
   // loaded; every project, with the ones matched as similar marked.
-  const selectedProjectIds = new Set(selectedProjects.map((match) => match.projectId));
+  const selectedProjectIds = new Set(selectedProjects.map(({ projectId }) => projectId));
   const qualificationEvidence = {
     companyName: firm.companyName,
     foundingYear: firm.foundingYear,

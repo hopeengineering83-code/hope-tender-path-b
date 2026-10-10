@@ -54,6 +54,41 @@ function escCell(text: string | null | undefined): string {
 }
 
 /**
+ * Remove every Section F from markdown — the heading and its body, up to the
+ * next heading of the same or a higher level.
+ *
+ * The model path runs the writer's output through the evaluator appendix,
+ * whose last-resort repair adds a Section F built from the tender's
+ * REQUIREMENTS ("Valid Business License — Mandatory / pass-fail") whenever the
+ * model wrote none. The canonical builder below then saw a Section F and stood
+ * down, so a proposal whose tender states five evaluation criteria listed
+ * fourteen requirements under "each published evaluation criterion"
+ * (Pharo, hosted run 38061776056, 2026-10-10). Section E had the same defect
+ * and is stripped the same way (stripComplianceMatrixSections).
+ */
+export function stripEvaluatorMirrorSections(markdown: string): string {
+  const lines = markdown.split("\n");
+  const out: string[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const match = lines[i]!.match(/^\s*(#{1,4})\s/);
+    if (match && hasEvaluatorMirrorHeading(lines[i]!)) {
+      const level = match[1]!.length;
+      i += 1;
+      while (i < lines.length) {
+        const next = lines[i]!.match(/^\s*(#+)\s/);
+        if (next && next[1]!.length <= level) break;
+        i += 1;
+      }
+      continue;
+    }
+    out.push(lines[i]!);
+    i += 1;
+  }
+  return out.join("\n");
+}
+
+/**
  * Detect whether the upstream markdown already contains a Section F
  * Evaluation Criteria Response Mirror.
  */

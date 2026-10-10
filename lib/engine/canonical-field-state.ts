@@ -33,6 +33,7 @@ import { isGroundedEvidence as isGroundedSourceEvidence, isGroundedEvidenceWithF
 // the global containsMetadataPlaceholder, because sanitize-stored-metadata nulls
 // fields on it and mid-text matches would risk dropping legitimate values.)
 import { looksLikeMetadataPlaceholder } from "./tender-metadata-completeness";
+import { ALWAYS_PLACEHOLDER_PATTERNS, valuePositionPlaceholderMatches } from "./detection-patterns";
 // Authority model — manual tender facts flexibility
 import {
   isSubmissionCriticalField,
@@ -299,12 +300,29 @@ function normalizeFieldValue(fieldKey: string, value: string): string {
 // there. The dead duplicate was removed on 2026-07-19 during post-#1175
 // gap closure.
 
+// Fields whose value is prose, not a single datum. "Evaluation criteria" holds
+// AI Analyze's reading of the tender's criteria: "… Since percentage weights
+// are not provided, the proposal must address all criteria …". Scanned with the
+// single-value vocabulary, "not provided" made the whole field a placeholder
+// and blocked final export (Pharo, 2026-10-10, once Run Engine stopped erasing
+// the field). In prose only an unambiguous marker or a phrase in value
+// position is a placeholder — the rule detection-patterns.ts already applies
+// to document text.
+const NARRATIVE_FIELDS = new Set(["evaluationCriteria"]);
+
+function isPlaceholderValue(fieldKey: string, value: string): boolean {
+  if (NARRATIVE_FIELDS.has(fieldKey)) {
+    return ALWAYS_PLACEHOLDER_PATTERNS.some((rx) => rx.test(value)) || valuePositionPlaceholderMatches(value).length > 0;
+  }
+  return containsMetadataPlaceholder(value) || looksLikeMetadataPlaceholder(value);
+}
+
 function validateFieldFormat(fieldKey: string, value: string | null): { valid: boolean; reason: string | null } {
   if (!value) return { valid: true, reason: null };
   const trimmed = typeof value === "string" ? value.trim() : String(value);
   if (trimmed.length === 0) return { valid: true, reason: null };
 
-  if (containsMetadataPlaceholder(trimmed) || looksLikeMetadataPlaceholder(trimmed)) {
+  if (isPlaceholderValue(fieldKey, trimmed)) {
     return { valid: false, reason: "Value is a placeholder (e.g. TBD, Bid-Team to confirm) and must be replaced." };
   }
   if (containsMetadataScaffolding(trimmed)) {
