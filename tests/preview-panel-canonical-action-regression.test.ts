@@ -17,7 +17,9 @@ describe("real Preview panels expose one canonical action", () => {
   it("does not return invented manual finalization or export re-check actions", () => {
     const autoFinalize = read("app/api/tenders/[id]/auto-finalize/route.ts");
     assert.doesNotMatch(autoFinalize, /nextAction:[^\n]*RECHECK_EXPORT_READINESS/);
-    assert.match(autoFinalize, /nextAction:\s*readiness\.ok\s*\?\s*"EXPORT_READY"\s*:\s*"AUTOMATIC_PROCESSING"/);
+    assert.match(autoFinalize, /nextAction:\s*exportReady\s*\?\s*"EXPORT_READY"\s*:\s*"AUTOMATIC_PROCESSING"/);
+    // Export-ready only when the byte gate and the canonical resolver agree.
+    assert.match(autoFinalize, /const exportReady = readiness\.ok && canonicalReadiness\?\.readyForFinalExport === true;/);
   });
 
   it("keeps derived-plan recovery at the one manual Run Engine gate", () => {

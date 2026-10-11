@@ -64,7 +64,7 @@ function imageContentType(mimeType: string): string {
  * Actually: 200x100 pixels at 96 DPI ≈ 2x1 inches = 1828800x914400 EMU.
  * Let's use a reasonable default: signature 300x150 pixels, stamp 200x200 pixels.
  */
-async function insertImageIntoDocx(
+export async function insertImageIntoDocx(
   docxBuffer: Buffer,
   imageBuffer: Buffer,
   imageExt: string,
@@ -72,9 +72,27 @@ async function insertImageIntoDocx(
   opts: { widthEmu: number; heightEmu: number; imageName: string },
 ): Promise<Buffer> {
   const zip = await JSZip.loadAsync(docxBuffer);
+  const mediaName = `word/media/${opts.imageName}.${imageExt}`;
+
+  // 0. Already applied (generation or auto-finalize ran again): never add a
+  // second drawing. Refresh the image only when the owner has replaced it.
+  const priorRels = await zip.file("word/_rels/document.xml.rels")?.async("string");
+  const priorTarget = priorRels?.match(new RegExp(`Target=["']media/${opts.imageName}\\.(\\w+)["']`));
+  if (priorRels && priorTarget) {
+    const priorMedia = `word/media/${opts.imageName}.${priorTarget[1]}`;
+    const priorBytes = await zip.file(priorMedia)?.async("nodebuffer");
+    if (priorTarget[1] === imageExt && priorBytes?.equals(imageBuffer)) return docxBuffer;
+    if (priorMedia !== mediaName) zip.remove(priorMedia);
+    zip.file(mediaName, imageBuffer);
+    zip.file("word/_rels/document.xml.rels", priorRels.replace(priorTarget[0], `Target="media/${opts.imageName}.${imageExt}"`));
+    const types = await zip.file("[Content_Types].xml")?.async("string");
+    if (types && !new RegExp(`<Default[^>]+Extension=["']${imageExt}["']`, "i").test(types)) {
+      zip.file("[Content_Types].xml", types.replace("</Types>", `<Default Extension="${imageExt}" ContentType="${imageContentTypeStr}"/></Types>`));
+    }
+    return zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
+  }
 
   // 1. Add image to word/media/
-  const mediaName = `word/media/${opts.imageName}.${imageExt}`;
   zip.file(mediaName, imageBuffer);
 
   // 2. Add content type to [Content_Types].xml

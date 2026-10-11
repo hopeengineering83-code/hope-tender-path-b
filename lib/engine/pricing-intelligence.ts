@@ -1003,17 +1003,44 @@ export function estimateTenderPrice(input: PricingEvidenceInput): PricingEstimat
     if (budget) {
       const ceilingNet = budget.amount / (budget.inclusiveOfVat ? vatFactor : 1) / contingencyFactor;
       if (subtotal > ceilingNet && subtotal > 0) {
-        const scale = ceilingNet / subtotal;
-        for (const l of lines) {
-          // A rate the tender fixes is not the bidder's to scale.
-          if (l.rate === null || l.rateSource === "Tender document") continue;
-          l.rate = floorEstimatedRate(l.rate * scale);
-          l.amount = round2(l.rate * l.quantity);
-          l.assumptions.push(`Scaled ×${round2(scale)} to stay within the client's budget.`);
+        // A rate the tender fixes is not the bidder's to scale, so only the
+        // other lines are scaled, into what the fixed lines leave of the
+        // ceiling.
+        const fixedByTender = (l: EstimateLine) => l.rateSource === "Tender document";
+        const fixedSum = lines.reduce((s, l) => s + (l.rate !== null && fixedByTender(l) ? l.amount ?? 0 : 0), 0);
+        const room = ceilingNet - fixedSum;
+        const adjustable = subtotal - fixedSum;
+        const scale = room > 0 && adjustable > 0 ? room / adjustable : 0;
+        const scaledRate = (l: EstimateLine) => (l.rate === null || fixedByTender(l) ? l.rate : floorEstimatedRate(l.rate * scale));
+        // A rate is never rounded below its smallest step, so a sliver of
+        // room can still overshoot: the scaled price must itself fit.
+        const fits = scale > 0 && lines.reduce((s, l) => s + round2((scaledRate(l) ?? 0) * l.quantity), 0) <= ceilingNet;
+        if (fits) {
+          for (const l of lines) {
+            if (l.rate === null || fixedByTender(l)) continue;
+            l.rate = scaledRate(l);
+            l.amount = round2(l.rate! * l.quantity);
+            l.assumptions.push(`Scaled ×${round2(scale)} to stay within the client's budget.`);
+          }
+          notes.push("Scaled down to stay within the client's stated budget.");
+          warnings.push({ code: "BUDGET_EXCEEDED", message: `${sc.label}: the evidence-based price exceeded the client's budget and was scaled ×${round2(scale)} to fit; check it still covers cost.` });
+        } else {
+          // The rates the tender fixes leave no room under its own ceiling:
+          // no price for the other lines fits, so none is proposed and
+          // approval waits for the owner to enter them deliberately.
+          for (const l of lines) {
+            if (l.rate === null || fixedByTender(l)) continue;
+            l.rate = null;
+            l.amount = null;
+            l.build = null;
+            l.rateBasis = "no price fits: the rates the tender fixes leave no room for it within the client's stated budget";
+            l.rateConfidence = "NONE";
+            l.confidence = "NONE";
+          }
+          notes.push("The rates the tender fixes leave no room within the client's stated budget; the other lines are left for the owner to price.");
+          warnings.push({ code: "BUDGET_EXCEEDED", message: `${sc.label}: the rates the tender fixes leave no room within the client's stated budget for the other lines; check the tender's figures and enter those rates deliberately.` });
         }
         subtotal = round2(lines.reduce((s, l) => s + (l.amount ?? 0), 0));
-        notes.push("Scaled down to stay within the client's stated budget.");
-        warnings.push({ code: "BUDGET_EXCEEDED", message: `${sc.label}: the evidence-based price exceeded the client's budget and was scaled ×${round2(scale)} to fit; check it still covers cost.` });
       }
     }
     // Cost → overhead → margin, for the cost-built lines; fee lines as billed.
