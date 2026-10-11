@@ -831,9 +831,93 @@ const DOCUMENT_PATTERNS: Array<{ name: string; patterns: RegExp[]; envelope: "te
 const FINANCIAL_CONCEPT =
   /financial\s+proposal|financial\s+offer|financial\s+bid|financial\s+submission|financial\s+envelope|fee\s+proposal|fee\s+schedule|fee\s+breakdown|price\s+schedule|priced\s+schedule|schedule\s+of\s+(?:prices|rates)|price\s+proposal|price\s+breakdown|price\s+quote|commercial\s+proposal|commercial\s+offer|commercial\s+submission|\bquotation\b|bill\s+of\s+quantities|cost\s+breakdown|cost\s+proposal|lump\s+sum\s+(?:price|fee)|remuneration/i;
 
-const TECHNICAL_ONLY = /technical\s+(?:proposal|submission|offer)\s+only|only\s+a\s+technical\s+(?:proposal|submission)/i;
+// The submission is confined to a technical (or expression-of-interest)
+// response. "The first envelope shall contain the technical proposal only"
+// describes one envelope of a two-envelope tender, not the whole submission.
+const SCOPE_ONLY = /\btechnical\s+(?:proposal|submission|offer)\s+only\b|\bonly\s+(?:a|the)\s+technical\s+(?:proposal|submission|offer)\b|\b(?:eoi|expression\s+of\s+interest)\s+only\b/i;
+const NAMES_AN_ENVELOPE = /\benvelopes?\b/i;
 
 const TWO_ENVELOPE = /two[-\s]envelopes?|separate\s+envelopes?|second\s+envelope|envelope\s+(?:1|2|i|ii|one|two)\b/i;
+
+// What a bidder's price submission is called when a tender rules it out.
+const PRICE_SUBMISSION =
+  /\b(?:financial|commercial|price|cost|fee)\s+(?:proposals?|offers?|bids?|submissions?|envelopes?|information|schedules?|quotations?|quotes?)\b|\bprices?\b|\bpricing\b|\bquotations?\b/i;
+
+// "No price information shall appear in the technical proposal" keeps prices
+// OUT OF ONE PART; it is how two-envelope tenders separate the offers, not a
+// statement that no price is asked for.
+const CONFINED_TO_TECHNICAL_PART =
+  /\b(?:in|within|inside|into|as\s+part\s+of|from|with|on)\s+(?:the\s+|this\s+|any\s+|your\s+|its\s+|their\s+)?technical\s+(?:proposals?|envelopes?|offers?|submissions?|parts?|volumes?|documents?|bids?|responses?)\b/i;
+
+// Prohibitions a tender states outright. Each names the price submission and
+// negates SUBMITTING it — "price adjustment is not applicable" negates a
+// contract term, not the offer, and is not read here.
+const PRICE_PROHIBITIONS: RegExp[] = [
+  /\bno\s+(?:financial|commercial|price)\s+(?:proposals?|offers?|bids?|submissions?|information|schedules?|quotations?)\b/i,
+  /\b(?:do|does|shall|must|should|will|need|are\s+to|is\s+to)\s+not\s+(?:be\s+)?(?:submit|include|provide|quote|state|indicate|send|attach|enclose|generate|prepare)\w*\s+(?:any\s+|the\s+|a\s+|an\s+|your\s+|their\s+)?(?:prices?|pricing|price\s+information|costs?|fees?|rates?|quotations?|(?:financial|commercial|price)\s+(?:proposals?|offers?|bids?|information|quotations?))\b/i,
+  /\b(?:financial|commercial|price)\s+(?:proposals?|offers?|bids?|submissions?|information|schedules?|quotations?)\b[^.;]{0,60}?\b(?:not\s+(?:be\s+)?(?:required|requested|needed|applicable|expected|invited)|(?:shall|must|should|will|is\s+to|are\s+to)\s+not\s+be\s+(?:included|submitted|provided|required|requested))\b/i,
+  /\b(?:financial|commercial|price)\s+(?:proposals?|offers?|bids?|submissions?)\s*[:\-–—]\s*(?:none|nil|no|n\/a|not\s+(?:applicable|required|requested))\b/i,
+  /\bwithout\s+(?:a\s+|any\s+)?(?:prices?|pricing|(?:financial|commercial|price)\s+(?:proposals?|offers?|information))\b/i,
+  /\bprice[-\s]?free\b/i,
+  // "No prices should be provided with this EOI", "Prices shall not be quoted".
+  /\bno\s+(?:prices?|pricing|price\s+information|costs?|fees?|rates?|financial\s+information)\b[^.;]{0,30}?\b(?:shall|should|must|will|may|are\s+to|is\s+to)\s+be\s+(?:submitted|provided|included|quoted|stated|given|indicated|shown)\b/i,
+  /\b(?:prices?|pricing|price\s+information|costs?|fees?|rates?)\s+(?:shall|should|must|will|may|are\s+to|is\s+to)\s+not\s+be\s+(?:submitted|provided|included|quoted|stated|given|indicated|shown)\b/i,
+];
+
+// "… will be requested later", "… only from shortlisted firms": the price is
+// ASKED FOR at a later stage of the procurement, so not in this submission.
+// Only a request is read here: "financial proposals are opened in the second
+// stage" describes how one submission is evaluated, and "submitted later than
+// the deadline" is a lateness rule.
+const DEFERRED_TO_LATER_STAGE =
+  /\b(?:requested|invited|asked|called\s+for|required|sought|submitted)\b[^.;]{0,60}?\b(?:later\b(?!\s+than)|at\s+a\s+later\s+(?:stage|date|time)|in\s+due\s+course|(?:from|by|of)\s+(?:the\s+)?short[-\s]?listed|(?:at|in|during)\s+the\s+(?:rfp|request\s+for\s+proposals?)\s+stage)|\bshort[-\s]?listed\s+(?:firms?|consultants?|bidders?|applicants?|companies|candidates)\s+(?:will|shall|may)\s+(?:then\s+|subsequently\s+|later\s+)?be\s+(?:invited|requested|asked)\b|\bnot\s+(?:be\s+)?(?:required\s+|requested\s+|submitted\s+)?at\s+this\s+stage\b/i;
+
+// A negation qualified by HOW or WHERE the offer is sent ("shall not be
+// submitted by e-mail", "… in the same envelope") restricts the channel; it
+// does not withdraw the offer.
+const CHANNEL_QUALIFIER =
+  /\bnot\s+(?:be\s+)?(?:submitted|included|provided|sent|enclosed|attached)\s+(?:by|via|through|in\s+(?:the\s+same|one|a\s+single)|to\s+the|together|with\s+the\s+technical|unless|until|before|after|separately)\b/i;
+
+/**
+ * The tender rules a bidder price submission out of THIS procurement — stated
+ * outright, deferred to a later stage, or by confining the submission to a
+ * technical or expression-of-interest response.
+ *
+ * A prohibition overrides every generic financial signal elsewhere in the
+ * tender (a stray "financial proposal" heading, a scoring weight, a client
+ * budget): no financial file, no price schedule, no bid price, no request for
+ * the owner's rates.
+ */
+export function statesFinancialProhibition(text: string): boolean {
+  if (!text || !text.trim()) return false;
+  for (const clause of clausesOf(text)) {
+    if (SCOPE_ONLY.test(clause) && !NAMES_AN_ENVELOPE.test(clause)) return true;
+    if (!PRICE_SUBMISSION.test(clause)) continue;
+    if (DEFERRED_TO_LATER_STAGE.test(clause)) return true;
+    if (CONFINED_TO_TECHNICAL_PART.test(clause) || CHANNEL_QUALIFIER.test(clause)) continue;
+    if (PRICE_PROHIBITIONS.some((pattern) => pattern.test(clause))) return true;
+  }
+  return false;
+}
+
+const BIDDER_DIRECTIVE = /\b(?:submit(?:ted|s)?|provide[ds]?|prepare[ds]?|attach(?:ed)?|enclose[ds]?|furnish(?:ed)?|include[ds]?|fill\s+in|complete\s+and\s+(?:sign|return)|quote)\b/i;
+const MONEY_DESCRIPTION = [
+  // How offers are scored: weights, points, formulas, opening order.
+  /\bwill\s+be\s+(?:evaluated|scored|assessed|weighted|ranked|opened|compared)\b|\bevaluation\b|\bweight(?:ed|ing)?\b|\bscore[sd]?\b|\bpoints?\b|\bmarks?\b|\d{1,3}\s*(?:%|percent)|\bformula\b|\blowest\s+(?:evaluated\s+)?(?:price|cost)\b/i,
+  // The client's payment terms and securities.
+  /\bpayments?\b|\bpaid\b|\bpayable\b|\binvoic\w*|\bretention\b|\badvance\b|\binstal(?:l)?ments?\b/i,
+  // What the client expects to spend.
+  /\bbudget\b|\bestimated\s+(?:cost|value|contract\s+value|budget)\b|\bengineer'?s\s+estimate\b|\bceiling\b|\bavailable\s+funds?\b|\bcontract\s+value\b/i,
+];
+
+/**
+ * The clause talks ABOUT money — how offers are scored, how the client pays,
+ * what the client budgets — and asks the bidder for nothing. A scoring weight
+ * or a budget is not a requirement to submit a price.
+ */
+function onlyDescribesMoney(clause: string): boolean {
+  return !BIDDER_DIRECTIVE.test(clause) && MONEY_DESCRIPTION.some((pattern) => pattern.test(clause));
+}
 
 /**
  * true  — the source requires a financial submission.
@@ -843,11 +927,11 @@ const TWO_ENVELOPE = /two[-\s]envelopes?|separate\s+envelopes?|second\s+envelope
 export function readFinancialProposalRequirement(text: string): boolean | null {
   if (!text || !text.trim()) return null;
 
-  // An explicit scope statement settles it even when no financial noun appears.
-  if (TECHNICAL_ONLY.test(text)) return false;
+  // A prohibition settles it, whatever else the tender mentions.
+  if (statesFinancialProhibition(text)) return false;
 
   const clauses = clausesOf(text);
-  const mentioning = clauses.filter((clause) => FINANCIAL_CONCEPT.test(clause));
+  const mentioning = clauses.filter((clause) => FINANCIAL_CONCEPT.test(clause) && !onlyDescribesMoney(clause));
 
   if (mentioning.length === 0) {
     // A two-envelope structure implies a financial envelope even when the
@@ -1226,10 +1310,11 @@ export function parseTenderDocumentIntelligence(
   if (financialProposalRequiredState === false) {
     sourceExcerpts.financialProposalRequired = "Financial proposal not required at this stage";
   } else if (financialProposalRequiredState === null) {
-    // Surfaced, not silently resolved. A reviewer needs to know the source did
-    // not answer this rather than be shown a confident "no".
+    // Surfaced, not silently resolved: the source did not answer this. An
+    // absent requirement is not a required document (owner policy), so it
+    // asks nothing of the owner either.
     warnings.push(
-      "Source does not state whether a financial proposal is required — treated as UNKNOWN. No financial document is generated on an unstated obligation; confirm before final submission.",
+      "Source does not ask the bidder for prices — treated as UNKNOWN, which is not an obligation: no financial proposal is planned and no price is requested.",
     );
   }
 

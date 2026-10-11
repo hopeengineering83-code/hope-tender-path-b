@@ -4,7 +4,8 @@ import { ANALYSIS_HASH_FILE_SELECT } from "./tender-analysis-content";
 import { provenPageOfQuote } from "./page-provenance";
 import { normalizeForContainment } from "./evidence-grounding";
 import type { PrismaClient } from "@prisma/client";
-import { buildSubmissionPlan, plannedSubmissionTargetFiles, type SubmissionPlanFile } from "./submission-plan";
+import { buildSubmissionPlan, plannedSubmissionTargetFiles, priceSubmissionGrounding, type SubmissionPlanFile } from "./submission-plan";
+import { isPriceSubmissionFile } from "./pricing-submission-scope";
 import { isEmailSubmissionMethod, isPhysicalSubmissionMethod, isPortalSubmissionMethod } from "./submission-method-policy";
 import { containsMetadataPlaceholder } from "./metadata-validators";
 import { isValidationPassed } from "./document-output-state";
@@ -690,8 +691,12 @@ export async function validateBuildPlanForConfirmation(prisma: PrismaClient, ten
   const seen = new Set<string>();
   if (items.length === 0) blockers.push("Build Plan has no tender-controlled required files.");
   if (items.length !== authoritativeItems.length) blockers.push("Build Plan item count does not match current tender-controlled submission scope.");
+  // INVARIANT: no price submission without a grounded pricing requirement, and
+  // never against the tender's prohibition.
+  const pricing = priceSubmissionGrounding(tender as any);
   for (const item of items) {
     const key = planItemKey(item);
+    if (!pricing.grounded && isPriceSubmissionFile(item.exactFileName, item.documentType)) blockers.push(`${item.exactFileName} is a price submission the tender ${pricing.state === false ? "rules out" : "does not ask for"}.`);
     if (!authoritativeKeys.has(key)) blockers.push(`${item.exactFileName} order/type/name is not in current tender-controlled scope.`);
     const orderNameKey = `${Number(item.exactOrder)}:${normalizePlanName(item.exactFileName)}`;
     if (seen.has(orderNameKey)) blockers.push(`Duplicate/conflicting plan item: ${item.exactOrder} ${item.exactFileName}`);
@@ -819,11 +824,16 @@ export async function validateBuildPlanItemsAtRuntime(
   if (!Array.isArray(items)) blockers.push("Build Plan items must be an array.");
   if (items.length === 0) blockers.push("Build Plan cannot be empty.");
   if (items.length !== authoritative.length) blockers.push("Build Plan item count does not match current tender scope.");
+  const pricing = priceSubmissionGrounding(tender as any);
 
   for (const item of items) {
     if (!item) {
       blockers.push("Build Plan contains null or undefined item.");
       continue;
+    }
+    // INVARIANT: no price submission without a grounded pricing requirement.
+    if (!pricing.grounded && isPriceSubmissionFile(item.exactFileName, item.documentType)) {
+      blockers.push(`Plan item ${item.exactFileName} is a price submission the tender ${pricing.state === false ? "rules out" : "does not ask for"}.`);
     }
     // Strict item structure validation
     if (typeof item.exactFileName !== "string" || !item.exactFileName.trim()) {

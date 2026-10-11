@@ -60,6 +60,7 @@ function money(value: number, currency: string): string {
 export function PricingWorkbookPanel({ tenderId, canMutate = false }: { tenderId: string; canMutate?: boolean }) {
   const router = useRouter();
   const [workbook, setWorkbook] = useState<PricingWorkbook | null>(null);
+  const [pricingRequired, setPricingRequired] = useState(true);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState<DraftLine>(EMPTY_LINE);
@@ -73,6 +74,7 @@ export function PricingWorkbookPanel({ tenderId, canMutate = false }: { tenderId
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error ?? `Failed to load pricing workbook (${res.status})`);
       setWorkbook(data.workbook);
+      setPricingRequired(data.pricingScope?.required !== false);
     } catch (err) {
       setError("Failed to load pricing workbook.");
     } finally {
@@ -152,6 +154,10 @@ export function PricingWorkbookPanel({ tenderId, canMutate = false }: { tenderId
       setSaving(false);
     }
   }
+
+  // No workbook for a tender that does not ask for prices; the Pricing
+  // Intelligence panel already says why.
+  if (!pricingRequired) return null;
 
   return (
     <div className="rounded-2xl border bg-white p-5 shadow-sm">

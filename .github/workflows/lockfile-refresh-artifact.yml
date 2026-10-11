@@ -733,11 +733,66 @@ jobs:
           # pass of the submission gate and is reported as such; every other
           # refusal still fails here.
           if result.get('packageStatus') == 'PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED':
-              print("PROPOSAL COMPLETE — OWNER ATTACHMENTS REQUIRED: every document the app produces is ready; the submission waits on the owner's originals.")
+              print("PROPOSAL COMPLETE — MANUAL ORIGINAL ATTACHMENTS REQUIRED: every document the App generates is ready; the owner compiles the originals.")
           elif result.get('ok') is not True or blockers:
               raise SystemExit(
                   f"Hosted readiness did not pass: ok={result.get('ok')!r}, "
                   f"blockers={len(blockers)} (each named above)")
+          PYEOF
+
+      - name: Report the tender-controlled document scope
+        run: |
+          # The tender decides what documents exist: the App generates the
+          # bidder-created documents the tender requires and nothing else, a
+          # financial proposal only when the tender asks for prices, and the
+          # owner compiles the originals manually. Print that scope and fail on
+          # any contradiction between the plan, the generated documents, the
+          # pricing surface and the manual-original checklist.
+          curl -sS --connect-timeout 15 --max-time 60 -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/tenders/$TENDER_ID/pricing/estimate" > /tmp/pricing-scope.json
+          curl -sS --connect-timeout 15 --max-time 60 -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/tenders/$TENDER_ID/owner-attachments" > /tmp/owner-attachments.json
+          python3 - <<'PYEOF'
+          import json, re
+          readiness = json.load(open('/tmp/export-readiness-final.json', encoding='utf-8'))
+          audit = json.load(open('/tmp/generated-proposal-audit.json', encoding='utf-8'))
+          pricing = json.load(open('/tmp/pricing-scope.json', encoding='utf-8'))
+          checklist = (json.load(open('/tmp/owner-attachments.json', encoding='utf-8')) or {}).get('checklist') or {}
+          planned = (((readiness.get('exportReadiness') or {}).get('finalPackageReadiness') or {}).get('documents') or {}).get('planned') or []
+          price = re.compile(r'(financial|commercial|price|cost|fee)[\s._-]+(proposal|offer|bid|quotation|schedule|breakdown)|priced|quotation|bill[\s._-]+of[\s._-]+quantities|\bboq\b|rate[\s._-]+card|schedule[\s._-]+of[\s._-]+(prices|rates)', re.I)
+          scope = pricing.get('scope') or {}
+          print('REQUIRED GENERATED FILES:')
+          for item in planned:
+              print(f"  - {item.get('displayName')} [{item.get('envelope')}] sourceRequirementIds={len(item.get('sourceRequirementIds') or [])}")
+          price_planned = [i.get('displayName') for i in planned if price.search(str(i.get('displayName') or ''))]
+          print(f"NOT REQUIRED FILES: {'Financial Proposal (not required by this tender — not generated)' if not price_planned else 'none'}")
+          items = checklist.get('items') or []
+          print(f"OWNER MANUAL ORIGINALS ({checklist.get('mode')}): " + ('; '.join(f"{i.get('order')}. {i.get('kind')} — {i.get('document')}" for i in items) or 'none'))
+          print(f"FINANCIAL PROPOSAL REQUIRED: {'YES' if scope.get('required') else 'NO'}")
+          print(f"SOURCE BASIS: {scope.get('basis')}")
+          problems = []
+          if not scope:
+              problems.append('the pricing estimate route returned no scope')
+          if scope.get('required') is False:
+              if pricing.get('estimate') is not None:
+                  problems.append('an estimate was prepared for a tender that asks for no price')
+              if price_planned:
+                  problems.append(f'price files planned without a pricing requirement: {price_planned}')
+              generated_price = [r.get('exactFileName') for r in audit.get('documents', []) if r.get('generationStatus') == 'GENERATED' and price.search(str(r.get('exactFileName') or ''))]
+              if generated_price:
+                  problems.append(f'financial documents generated for a tender that asks for no price: {generated_price}')
+          if scope.get('required') is True and not price_planned:
+              problems.append('pricing is required but no price submission is planned')
+          for item in planned:
+              if not (item.get('sourceRequirementIds') or []) and not str(item.get('key') or '').startswith('exact'):
+                  print(f"  note: {item.get('displayName')} carries no requirement id (a name from the tender's own file list)")
+          for i in items:
+              action = str(i.get('ownerAction') or '')
+              if re.search(r'upload', action, re.I) and not re.search(r'Optional', action):
+                  problems.append(f"an owner action makes an upload sound required: {action[:160]}")
+          if problems:
+              raise SystemExit('Tender-controlled scope contradiction: ' + ' | '.join(problems))
+          print('Tender-controlled scope consistent: plan, generated documents, pricing and the manual-original checklist agree.')
           PYEOF
 
       - name: Require the audit surface to agree with export-readiness

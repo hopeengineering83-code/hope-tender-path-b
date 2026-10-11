@@ -8,10 +8,11 @@
  * letters, audited statements, powers of attorney, tender-issued forms) are
  * listed here exactly as the tender asks for them — what, where in the tender,
  * which kind of copy, signed or stamped, how many, which envelope, in which
- * order, whether the Company Vault already holds it, and the one thing the
- * owner does about it. A verified PDF original already in the Vault is
- * packaged automatically (bound into a combined file); anything else is the
- * owner's to attach.
+ * order, whether the Company Vault happens to hold it, and the one thing the
+ * owner does about it. Manual assembly by the owner is the normal, fully
+ * supported workflow: the owner may never upload these to the App. Where a
+ * verified PDF original is already in the Vault the App may bind it into a
+ * combined file as a convenience; that is optional, never required.
  *
  * It never claims a document exists: an item is "packaged" only when the
  * delivered file actually carries it.
@@ -24,6 +25,7 @@ import { isOwnerSignedKind, isVerifiedPdf, vaultCandidatesForKind, readAnnexBund
 import { combinedSubmissionFileName } from "./annex-bundle-loader";
 import { isAwaitingOwnerPricing } from "./owner-pricing-stop";
 import { parseStringArray, inferEnvelope } from "./submission-plan";
+import { classifySubmissionPlanItem } from "./submission-plan-classifier";
 
 export type AttachmentCopyType = "ORIGINAL" | "CERTIFIED_COPY" | "SCANNED_COPY" | "COPY" | "NOT_STATED";
 export type AttachmentVaultStatus = "VERIFIED_PDF_ORIGINAL" | "HELD_NOT_VERIFIED_PDF" | "NOT_IN_VAULT" | "NOT_APPLICABLE";
@@ -154,11 +156,24 @@ export function buildOwnerAttachmentChecklist(input: ChecklistInput): OwnerAttac
   })), input.declaredFileNames);
   const texts = input.requirements.map((r) => `${r.title} ${r.description ?? ""}`);
   const policy = tenderAnnexPolicy(texts);
+  // An original the tender requires is the owner's to compile whether the
+  // tender says "attach" or "submit": "Bidders shall submit audited financial
+  // statements for the last three years" is not a file the App writes (the
+  // plan classifier's ORIGINAL_EVIDENCE_ATTACHMENT), yet it named no attach
+  // verb, so the checklist left it out (2026-10-11).
+  const heldOriginals = input.requirements.filter((r) => classifySubmissionPlanItem({
+    title: r.title, description: r.description ?? null, requirementType: r.requirementType ?? null, exactFileName: r.exactFileName ?? null,
+  }).category === "ORIGINAL_EVIDENCE_ATTACHMENT");
+  const kinds = [
+    ...policy.items,
+    ...Object.keys(KIND_TEST).filter((kind) => !policy.items.includes(kind)
+      && heldOriginals.some((r) => KIND_TEST[kind]!.test(`${r.title} ${r.description ?? ""}`))),
+  ];
   const items: OwnerAttachmentItem[] = [];
   const bound = new Set(input.boundHashes);
-  const mode: OwnerAttachmentChecklist["mode"] = combined && policy.required ? "COMBINED_FILE" : policy.required || input.formsAwaitingOriginal.length > 0 ? "SEPARATE_ATTACHMENTS" : "NONE";
+  const mode: OwnerAttachmentChecklist["mode"] = combined && policy.required ? "COMBINED_FILE" : kinds.length > 0 || input.formsAwaitingOriginal.length > 0 ? "SEPARATE_ATTACHMENTS" : "NONE";
 
-  policy.items.forEach((kind, index) => {
+  kinds.forEach((kind, index) => {
     const test = KIND_TEST[kind];
     const req = input.requirements.find((r) => test?.test(`${r.title} ${r.description ?? ""} ${r.sourceExactQuote ?? ""}`)) ?? null;
     const reqText = req ? `${req.sourceExactQuote ?? ""} ${req.description ?? ""} ${req.title}` : "";
@@ -191,8 +206,8 @@ export function buildOwnerAttachmentChecklist(input: ChecklistInput): OwnerAttac
         : `Attach the ${what} — the Company Vault holds ${verified.map((d) => `"${d.originalFileName}"`).join(", ")} — to the ${location.toLowerCase()}.`;
     } else {
       ownerAction = mode === "COMBINED_FILE"
-        ? `Insert the ${what} into "${combined}" as Annex ${annexNo} when assembling the file${copiesOf(clause) ? ` (${copiesOf(clause)} copies)` : ""}, or upload it to the Company Vault as a PDF and it is bound in automatically.`
-        : `Attach the ${what} to the ${location.toLowerCase()}${copiesOf(clause) ? ` (${copiesOf(clause)} copies)` : ""}.`;
+        ? `Insert the ${what} into "${combined}" as Annex ${annexNo} when assembling the file${copiesOf(clause) ? ` (${copiesOf(clause)} copies)` : ""}. Optional: if you choose to store a verified PDF of it in the Company Vault, the App can bind it in automatically.`
+        : `Attach the ${what} to the ${location.toLowerCase()}${copiesOf(clause) ? ` (${copiesOf(clause)} copies)` : ""} when assembling the final submission.`;
     }
     items.push({
       order: annexNo,
@@ -230,7 +245,7 @@ export function buildOwnerAttachmentChecklist(input: ChecklistInput): OwnerAttac
       location: `${envelope === "FINANCIAL" ? "Financial" : envelope === "ADMIN" ? "Administrative" : "Technical"} envelope, as "${form.fileName}"`,
       vault: { status: "NOT_APPLICABLE", documents: [] },
       status: "OWNER_TO_ATTACH",
-      ownerAction: `Complete and sign the tender's form "${form.fileName}" and include it in the ${envelope.toLowerCase()} envelope (or attach it to this tender as the original and it is packaged automatically).`,
+      ownerAction: `Complete and sign the tender's form "${form.fileName}" and include it in the ${envelope.toLowerCase()} envelope when assembling the final submission. Optional: attach the signed original to this tender and the App packages it.`,
     });
   }
 
@@ -281,13 +296,14 @@ export async function loadOwnerAttachmentChecklist(tenderId: string, userId: str
 /** The checklist as plain text, for printing beside the package. */
 export function ownerAttachmentChecklistText(tenderTitle: string, checklist: OwnerAttachmentChecklist): string {
   const lines = [
-    `OWNER ATTACHMENT CHECKLIST — ${tenderTitle}`,
+    `MANUAL ORIGINAL ATTACHMENT CHECKLIST — ${tenderTitle}`,
     "For the bidder's own use when assembling the submission. Do not submit this list.",
+    "The App-generated proposal documents are complete. Compile these original/supporting documents manually; uploading them to the App is optional.",
     checklist.mode === "COMBINED_FILE" ? `The tender requires one combined file: "${checklist.combinedFileName}". Annexes follow the proposal pages in this order.` : "Attach each item in this order.",
     "",
   ];
   for (const item of checklist.items) {
-    lines.push(`${item.order}. ${item.kind} — ${item.status === "PACKAGED_AUTOMATICALLY" ? "PACKAGED" : "OWNER TO ATTACH"}`);
+    lines.push(`${item.order}. ${item.kind} — ${item.status === "PACKAGED_AUTOMATICALLY" ? "PACKAGED" : "ATTACH MANUALLY"}`);
     lines.push(`   Required: ${item.document}`);
     lines.push(`   Source: ${item.source.requirementTitle ?? "tender requirement"}${item.source.page ? `, page ${item.source.page}` : ""}${item.source.quote ? ` — "${item.source.quote.replace(/\s+/g, " ").slice(0, 200)}"` : ""}`);
     lines.push(`   Copy: ${item.copyType.replace(/_/g, " ").toLowerCase()}; signature ${item.signatureRequired ? "required" : "not stated"}; stamp ${item.stampRequired ? "required" : "not stated"}${item.copies ? `; ${item.copies} copies` : ""}`);

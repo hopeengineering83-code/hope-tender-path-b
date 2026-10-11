@@ -38,7 +38,7 @@ export function presentTwoActionWorkflowDecision(
     // The financial proposal waits for the owner's prices; the app never sets
     // a price. Any signed originals still due are named alongside.
     const originals = awaiting.length > 0
-      ? ` Also upload the signed original of: ${awaiting.join("; ")}.`
+      ? ` When assembling the submission, also attach the signed original of: ${awaiting.join("; ")}.`
       : "";
     return {
       ...decision,
@@ -52,9 +52,9 @@ export function presentTwoActionWorkflowDecision(
     return {
       ...decision,
       nextRequiredAction: "UPLOAD_SIGNED_ORIGINALS",
-      nextRequiredActionLabel: "Attach owner originals",
+      nextRequiredActionLabel: "Proposal complete — attach originals manually",
       nextRequiredActionReason:
-        `PROPOSAL COMPLETE — OWNER ATTACHMENTS REQUIRED. Everything the app prepares is done; the submission waits only on ${awaiting.length === 1 ? "a document" : "documents"} your company signs or supplies: ${awaiting.join("; ")}. Attach each to the submission as the Owner Attachment Checklist lists it (the proposal can be downloaded for assembly now), or upload the signed original on the tender's Documents page and it is packaged automatically.`,
+        `PROPOSAL COMPLETE — MANUAL ORIGINAL ATTACHMENTS REQUIRED. Everything the App generates is done and can be downloaded now; the submission also needs ${awaiting.length === 1 ? "a document" : "documents"} your company signs or supplies: ${awaiting.join("; ")}. Attach each manually when assembling the final submission, as the checklist lists it. Optional: upload the signed original on the tender's Documents page and the App packages it.`,
     };
   }
 

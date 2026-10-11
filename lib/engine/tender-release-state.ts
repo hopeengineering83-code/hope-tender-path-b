@@ -42,6 +42,13 @@ export type TenderReleaseState = {
   generationEligible: boolean;
   exportEligible: boolean;
   finalZipEligible: boolean;
+  /**
+   * SUBMISSION_READY, or PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED when every
+   * App-generated document is complete and only originals the owner compiles
+   * manually remain — a successful App completion, not a failure.
+   */
+  packageStatus: FinalSubmissionReadiness["packageStatus"];
+  ownerAttachmentsOutstanding: number;
   canonicalFields: CanonicalFieldState[] | undefined;
   fixtureData: boolean;
   deploymentEnvironment: string;
@@ -244,6 +251,8 @@ export async function getTenderReleaseState(
     generationEligible: snapshot.generationEligible,
     exportEligible: snapshot.exportEligible,
     finalZipEligible: snapshot.finalZipEligible,
+    packageStatus: finalSubmission.packageStatus,
+    ownerAttachmentsOutstanding: finalSubmission.ownerAttachments?.outstanding ?? 0,
     canonicalFields: finalSubmission.canonicalFields,
     fixtureData: deploymentEnvironment !== "production",
     deploymentEnvironment,

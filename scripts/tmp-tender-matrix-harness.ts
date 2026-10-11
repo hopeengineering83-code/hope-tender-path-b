@@ -18,6 +18,9 @@ import { buildAndVerifyBuildPlan } from "../lib/engine/automatic-build-plan";
 import { generateTenderDocuments } from "../lib/engine/generate-elite";
 import { generateMissingPlanFiles } from "../lib/engine/missing-plan-file-generation";
 import { hasUnprovenClaim } from "../lib/engine/detection-patterns";
+import { loadOwnerAttachmentChecklist } from "../lib/engine/owner-attachment-checklist";
+import { loadPricingScope, isPriceSubmissionFile } from "../lib/engine/pricing-submission-scope";
+import { findExtraGeneratedDocuments, type SubmissionPlanFile } from "../lib/engine/submission-plan";
 
 const sha = (text: string) => createHash("sha256").update(text).digest("hex");
 
@@ -37,6 +40,10 @@ type Fixture = {
   evaluation?: string[];
   /** Owner pricing workbook lines, for a tender that asks for a financial proposal. */
   pricing?: Array<{ category: string; label: string; quantity: number; unit: string; rate: number }>;
+  /** The tender asks the bidder for a price submission. Default: no. */
+  expectFinancial?: boolean;
+  /** The tender requires one combined file carrying the annexes. */
+  expectCombined?: boolean;
 };
 
 /** Sector families a numbered heading can belong to; any family the tender does not own is foreign. */
@@ -313,6 +320,7 @@ const FIXTURES: Fixture[] = [
     ],
     forbidden: /\b(?:clinical|patient|IPC-compliant|medical gas|guestroom|RevPAR|FF&E|joinery)\b/i,
     ownSectors: ["roads"],
+    expectFinancial: true,
     pricing: [
       { category: "PERSONNEL", label: "Team Leader / Senior Highway Engineer", quantity: 60, unit: "DAY", rate: 5_000 },
       { category: "PERSONNEL", label: "Quantity Surveyor", quantity: 30, unit: "DAY", rate: 3_000 },
@@ -337,6 +345,73 @@ const FIXTURES: Fixture[] = [
     ],
     forbidden: /\b(?:clinical|patient|IPC(?![^\n]{0,6}\(?Interim)(?!\))|IPC-compliant|medical gas|guestroom|RevPAR|pavement)\b/i,
     ownSectors: [],
+  },
+  {
+    // Financial QUALIFICATION evidence, a client budget and a scoring weight —
+    // and no request for a price. No financial proposal.
+    id: "audited-no-price", title: "Architectural Design of a Municipal Library", client: "Westfield City Administration", reference: "RFP WCA/31-18",
+    text: [
+      "Westfield City Administration invites consultants for the architectural and engineering design of a two-storey municipal library, including tender documents.",
+      "The Client's budget for this assignment is ETB 4,500,000. Proposals will be evaluated with a technical weight of 80% and a financial weight of 20%.",
+    ],
+    requirements: [
+      { title: "Audited Financial Statements", type: "FINANCIAL", quote: "Bidders shall submit audited financial statements for the last three years showing an average annual turnover of at least ETB 5,000,000.", priority: "MANDATORY" },
+      { title: "Library or Public Building Design Experience", type: "PROJECT_EXPERIENCE", quote: "At least one public building designed in the last ten years.", priority: "MANDATORY" },
+      { title: "Lead Architect", type: "EXPERT", quote: "A lead architect.", priority: "MANDATORY" },
+    ],
+    forbidden: /\b(?:clinical|patient|IPC-compliant|medical gas|guestroom|RevPAR|pavement)\b/i,
+    ownSectors: [],
+  },
+  {
+    // An expression of interest whose prices are asked for later, from the shortlist.
+    id: "eoi-pricing-later", title: "Expression of Interest for Design of Urban Drainage in Southvale", client: "Southvale Town Administration", reference: "EOI STA/31-07",
+    text: [
+      "Southvale Town Administration invites Expressions of Interest from consulting firms for the design of urban storm-water drainage.",
+      "Financial proposals will be requested only from shortlisted firms at the RFP stage. Bidders shall not submit prices with this EOI.",
+    ],
+    requirements: [
+      { title: "Expression of Interest", type: "TECHNICAL", quote: "Interested firms shall submit an expression of interest describing their qualifications and similar assignments.", priority: "MANDATORY" },
+      { title: "Drainage Design Experience", type: "PROJECT_EXPERIENCE", quote: "At least one urban drainage or water project.", priority: "MANDATORY" },
+    ],
+    forbidden: /\b(?:clinical|patient|IPC-compliant|medical gas|guestroom|RevPAR)\b/i,
+    ownSectors: ["water"],
+  },
+  {
+    // One combined PDF that must carry the annex originals; none is in the Vault
+    // as a verified PDF. The proposal portion is the App's; the originals are
+    // inserted by the owner.
+    id: "combined-submission", title: "Design of a Community Health Post", client: "Lakeside City Administration", reference: "RFQ LCA/31-21",
+    text: [
+      "Lakeside City Administration invites consultants for the architectural design of a community health post.",
+    ],
+    requirements: [
+      { title: "Submission Format", type: "SUBMISSION_RULE", quote: "All documents shall be submitted as a single PDF file named 'Technical Proposal.pdf' containing the technical proposal and its annexes: the company profile, CVs of the key experts, professional licences and certificates, and client reference letters.", priority: "MANDATORY" },
+      { title: "Health Facility Design Experience", type: "PROJECT_EXPERIENCE", quote: "At least one health facility designed.", priority: "MANDATORY" },
+      { title: "Lead Architect", type: "EXPERT", quote: "A lead architect.", priority: "MANDATORY" },
+    ],
+    forbidden: /\b(?:guestroom|RevPAR|pavement)\b/i,
+    ownSectors: ["healthcare"],
+    expectCombined: true,
+  },
+  {
+    // Technical and financial proposals in one submission (no separate envelope).
+    id: "tech-and-fin-single", title: "Supervision of a Rural Water Scheme", client: "Southvale Water Utility", reference: "RFP SWU/31-11",
+    text: [
+      "Southvale Water Utility invites consultants for the construction supervision of a rural water supply scheme over twelve months.",
+      "Bidders shall submit a technical proposal and a financial proposal. The financial proposal shall include a fee breakdown in Ethiopian Birr inclusive of VAT.",
+    ],
+    requirements: [
+      { title: "Water Supervision Experience", type: "PROJECT_EXPERIENCE", quote: "At least one water supply project supervised.", priority: "MANDATORY" },
+      { title: "Resident Engineer", type: "EXPERT", quote: "A resident water engineer.", priority: "MANDATORY" },
+      { title: "Financial Proposal", type: "FINANCIAL_PROPOSAL", quote: "The financial proposal shall be submitted with a fee breakdown in Ethiopian Birr inclusive of VAT.", priority: "MANDATORY" },
+    ],
+    forbidden: /\b(?:clinical|patient|IPC-compliant|medical gas|guestroom|RevPAR)\b/i,
+    ownSectors: ["water"],
+    expectFinancial: true,
+    pricing: [
+      { category: "PERSONNEL", label: "Resident Water Engineer", quantity: 12, unit: "MONTH", rate: 90_000 },
+      { category: "REIMBURSABLE", label: "Site transport", quantity: 12, unit: "MONTH", rate: 25_000 },
+    ],
   },
 ];
 
@@ -409,7 +484,7 @@ function genericFindings(text: string, fixture: Fixture): string[] {
   return out;
 }
 
-async function runFixture(fixture: Fixture, outDir: string): Promise<{ id: string; findings: string[]; sector: string | null }> {
+async function runFixture(fixture: Fixture, outDir: string): Promise<{ id: string; findings: string[]; sector: string | null; scope: string[] }> {
   const nonce = randomUUID();
   const user = await prisma.user.create({ data: { email: `matrix-${fixture.id}-${nonce}@test.local`, passwordHash: "unused", role: "PROPOSAL_MANAGER" } });
   try {
@@ -514,9 +589,40 @@ async function runFixture(fixture: Fixture, outDir: string): Promise<{ id: strin
       }
     }
     if (docs.length === 0) findings.push("no document generated");
+
+    // ── What the tender decides: the scope report ──────────────────────────
+    const planRow = await prisma.buildPlan.findFirst({ where: { tenderId: tender.id, status: "CONFIRMED" }, orderBy: { updatedAt: "desc" }, select: { itemsJson: true } });
+    const planItems: SubmissionPlanFile[] = planRow ? JSON.parse(planRow.itemsJson) : [];
+    const reqs = await prisma.tenderRequirement.findMany({ where: { tenderId: tender.id }, select: { id: true, title: true, sourcePageNumber: true, sourceExactQuote: true } });
+    const reqById = new Map(reqs.map((r) => [r.id, r]));
+    const scope = await loadPricingScope(tender.id, user.id, prisma);
+    const checklist = await loadOwnerAttachmentChecklist(tender.id, user.id, prisma);
+    const priceFiles = planItems.filter((item) => isPriceSubmissionFile(item.exactFileName, item.documentType));
+    const scopeLines = [
+      "REQUIRED GENERATED FILES:",
+      ...planItems.map((item) => `  - ${item.exactFileName} [${item.envelope}] — ${item.sourceRequirementIds.length > 0
+        ? item.sourceRequirementIds.map((id) => { const r = reqById.get(id); return r ? `"${r.title}" p.${r.sourcePageNumber ?? "?"}` : id; }).join("; ")
+        : String(item.canonicalId ?? "").startsWith("exact-") ? "the tender's own file list" : "NO SOURCE"}`),
+      `NOT REQUIRED FILES: ${priceFiles.length === 0 ? "Financial Proposal (not required by this tender — not generated)" : "none"}`,
+      `OWNER MANUAL ORIGINALS (${checklist?.mode ?? "NONE"}): ${(checklist?.items ?? []).map((i) => `${i.order}. ${i.kind} [${i.status === "PACKAGED_AUTOMATICALLY" ? "packaged" : "attach manually"}]`).join("; ") || "none"}`,
+      `FINANCIAL PROPOSAL REQUIRED: ${scope?.required ? "YES" : "NO"}`,
+      `SOURCE BASIS: ${scope?.basis ?? "n/a"}`,
+    ];
+    parts.unshift(...scopeLines);
+    if (Boolean(fixture.expectFinancial) !== Boolean(scope?.required)) findings.push(`financial scope: expected ${fixture.expectFinancial ? "YES" : "NO"}, got ${scope?.required ? "YES" : "NO"} (${scope?.basis})`);
+    if (Boolean(fixture.expectFinancial) !== priceFiles.length > 0) findings.push(`plan price files: expected ${fixture.expectFinancial ? "a price submission" : "none"}, got ${priceFiles.map((f) => f.exactFileName).join(", ") || "none"}`);
+    if (fixture.expectFinancial && !docs.some((d) => d.generationStatus === "GENERATED" && isPriceSubmissionFile(d.exactFileName, d.documentType))) findings.push("a required financial proposal was not generated");
+    if (!fixture.expectFinancial && docs.some((d) => isPriceSubmissionFile(d.exactFileName, d.documentType))) findings.push("a financial document exists for a tender that asks for no price");
+    for (const item of planItems) {
+      if (item.sourceRequirementIds.length === 0 && !String(item.canonicalId ?? "").startsWith("exact-")) findings.push(`planned file with no tender source: ${item.exactFileName}`);
+    }
+    const extras = findExtraGeneratedDocuments({ files: planItems } as never, docs.filter((d) => d.generationStatus === "GENERATED"));
+    if (extras.length > 0) findings.push(`generated outside the confirmed plan: ${extras.map((d) => d.exactFileName ?? d.name).join(", ")}`);
+    if (fixture.expectCombined && checklist?.mode !== "COMBINED_FILE") findings.push(`combined submission not recognised (checklist mode ${checklist?.mode})`);
+    if ((checklist?.items ?? []).some((i) => /upload it to the Company Vault|upload the originals/i.test(i.ownerAction) && !/Optional/i.test(i.ownerAction))) findings.push("an owner action makes a Vault upload sound required");
     writeFileSync(`${outDir}/${fixture.id}.txt`, parts.join("\n"));
     const engineSector = (await prisma.tender.findUnique({ where: { id: tender.id }, select: { category: true } }))?.category ?? null;
-    return { id: fixture.id, findings, sector: engineSector };
+    return { id: fixture.id, findings, sector: engineSector, scope: scopeLines };
   } finally {
     await prisma.tender.deleteMany({ where: { userId: user.id } }).catch(() => undefined);
     await prisma.company.deleteMany({ where: { userId: user.id } }).catch(() => undefined);
@@ -532,6 +638,7 @@ async function main() {
   for (const fixture of FIXTURES.filter((f) => only.length === 0 || only.includes(f.id))) {
     const result = await runFixture(fixture, outDir);
     summary.push(`## ${result.id}: ${result.findings.length === 0 ? "CLEAN" : `${result.findings.length} finding(s)`}`);
+    for (const line of result.scope) summary.push(`  ${line}`);
     for (const f of result.findings) summary.push(`  - ${f}`);
   }
   writeFileSync(`${outDir}/SUMMARY.txt`, summary.join("\n"));

@@ -121,7 +121,7 @@ describe("no empty or miscounted content", () => {
 
   it("Section F rows name real sections and carry no tag residue", () => {
     assert.equal(withoutProvenanceTags("Audited Financial Statements — three years. (§ 3. Basic Respondents (Bidders) Requirements)"), "Audited Financial Statements — three years.");
-    assert.equal(inferProposalLocation({ title: "Audited Financial Statements" }), "Section D Professional Certifications and Affiliations");
+    assert.equal(inferProposalLocation({ title: "Audited Financial Statements" }), "Section D Professional Certifications and Affiliations + Original supporting document supplied with the submission");
     assert.equal(inferProposalLocation({ title: "Litigation History Disclosure", requirementType: "DECLARATION" }), "Declaration");
   });
 });

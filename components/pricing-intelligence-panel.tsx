@@ -47,6 +47,7 @@ function money(value: number, currency: string): string {
 
 export function PricingIntelligencePanel({ tenderId, canMutate = false }: { tenderId: string; canMutate?: boolean }) {
   const [estimate, setEstimate] = useState<Estimate | null>(null);
+  const [scope, setScope] = useState<{ required: boolean; basis: string } | null>(null);
   const [scenarioId, setScenarioId] = useState<string>("BALANCED");
   const [rates, setRates] = useState<Record<string, string>>({});
   const [quantities, setQuantities] = useState<Record<string, string>>({});
@@ -62,7 +63,8 @@ export function PricingIntelligencePanel({ tenderId, canMutate = false }: { tend
       const res = await fetch(`/api/tenders/${tenderId}/pricing/estimate`, { cache: "no-store" });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error ?? `Failed to load the estimate (${res.status})`);
-      setEstimate(data.estimate);
+      setScope(data.scope ?? null);
+      setEstimate(data.estimate ?? null);
       setScenarioId((current) => current || data.estimate?.recommended || "BALANCED");
     } catch {
       setError("Failed to load the pricing estimate.");
@@ -123,6 +125,17 @@ export function PricingIntelligencePanel({ tenderId, canMutate = false }: { tend
     } finally {
       setBusy(false);
     }
+  }
+
+  // A tender that does not ask for prices gets no estimate and no rate inputs.
+  if (scope && !scope.required) {
+    return (
+      <section className="rounded-lg border border-slate-200 bg-white p-4" aria-labelledby="pricing-intelligence-heading" data-testid="pricing-not-required">
+        <h3 id="pricing-intelligence-heading" className="text-base font-semibold text-slate-900">Pricing Intelligence</h3>
+        <p className="mt-2 text-sm text-slate-700">Financial Proposal: not required by this tender — not generated.</p>
+        <p className="mt-1 text-xs text-slate-500">{scope.basis}</p>
+      </section>
+    );
   }
 
   if (!estimate) {

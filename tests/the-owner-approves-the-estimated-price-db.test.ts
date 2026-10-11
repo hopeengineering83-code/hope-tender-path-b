@@ -33,7 +33,8 @@ describe("the owner approves the estimated price — real PostgreSQL", () => {
       data: {
         userId, title: `Feasibility study ${nonce}`, status: "GENERATED", stage: "TENDER_INTAKE", country: "Ethiopia",
         description: "The assignment shall be completed within three (3) months. Two validation workshops will be held.",
-        files: { create: { fileName: "tor.txt", originalFileName: "tor.txt", mimeType: "text/plain", size: 10, extractedText: "The assignment shall be completed within three (3) months. Two validation workshops will be held." } },
+        // The tender asks for a price: pricing is prepared only then.
+        files: { create: { fileName: "tor.txt", originalFileName: "tor.txt", mimeType: "text/plain", size: 10, extractedText: "The assignment shall be completed within three (3) months. Two validation workshops will be held. The Consultant shall submit a financial proposal." } },
         requirements: { create: [{ title: "Team", description: "Key experts: Team Leader; Water Engineer", requirementType: "EXPERT", priority: "MANDATORY" }] },
       },
     })).id;

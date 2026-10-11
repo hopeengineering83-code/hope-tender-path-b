@@ -3,6 +3,7 @@ import { requireUser, unauthorizedResponse, forbiddenResponse } from "../../../.
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { computeWorkbookTotals } from "../../../../../lib/engine/financial-proposal";
+import { loadPricingScope } from "../../../../../lib/engine/pricing-submission-scope";
 
 export const dynamic = "force-dynamic";
 
@@ -86,10 +87,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
   const { id } = await params;
   await prismaReady;
-  const tender = await prisma.tender.findFirst({ where: { id, userId: actor.id }, select: { id: true } });
-  if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
+  const pricingScope = await loadPricingScope(id, actor.id, prisma);
+  if (!pricingScope) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
-  return NextResponse.json({ workbook: await loadWorkbook(id) });
+  return NextResponse.json({ workbook: await loadWorkbook(id), pricingScope });
 }
 
 export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }) {

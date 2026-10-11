@@ -166,9 +166,12 @@ function locationFromText(text: string, type: string): string | null {
     return "Section C.2 Technical Methodology";
   // Before the quality pattern, whose bare "audit" claimed "Audited Financial
   // Statements" for Quality Assurance; and no "Appendix E", which no proposal
-  // contains. The statements are listed with the firm's records in Section D.
+  // contains. The statements are listed with the firm's records in Section D
+  // when the Vault holds them, and are always an original the bidder supplies:
+  // a proposal without that Section D said "Not presented in this proposal"
+  // for a document the submission carries (2026-10-11 matrix).
   if (/financial.*statement|audited.*(?:account|financial|report)|turnover/.test(text))
-    return "Section D Professional Certifications and Affiliations";
+    return "Section D Professional Certifications and Affiliations + Original supporting document supplied with the submission";
   if (/quality|\bqa\b|\bqc\b|review|\baudit\b|\biso\b/.test(text))
     return "Section C.3 Quality Assurance";
   if (/risk|mitigation|contingency/.test(text))

@@ -22,7 +22,7 @@ type Checklist = { mode: "COMBINED_FILE" | "SEPARATE_ATTACHMENTS" | "NONE"; comb
 
 const STATUS_LABEL: Record<string, string> = {
   SUBMISSION_READY: "Submission ready",
-  PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED: "PROPOSAL COMPLETE — OWNER ATTACHMENTS REQUIRED",
+  PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED: "PROPOSAL COMPLETE — MANUAL ORIGINAL ATTACHMENTS REQUIRED",
   IN_PROGRESS: "Proposal in progress",
 };
 
@@ -72,14 +72,14 @@ export function OwnerAttachmentChecklistPanel({ tenderId }: { tenderId: string }
     <section className="rounded-lg border border-slate-200 bg-white p-4" aria-labelledby="owner-attachments-heading" data-testid="owner-attachment-checklist">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
-          <h3 id="owner-attachments-heading" className="text-base font-semibold text-slate-900">Owner Attachment Checklist</h3>
+          <h3 id="owner-attachments-heading" className="text-base font-semibold text-slate-900">Manual Original Attachment Checklist</h3>
           <p className="text-xs text-slate-500">
-            The originals the tender requires that the app does not produce. You do not need to upload them to the app;
-            {checklist.mode === "COMBINED_FILE" ? ` insert them into "${checklist.combinedFileName}" in this order, or upload a verified PDF to the Company Vault and it is bound in automatically.` : " attach them to the submission in this order."}
+            The original and supporting documents the tender requires that the App does not produce. Attach them manually when assembling the final submission
+            {checklist.mode === "COMBINED_FILE" ? `: insert them into "${checklist.combinedFileName}" in this order. Optional: if you choose to store a verified PDF in the Company Vault, the App can bind it in automatically.` : ", in this order. Uploading them to the App is optional."}
           </p>
         </div>
         {packageStatus ? (
-          <span className={`rounded border px-2 py-0.5 text-xs font-semibold ${packageStatus === "SUBMISSION_READY" ? "border-emerald-300 bg-emerald-50 text-emerald-800" : proposalComplete ? "border-amber-300 bg-amber-50 text-amber-900" : "border-slate-300 bg-slate-50 text-slate-700"}`} data-testid="package-status">
+          <span className={`rounded border px-2 py-0.5 text-xs font-semibold ${packageStatus === "SUBMISSION_READY" ? "border-emerald-300 bg-emerald-50 text-emerald-800" : proposalComplete ? "border-emerald-300 bg-emerald-50 text-emerald-800" : "border-slate-300 bg-slate-50 text-slate-700"}`} data-testid="package-status">
             {STATUS_LABEL[packageStatus] ?? packageStatus}
           </span>
         ) : null}
@@ -92,7 +92,7 @@ export function OwnerAttachmentChecklistPanel({ tenderId }: { tenderId: string }
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="font-medium text-slate-900">{item.order}. {item.kind}</span>
                 <span className={`rounded px-1.5 py-0.5 text-xs ${item.status === "PACKAGED_AUTOMATICALLY" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-800"}`}>
-                  {item.status === "PACKAGED_AUTOMATICALLY" ? "Packaged" : "Owner to attach"}
+                  {item.status === "PACKAGED_AUTOMATICALLY" ? "Packaged" : "Attach manually"}
                 </span>
               </div>
               <div className="mt-1 text-slate-700">{item.document}</div>

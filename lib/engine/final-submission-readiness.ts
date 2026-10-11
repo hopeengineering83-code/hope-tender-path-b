@@ -161,7 +161,7 @@ export type FinalReadinessSummary = {
  */
 export type FinalPackageStatus = "SUBMISSION_READY" | "PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED" | "IN_PROGRESS";
 
-export const PROPOSAL_COMPLETE_LABEL = "PROPOSAL COMPLETE — OWNER ATTACHMENTS REQUIRED";
+export const PROPOSAL_COMPLETE_LABEL = "PROPOSAL COMPLETE — MANUAL ORIGINAL ATTACHMENTS REQUIRED";
 
 /**
  * The package status, from the export gate's verdict. The one place it is
@@ -930,8 +930,8 @@ export async function getFinalSubmissionReadiness(
       tenderLevelBlockers.push({
         category: "OWNER_ATTACHMENTS_REQUIRED",
         severity: "HIGH",
-        title: `${outstanding.length} original(s) the tender requires are attached by the owner: ${outstanding.map((item) => item.kind).join("; ")}.`,
-        recommendedAction: "Attach each item in the Owner Attachment Checklist to the submission, in the order listed. The proposal itself is complete.",
+        title: `${outstanding.length} original/supporting document(s) the tender requires are compiled manually by the owner: ${outstanding.map((item) => item.kind).join("; ")}.`,
+        recommendedAction: "Attach these original/supporting documents manually when assembling the final submission, in the checklist's order. The App-generated proposal is complete and can be downloaded now.",
       });
     }
   }
@@ -949,7 +949,7 @@ export async function getFinalSubmissionReadiness(
           category: "COMBINED_FILE_ANNEX_MISSING",
           severity: "HIGH",
           title: `"${combined}" must contain the tender's annexes. Not available as verified PDF originals: ${annex.plan.missing.map((m) => `${m.kind} (${m.reason})`).join("; ")}.`,
-          recommendedAction: "Insert each original into the combined file in the Owner Attachment Checklist's order when assembling it, or upload it to the Company Vault as a PDF (signed where the tender requires) and it is bound in automatically. The proposal itself is complete.",
+          recommendedAction: "Insert each original into the combined file in the checklist's order when assembling the final submission. The App-generated proposal is complete and can be downloaded now. Optional: if you choose to store a verified PDF of an original in the Company Vault (signed where the tender requires), the App can bind it in automatically.",
         });
       } else {
         const row = generatedDocuments.find((doc) => String((doc as { exactFileName?: string | null }).exactFileName ?? "").toLowerCase() === combined.toLowerCase()
@@ -1503,11 +1503,11 @@ export async function getFinalSubmissionReadiness(
   });
   const packageStatus: FinalPackageStatus = finalPackageStatus({ ok, proposalComplete });
   const message = packageStatus === "PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED"
-    ? `${PROPOSAL_COMPLETE_LABEL}. The proposal documents are complete; ${ownerAttachments?.outstanding ?? 0} required original(s) are the owner's to attach — see the Owner Attachment Checklist.`
+    ? `${PROPOSAL_COMPLETE_LABEL}. Every document the App generates for this tender is complete and can be downloaded now; ${ownerAttachments?.outstanding ?? 0} original/supporting document(s) are compiled manually by the owner — see the Manual Original Attachment Checklist. The App cannot confirm the externally assembled submission.`
     : buildMessage({ ok, documentBlockers, tenderLevelBlockers, advisoryWarnings });
   if (packageStatus === "PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED") {
     summary.primaryBlockerReason = PROPOSAL_COMPLETE_LABEL;
-    summary.primaryFixAction = "Attach the originals in the Owner Attachment Checklist. The proposal can be downloaded for assembly now.";
+    summary.primaryFixAction = "Download the App-generated proposal and attach the listed originals manually when assembling the final submission.";
   }
 
   return {

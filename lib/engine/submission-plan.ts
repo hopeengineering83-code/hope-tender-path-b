@@ -1,5 +1,7 @@
 import { classifySubmissionPlanItem, financialProposalNameInTitle, plannedFileIsARule, requiresSubmittedFinancialProposal } from "./submission-plan-classifier";
 import { statedSingleSubmissionFile } from "./single-submission-file-rule";
+import { readFinancialProposalRequirement } from "./source-driven-tender-text-parser";
+import { isPriceSubmissionFile } from "./pricing-submission-scope";
 
 export type SubmissionPlanFormat = "DOCX" | "PDF" | "ZIP" | "XLSX" | "OTHER";
 
@@ -218,6 +220,13 @@ export function inferEnvelope(
   description?: string | null,
 ): SubmissionEnvelope {
   const text = `${requirementType} ${fileName} ${description ?? ""}`.toLowerCase();
+
+  // Financial QUALIFICATION evidence (audited statements, turnover, a
+  // financial-capacity form, bank references) belongs with the eligibility
+  // documents, not in the sealed financial envelope with the price.
+  const qualificationEvidence = /\baudited\b|\bfinancial[\s-]+(?:statements?|capacity|standing|situation|position|resources|records?|reports?|soundness|strength)\b|\bturnover\b|\bbalance[\s-]+sheets?\b|\bbank[\s-]+(?:statements?|references?)\b|\bannual[\s-]+reports?\b|\bline[\s-]+of[\s-]+credit\b/i;
+  const priceSubmission = /\b(?:financial|commercial|price)[\s-]+(?:proposal|offer|bid)\b|price[\s-]+schedule|\bpriced\b|bill[\s-]+of[\s-]+quantit|\bboq\b|rate[\s-]+card|schedule[\s-]+of[\s-]+rates|fee[\s-]+schedule|\bquotation\b/i;
+  if (qualificationEvidence.test(text) && !priceSubmission.test(text)) return "ADMIN";
 
   const financialRx = /\bfinancial\b|commercial[\s-]+offer|price[\s-]+(schedule|proposal|form)|bill[\s-]+of[\s-]+quantit|rate[\s-]+card|cost[\s-]+proposal|budget[\s-]+proposal|pricing|fee[\s-]+schedule|boq\b|b\.o\.q\b|lump[\s-]+sum[\s-]+offer|schedule[\s-]+of[\s-]+rates/i;
   if (financialRx.test(text)) return "FINANCIAL";
@@ -439,7 +448,7 @@ export function buildSubmissionPlanWithDerivedFallback(tender: TenderLike): Subm
     required: entry.required,
     exactOrder: index + 1,
     format: "DOCX",
-    envelope: (entry.documentType === "FINANCIAL" ? "FINANCIAL" : "TECHNICAL"),
+    envelope: (/^FINANCIAL/.test(entry.documentType) ? "FINANCIAL" : "TECHNICAL"),
     sourceRequirementIds: [],
     pageLimit: null,
     templateRequired: false,
@@ -452,6 +461,26 @@ export function buildSubmissionPlanWithDerivedFallback(tender: TenderLike): Subm
   }));
 
   return { ...plan, files: derivedFiles, warnings: [...plan.warnings, "Submission plan is a derived draft; confirm exact file names/order before export."] };
+}
+
+/**
+ * Does the tender ground a bidder price submission? Read from the requirement
+ * rows and the tender's own file list. `state` is the canonical three-state
+ * reader's answer; a price file the tender names itself grounds pricing unless
+ * the tender also rules pricing out, which always wins (a prohibition is
+ * `state === false`). The plan builder and the Build Plan validators share
+ * this one answer.
+ */
+export function priceSubmissionGrounding(tender: Pick<TenderLike, "requirements" | "exactFileNaming" | "exactFileOrder">): { grounded: boolean; state: boolean | null } {
+  const requirements = tender.requirements ?? [];
+  const declared = [...parseStringArray(tender.exactFileNaming), ...parseStringArray(tender.exactFileOrder)];
+  const state = readFinancialProposalRequirement([
+    ...declared.map((name) => name.replace(/\.[a-z0-9]+$/i, "")),
+    ...requirements.map((requirement) => [requirement.title, requirement.description, requirement.restrictions].filter(Boolean).join(". ")),
+  ].join("\n"));
+  const namesAPriceFile = [...declared, ...requirements.map((requirement) => requirement.exactFileName ?? "")]
+    .some((name) => isPriceSubmissionFile(name));
+  return { grounded: state === true || (state === null && namesAPriceFile), state };
 }
 
 export function buildSubmissionPlan(tender: TenderLike): SubmissionPlan {
@@ -664,6 +693,26 @@ export function buildSubmissionPlan(tender: TenderLike): SubmissionPlan {
         });
   }
 
+  // ── No price submission the tender does not ask for ──────────────────────
+  //
+  // A financial proposal, price schedule or priced BOQ is planned only when the
+  // tender requires the bidder to submit pricing, and never against a
+  // prohibition ("no financial proposal at this stage", "do not submit
+  // prices", "EOI only"), whatever a single row's wording suggests. Audited
+  // statements, turnover, a budget or a scoring weight are not a price
+  // submission (readFinancialProposalRequirement). A price file the tender
+  // names in its own file list is its own grounding — unless the tender also
+  // rules pricing out, which always wins.
+  const { grounded: pricingGrounded, state: pricingState } = priceSubmissionGrounding(tender);
+  const ungroundedPriceFiles: string[] = [];
+  if (!pricingGrounded) {
+    for (const [key, file] of Array.from(files.entries())) {
+      if (!isPriceSubmissionFile(file.exactFileName, file.documentType)) continue;
+      ungroundedPriceFiles.push(file.exactFileName);
+      files.delete(key);
+    }
+  }
+
   // ── The tender's stated attachment order is authoritative ────────────────
   //
   // Files are contributed in two passes: one per requirement (ordered by the
@@ -705,6 +754,7 @@ export function buildSubmissionPlan(tender: TenderLike): SubmissionPlan {
     .map((file, index) => ({ ...file, exactOrder: index + 1 }));
 
   const warnings: string[] = [];
+  if (ungroundedPriceFiles.length > 0) warnings.push(`Not planned: ${ungroundedPriceFiles.join(", ")} — the tender ${pricingState === false ? "rules out a price submission" : "does not ask the bidder for prices"}.`);
   if (sortedFiles.length === 0) warnings.push("No exact submission files were extracted; generation should remain draft-only until tender output scope is confirmed.");
   if (parseStringArray(tender.exactFileNaming).length > 0 && parseStringArray(tender.exactFileOrder).length === 0) warnings.push("Exact file names exist but exact order was not extracted.");
   if (requirements.some((requirement) => requirement.requiredQuantity != null && requirement.requiredQuantity < 0)) warnings.push("At least one requirement has an invalid negative quantity.");
@@ -750,10 +800,21 @@ export function submissionPlanFileKey(fileName?: string | null): string {
 
 // ── Derived draft plan ───────────────────────────────────────────────────────
 //
-// Creates a heuristic submission plan when the primary plan produces 0 files.
-// Uses keyword analysis of requirements to infer the most likely submission
-// documents. All entries are tagged DERIVED_DRAFT_UNCONFIRMED and must be
-// confirmed by the user before export.
+// A display-only preview when the primary plan produces 0 files (before Run
+// Engine builds and source-verifies the real plan). It never authorizes
+// generation or export, and it obeys the same rule as the real plan: the
+// tender decides what documents exist.
+//
+// It used to add files because they are common in tenders — a "Financial
+// Proposal" from the words budget, cost, fee or rate; a "Financial Capacity
+// Package" from audited statements (owner originals, never generated); a
+// "Design Statement", "Healthcare Infrastructure Technical Proposal", "Donor
+// Compliance Package", "Compliance Matrix" and "CV Package" from sector or
+// donor keywords. None of those is a requirement of the tender, so the preview
+// showed the owner documents the tender never asked for. It now offers only
+// the one response the requirements describe (a technical proposal, or an
+// expression of interest), and a financial proposal only when the tender asks
+// the bidder for prices.
 
 export type DerivedDraftEntry = {
   name: string;
@@ -768,219 +829,51 @@ export function buildDerivedDraftPlan(tender: {
   submissionMethod?: string | null;
   title?: string | null;
   analysisExtractionStatus?: string | null;
-  tenderCategory?: string | null;  // tender-type-aware section routing
+  tenderCategory?: string | null;
 }): DerivedDraftEntry[] {
   const requirements = tender.requirements ?? [];
   if (requirements.length === 0) return [];
 
-  // Build a single searchable text block from all requirements
   const requirementsText = requirements
     .map((r) => [r.text ?? "", r.title ?? "", r.description ?? ""].join(" "))
     .join("\n");
-
-  // Combined search corpus: title + tenderCategory + all requirement text (lowercase).
-  // Used for tender-type-aware section routing so domain keywords in the title or
-  // category field (e.g. "road construction", "water supply") trigger the right
-  // sector-specific derived entries even when the requirements themselves are sparse.
-  const combinedText = [
-    tender.title ?? "",
-    tender.tenderCategory ?? "",
-    requirementsText,
-  ].join(" ").toLowerCase();
-
-  // reqText kept as a lowercase alias for the existing keyword checks below
+  const combinedText = [tender.title ?? "", tender.tenderCategory ?? "", requirementsText].join(" ").toLowerCase();
   const reqText = requirementsText.toLowerCase();
 
   const entries: DerivedDraftEntry[] = [];
 
-  // ── Technical Proposal ───────────────────────────────────────────────────
-  if (/technical|methodology|approach|scope[\s-]+of[\s-]+work|sow|technical[\s-]+section|technical[\s-]+offer|technical[\s-]+proposal/.test(reqText)) {
+  // The response the requirements describe: an expression of interest is a
+  // shortlisting submission; anything asking for an approach, team or
+  // experience is answered by one technical proposal.
+  const isEOI = /\beoi\b|expression[\s-]+of[\s-]+interest/.test(combinedText) && !/\btechnical[\s-]+proposal\b/.test(reqText);
+  if (isEOI) {
+    entries.push({
+      name: "Expression of Interest",
+      documentType: "EXPRESSION_OF_INTEREST",
+      required: true,
+      derivedFrom: "DERIVED_DRAFT_UNCONFIRMED — the tender asks for an expression of interest",
+      confidence: "HIGH",
+    });
+  } else if (/technical|methodology|approach|scope[\s-]+of[\s-]+(?:work|services)|\bsow\b|work[\s-]+plan|personnel|expert|\bcvs?\b|experience|qualification|capabilit/.test(reqText)) {
     entries.push({
       name: "Technical Proposal",
       documentType: "TECHNICAL_PROPOSAL",
       required: true,
-      derivedFrom: "DERIVED_DRAFT_UNCONFIRMED — derived from technical/methodology keywords in requirements",
+      derivedFrom: "DERIVED_DRAFT_UNCONFIRMED — the requirements ask for a technical response",
       confidence: "HIGH",
     });
   }
 
-  // ── Financial Proposal ───────────────────────────────────────────────────
-  // Omitted for EOI tenders — Expression of Interest documents are pre-qualification
-  // submissions; they do not include a financial proposal.
-  const isEOI = /eoi\b|expression[\s-]+of[\s-]+interest/.test(combinedText);
-  if (!isEOI && /price|cost|budget|financial|commercial|fee|rate|boq|bill[\s-]+of[\s-]+quantit|pricing|lump[\s-]+sum|financial[\s-]+offer|financial[\s-]+proposal/.test(reqText)) {
+  // A financial proposal only when the tender asks the bidder for prices — never
+  // from a budget, turnover, audited statements, payment terms or a weight, and
+  // never against a prohibition.
+  if (readFinancialProposalRequirement(requirementsText) === true) {
     entries.push({
       name: "Financial Proposal",
-      documentType: "FINANCIAL",
+      documentType: "FINANCIAL_PROPOSAL",
       required: true,
-      derivedFrom: "DERIVED_DRAFT_UNCONFIRMED — derived from financial/pricing keywords in requirements",
+      derivedFrom: "DERIVED_DRAFT_UNCONFIRMED — the tender asks the bidder to submit pricing",
       confidence: "HIGH",
-    });
-  }
-
-  // ── Company Profile / Eligibility Package ───────────────────────────────
-  if (/registration|legal|eligibility|incorporation|company[\s-]+profile|business[\s-]+licen|tax[\s-]+clearance|vat|tin\b|certificate[\s-]+of[\s-]+registration|statutory/.test(reqText)) {
-    entries.push({
-      name: "Company Profile / Eligibility Package",
-      documentType: "ELIGIBILITY",
-      required: true,
-      derivedFrom: "DERIVED_DRAFT_UNCONFIRMED — derived from registration/eligibility keywords in requirements",
-      confidence: "MEDIUM",
-    });
-  }
-
-  // ── CV Package ───────────────────────────────────────────────────────────
-  if (/\bstaff\b|personnel|expert|qualification|cv\b|curriculum[\s-]+vitae|key[\s-]+personnel|team[\s-]+member|professional[\s-]+profile/.test(reqText)) {
-    entries.push({
-      name: "CV Package",
-      documentType: "EXPERT",
-      required: true,
-      derivedFrom: "DERIVED_DRAFT_UNCONFIRMED — derived from personnel/expert keywords in requirements",
-      confidence: "MEDIUM",
-    });
-  }
-
-  // ── Project Experience / References ─────────────────────────────────────
-  if (/experience|similar[\s-]+project|reference|past[\s-]+project|track[\s-]+record|relevant[\s-]+project|prior[\s-]+project/.test(reqText)) {
-    entries.push({
-      name: "Project Experience / References",
-      documentType: "PROJECT_REFERENCE",
-      required: true,
-      derivedFrom: "DERIVED_DRAFT_UNCONFIRMED — derived from experience/project reference keywords in requirements",
-      confidence: "MEDIUM",
-    });
-  }
-
-  // ── Financial Capacity Package ───────────────────────────────────────────
-  if (/financial[\s-]+statement|audit|turnover|annual[\s-]+report|financial[\s-]+capacity|bank[\s-]+statement|balance[\s-]+sheet/.test(reqText)) {
-    entries.push({
-      name: "Financial Capacity Package",
-      documentType: "FINANCIAL",
-      required: true,
-      derivedFrom: "DERIVED_DRAFT_UNCONFIRMED — derived from financial statements/capacity keywords in requirements",
-      confidence: "MEDIUM",
-    });
-  }
-
-  // ── Work Plan / Methodology ───────────────────────────────────────────────
-  if (/work[\s-]+plan|timeline|schedule|milestone|gantt|implementation[\s-]+plan|activity[\s-]+schedule/.test(reqText)) {
-    entries.push({
-      name: "Work Plan / Methodology",
-      documentType: "METHODOLOGY",
-      required: true,
-      derivedFrom: "DERIVED_DRAFT_UNCONFIRMED — derived from work plan/timeline keywords in requirements",
-      confidence: "MEDIUM",
-    });
-  }
-
-  // ── Compliance Matrix ─────────────────────────────────────────────────────
-  if (/compliance|checklist|compliance[\s-]+matrix|requirement[\s-]+checklist/.test(reqText)) {
-    entries.push({
-      name: "Compliance Matrix",
-      documentType: "FORM",
-      required: true,
-      derivedFrom: "DERIVED_DRAFT_UNCONFIRMED — derived from compliance/checklist keywords in requirements",
-      confidence: "LOW",
-    });
-  }
-
-  // ── Tender-type-aware section routing ────────────────────────────────────
-  // Uses combinedText (title + tenderCategory + requirementsText) so that even
-  // sparse requirements yield the correct domain-specific derived entries when
-  // the tender title or category identifies the sector.
-
-  // EOI — add Expression of Interest Letter; Financial Proposal already excluded above
-  if (isEOI) {
-    entries.push({
-      name: "Expression of Interest Letter",
-      documentType: "TECHNICAL_PROPOSAL",
-      required: true,
-      derivedFrom: "DERIVED_DRAFT_UNCONFIRMED — EOI detected; Expression of Interest letter is the primary deliverable",
-      confidence: "HIGH",
-    });
-  }
-
-  // Building / architectural design
-  if (/building|design|architect|interior/.test(combinedText)) {
-    entries.push({
-      name: "Design Statement / Approach",
-      documentType: "METHODOLOGY",
-      required: true,
-      derivedFrom: "DERIVED_DRAFT_UNCONFIRMED — building/architectural design tender; design statement is expected",
-      confidence: "MEDIUM",
-    });
-  }
-
-  // Road / highway / civil infrastructure
-  if (/road|highway|infrastructure|civil/.test(combinedText)) {
-    entries.push({
-      name: "Technical Approach: Road Design and Construction Method",
-      documentType: "METHODOLOGY",
-      required: true,
-      derivedFrom: "DERIVED_DRAFT_UNCONFIRMED — road/infrastructure tender; construction methodology statement required",
-      confidence: "HIGH",
-    });
-  }
-
-  // Water / sanitation / WASH / drainage
-  if (/water|sanitation|wash\b|drainage/.test(combinedText)) {
-    entries.push({
-      name: "Technical Approach: Water/Sanitation Works",
-      documentType: "METHODOLOGY",
-      required: true,
-      derivedFrom: "DERIVED_DRAFT_UNCONFIRMED — water/sanitation/WASH tender; technical water works approach required",
-      confidence: "HIGH",
-    });
-  }
-
-  // Geotechnical investigation
-  if (/geotechnical|soil|investigation|borehole/.test(combinedText)) {
-    entries.push({
-      name: "Geotechnical Investigation Methodology",
-      documentType: "METHODOLOGY",
-      required: true,
-      derivedFrom: "DERIVED_DRAFT_UNCONFIRMED — geotechnical/soil investigation tender; investigation methodology required",
-      confidence: "HIGH",
-    });
-  }
-
-  // Urban planning / master plan
-  if (/urban|planning|master.?plan|land.?use/.test(combinedText)) {
-    entries.push({
-      name: "Urban Planning Methodology",
-      documentType: "METHODOLOGY",
-      required: true,
-      derivedFrom: "DERIVED_DRAFT_UNCONFIRMED — urban/planning tender; planning methodology statement required",
-      confidence: "HIGH",
-    });
-  }
-
-  // Healthcare / hospital facility
-  if (/\bhospitals?\b|medical|health.?facilit/.test(combinedText)) {
-    entries.push({
-      name: "Healthcare Infrastructure Technical Proposal",
-      documentType: "METHODOLOGY",
-      required: true,
-      derivedFrom: "DERIVED_DRAFT_UNCONFIRMED — healthcare/hospital tender; sector-specific technical proposal required",
-      confidence: "HIGH",
-    });
-  }
-
-  // Donor / bank-funded project
-  if (/donor|bank\b|ida\b|adb\b|afdb\b|world.?bank|eu.?fund|usaid|dfid|giz\b/.test(combinedText)) {
-    entries.push({
-      name: "Donor Compliance Package",
-      documentType: "ELIGIBILITY",
-      required: true,
-      derivedFrom: "DERIVED_DRAFT_UNCONFIRMED — donor/bank-funded tender; compliance with donor procurement rules required",
-      confidence: "HIGH",
-    });
-    entries.push({
-      name: "Procurement Compliance Declaration",
-      documentType: "DECLARATION",
-      required: true,
-      derivedFrom: "DERIVED_DRAFT_UNCONFIRMED — donor/bank-funded tender; procurement compliance declaration required",
-      confidence: "MEDIUM",
     });
   }
 

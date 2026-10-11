@@ -33,6 +33,9 @@ type EnvelopeBreakdown = { TECHNICAL?: number; FINANCIAL?: number; ADMIN?: numbe
 
 type ExportReadiness = {
   ok: boolean;
+  /** PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED: every App-generated document is complete; only manually compiled originals remain. */
+  packageStatus?: string;
+  proposalComplete?: boolean;
   tender: { id: string; title: string; status: string; stage: string; readinessScore: number };
   summary: {
     activeDocuments: number;
@@ -185,6 +188,11 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
   const advisoryCount = readiness?.summary.advisoryWarnings ?? advisoryWarnings.length;
   const strictTwoEnvelope = readiness?.summary.strictTwoEnvelope ?? false;
   const envelopeBreakdown = readiness?.summary.envelopeBreakdown;
+  // A successful App completion: every document the App generates is ready,
+  // and the only items left are originals the owner compiles manually. The
+  // proposal downloads now; nothing here is an App failure.
+  const manualOriginalsOnly = !ok && readiness?.packageStatus === "PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED";
+  const proposalZip = `/api/tenders/${tenderId}/download?type=zip&scope=proposal`;
 
   return (
     <div className="rounded-2xl border bg-white p-5 shadow-sm" id="export-readiness">
@@ -195,8 +203,8 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {readiness && (
-            <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${ok ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"}`}>
-              {ok ? "READY" : `${readiness.summary.totalBlockers} blocker(s)`}
+            <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${ok || manualOriginalsOnly ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"}`}>
+              {ok ? "READY" : manualOriginalsOnly ? "PROPOSAL COMPLETE" : `${readiness.summary.totalBlockers} blocker(s)`}
             </span>
           )}
           {canMutate && readiness && !ok && hasDocumentBlockers && null}
@@ -247,7 +255,25 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
               )}
             </div>
           )}
-          {readiness && !ok && (
+          {readiness && manualOriginalsOnly && (
+            <div className="flex flex-wrap gap-1">
+              {strictTwoEnvelope ? (
+                <>
+                  <a href={`${proposalZip}&envelope=technical`} download className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-700" data-testid="readiness-download-proposal-technical">
+                    <DownloadIcon /> Proposal — technical envelope
+                  </a>
+                  <a href={`${proposalZip}&envelope=financial`} download className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-800" data-testid="readiness-download-proposal-financial">
+                    <DownloadIcon /> Proposal — financial envelope
+                  </a>
+                </>
+              ) : (
+                <a href={proposalZip} download className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-700" title="Every App-generated document is complete — download them for final assembly." data-testid="readiness-download-proposal">
+                  <DownloadIcon /> Download proposal package
+                </a>
+              )}
+            </div>
+          )}
+          {readiness && !ok && !manualOriginalsOnly && (
             <button
               type="button"
               disabled
@@ -265,7 +291,13 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
       {/* Structured blocker display — shows when export readiness returns ok:false
           with primaryBlockerReason. This replaces the generic failure message
           with actionable guidance. */}
-      {readiness && !readiness.ok && (readiness as { primaryBlockerReason?: string | null }).primaryBlockerReason && !error && (
+      {readiness && manualOriginalsOnly && !error && (
+        <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs" data-testid="proposal-complete-manual-originals">
+          <p className="font-semibold text-emerald-800">PROPOSAL COMPLETE — MANUAL ORIGINAL ATTACHMENTS REQUIRED</p>
+          <p className="mt-0.5 text-emerald-700">{readiness.message}</p>
+        </div>
+      )}
+      {readiness && !readiness.ok && !manualOriginalsOnly && (readiness as { primaryBlockerReason?: string | null }).primaryBlockerReason && !error && (
         <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs">
           <p className="font-semibold text-red-700">Primary blocker: {(readiness as { primaryBlockerReason?: string | null }).primaryBlockerReason}</p>
           {(readiness as { primaryFixAction?: string | null }).primaryFixAction && (
@@ -287,10 +319,10 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
 
       {readiness && (
         <div className="mt-4 space-y-4">
-          <div className={`rounded-xl p-4 ${ok ? "border border-emerald-200 bg-emerald-50" : "border border-red-200 bg-red-50"}`}>
+          <div className={`rounded-xl p-4 ${ok || manualOriginalsOnly ? "border border-emerald-200 bg-emerald-50" : "border border-red-200 bg-red-50"}`}>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <p className={`text-sm font-semibold ${ok ? "text-emerald-900" : "text-red-900"}`}>{ok ? "Export gate passed" : "Export gate blocked"}</p>
+                <p className={`text-sm font-semibold ${ok || manualOriginalsOnly ? "text-emerald-900" : "text-red-900"}`}>{ok ? "Export gate passed" : manualOriginalsOnly ? "App-generated documents complete" : "Export gate blocked"}</p>
                 <p className={`mt-1 text-xs ${ok ? "text-emerald-700" : "text-red-700"}`}>
                   {readiness.summary.documentBlockers} document blocker(s) · {readiness.summary.tenderLevelBlockers} tender blocker(s) · {advisoryCount} advisory warning(s)
                 </p>
@@ -313,7 +345,7 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
             </div>
           </div>
 
-          {!ok && (readiness.documentBlockers.length > 0 || readiness.tenderLevelBlockers.length > 0) && (
+          {!ok && !manualOriginalsOnly && (readiness.documentBlockers.length > 0 || readiness.tenderLevelBlockers.length > 0) && (
             <div className="rounded-xl border border-sky-100 bg-sky-50 p-3">
               <p className="text-xs font-semibold text-sky-900">How to clear blockers</p>
               <ol className="mt-2 space-y-1 pl-4 text-xs text-sky-800 list-decimal">
@@ -332,12 +364,12 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
 
           {readiness.tenderLevelBlockers.length > 0 && (
             <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-red-700">Tender-level blockers</p>
+              <p className={`text-xs font-semibold uppercase tracking-wide ${manualOriginalsOnly ? "text-slate-600" : "text-red-700"}`}>{manualOriginalsOnly ? "Compiled by you outside the App (not App blockers)" : "Tender-level blockers"}</p>
               <ul className="mt-2 space-y-2">
                 {readiness.tenderLevelBlockers.map((blocker, i) => (
-                  <li key={`${blocker.category}-${i}`} className="rounded-lg border border-red-100 bg-white p-3 text-xs">
+                  <li key={`${blocker.category}-${i}`} className={`rounded-lg border bg-white p-3 text-xs ${manualOriginalsOnly ? "border-slate-200" : "border-red-100"}`}>
                     <div className="flex items-start gap-2">
-                      <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${severityClass(blocker.severity)}`}>{blocker.severity}</span>
+                      <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${manualOriginalsOnly ? "bg-slate-100 text-slate-700" : severityClass(blocker.severity)}`}>{manualOriginalsOnly ? "MANUAL" : blocker.severity}</span>
                       <div>
                         <p className="font-medium text-slate-900">{blocker.title}</p>
                         <p className="mt-0.5 text-slate-500">{blocker.category}</p>

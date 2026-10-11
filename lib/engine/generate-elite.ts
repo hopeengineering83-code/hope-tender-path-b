@@ -136,6 +136,18 @@ import { isHealthcareSector, reviewDisciplineOf } from "./assignment-subject";
 import { reconcileSectionPointers } from "./section-pointer-reconciliation";
 export { isCurrentRecordStatus };
 
+/**
+ * The cover letter's statement that no price is enclosed. "As required by the
+ * tender instructions" is a claim about the tender, so it is made only when the
+ * tender rules a financial proposal out; a tender that simply does not ask for
+ * prices is described as exactly that.
+ */
+export function technicalOnlyNote(ruledOutByTender: boolean): string {
+  return ruledOutByTender
+    ? "Note: This is a TECHNICAL PROPOSAL ONLY. No financial offer or pricing is included, as required by the tender instructions."
+    : "Note: This is a TECHNICAL PROPOSAL ONLY. No financial offer or pricing is included; the tender does not ask the bidder for prices.";
+}
+
 /** Rename the document's references to itself when it is not a Technical Proposal. */
 export function withSubmissionDocumentLabel(markdown: string, label: string): string {
   if (!label || /^technical proposal$/i.test(label)) return markdown;
@@ -664,6 +676,8 @@ export function recordBasedOpeningSections(params: OpeningParams & {
   recipients: string;
   subject: string;
   technicalOnly: boolean;
+  /** The tender rules a financial proposal out, rather than not asking for one. */
+  financialRuledOut?: boolean;
   salutation: string;
   signOff: string[];
 }): string {
@@ -673,7 +687,7 @@ export function recordBasedOpeningSections(params: OpeningParams & {
     "# Cover Letter",
     `To: ${params.recipients}`,
     `Subject: ${params.subject}`,
-    params.technicalOnly ? "Note: This is a TECHNICAL PROPOSAL ONLY. No financial offer or pricing is included, as required by the tender instructions." : "",
+    params.technicalOnly ? technicalOnlyNote(params.financialRuledOut === true) : "",
     params.salutation,
     composeCoverLetterBody(input),
     params.signOff.join("\n"),
@@ -725,6 +739,7 @@ function fallbackProposalMarkdown(params: {
   evaluationCriteria?: string[];
   appendixList?: string[];
   noFinancialProposal?: boolean;
+  financialProposalRuledOut?: boolean;
   exactEmails?: string[];
   exactSubjectLine?: string | null;
   gapsToAddressInNarrative?: string[];
@@ -773,7 +788,7 @@ function fallbackProposalMarkdown(params: {
   lines.push("# Cover Letter");
   lines.push(emailLine);
   lines.push(`Subject: ${exactSubject}`);
-  if (params.noFinancialProposal) lines.push("Note: This is a TECHNICAL PROPOSAL ONLY. No financial offer or pricing is included, as required by the tender instructions.");
+  if (params.noFinancialProposal) lines.push(technicalOnlyNote(params.financialProposalRuledOut === true));
   lines.push(params.clientContactName ? `Dear ${params.clientContactName},` : "Dear Evaluation Committee,");
   const summaryInput = openingSummaryInput(params);
   if (summaryInput) {
@@ -2351,6 +2366,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
               : intelligence.clientName,
           subject: withBidderName(intelligence.exactSubjectLine, company.legalName || company.name) ?? `${submissionDocumentLabel} for ${cleanedTenderTitle}`,
           technicalOnly: Boolean(intelligence.noFinancialProposal),
+          financialRuledOut: intelligence.financialProposalRuledOut === true,
           salutation: writerTender.clientContactName ? `Dear ${writerTender.clientContactName},` : "Dear Evaluation Committee,",
           signOff: signOffLines(company.name, resolveSignatory({ gmName: company.gmName, gmTitle: company.gmTitle, gmLicense: company.gmLicense, experts: experts as ExpertRecord[] })),
         }),
@@ -2661,11 +2677,11 @@ export async function generateTenderDocuments(tenderId: string, userId: string, 
       mode = `${provider === "claude" ? "Claude" : provider === "gemini" ? "Gemini" : provider === "openai" ? "GPT-4o" : "AI"} ${pathLabel}${mixedLabel} bid-writer + evaluator response matrix + full evidence library + client-ready benchmark finalizer + professional DOCX polish`;
     } catch (error) {
       aiError = error instanceof Error ? error.message : String(error);
-      sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, clientContactName: writerTender.clientContactName, companyName: company.name, companyLegalName: company.legalName, companyAddress: company.address, companyTIN: company.tin, companyVAT: company.vat, companyGM: company.gmName, companyGMLicense: company.gmLicense, companyGMTitle: company.gmTitle, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, experts: experts as ExpertRecord[], projects: projects as ProjectRecord[], reviewedExpertCount: experts.length, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired, themes: intelligence.themes, evaluationCriteria: intelligence.evaluationCriteria, appendixList: intelligence.appendixList, noFinancialProposal: intelligence.noFinancialProposal, exactEmails: intelligence.exactEmails, exactSubjectLine: intelligence.exactSubjectLine, gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative, requiredSections: intelligence.requiredSections, tenderDeadline: writerTender.deadline, tenderDeadlineSourceQuote: deadlineQuoteForDisplay, companyLicenseGrade: company.licenseGrade, companyHeadcount: company.headcount, companyServiceLines: safeParseArr(company.serviceLines), companySectors: safeParseArr(company.sectors), companyProfileSummary: company.profileSummary ?? company.description, companyLegalRecords: company.legalRecords ?? [], companyComplianceRecords: company.complianceRecords ?? [], serviceStreams: detectedServiceStreams, scopePlan: fallbackScopePlan, location: tenderFacts.locations[0] ?? null, companyDescription: company.description });
+      sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, clientContactName: writerTender.clientContactName, companyName: company.name, companyLegalName: company.legalName, companyAddress: company.address, companyTIN: company.tin, companyVAT: company.vat, companyGM: company.gmName, companyGMLicense: company.gmLicense, companyGMTitle: company.gmTitle, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, experts: experts as ExpertRecord[], projects: projects as ProjectRecord[], reviewedExpertCount: experts.length, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired, themes: intelligence.themes, evaluationCriteria: intelligence.evaluationCriteria, appendixList: intelligence.appendixList, noFinancialProposal: intelligence.noFinancialProposal, financialProposalRuledOut: intelligence.financialProposalRuledOut, exactEmails: intelligence.exactEmails, exactSubjectLine: intelligence.exactSubjectLine, gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative, requiredSections: intelligence.requiredSections, tenderDeadline: writerTender.deadline, tenderDeadlineSourceQuote: deadlineQuoteForDisplay, companyLicenseGrade: company.licenseGrade, companyHeadcount: company.headcount, companyServiceLines: safeParseArr(company.serviceLines), companySectors: safeParseArr(company.sectors), companyProfileSummary: company.profileSummary ?? company.description, companyLegalRecords: company.legalRecords ?? [], companyComplianceRecords: company.complianceRecords ?? [], serviceStreams: detectedServiceStreams, scopePlan: fallbackScopePlan, location: tenderFacts.locations[0] ?? null, companyDescription: company.description });
       mode = "deterministic benchmark fallback + evaluator response matrix + client-ready benchmark finalizer + professional DOCX polish";
     }
   } else {
-    sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, clientContactName: writerTender.clientContactName, companyName: company.name, companyLegalName: company.legalName, companyAddress: company.address, companyTIN: company.tin, companyVAT: company.vat, companyGM: company.gmName, companyGMLicense: company.gmLicense, companyGMTitle: company.gmTitle, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, experts: experts as ExpertRecord[], projects: projects as ProjectRecord[], reviewedExpertCount: experts.length, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired, themes: intelligence.themes, evaluationCriteria: intelligence.evaluationCriteria, appendixList: intelligence.appendixList, noFinancialProposal: intelligence.noFinancialProposal, exactEmails: intelligence.exactEmails, exactSubjectLine: intelligence.exactSubjectLine, gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative, requiredSections: intelligence.requiredSections, tenderDeadline: writerTender.deadline, tenderDeadlineSourceQuote: deadlineQuoteForDisplay, companyLicenseGrade: company.licenseGrade, companyHeadcount: company.headcount, companyServiceLines: safeParseArr(company.serviceLines), companySectors: safeParseArr(company.sectors), companyProfileSummary: company.profileSummary ?? company.description, companyLegalRecords: company.legalRecords ?? [], companyComplianceRecords: company.complianceRecords ?? [], serviceStreams: detectedServiceStreams, scopePlan: fallbackScopePlan, location: tenderFacts.locations[0] ?? null, companyDescription: company.description });
+    sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, clientContactName: writerTender.clientContactName, companyName: company.name, companyLegalName: company.legalName, companyAddress: company.address, companyTIN: company.tin, companyVAT: company.vat, companyGM: company.gmName, companyGMLicense: company.gmLicense, companyGMTitle: company.gmTitle, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, experts: experts as ExpertRecord[], projects: projects as ProjectRecord[], reviewedExpertCount: experts.length, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired, themes: intelligence.themes, evaluationCriteria: intelligence.evaluationCriteria, appendixList: intelligence.appendixList, noFinancialProposal: intelligence.noFinancialProposal, financialProposalRuledOut: intelligence.financialProposalRuledOut, exactEmails: intelligence.exactEmails, exactSubjectLine: intelligence.exactSubjectLine, gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative, requiredSections: intelligence.requiredSections, tenderDeadline: writerTender.deadline, tenderDeadlineSourceQuote: deadlineQuoteForDisplay, companyLicenseGrade: company.licenseGrade, companyHeadcount: company.headcount, companyServiceLines: safeParseArr(company.serviceLines), companySectors: safeParseArr(company.sectors), companyProfileSummary: company.profileSummary ?? company.description, companyLegalRecords: company.legalRecords ?? [], companyComplianceRecords: company.complianceRecords ?? [], serviceStreams: detectedServiceStreams, scopePlan: fallbackScopePlan, location: tenderFacts.locations[0] ?? null, companyDescription: company.description });
   }
 
   // PR NN: Strip any AI-produced Section H (Proposal Self-Score) from the raw AI

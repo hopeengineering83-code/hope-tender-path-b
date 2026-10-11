@@ -862,7 +862,7 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
     await recordStep(ctx.jobId, {
       stepName: "auto-finalize.complete",
       message: ownerAttachmentsRequired
-        ? `Proposal complete — owner attachments required (${result.finalReadiness.ownerAttachmentsOutstanding ?? 0}): ${summary}`
+        ? `Proposal complete — manual original attachments required (${result.finalReadiness.ownerAttachmentsOutstanding ?? 0}): ${summary}`
         : `Auto-finalize complete: ${summary}`,
       status: "SUCCEEDED",
     });

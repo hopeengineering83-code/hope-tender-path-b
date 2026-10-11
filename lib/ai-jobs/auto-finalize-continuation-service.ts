@@ -704,7 +704,7 @@ export async function runAutoFinalizeAfterGeneration(
     stepName: "auto-finalize.convergence",
     message: result.ok
       ? result.finalReadiness.proposalComplete && !result.finalReadiness.ok
-        ? `Proposal complete — owner attachments required: ${result.finalReadiness.ownerAttachmentsOutstanding ?? 0} original(s) to attach (Owner Attachment Checklist)`
+        ? `Proposal complete — manual original attachments required: ${result.finalReadiness.ownerAttachmentsOutstanding ?? 0} original/supporting document(s) for the owner to compile (checklist)`
         : "Auto-finalize converged: no outstanding blockers"
       : `Auto-finalize did not converge: ${result.blockers.join("; ")}`,
     status: result.ok ? "SUCCEEDED" : "FAILED",

@@ -3,6 +3,7 @@ import { describesTelecomTowerWork, TELECOM_TOWER_SECTOR } from "./telecom-tower
 import { extractProjectFacts, extractProjectAmounts, extractServicesProvided } from "./project-fact-extractor";
 import { tidyTruncation, factualCardOrEmpty } from "./vault-prose";
 import { detectFinancialProposalRequiredFromText, buildTenderDocumentTypeAdvisory, type TenderDocumentTypeAdvisory } from "../document-generation/generation-integration";
+import { readFinancialProposalRequirement } from "./source-driven-tender-text-parser";
 import { resolveJurisdictionTokens } from "./jurisdiction-instruments";
 import { assignmentSubjectText, buildingSectorLabel, HEALTHCARE_WORK, HOSPITALITY_WORK, isBuildingSectorLabel } from "./assignment-subject";
 
@@ -70,6 +71,8 @@ export type ProposalIntelligence = {
   gapsToAddressInNarrative: string[];
   appendixList: string[];
   noFinancialProposal: boolean;
+  /** The tender itself rules a financial proposal out (not merely silent on it). */
+  financialProposalRuledOut: boolean;
   exactEmails: string[];
   exactSubjectLine: string | null;
   /**
@@ -1519,6 +1522,7 @@ export function buildProposalIntelligence(params: {
   // truth for "should this tender have a financial proposal?". Supersedes
   // the inline regex that lived here before PR fix/generated-document-content-quality.
   const noFinancialProposal = !detectFinancialProposalRequiredFromText(tenderText);
+  const financialProposalRuledOut = readFinancialProposalRequirement(tenderText) === false;
   const documentTypeAdvisory = buildTenderDocumentTypeAdvisory(tenderText);
   if (documentTypeAdvisory.notes.length > 0) {
     logger.info(`[proposal-intelligence] document-type advisory (type=${documentTypeAdvisory.tenderType}, financial=${documentTypeAdvisory.financialProposalRequired}): ${documentTypeAdvisory.notes.join(" | ")}`);
@@ -1568,6 +1572,7 @@ export function buildProposalIntelligence(params: {
     gapsToAddressInNarrative: detectGaps(themes, topProjects, topExperts, tenderText),
     appendixList: detectAppendixList(tenderText),
     noFinancialProposal,
+    financialProposalRuledOut,
     exactEmails,
     exactSubjectLine,
     documentTypeAdvisory,

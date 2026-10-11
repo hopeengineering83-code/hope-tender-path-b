@@ -18,6 +18,7 @@ import { prisma as defaultPrisma } from "../prisma";
 import { logAction } from "../audit";
 import { resumeAutoFinalizeAfterOwnerInput } from "../ai-jobs/auto-finalize-continuation-job";
 import { loadPricingEstimate } from "./pricing-intelligence-loader";
+import { loadPricingScope } from "./pricing-submission-scope";
 import { approvedLineNotes, rateCardSlotFor, type PricingEstimate, type PricingScenarioId } from "./pricing-intelligence";
 import { saveOwnerRates, type OwnerRateEntry } from "./pricing-rate-card";
 import { computeWorkbookTotals } from "./financial-proposal";
@@ -58,6 +59,11 @@ export async function approvePricingEstimate(
   if (!["AGGRESSIVE", "BALANCED", "CONSERVATIVE"].includes(request.scenario)) {
     return { ok: false, status: 400, code: "INVALID_SCENARIO", error: "scenario must be AGGRESSIVE, BALANCED or CONSERVATIVE" };
   }
+  // No price is approved for a tender that does not ask for one: there is no
+  // financial proposal to write it into.
+  const scope = await loadPricingScope(tenderId, userId, db);
+  if (!scope) return { ok: false, status: 404, code: "TENDER_NOT_FOUND", error: "Tender not found" };
+  if (!scope.required) return { ok: false, status: 409, code: "PRICING_NOT_REQUIRED_BY_TENDER", error: scope.basis };
   const estimate = await loadPricingEstimate(tenderId, userId, db);
   if (!estimate) return { ok: false, status: 404, code: "TENDER_NOT_FOUND", error: "Tender not found" };
   const scenario = estimate.scenarios.find((s) => s.id === request.scenario)!;

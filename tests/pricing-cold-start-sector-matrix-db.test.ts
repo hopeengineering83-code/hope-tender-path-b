@@ -105,7 +105,8 @@ describe("cold-start pricing across tender types — real PostgreSQL", () => {
     const id = (await prisma.tender.create({
       data: {
         userId, title: c.name, status: "GENERATED", stage: "TENDER_INTAKE", country: "Ethiopia",
-        files: { create: { fileName: "tor.txt", originalFileName: "tor.txt", mimeType: "text/plain", size: c.text.length, extractedText: c.text } },
+        // The tender asks for a price: pricing is prepared only then.
+        files: { create: { fileName: "tor.txt", originalFileName: "tor.txt", mimeType: "text/plain", size: c.text.length, extractedText: `${c.text} The Consultant shall submit a financial proposal.` } },
         requirements: { create: [{ title: "Team", description: c.team, requirementType: "EXPERT", priority: "MANDATORY" }] },
       },
     })).id;
