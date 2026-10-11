@@ -91,6 +91,14 @@ const KIND_TEST: Record<string, RegExp> = {
   "Power of attorney": /\bpower\s+of\s+attorney\b/i,
 };
 
+/** Kinds that are always an original the bidder holds, never a document the App writes. */
+const ALWAYS_ORIGINAL_KINDS = new Set([
+  "Business licence and registration certificates",
+  "Tax clearance, VAT and TIN certificates",
+  "Audited financial statements",
+  "Power of attorney",
+]);
+
 const NUMBER_WORDS: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6 };
 
 function clauseFor(text: string, test: RegExp): string | null {
@@ -164,10 +172,16 @@ export function buildOwnerAttachmentChecklist(input: ChecklistInput): OwnerAttac
   const heldOriginals = input.requirements.filter((r) => classifySubmissionPlanItem({
     title: r.title, description: r.description ?? null, requirementType: r.requirementType ?? null, exactFileName: r.exactFileName ?? null,
   }).category === "ORIGINAL_EVIDENCE_ATTACHMENT");
+  // A mandatory row whose own title names one of these is that original,
+  // however its description is worded: Pharo's "Valid Business License"
+  // eligibility row is read by the planner as an evaluation rule, and the
+  // licence was missing from the checklist (hosted run 2026-10-11).
+  const titledOriginals = input.requirements.filter((r) => /^(?:MANDATORY|CRITICAL)$/i.test(String(r.priority ?? "")));
   const kinds = [
     ...policy.items,
     ...Object.keys(KIND_TEST).filter((kind) => !policy.items.includes(kind)
-      && heldOriginals.some((r) => KIND_TEST[kind]!.test(`${r.title} ${r.description ?? ""}`))),
+      && (heldOriginals.some((r) => KIND_TEST[kind]!.test(`${r.title} ${r.description ?? ""}`))
+        || (ALWAYS_ORIGINAL_KINDS.has(kind) && titledOriginals.some((r) => KIND_TEST[kind]!.test(r.title))))),
   ];
   const items: OwnerAttachmentItem[] = [];
   const bound = new Set(input.boundHashes);

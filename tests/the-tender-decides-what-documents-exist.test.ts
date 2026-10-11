@@ -115,6 +115,14 @@ describe("CASE 3 — audited financial statements, no price requested", () => {
     assert.ok(audited, list.items.map((i) => i.kind).join(", "));
     assert.equal(audited!.status, "OWNER_TO_ATTACH");
   });
+  it("a mandatory row titled as an original is listed however its description reads", () => {
+    const list = buildOwnerAttachmentChecklist({
+      requirements: [row("r1", "Valid Business License", "Proof of a valid business license; this eligibility criterion will be evaluated on a pass/fail basis.", "ELIGIBILITY")],
+      declaredFileNames: [], vaultDocuments: [], selectedExpertSourceDocumentIds: [], selectedProjectSourceDocumentIds: [], formsAwaitingOriginal: [], boundHashes: [],
+    });
+    assert.deepEqual(list.items.map((i) => i.kind), ["Business licence and registration certificates"]);
+    assert.equal(list.mode, "SEPARATE_ATTACHMENTS");
+  });
   it("the plan preview offers no 'Financial Capacity Package'", () => {
     assert.ok(!buildDerivedDraftPlan({ requirements: rows }).some((e) => /financial/i.test(e.name)));
   });
