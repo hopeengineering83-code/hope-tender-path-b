@@ -464,12 +464,17 @@ export function buildSubmissionPlanWithDerivedFallback(tender: TenderLike): Subm
 }
 
 /**
- * Does the tender ground a bidder price submission? Read from the requirement
- * rows and the tender's own file list. `state` is the canonical three-state
- * reader's answer; a price file the tender names itself grounds pricing unless
- * the tender also rules pricing out, which always wins (a prohibition is
- * `state === false`). The plan builder and the Build Plan validators share
- * this one answer.
+ * May this tender's plan carry a price submission? `state` is the canonical
+ * three-state reader's answer over the requirement rows and the tender's own
+ * file list. Every planned file comes from a tender requirement row (source
+ * page and quote, verified at confirmation) or the tender's own file list, so
+ * a planned price file is grounded by that source — unless the tender rules
+ * pricing out (`state === false`), which always wins. The plan builder and the
+ * Build Plan validators share this one answer.
+ *
+ * It used to demand that the rows also use the reader's financial vocabulary,
+ * so a required "Price Bid Form" or "Cost Schedule" row, whose words the reader
+ * does not list, was dropped from the plan (release review, 2026-10-11).
  */
 export function priceSubmissionGrounding(tender: Pick<TenderLike, "requirements" | "exactFileNaming" | "exactFileOrder">): { grounded: boolean; state: boolean | null } {
   const requirements = tender.requirements ?? [];
@@ -478,9 +483,12 @@ export function priceSubmissionGrounding(tender: Pick<TenderLike, "requirements"
     ...declared.map((name) => name.replace(/\.[a-z0-9]+$/i, "")),
     ...requirements.map((requirement) => [requirement.title, requirement.description, requirement.restrictions].filter(Boolean).join(". ")),
   ].join("\n"));
-  const namesAPriceFile = [...declared, ...requirements.map((requirement) => requirement.exactFileName ?? "")]
-    .some((name) => isPriceSubmissionFile(name));
-  return { grounded: state === true || (state === null && namesAPriceFile), state };
+  return { grounded: state !== false, state };
+}
+
+/** A planned file carries the tender source it came from: requirement rows, or the tender's own file list. */
+function hasTenderSource(file: { canonicalId?: string | null; sourceRequirementIds?: string[] | null }): boolean {
+  return (file.sourceRequirementIds ?? []).length > 0 || String(file.canonicalId ?? "").startsWith("exact-");
 }
 
 export function buildSubmissionPlan(tender: TenderLike): SubmissionPlan {
@@ -699,18 +707,17 @@ export function buildSubmissionPlan(tender: TenderLike): SubmissionPlan {
   // tender requires the bidder to submit pricing, and never against a
   // prohibition ("no financial proposal at this stage", "do not submit
   // prices", "EOI only"), whatever a single row's wording suggests. Audited
-  // statements, turnover, a budget or a scoring weight are not a price
-  // submission (readFinancialProposalRequirement). A price file the tender
-  // names in its own file list is its own grounding — unless the tender also
-  // rules pricing out, which always wins.
+  // statements, turnover, a budget or a scoring weight never become a price
+  // file (the classifier keeps them as owner originals); a price file the
+  // tender's own rows or file list name is grounded by them — unless the
+  // tender also rules pricing out, which always wins.
   const { grounded: pricingGrounded, state: pricingState } = priceSubmissionGrounding(tender);
   const ungroundedPriceFiles: string[] = [];
-  if (!pricingGrounded) {
-    for (const [key, file] of Array.from(files.entries())) {
-      if (!isPriceSubmissionFile(file.exactFileName, file.documentType)) continue;
-      ungroundedPriceFiles.push(file.exactFileName);
-      files.delete(key);
-    }
+  for (const [key, file] of Array.from(files.entries())) {
+    if (!isPriceSubmissionFile(file.exactFileName, file.documentType)) continue;
+    if (pricingGrounded && hasTenderSource(file)) continue;
+    ungroundedPriceFiles.push(file.exactFileName);
+    files.delete(key);
   }
 
   // ── The tender's stated attachment order is authoritative ────────────────

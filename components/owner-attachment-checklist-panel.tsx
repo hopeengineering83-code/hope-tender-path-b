@@ -37,6 +37,7 @@ export function OwnerAttachmentChecklistPanel({ tenderId }: { tenderId: string }
   const [checklist, setChecklist] = useState<Checklist | null>(null);
   const [packageStatus, setPackageStatus] = useState<string | null>(null);
   const [strictTwoEnvelope, setStrictTwoEnvelope] = useState(false);
+  const [envelopeCounts, setEnvelopeCounts] = useState<{ TECHNICAL?: number; FINANCIAL?: number }>({});
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -52,6 +53,7 @@ export function OwnerAttachmentChecklistPanel({ tenderId }: { tenderId: string }
       setChecklist(list.checklist);
       setPackageStatus(ready.packageStatus ?? null);
       setStrictTwoEnvelope(Boolean(ready.exportReadiness?.summary?.strictTwoEnvelope));
+      setEnvelopeCounts(ready.exportReadiness?.summary?.envelopeBreakdown ?? {});
     } catch {
       setError("Failed to load the owner attachment checklist.");
     }
@@ -114,8 +116,8 @@ export function OwnerAttachmentChecklistPanel({ tenderId }: { tenderId: string }
         {proposalComplete ? (
           strictTwoEnvelope ? (
             <>
-              <a className="rounded bg-slate-900 px-3 py-1.5 text-white" href={`${zipBase}&envelope=technical`} data-testid="download-proposal-technical">Download proposal — technical envelope</a>
-              <a className="rounded bg-slate-900 px-3 py-1.5 text-white" href={`${zipBase}&envelope=financial`} data-testid="download-proposal-financial">Download proposal — financial envelope</a>
+              {(envelopeCounts.TECHNICAL ?? 0) > 0 ? <a className="rounded bg-slate-900 px-3 py-1.5 text-white" href={`${zipBase}&envelope=technical`} data-testid="download-proposal-technical">Download proposal — technical envelope</a> : null}
+              {(envelopeCounts.FINANCIAL ?? 0) > 0 ? <a className="rounded bg-slate-900 px-3 py-1.5 text-white" href={`${zipBase}&envelope=financial`} data-testid="download-proposal-financial">Download proposal — financial envelope</a> : null}
             </>
           ) : (
             <a className="rounded bg-slate-900 px-3 py-1.5 text-white" href={zipBase} data-testid="download-proposal">Download proposal for assembly</a>

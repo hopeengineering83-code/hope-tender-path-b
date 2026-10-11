@@ -24,7 +24,7 @@ import { readFinancialProposalRequirement } from "./source-driven-tender-text-pa
 /** A file that IS the bidder's price submission (by type or by name). */
 const PRICE_SUBMISSION_TYPE = /^(?:FINANCIAL_PROPOSAL|FINANCIAL|PRICE_SCHEDULE|BOQ|BILL_OF_QUANTITIES|QUOTATION|COMMERCIAL_PROPOSAL)$/i;
 const PRICE_SUBMISSION_NAME =
-  /\b(?:financial|commercial|price|cost|fee)[\s._-]+(?:proposal|offer|bid|quotation|schedule|breakdown)s?\b|\bpriced\b|\bquotation\b|\bbill[\s._-]+of[\s._-]+quantities\b|\bboq\b|\brate[\s._-]+card\b|\bschedule[\s._-]+of[\s._-]+(?:prices|rates)\b|\bremuneration[\s._-]+schedule\b|\breimbursable[\s._-]+(?:expenses?[\s._-]+)?schedule\b/i;
+  /\b(?:financial|commercial|price|pricing|cost|fee)[\s._-]+(?:proposal|offer|bid|quotation|schedule|breakdown|form|sheet|table|template)s?\b|\bpriced\b|\bquotation\b|\bbill[\s._-]+of[\s._-]+quantities\b|\bboq\b|\brates?[\s._-]+(?:card|schedule|sheet)\b|\bschedule[\s._-]+of[\s._-]+(?:prices|rates)\b|\bremuneration[\s._-]+schedule\b|\breimbursable[\s._-]+(?:expenses?[\s._-]+)?schedule\b/i;
 /** Financial qualification evidence named like a financial file. */
 const QUALIFICATION_EVIDENCE =
   /\baudited\b|\bfinancial[\s._-]+(?:statements?|capacity|standing|situation|position|resources|records?|reports?|soundness|strength)\b|\bturnover\b|\bbalance[\s._-]+sheets?\b|\bbank[\s._-]+(?:statements?|references?)\b|\bannual[\s._-]+reports?\b|\bline[\s._-]+of[\s._-]+credit\b/i;

@@ -48,7 +48,9 @@ function money(value: number, currency: string): string {
 export function PricingIntelligencePanel({ tenderId, canMutate = false }: { tenderId: string; canMutate?: boolean }) {
   const [estimate, setEstimate] = useState<Estimate | null>(null);
   const [scope, setScope] = useState<{ required: boolean; basis: string } | null>(null);
-  const [scenarioId, setScenarioId] = useState<string>("BALANCED");
+  // Empty until the estimate arrives, so the panel opens on the scenario the
+  // estimator recommends for this tender's evaluation model.
+  const [scenarioId, setScenarioId] = useState<string>("");
   const [rates, setRates] = useState<Record<string, string>>({});
   const [quantities, setQuantities] = useState<Record<string, string>>({});
   const [excluded, setExcluded] = useState<Record<string, boolean>>({});

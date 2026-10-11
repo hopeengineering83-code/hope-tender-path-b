@@ -259,12 +259,18 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
             <div className="flex flex-wrap gap-1">
               {strictTwoEnvelope ? (
                 <>
-                  <a href={`${proposalZip}&envelope=technical`} download className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-700" data-testid="readiness-download-proposal-technical">
-                    <DownloadIcon /> Proposal — technical envelope
-                  </a>
-                  <a href={`${proposalZip}&envelope=financial`} download className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-800" data-testid="readiness-download-proposal-financial">
-                    <DownloadIcon /> Proposal — financial envelope
-                  </a>
+                  {/* An envelope link only where the App generated something for it:
+                      an envelope holding only owner originals has nothing to download. */}
+                  {(envelopeBreakdown?.TECHNICAL ?? 0) > 0 && (
+                    <a href={`${proposalZip}&envelope=technical`} download className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-700" data-testid="readiness-download-proposal-technical">
+                      <DownloadIcon /> Proposal — technical envelope
+                    </a>
+                  )}
+                  {(envelopeBreakdown?.FINANCIAL ?? 0) > 0 && (
+                    <a href={`${proposalZip}&envelope=financial`} download className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-800" data-testid="readiness-download-proposal-financial">
+                      <DownloadIcon /> Proposal — financial envelope
+                    </a>
+                  )}
                 </>
               ) : (
                 <a href={proposalZip} download className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-700" title="Every App-generated document is complete — download them for final assembly." data-testid="readiness-download-proposal">

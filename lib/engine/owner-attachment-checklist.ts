@@ -85,7 +85,7 @@ const KIND_TEST: Record<string, RegExp> = {
   "Business licence and registration certificates": /\bbusiness\s+licen[cs]e|\bcommercial\s+registration|\bregistration\s+certificate|\btrade\s+licen[cs]e/i,
   "Tax clearance, VAT and TIN certificates": /\btax\s+clearance|\bVAT\b|\bTIN\b/,
   "Curricula vitae of the proposed experts": /\bCVs?\b|\bcurricul(?:um|a)\s+vita/i,
-  "Professional licences and certificates of the proposed experts": /\b(?:professional\s+)?licen[cs]es\b|\bcertificates\b|\bcertifications\b/i,
+  "Professional licences and certificates of the proposed experts": /\bprofessional\s+(?:licen[cs]es?|certificat(?:es?|ions?)|registrations?)\b|\b(?:experts?|staff|personnel|engineers?|architects?|team(?:\s+members)?)['’]?\s+(?:professional\s+)?(?:licen[cs]es|certificat(?:es|ions))\b|(?<!\b(?:trade|business|commercial|operating)\s)\blicen[cs]es\b/i,
   "Client reference and completion letters for the cited projects": /\b(?:project\s+)?references\b|\breference\s+letters?\b|\btestimon(?:y|ial)|\bcompletion\s+certificate/i,
   "Audited financial statements": /\baudited\s+financial|\bfinancial\s+statements\b/i,
   "Power of attorney": /\bpower\s+of\s+attorney\b/i,
@@ -145,8 +145,13 @@ function copiesOf(text: string): number | null {
 }
 
 function envelopeOf(text: string): OwnerAttachmentItem["envelope"] {
+  // A tender that keeps eligibility originals in their own envelope says so;
+  // the checklist must send them there, not into the technical one.
+  if (/\b(?:administrative|admin|eligibility|qualification)\s+(?:envelope|part|package)\b/i.test(text)) return "ADMIN";
   return /\bfinancial\s+(?:envelope|proposal|offer)\b/i.test(text) && !/\btechnical\s+(?:envelope|proposal)\b/i.test(text) ? "FINANCIAL" : "TECHNICAL";
 }
+
+const ENVELOPE_LABEL: Record<OwnerAttachmentItem["envelope"], string> = { TECHNICAL: "Technical", FINANCIAL: "Financial", ADMIN: "Administrative" };
 
 const COPY_PHRASE: Record<AttachmentCopyType, string> = {
   ORIGINAL: "original",
@@ -210,7 +215,7 @@ export function buildOwnerAttachmentChecklist(input: ChecklistInput): OwnerAttac
     const what = `${qualifiers ? `${qualifiers} ` : ""}${COPY_PHRASE[copyType]} of ${clause.replace(/^(?:a\s+|the\s+)?(?:scanned|certified|notari[sz]ed|attested)?\s*cop(?:y|ies)\s+of\s+/i, "")}`;
     const location = mode === "COMBINED_FILE"
       ? `Inside "${combined}", after the proposal pages, as Annex ${annexNo}`
-      : `${envelope === "FINANCIAL" ? "Financial" : "Technical"} envelope, as Annex ${annexNo} after the proposal`;
+      : `${ENVELOPE_LABEL[envelope]} envelope, as Annex ${annexNo}${envelope === "ADMIN" ? "" : " after the proposal"}`;
     let ownerAction: string;
     if (packaged) {
       ownerAction = `Nothing to do: the verified original from the Company Vault is bound into "${combined}" as Annex ${annexNo}.${signatureRequired ? " Confirm it carries the required signature." : ""}`;
@@ -220,7 +225,7 @@ export function buildOwnerAttachmentChecklist(input: ChecklistInput): OwnerAttac
         : `Attach the ${what} — the Company Vault holds ${verified.map((d) => `"${d.originalFileName}"`).join(", ")} — to the ${location.toLowerCase()}.`;
     } else {
       ownerAction = mode === "COMBINED_FILE"
-        ? `Insert the ${what} into "${combined}" as Annex ${annexNo} when assembling the file${copiesOf(clause) ? ` (${copiesOf(clause)} copies)` : ""}. Optional: if you choose to store a verified PDF of it in the Company Vault, the App can bind it in automatically.`
+        ? `Insert the ${what} into "${combined}" as Annex ${annexNo} when assembling the file${copiesOf(clause) ? ` (${copiesOf(clause)} copies)` : ""}.${ownerSigned ? "" : " Optional: if you choose to store a verified PDF of it in the Company Vault, the App can bind it in automatically."}`
         : `Attach the ${what} to the ${location.toLowerCase()}${copiesOf(clause) ? ` (${copiesOf(clause)} copies)` : ""} when assembling the final submission.`;
     }
     items.push({
@@ -256,7 +261,7 @@ export function buildOwnerAttachmentChecklist(input: ChecklistInput): OwnerAttac
       stampRequired: /\b(?:stamp(?:ed)?|seal(?:ed)?)\b/i.test(text),
       copies: copiesOf(text),
       envelope,
-      location: `${envelope === "FINANCIAL" ? "Financial" : envelope === "ADMIN" ? "Administrative" : "Technical"} envelope, as "${form.fileName}"`,
+      location: `${ENVELOPE_LABEL[envelope]} envelope, as "${form.fileName}"`,
       vault: { status: "NOT_APPLICABLE", documents: [] },
       status: "OWNER_TO_ATTACH",
       ownerAction: `Complete and sign the tender's form "${form.fileName}" and include it in the ${envelope.toLowerCase()} envelope when assembling the final submission. Optional: attach the signed original to this tender and the App packages it.`,

@@ -696,7 +696,7 @@ export async function validateBuildPlanForConfirmation(prisma: PrismaClient, ten
   const pricing = priceSubmissionGrounding(tender as any);
   for (const item of items) {
     const key = planItemKey(item);
-    if (!pricing.grounded && isPriceSubmissionFile(item.exactFileName, item.documentType)) blockers.push(`${item.exactFileName} is a price submission the tender ${pricing.state === false ? "rules out" : "does not ask for"}.`);
+    if (isPriceSubmissionFile(item.exactFileName, item.documentType) && (!pricing.grounded || (item.sourceRequirementIds.length === 0 && !String(item.canonicalId ?? "").startsWith("exact-")))) blockers.push(`${item.exactFileName} is a price submission the tender ${pricing.state === false ? "rules out" : "does not ask for"}.`);
     if (!authoritativeKeys.has(key)) blockers.push(`${item.exactFileName} order/type/name is not in current tender-controlled scope.`);
     const orderNameKey = `${Number(item.exactOrder)}:${normalizePlanName(item.exactFileName)}`;
     if (seen.has(orderNameKey)) blockers.push(`Duplicate/conflicting plan item: ${item.exactOrder} ${item.exactFileName}`);
@@ -832,7 +832,7 @@ export async function validateBuildPlanItemsAtRuntime(
       continue;
     }
     // INVARIANT: no price submission without a grounded pricing requirement.
-    if (!pricing.grounded && isPriceSubmissionFile(item.exactFileName, item.documentType)) {
+    if (isPriceSubmissionFile(item.exactFileName, item.documentType) && (!pricing.grounded || ((item.sourceRequirementIds ?? []).length === 0 && !String(item.canonicalId ?? "").startsWith("exact-")))) {
       blockers.push(`Plan item ${item.exactFileName} is a price submission the tender ${pricing.state === false ? "rules out" : "does not ask for"}.`);
     }
     // Strict item structure validation

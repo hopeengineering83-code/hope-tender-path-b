@@ -26,7 +26,10 @@ const ANNEX_KINDS: Array<{ name: string; test: RegExp }> = [
   { name: "Business licence and registration certificates", test: /\bbusiness\s+licen[cs]e|\bcommercial\s+registration|\bregistration\s+certificate|\btrade\s+licen[cs]e/i },
   { name: "Tax clearance, VAT and TIN certificates", test: /\btax\s+clearance|\bVAT\b|\bTIN\b/ },
   { name: "Curricula vitae of the proposed experts", test: /\bCVs?\b|\bcurricul(?:um|a)\s+vita/i },
-  { name: "Professional licences and certificates of the proposed experts", test: /\b(?:professional\s+)?licen[cs]es\b|\bcertificates\b|\bcertifications\b/i },
+  // Expert credentials only: "registration certificates" or "tax clearance
+  // certificates" are the firm's documents, not the experts' (release review,
+  // 2026-10-11 — a plural "certificates" alone added this item).
+  { name: "Professional licences and certificates of the proposed experts", test: /\bprofessional\s+(?:licen[cs]es?|certificat(?:es?|ions?)|registrations?)\b|\b(?:experts?|staff|personnel|engineers?|architects?|team(?:\s+members)?)['’]?\s+(?:professional\s+)?(?:licen[cs]es|certificat(?:es|ions))\b|(?<!\b(?:trade|business|commercial|operating)\s)\blicen[cs]es\b/i },
   { name: "Client reference and completion letters for the cited projects", test: /\b(?:project\s+)?references\b|\breference\s+letters?\b|\btestimon(?:y|ial)|\bcompletion\s+certificate/i },
   { name: "Audited financial statements", test: /\baudited\s+financial|\bfinancial\s+statements\b/i },
   { name: "Power of attorney", test: /\bpower\s+of\s+attorney\b/i },

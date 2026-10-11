@@ -62,7 +62,7 @@ export type AnnexBundlePlan = {
   missing: AnnexBundleMissing[];
 };
 
-const OWNER_SIGNED = "an original the owner signs; upload the signed PDF to the Company Vault";
+const OWNER_SIGNED = "an original the owner signs for this tender and inserts when assembling the file";
 
 type KindRule = {
   /** Which Vault originals answer this kind. */
@@ -79,8 +79,13 @@ const KIND_RULES: Record<string, KindRule> = {
     select: (doc) => doc.category === "COMPANY_PROFILE",
     missingReason: "no verified company profile PDF in the Company Vault",
   },
+  // Never bound from the Vault. The Vault is the firm's, not the tender's: a
+  // file named "declaration" or "power of attorney" there was signed for some
+  // other procurement, and binding it would submit a stale legal attestation
+  // as this tender's (release review, 2026-10-11). The owner signs these for
+  // this tender and inserts them.
   "Signed declaration form issued with the tender": {
-    select: (doc) => /declaration/.test(name(doc)) && ["COMPLIANCE_RECORD", "LEGAL_REGISTRATION", "CERTIFICATION", "OTHER"].includes(doc.category),
+    select: () => false,
     missingReason: OWNER_SIGNED,
   },
   "Business licence and registration certificates": {
@@ -108,7 +113,7 @@ const KIND_RULES: Record<string, KindRule> = {
     missingReason: "no verified audited financial statement PDF in the Company Vault",
   },
   "Power of attorney": {
-    select: (doc) => /power\s+of\s+attorney/.test(name(doc)),
+    select: () => false,
     missingReason: OWNER_SIGNED,
   },
 };
