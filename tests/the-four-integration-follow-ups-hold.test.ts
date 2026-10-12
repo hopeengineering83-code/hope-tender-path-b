@@ -93,6 +93,8 @@ describe("1. a separately stored certificate counts for the selected expert", ()
     assert.ok(expertFiledUnder("John_Doe_Licence.pdf", ["Doe, Dr. John"], ["Doe, Dr. John"]), "a title before the given names");
     assert.ok(expertFiledUnder("John_Doe_Licence.pdf", ["John Doe, MSc"], ["John Doe, MSc"]), "MSc is a credential");
     assert.equal(expertFiledUnder("Doe_Licence.pdf", ["Doe, JOHN"], ["Doe, JOHN"]), null, "a segment not written as a name is never read as one, and the rest is too short");
+    assert.ok(expertFiledUnder("John_A_Doe_Licence.pdf", ["Doe, John A."], ["Doe, John A."]), "an initial is skipped, not a reason to drop the given name");
+    assert.ok(expertFiledUnder("John_Doe_Licence.pdf", ["Doe, John A."], ["Doe, John A."]));
   });
 
   it("without the firm's expert list nothing is bound by name", () => {
@@ -106,7 +108,7 @@ describe("4. the tender's validity is the offer's, never a bid security's", () =
   const cases: Array<[string, number | null]> = [
     ["The bid security shall be valid for 120 days beyond the deadline. Bids shall remain valid for 90 days after the submission deadline.", 90],
     ["Validity of the bid security: 120 days. Proposal validity: 60 days.", 60],
-    ["A bid security of ETB 50,000 is required. Validity: 90 days.", 90],
+    ["A bid security of ETB 50,000 is required. Validity: 90 days.", null],
     ["The performance guarantee shall be valid for 28 days after completion.", null],
     ["Proposal validity: 90 days.", 90],
     ["Bid security required; validity: 120 days.", null],
@@ -125,8 +127,12 @@ describe("4. the tender's validity is the offer's, never a bid security's", () =
     ["The bid security shall be\nvalid for 120 days after the deadline.", null],
     ["The bid security shall be issued by 31 Jan. 2027 and remain valid for 120 days. Proposals shall remain valid for 90 days.", 90],
     ["The bid security, issued on 3 Sept. 2026, shall remain valid for 120 days.", null],
-    ["The bid security shall be valid for 120 days. 2.1 Validity: 90 days.", 90],
+    ["The bid security shall be valid for 120 days. 2.1 Bid validity: 90 days.", 90],
     ["The bid security shall be valid for 120 days. 18. Bids shall remain valid for 60 days.", 60],
+    ["The bidder must hold a business licence valid for 365 days. Proposals shall remain valid for 90 days.", 90],
+    ["Validity: 120 days for the bid security. Proposal validity: 90 days.", 90],
+    ["Validity: 90 days.", null],
+    ["Proposals must be submitted in English. They shall remain valid for 90 days.", 90],
   ];
 
   it("the tender-detail field extractor", () => {
@@ -153,14 +159,20 @@ describe("4. the tender's validity is the offer's, never a bid security's", () =
       tenderText: "Bid security required; validity: 120 days.", experts: [], historicalProjects: [], priorRates: [], companyDefaultCurrency: null, now: new Date("2026-10-12"),
     });
     assert.equal(semicolon.validityDays, 90, "the security's 120 days after a semicolon is not the offer's");
-    assert.match(semicolon.validityBasis, /could not be told apart from its bid security's; 90 days assumed — confirm/, "the assumption is said, not hidden");
+    assert.match(semicolon.validityBasis, /validity periods, but none as the offer's \(a bid security's, for one, is not\); 90 days assumed — confirm/, "the assumption is said, not hidden");
     assert.ok(semicolon.lowConfidence.some((note) => /^Validity:/.test(note)), "and listed for confirmation before approval");
   });
 
   it("the shared rule reads only the sentence the figure is in", () => {
     const text = "The bid security is ETB 50,000. Validity: 90 days.";
     const i = text.indexOf("Validity");
-    assert.equal(isOfferValidity(text, i, "Validity: 90 days".length), true, "a security in the previous sentence is not this figure's subject");
+    assert.equal(isOfferValidity(text, i, "Validity: 90 days".length), false, "a bare validity names no offer, so it is not read as the offer's");
+    const t3 = "The bid security is ETB 50,000. Bid validity: 90 days.";
+    assert.equal(isOfferValidity(t3, t3.indexOf("validity"), "validity: 90 days".length), true, "the offer named on the validity; a security in the previous sentence is not its subject");
+    const t4 = "The validity of the bids: 75 days.";
+    assert.equal(isOfferValidity(t4, t4.indexOf("validity"), "validity of the bids: 75 days".length), true, "the offer named after the validity");
+    const t5 = "The bidder must hold a business licence valid for 365 days.";
+    assert.equal(isOfferValidity(t5, t5.indexOf("valid "), "valid for 365 days".length), false, "a licence's validity");
     const t2 = "The bid security shall be valid for 120 days.";
     assert.equal(isOfferValidity(t2, t2.indexOf("valid"), "valid for 120 days".length), false);
   });

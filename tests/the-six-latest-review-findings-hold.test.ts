@@ -56,7 +56,7 @@ describe("3. the financial proposal promises the offer's validity, not the secur
   it("only a security's validity stated: the offer's is not stated, so it is assumed and said so", () => {
     const est = validity("Validity of the bid security: 120 days. The performance guarantee shall be valid for 28 days after completion.");
     assert.equal(est.validityDays, 90);
-    assert.match(est.validityBasis, /could not be told apart from its bid security's; 90 days assumed — confirm/);
+    assert.match(est.validityBasis, /validity periods, but none as the offer's \(a bid security's, for one, is not\); 90 days assumed — confirm/);
   });
   it("the offer's own validity is still read, including a figure in brackets", () => {
     assert.equal(validity("Proposal validity: 60 days.").validityDays, 60);

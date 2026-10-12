@@ -98,8 +98,10 @@ const nameWords = (text: string) => text.toLowerCase().normalize("NFKD").replace
 // in a surname-first name, the given names ("Doe, John"). A segment is given
 // names only when every word in it is written as one — a capital, then small
 // letters, no full stop ("John", not "PE", "PhD", "MSc" or "Ph.D."); any other
-// segment is credentials, and a generational suffix ("Jr.") is neither.
+// segment is credentials. A generational suffix ("Jr.") and an initial ("A.")
+// are neither, and are skipped.
 const SUFFIXES = new Set(["jr", "sr", "ii", "iii", "iv"]);
+const isInitial = (word: string) => /^\p{L}\.?$/u.test(word);
 const writtenAsName = (word: string) => /^\p{Lu}\p{Ll}+(?:[-'’]\p{Lu}?\p{Ll}+)*$/u.test(word);
 const withoutTitles = (segment: string) => {
   const words = nameWords(segment.replace(DOTTED_TITLES, ""));
@@ -111,7 +113,7 @@ const nameParts = (fullName: string) => {
   const words = withoutTitles(name);
   for (const segment of after) {
     const written = segment.replace(DOTTED_TITLES, "").trim().split(/\s+/)
-      .filter((word) => word && !SUFFIXES.has(word.toLowerCase().replace(/\.$/, "")));
+      .filter((word) => word && !isInitial(word) && !SUFFIXES.has(word.toLowerCase().replace(/\.$/, "")));
     if (written.length > 0 && written.every(writtenAsName)) words.push(...withoutTitles(written.join(" ")));
   }
   return words.filter((word) => word.length >= 2);
