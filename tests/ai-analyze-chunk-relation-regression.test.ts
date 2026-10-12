@@ -37,7 +37,7 @@ describe("AiAnalyzeChunk relation query regression", () => {
 
   it("generation-readiness-gate uses scalar userId for AiAnalyzeChunk", () => {
     const src = readFileSync("lib/engine/generation-readiness-gate.ts", "utf8");
-    assert.ok(src.includes("where: { tenderId, userId, contentHash: currentContentHash }"));
+    assert.ok(src.includes('where: { tenderId, userId, jobId: latestJob?.id ?? "__missing_analysis_job__" }'));
     const q = src.match(/aiAnalyzeChunk\.findMany\([\s\S]*?\}\s*\)/);
     if (q) assert.ok(!/tender\s*:\s*\{/.test(q[0]));
   });

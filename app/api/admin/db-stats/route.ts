@@ -1,3 +1,4 @@
+import { secretMatches } from "@/lib/secret-compare";
 import { NextRequest, NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
@@ -5,7 +6,7 @@ export const dynamic = 'force-dynamic';
 export async function GET(req: NextRequest) {
   const authHeader = req.headers.get('authorization');
   const adminSecret = process.env.ADMIN_SECRET;
-  if (!adminSecret || authHeader !== `Bearer ${adminSecret}`) {
+  if (!adminSecret || adminSecret.length < 16 || !secretMatches(authHeader, `Bearer ${adminSecret}`)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

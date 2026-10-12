@@ -172,10 +172,16 @@ describe("non-destructive AI analysis — service staging for partial and fallba
 // ── Service: recovery actions are still functional ────────────────────
 
 describe("non-destructive AI analysis — recovery actions preserved", () => {
-  it("preserveAiAnalyzeProgressOnFailure still exists for catch-block progress preservation", () => {
+  it("failed chunk handling preserves other completed chunks without a test-only helper", () => {
     assert.ok(
-      serviceSource.includes("async function preserveAiAnalyzeProgressOnFailure"),
-      "preserveAiAnalyzeProgressOnFailure must remain so failed runs preserve partial chunk results for resumption",
+      serviceSource.includes("where: { id: chunk.id }") &&
+        serviceSource.includes('status: "FAILED"') &&
+        serviceSource.includes("Previously succeeded chunks"),
+      "the durable catch path must update only the failed chunk so completed chunk results remain resumable",
+    );
+    assert.ok(
+      !serviceSource.includes("async function preserveAiAnalyzeProgressOnFailure"),
+      "production code must not retain an unused helper only to satisfy a source-text test",
     );
   });
 

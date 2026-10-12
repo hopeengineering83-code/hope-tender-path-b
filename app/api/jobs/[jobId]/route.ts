@@ -1,14 +1,25 @@
 import { NextResponse } from "next/server";
 import { getSession } from "../../../../lib/auth";
-import { getJob as getMemoryJob } from "../../../../lib/job-store";
+import { getInMemoryJob as getMemoryJob } from "../../../../lib/job-store";
 import { getJob as getDurableJob } from "../../../../lib/ai-jobs";
 import { prisma, prismaReady } from "../../../../lib/prisma";
+import { ANALYSIS_SUPERSEDED_STATUS } from "../../../../lib/ai-analyze-promotion";
 
 export const dynamic = "force-dynamic";
 
 function legacyStatus(status: string): "PENDING" | "RUNNING" | "DONE" | "FAILED" {
   if (status === "SUCCEEDED" || status === "PARTIAL_SUCCESS") return "DONE";
-  if (status === "FAILED" || status === "CANCELED") return "FAILED";
+  // SUPERSEDED is terminal: the analysis lost a promotion race and will never
+  // produce a usable result. It must map to a terminal legacy status.
+  //
+  // It previously fell through to the PENDING default, which told a polling
+  // client the job was still queued — so the caller waited on a job that could
+  // never progress, and the UI showed work in flight that had already ended.
+  // Reporting it as DONE would be worse still: DONE reads as a usable result,
+  // and a superseded analysis must never authorise anything downstream.
+  // Among the four legacy values, FAILED is the only honest one — terminal,
+  // and explicitly not a success.
+  if (status === "FAILED" || status === "CANCELED" || status === ANALYSIS_SUPERSEDED_STATUS) return "FAILED";
   if (status === "RUNNING") return "RUNNING";
   return "PENDING";
 }

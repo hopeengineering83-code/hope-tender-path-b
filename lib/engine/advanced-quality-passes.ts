@@ -29,12 +29,39 @@
 
 // ─── PR HH: Table deduplication ───────────────────────────────────────────
 
-function extractTableHeader(line: string): string {
+function normaliseTableRow(line: string): string {
   return line
     .split("|")
     .filter((_, i, arr) => i > 0 && i < arr.length - 1)
-    .map((c) => c.replace(/\*\*/g, "").trim().toLowerCase())
+    .map((c) => c.replace(/\*\*/g, "").replace(/\s+/g, " ").trim().toLowerCase())
     .join("|");
+}
+
+/**
+ * The identity of a table is its CONTENT, not its column headings.
+ *
+ * This used to key on the header row alone, and every Section B project card is
+ * a two-column metadata table headed `| Field | Detail |`. Three cards
+ * therefore hashed to one key and two were deleted as "duplicates" — in the
+ * delivered proposal for an Addis Ababa hospital tender, the page named three
+ * references (two Ethiopian hospitals and one Nigerian project) and carded only
+ * the last one written, the Nigerian one. The two most relevant pieces of
+ * evidence in the document were removed by a cleanup pass, silently, and no
+ * gate could see it: the remaining card is well-formed, so readiness passes and
+ * the hashes match.
+ *
+ * Two tables that share a header and differ in their rows are different
+ * evidence. The pass exists to remove tables a repeated section emitted twice,
+ * and those are identical all the way down, so keying on the whole block still
+ * catches them.
+ */
+function extractTableIdentity(lines: readonly string[], start: number, end: number): string {
+  const body: string[] = [];
+  for (let i = start; i < end; i += 1) {
+    if (isSeparator(lines[i])) continue;
+    body.push(normaliseTableRow(lines[i]));
+  }
+  return body.join("\n");
 }
 
 function isSeparator(line: string): boolean {
@@ -53,32 +80,31 @@ export interface DedupeTablesResult {
 export function deduplicateTables(markdown: string): DedupeTablesResult {
   const lines = markdown.split("\n");
   // Collect all table blocks: {startLine, endLine (exclusive), headerKey}
-  interface TableBlock { start: number; end: number; headerKey: string }
+  interface TableBlock { start: number; end: number; identity: string }
   const tables: TableBlock[] = [];
 
   let i = 0;
   while (i < lines.length) {
     if (isTableLine(lines[i]) && i + 1 < lines.length && isSeparator(lines[i + 1])) {
       const start = i;
-      const headerKey = extractTableHeader(lines[i]);
       let j = i + 1;
       while (j < lines.length && isTableLine(lines[j])) j += 1;
-      tables.push({ start, end: j, headerKey });
+      tables.push({ start, end: j, identity: extractTableIdentity(lines, start, j) });
       i = j;
     } else {
       i += 1;
     }
   }
 
-  // Group by header key; for each group with duplicates, mark all but the
-  // LAST (deterministic) as removed.
+  // Group by the table's full content; for each group of genuinely identical
+  // tables, mark all but the LAST (deterministic) as removed.
   const toRemove = new Set<number>();
-  const byHeader = new Map<string, TableBlock[]>();
+  const byIdentity = new Map<string, TableBlock[]>();
   for (const t of tables) {
-    if (!byHeader.has(t.headerKey)) byHeader.set(t.headerKey, []);
-    byHeader.get(t.headerKey)!.push(t);
+    if (!byIdentity.has(t.identity)) byIdentity.set(t.identity, []);
+    byIdentity.get(t.identity)!.push(t);
   }
-  for (const group of byHeader.values()) {
+  for (const group of byIdentity.values()) {
     if (group.length < 2) continue;
     // Mark all but the last for removal
     for (const t of group.slice(0, -1)) {

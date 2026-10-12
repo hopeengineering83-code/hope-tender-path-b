@@ -113,7 +113,7 @@ This is an urban planning or master planning tender. The proposal must explicitl
 Do NOT write generic consulting methodology for an urban planning tender.`;
   }
 
-  if (/hospital|medical|clinic|health(?:care|[\s-]facilit)/.test(combined)) {
+  if (/\bhospitals?\b|medical|clinic|health(?:care|[\s-]facilit)/.test(combined)) {
     return `TENDER DOMAIN — HEALTHCARE / HOSPITAL FACILITY:
 This is a healthcare facility construction, design, or supervision tender. The proposal must explicitly address:
 - Infection control design: ventilation zoning (positive/negative pressure), HEPA filtration, hand hygiene infrastructure

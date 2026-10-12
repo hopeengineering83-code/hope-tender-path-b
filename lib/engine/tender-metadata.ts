@@ -21,6 +21,7 @@
 // extraction across 15+ tender fields, no AI call, no network. Patterns
 // are tuned for World Bank / UNDP / AfDB / govt RFP templates.
 
+import { findStatedDeadline, submissionEmailsFromText } from "./submission-source-clauses";
 import {
   isValidClientName,
   isValidReferenceNumber,
@@ -28,6 +29,8 @@ import {
   canonicalizeCountry,
   isValidClientContact,
   nonClientEntityLabelPattern,
+  containsMetadataScaffolding,
+  containsMetadataPlaceholder,
 } from "./metadata-validators";
 import { cutAtNextFieldLabel } from "./tender-field-extractors";
 
@@ -74,6 +77,18 @@ function clean(value: string | null | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim();
 }
 
+/**
+ * A labelled value read out of a table row. Extracted Word/PDF tables come
+ * through as "Project Title | Architectural Consultancy … | Reference | …", so
+ * a label followed by a cell separator captured "| Architectural …" — the
+ * separator became the first character of the tender's title — and a longer
+ * row would carry the next cell's label and value into it as well. The cell
+ * separator ends a value the way a line break does.
+ */
+function cellValue(raw: string): string {
+  return clean(raw).replace(/^[|:\-–—]+\s*/, "").split(/\s+\|\s+/)[0]!.replace(/\s*\|\s*$/, "").trim();
+}
+
 
 function pageForIndex(text: string, index: number): number | null {
   const before = text.slice(0, Math.max(0, index));
@@ -88,7 +103,7 @@ function firstLabelledValue(text: string, patterns: RegExp[]): GroundedString {
   for (const pattern of patterns) {
     const match = pattern.exec(text);
     if (!match?.[1]) continue;
-    const raw = clean(match[1]);
+    const raw = cellValue(match[1]);
     const value = cutAtNextFieldLabel(raw).split(/[,;]/)[0].replace(/[.;,]+$/, "").trim().slice(0, 240);
     if (!value) continue;
     return {
@@ -111,7 +126,9 @@ function sourceMap(entries: Array<[string, GroundedString]>): Record<string, { p
 function firstMatch(text: string, patterns: RegExp[]): string | null {
   for (const pattern of patterns) {
     const match = text.match(pattern);
-    if (match?.[1]) return clean(match[1]).replace(/[.;,]+$/, "").slice(0, 240);
+    if (!match?.[1]) continue;
+    const value = cellValue(match[1]).replace(/[.;,]+$/, "").slice(0, 240);
+    if (value) return value;
   }
   return null;
 }
@@ -119,7 +136,9 @@ function firstMatch(text: string, patterns: RegExp[]): string | null {
 function firstMatchGroup(text: string, patterns: RegExp[], group: number): string | null {
   for (const pattern of patterns) {
     const match = text.match(pattern);
-    if (match?.[group]) return clean(match[group]).replace(/[.;,]+$/, "").slice(0, 240);
+    if (!match?.[group]) continue;
+    const value = cellValue(match[group]).replace(/[.;,]+$/, "").slice(0, 240);
+    if (value) return value;
   }
   return null;
 }
@@ -238,11 +257,11 @@ function inferClientContactTitle(text: string): string | null {
   ]);
 }
 
+// Only the addresses the text gives for submitting. Every address in the
+// document used to become a submission e-mail, so a supplier-screening
+// privacy contact was stored as one (2026-10-06).
 function inferEmails(text: string): string[] {
-  const out = new Set<string>();
-  const matches = text.match(/\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b/gi) ?? [];
-  for (const m of matches) out.add(m.toLowerCase());
-  return Array.from(out).slice(0, 6);
+  return submissionEmailsFromText(text, 6);
 }
 
 /**
@@ -297,7 +316,7 @@ function inferCountry(text: string): string | null {
 }
 
 function inferCategory(text: string): string {
-  if (/hospital|health|clinic|medical|patient|biomedical|pharma/i.test(text)) return "Healthcare";
+  if (/\bhospitals?\b|health\s*(?:care|facilit|cent)|clinic|medical|patient|biomedical|pharma/i.test(text)) return "Healthcare";
   if (/urban|master\s*plan/i.test(text)) return "Urban Planning";
   if (/road|bridge|infrastructure|transport/i.test(text)) return "Infrastructure";
   if (/school|education|university|campus|classroom/i.test(text)) return "Education";
@@ -305,7 +324,7 @@ function inferCategory(text: string): string {
   if (/water\s+supply|borehole|hydraulic|WASH/i.test(text)) return "Water";
   if (/energy|solar|wind\s+farm|substation|grid|power\s+plant|hydropower|electrification/i.test(text)) return "Energy";
   if (/agri|irrigation|\bWUA\b|command\s*area|crop\s+water/i.test(text)) return "Agriculture";
-  if (/mining|\bJORC\b|tailings|ore\s+body|mine\s+plan|mineral\s+resource/i.test(text)) return "Mining";
+  if (/\bmining\b|\bJORC\b|tailings|\bore\s+body\b|\bmine\s+plan|mineral\s+resource/i.test(text)) return "Mining";
   if (/\bport\b|berth|quay|maritime|dredging|harbour|nautical/i.test(text)) return "Port & Maritime";
   if (/\bHAZOP\b|\bP&ID\b|pipeline\s+design|oil\s+facilit|gas\s+facilit|petrochemical|upstream\s+petroleum/i.test(text)) return "Oil & Gas";
   if (/\bKYC\b|\bAML\b|core\s+banking|microfinance|\bIFRS\b|\bBasel\b|fintech|payment\s+system/i.test(text)) return "Financial Services";
@@ -363,7 +382,10 @@ function inferDeadline(text: string): Date | null {
     // (e.g. "submitted by email to ... no later than 30 March 2026").
     /(?:no\s+later\s+than|not\s+later\s+than|on\s+or\s+before|received\s+(?:on\s+or\s+)?before|due\s+(?:on|by))\s*[:\-]?\s*([^\n\r]{6,100})/i,
   ]);
-  return parseDateValue(raw);
+  // When the first label holds no date ("the deadline for bid submission will
+  // be …"), read the stated deadline across line breaks and ordinal forms
+  // ("not later than the 2 3rd\nof September 2026").
+  return parseDateValue(raw) ?? findStatedDeadline(text)?.date ?? null;
 }
 
 function inferSubmissionMethod(text: string): string | null {
@@ -554,6 +576,28 @@ function summaryFromText(text: string): string | null {
   return useful || null;
 }
 
+/**
+ * The upload-time extractor must not store what the export gate will refuse.
+ *
+ * On 2026-09-23 this extractor stored, as the Preview tender's submission
+ * address, "/ Portal: No physical address or portal is provided. Use email
+ * submission only. Financial Proposal: Not required at this stage. ..." --
+ * several field labels and an instruction run together. The AI Analyze write
+ * path already refused such values (storedTenderFactOrNull), but this path
+ * did not, and canonical-field-state later refused the same value with
+ * "extractor field-label scaffolding", pausing everything after Run Engine.
+ * One test decides, at both writers: the gate's own containsMetadataScaffolding
+ * and placeholder checks. A refused value is simply not stated; nothing is
+ * invented in its place.
+ */
+function extractedFactOrNull(value: string | null | undefined): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (containsMetadataScaffolding(trimmed) || containsMetadataPlaceholder(trimmed)) return null;
+  return trimmed;
+}
+
 export function inferTenderMetadata(extractedText: string, fallbackFileName: string): TenderMetadataDraft {
   const text = extractedText.slice(0, 250_000);
 
@@ -646,7 +690,7 @@ export function inferTenderMetadata(extractedText: string, fallbackFileName: str
     donorAgency: donorAgencyResult?.value ?? null,
     implementingAgency: implementingAgencyResult?.value ?? null,
     clientWebsite: clientWebsiteResult?.value ?? null,
-    submissionEmailSubject: submissionEmailSubjectResult?.value ?? null,
+    submissionEmailSubject: extractedFactOrNull(submissionEmailSubjectResult?.value ?? null),
     contactDetailsSource: sourceMap([
       ["procuringEntityName", procuringEntity],
       ["donorAgency", donorAgencyResult],
@@ -654,24 +698,24 @@ export function inferTenderMetadata(extractedText: string, fallbackFileName: str
       ["clientWebsite", clientWebsiteResult],
       ["submissionEmailSubject", submissionEmailSubjectResult],
     ]),
-    clientContactName,
-    clientContactTitle,
+    clientContactName: extractedFactOrNull(clientContactName),
+    clientContactTitle: extractedFactOrNull(clientContactTitle),
     clientContactEmail,
     clientContactPhone,
-    clientAddress,
+    clientAddress: extractedFactOrNull(clientAddress),
     country,
     category,
     budget: budget.amount,
     currency: budget.currency,
     deadline,
     submissionMethod,
-    submissionAddress,
+    submissionAddress: extractedFactOrNull(submissionAddress),
     submissionEmails,
     validityDays,
     bidBondAmount: bidBond.amount,
     bidBondCurrency: bidBond.currency,
     preBidMeetingDate: preBid.date,
-    preBidMeetingLocation: preBid.location,
+    preBidMeetingLocation: extractedFactOrNull(preBid.location),
     mandatorySiteVisit,
     numberOfCopiesRequired,
     pageLimit,

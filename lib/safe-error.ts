@@ -8,6 +8,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { logger } from "./observability";
 
 export type SafeErrorResponse = {
   error: string;
@@ -28,15 +29,15 @@ export function safeError(
   // Log the full error server-side with the correlation ID.
   // Never include the error text in the response body.
   if (originalError) {
-    const detail = originalError instanceof Error
-      ? originalError.message
-      : String(originalError);
-    // Use console.error to avoid importing logger (which may not be
-    // available in all contexts). The logger is used in routes that
-    // have it; this is the fallback.
-    console.error(
-      `[safe-error] correlationId=${correlationId} code=${code}: ${detail}`,
-    );
+    // Use the structured logger so the error lands in Vercel's JSON log
+    // drain with level filtering and request correlation. The previous
+    // console.error call bypassed the logger and could leak PII via the
+    // raw error.message string in unstructured stdout.
+    logger.error(`[safe-error] code=${code}`, {
+      correlationId,
+      code,
+      errorClass: originalError instanceof Error ? originalError.constructor.name : "UnknownError",
+    });
   }
   return {
     error: message,

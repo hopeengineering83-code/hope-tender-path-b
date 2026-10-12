@@ -95,7 +95,7 @@ export function detectSubmissionPackageMode(tender: TenderPackageModeLike): Subm
 
   const separate = signals(SEPARATE_TECH_FIN, text);
   if (separate.length > 0) {
-    return { mode: "SEPARATE_TECHNICAL_FINANCIAL", confidence: "HIGH", blockingForZip: true, reason: "Tender appears to require separate technical and financial submissions; one final ZIP may be non-compliant.", matchedSignals: separate };
+    return { mode: "SEPARATE_TECHNICAL_FINANCIAL", confidence: "HIGH", blockingForZip: false, reason: "Tender requires separate technical and financial packages; the final download surface produces isolated Technical, Financial, and (when required) Admin ZIPs.", matchedSignals: separate };
   }
 
   const combinedPdf = signals(SINGLE_COMBINED_PDF, text);

@@ -53,6 +53,8 @@ export type TenderClassification = {
   classificationSource: "text" | "ai" | "manual" | "unknown";
 };
 
+import { readFinancialProposalRequirement } from "./source-driven-tender-text-parser";
+
 // ─── Tender type patterns (evidence-based, not hard-coded) ──────────────────
 
 const TENDER_TYPE_PATTERNS: Array<{ type: TenderType; patterns: RegExp[] }> = [
@@ -146,10 +148,21 @@ export function classifyTender(text: string): TenderClassification {
     if (tenderType !== "unknown") break;
   }
 
-  // Procurement structure
+  // Procurement structure. Whether a price is submitted at all is the
+  // canonical financial reader's answer, not a pattern that can span a cover
+  // page: "Technical Proposal / RFP … Tender Status: Open Financial Proposal"
+  // (a table row that goes on to say it is not required) read as
+  // technical-financial for a technical-only tender (Pharo, 2026-10-10).
   let procurementStructure: ProcurementStructure = "unknown";
   let procurementStructureEvidence: string | null = null;
-  for (const { structure, patterns } of PROCUREMENT_STRUCTURE_PATTERNS) {
+  const financial = readFinancialProposalRequirement(sample);
+  const financialStructures = new Set<ProcurementStructure>(["separate-envelopes", "technical-financial", "financial-only"]);
+  if (financial === false) {
+    procurementStructure = "technical-only";
+    procurementStructureEvidence = "The tender rules out a financial submission.";
+  }
+  for (const { structure, patterns } of procurementStructure === "unknown" ? PROCUREMENT_STRUCTURE_PATTERNS : []) {
+    if (financialStructures.has(structure) && financial !== true) continue;
     for (const pattern of patterns) {
       const match = sample.match(pattern);
       if (match) {

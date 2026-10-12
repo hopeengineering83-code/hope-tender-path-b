@@ -9,13 +9,14 @@ const styles: Record<string, string> = {
   FALLBACK_DRAFT_CREATED: "bg-orange-100 text-orange-700",
   ANALYSIS_REQUIRES_REVIEW: "bg-red-100 text-red-700",
   MATCHED: "bg-violet-100 text-violet-700",
-  COMPLIANCE_REVIEW: "bg-amber-100 text-amber-700",
+  COMPLIANCE_REVIEW: "bg-amber-100 text-amber-800",
   READY_FOR_GENERATION: "bg-cyan-100 text-cyan-700",
   GENERATED: "bg-blue-100 text-blue-700",
   IN_REVIEW: "bg-orange-100 text-orange-700",
   APPROVED: "bg-green-100 text-green-700",
   EXPORTED: "bg-emerald-100 text-emerald-700",
   CLOSED: "bg-rose-100 text-rose-700",
+  NO_BID: "bg-neutral-800 text-neutral-100",
 };
 
 export function StatusBadge({ status }: { status: string }) {

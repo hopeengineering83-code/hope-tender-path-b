@@ -19,10 +19,12 @@
 
 import { getStorageAdapter } from "../storage";
 import { validateFileSignature } from "./export-format-policy";
-import { extractDocxVisibleText, documentHygieneIssues } from "./export-readiness";
+import { documentHygieneIssues } from "./export-readiness";
+import { generatedDocumentVisibleText } from "./generated-document-text";
 import { assessGeneratedDocumentQuality } from "./document-quality-gate";
 import { containsPricingLeakage } from "./pricing-hygiene";
 import { isFinalExportCandidateDocument } from "./document-output-state";
+import { detectFormCompletionIssues, isTenderFormLike } from "./tender-form-completion-gate";
 
 // Max bytes to load from storage for text inspection (2 MB base64 ≈ 1.5 MB binary).
 const MAX_INSPECTION_BYTES = 2_000_000;
@@ -48,7 +50,7 @@ export type StorageAuditResult = {
   byteSignatureOk: boolean | null;
   fileSizeBytes: number | null;
   skippedLargeFile: boolean;
-  docxVisibleTextInspectable: boolean;
+  visibleTextInspectable: boolean;
   // Issue flags — no body text
   aiTraceIssue: boolean;
   placeholderIssue: boolean;
@@ -56,6 +58,12 @@ export type StorageAuditResult = {
   pricingLeakageIssue: boolean;
   officialOriginalPlaceholderRisk: boolean;
   missingContentIssue: boolean;
+  // Gap 1: tender-form completion gate. Only meaningful when the doc is a
+  // reused tender-issued form (carries the machine:tender-issued-form-reuse
+  // provenance marker in reviewNotes, or matches a tender-form filename).
+  tenderFormCompletionIssue: boolean;
+  tenderFormMissingMandatoryCount: number;
+  tenderFormMissingMandatoryLabels: string[];
   qualityScore: number | null;
   qualityRecommendedStatus: string | null;
   issueCodes: string[];
@@ -118,19 +126,22 @@ export async function auditStorageBackedDocument(
       byteSignatureOk: null,
       fileSizeBytes: null,
       skippedLargeFile: false,
-      docxVisibleTextInspectable: false,
+      visibleTextInspectable: false,
       aiTraceIssue: false,
       placeholderIssue: false,
       bidTeamToConfirmIssue: false,
       pricingLeakageIssue: false,
       officialOriginalPlaceholderRisk: false,
       missingContentIssue: finalExportCandidate,
+      tenderFormCompletionIssue: false,
+      tenderFormMissingMandatoryCount: 0,
+      tenderFormMissingMandatoryLabels: [],
       qualityScore: null,
       qualityRecommendedStatus: null,
       issueCodes: ["STORAGE_UNREADABLE"],
       wordCount: null,
       finalExportCandidate,
-      recommendedAction: "Storage file is unreadable. Regenerate this document or attach the official original.",
+      recommendedAction: "Storage file is unreadable. Regenerate this document.",
     };
   }
 
@@ -145,13 +156,16 @@ export async function auditStorageBackedDocument(
       byteSignatureOk: sig?.ok ?? null,
       fileSizeBytes,
       skippedLargeFile: true,
-      docxVisibleTextInspectable: false,
+      visibleTextInspectable: false,
       aiTraceIssue: false,
       placeholderIssue: false,
       bidTeamToConfirmIssue: false,
       pricingLeakageIssue: false,
       officialOriginalPlaceholderRisk: false,
       missingContentIssue: false,
+      tenderFormCompletionIssue: false,
+      tenderFormMissingMandatoryCount: 0,
+      tenderFormMissingMandatoryLabels: [],
       qualityScore: null,
       qualityRecommendedStatus: null,
       issueCodes: ["FILE_TOO_LARGE_FOR_INSPECTION"],
@@ -167,13 +181,27 @@ export async function auditStorageBackedDocument(
   const byteSignatureOk = sigResult.ok;
 
   // ── Extract visible text ────────────────────────────────────────────────
+  //
+  // Read through the canonical reader, which opens DOCX *and* PDF bytes.
+  // This used to call extractDocxVisibleText, whose maybeBase64Docx() guard
+  // returns null for anything that is not an OPC package. The final deliverable
+  // of a completed run is a PDF, so this audit saw no text at all for exactly
+  // the artifact it exists to judge: quality came back null, the score
+  // defaulted to 0 and the status to DRAFT_ONLY, while export-readiness — which
+  // does read the PDF — reported READY with zero blockers. Two release surfaces
+  // disagreeing about the same bytes is worse than either verdict alone.
   let visibleText: string | null = null;
-  let docxVisibleTextInspectable = false;
+  let visibleTextInspectable = false;
   try {
-    visibleText = await extractDocxVisibleText(base64Content, fileName);
-    docxVisibleTextInspectable = visibleText !== null;
+    visibleText = await generatedDocumentVisibleText({
+      fileContent: base64Content,
+      exactFileName: fileName,
+      name: fileName,
+      contentMimeType: null,
+    });
+    visibleTextInspectable = visibleText !== null;
   } catch {
-    docxVisibleTextInspectable = false;
+    visibleTextInspectable = false;
   }
 
   // ── Hygiene and quality checks ──────────────────────────────────────────
@@ -195,6 +223,30 @@ export async function auditStorageBackedDocument(
   const officialOriginalPlaceholderRisk = OFFICIAL_ORIGINAL_RISK_RX.test(input.reviewStatus ?? "") ||
     (visibleText ? OFFICIAL_ORIGINAL_RISK_RX.test(visibleText) : false);
 
+  // Gap 1: tender-form completion gate. Only run on documents that look like
+  // tender-issued forms (matches a tender-form filename heuristic, or has the
+  // FORM_TEMPLATE_TO_COMPLETE document type). Non-form documents skip the
+  // gate — the gate would produce false positives on technical proposals.
+  const tenderFormLike = isTenderFormLike({
+    fileName: input.exactFileName ?? input.documentName,
+    documentType: input.documentType,
+  });
+  let tenderFormCompletionIssue = false;
+  let tenderFormMissingMandatoryCount = 0;
+  let tenderFormMissingMandatoryLabels: string[] = [];
+  if (tenderFormLike && rawBuffer) {
+    const report = detectFormCompletionIssues({
+      documentId: input.documentId,
+      fileName: input.exactFileName ?? input.documentName,
+      mimeType: inferMimeFromFileName(input.exactFileName ?? input.documentName),
+      bytes: rawBuffer,
+      visibleText: visibleText ?? undefined,
+    });
+    tenderFormMissingMandatoryCount = report.missingMandatory.length;
+    tenderFormMissingMandatoryLabels = report.missingMandatory.slice(0, 10).map((i) => i.label);
+    tenderFormCompletionIssue = tenderFormMissingMandatoryCount > 0;
+  }
+
   // Quality gate — only when we have visible text
   const qualityReport = visibleText
     ? assessGeneratedDocumentQuality({
@@ -214,6 +266,7 @@ export async function auditStorageBackedDocument(
     ...(placeholderIssue ? ["PLACEHOLDER"] : []),
     ...(pricingLeakageIssue ? ["PRICING_LEAKAGE"] : []),
     ...(!byteSignatureOk ? ["INVALID_BYTE_SIGNATURE"] : []),
+    ...(tenderFormCompletionIssue ? ["MISSING_TENDER_FORM_FIELDS"] : []),
   ];
   const bidTeamToConfirmIssue = issueCodes.includes("BID_TEAM_TO_CONFIRM") ||
     (visibleText ? /Bid-Team\s+to\s+confirm/i.test(visibleText) : false);
@@ -225,9 +278,11 @@ export async function auditStorageBackedDocument(
   if (!byteSignatureOk) {
     recommendedAction = "File extension does not match byte signature. Regenerate in the required format.";
   } else if (officialOriginalPlaceholderRisk) {
-    recommendedAction = "Attach the exact tender-issued original. REPLACE_WITH_ORIGINAL placeholders must not enter the ZIP.";
+    recommendedAction = "Tender-issued forms must be sourced from uploaded Tender Intake files. REPLACE_WITH_ORIGINAL placeholders must not enter the ZIP.";
+  } else if (tenderFormCompletionIssue) {
+    recommendedAction = `Tender-issued form has ${tenderFormMissingMandatoryCount} unfilled mandatory field(s): ${tenderFormMissingMandatoryLabels.join("; ")}. Complete and sign before final export.`;
   } else if (qualityRecommendedStatus === "QUALITY_FAILED" || qualityRecommendedStatus === "NEEDS_REWRITE") {
-    recommendedAction = `Quality gate ${qualityRecommendedStatus} (score ${qualityScore}/100). Rewrite or attach official original.`;
+    recommendedAction = `Quality gate ${qualityRecommendedStatus} (score ${qualityScore}/100). Rewrite or regenerate.`;
   } else if (bidTeamToConfirmIssue) {
     recommendedAction = '"Bid-Team to confirm" placeholder detected. Remove before export.';
   } else if (pricingLeakageIssue) {
@@ -243,13 +298,16 @@ export async function auditStorageBackedDocument(
     byteSignatureOk,
     fileSizeBytes,
     skippedLargeFile: false,
-    docxVisibleTextInspectable,
+    visibleTextInspectable,
     aiTraceIssue,
     placeholderIssue,
     bidTeamToConfirmIssue,
     pricingLeakageIssue,
     officialOriginalPlaceholderRisk,
     missingContentIssue: false,
+    tenderFormCompletionIssue,
+    tenderFormMissingMandatoryCount,
+    tenderFormMissingMandatoryLabels,
     qualityScore,
     qualityRecommendedStatus,
     issueCodes,
@@ -257,6 +315,15 @@ export async function auditStorageBackedDocument(
     finalExportCandidate,
     recommendedAction,
   };
+}
+
+function inferMimeFromFileName(fileName: string): string | null {
+  const lower = (fileName ?? "").toLowerCase();
+  if (lower.endsWith(".pdf")) return "application/pdf";
+  if (lower.endsWith(".docx")) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  if (lower.endsWith(".doc")) return "application/msword";
+  if (lower.endsWith(".txt")) return "text/plain";
+  return null;
 }
 
 // Batch audit — processes multiple storage-backed documents with per-batch limits.

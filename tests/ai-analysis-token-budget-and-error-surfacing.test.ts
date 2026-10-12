@@ -40,14 +40,36 @@ describe("AI analysis output-token budget", () => {
     const match = source.match(/async function callProvider[\s\S]*?export async function generateWithFallback/);
     assert.ok(match, "callProvider not found");
     const body = match[0];
-    // Budget is now computed per-provider via the registry caps.
-    assert.match(body, /const maxTokens = maxOutputTokensForUseCase\(useCase, name\)/);
+    // Budget is computed per-provider via the registry caps, and a caller may
+    // now lower it for a single call.
+    assert.match(body, /maxOutputTokensForUseCase\(useCase, name\)/);
+    assert.match(
+      body,
+      /Math\.min\(opts\.maxOutputTokens, registryBudget\)/,
+      "a caller-supplied cap must be clamped to the registry budget, never able to raise it",
+    );
     // Each OpenAI-compatible provider call must pass maxTokens, never undefined.
-    assert.match(body, /generateWithGroq\(prompt, opts\?\.systemPrompt, maxTokens\)/);
-    assert.match(body, /generateWithOpenRouter\(prompt, opts\?\.systemPrompt, maxTokens\)/);
-    assert.match(body, /generateWithMistral\(prompt, opts\?\.systemPrompt, maxTokens, opts\?\.useCase\)/);
+    assert.match(body, /generateWithGroq\(prompt, opts\?\.systemPrompt, maxTokens, useCase, opts\?\.modelOverride\)/);
+    assert.match(body, /generateWithOpenRouter\(prompt, opts\?\.systemPrompt, maxTokens, opts\?\.modelOverride\)/);
+    assert.match(body, /generateWithMistral\(prompt, opts\?\.systemPrompt, maxTokens, opts\?\.useCase, opts\?\.modelOverride\)/);
     assert.match(body, /generateWithTogether\(prompt, opts\?\.systemPrompt, maxTokens, opts\?\.useCase\)/);
     assert.doesNotMatch(body, /generateWith(?:Mistral|Together)\(prompt, opts\?\.systemPrompt, undefined/);
+  });
+
+  it("a caller cannot raise a provider's budget above its registry cap", () => {
+    // Per-section proposal generation lowers the budget so four concurrent
+    // calls fit inside one serverless invocation. The clamp is what stops that
+    // parameter becoming a way to ask any provider for more than it is
+    // configured to give — which would reintroduce the monolithic 16K call by
+    // the back door.
+    const match = source.match(/async function callProviderInner[\s\S]*?const wantJson/);
+    assert.ok(match, "callProviderInner not found");
+    assert.match(match[0], /Math\.min\(opts\.maxOutputTokens, registryBudget\)/);
+    assert.doesNotMatch(
+      match[0],
+      /Math\.max\(opts\.maxOutputTokens/,
+      "clamping must be downward only",
+    );
   });
 
   it("Cerebras never reserves a 16K free-tier budget (conservative caps)", () => {

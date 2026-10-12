@@ -33,7 +33,17 @@
 //     for METADATA_INCOMPLETE_FOR_FINAL_GENERATION)
 //   - generated-document quality gate (rejects "Bid-Team to confirm")
 
-import { DOCUMENT_PLACEHOLDER_PATTERNS as _DOCUMENT_PLACEHOLDER_PATTERNS } from "./detection-patterns";
+import {
+  DOCUMENT_PLACEHOLDER_PATTERNS as _DOCUMENT_PLACEHOLDER_PATTERNS,
+  documentPlaceholderMatches,
+  documentPlaceholderOccurrences,
+  METADATA_PLACEHOLDER_PATTERNS,
+} from "./detection-patterns";
+// Re-export so existing callers that import METADATA_PLACEHOLDER_PATTERNS from
+// this module continue to work. The canonical declaration lives in
+// detection-patterns.ts — keeping a single source of truth prevents the two
+// copies from drifting (they were byte-for-byte identical before this change).
+export { METADATA_PLACEHOLDER_PATTERNS };
 // Submission-method classification lives in the neutral submission-method-policy
 // module so the policy registry, the canonical field-state resolver, and this
 // completeness gate all share ONE definition (no duplicated regex that could
@@ -42,19 +52,12 @@ import {
   isPhysicalSubmissionMethod,
   isEmailSubmissionMethod,
 } from "./submission-method-policy";
-
-export const METADATA_PLACEHOLDER_PATTERNS: RegExp[] = [
-  /\bbid[\s-]?team\s+to\s+confirm\b/i,
-  /\bto\s+be\s+(?:confirmed|determined|provided|completed|inserted)\b/i,
-  /\b(?:tbd|tbc|tba)\b/i,
-  /\b(?:not\s+provided|not\s+available|not\s+specified|unknown|pending)\b/i,
-  /\bn\/?a\b/i,
-  /\bplaceholder\b/i,
-  /\b(?:insert|add|fill)\b.{0,40}\b(?:here|later|manually)\b/i,
-  /\b\[?fill[\s_-]?in\]?/i,
-  /\bexact\s+site\s+to\s+be\s+determined\b/i,
-  /\bwith\s+consultant'?s\s+assistance\b/i,
-];
+// Entity-identity field labels. The vocabulary is declared once in
+// metadata-validators.ts, which already used it for clientName alone; importing
+// it here rather than restating it is what stops the two contamination
+// authorities drifting apart again (same reasoning as the
+// METADATA_PLACEHOLDER_PATTERNS re-export above).
+import { EMBEDDED_FIELD_LABEL } from "./metadata-validators";
 
 // Criticality classification here is kept in lock-step with the canonical
 // tender-policy registry (lib/engine/tender-policy-registry.ts), which imports
@@ -78,6 +81,11 @@ export type CriticalMetadataField =
   | "proposalValidity";
 
 export type NonCriticalMetadataField =
+  // A client, method or deadline the tender does not state is advisory
+  // (ABSENT_TENDER_FACT_IS_NOT_REQUIRED); a placeholder value stays critical.
+  | "clientName"
+  | "submissionMethod"
+  | "deadline"
   | "reference"
   | "clientContactName"
   | "clientContactEmail"
@@ -231,6 +239,31 @@ export const METADATA_CONTAMINATION_PATTERNS: Array<{ rx: RegExp; signal: string
   { rx: /\bReference\s+(?:No|Number)\s*:/i, signal: "PORTAL_REFERENCE_LABEL_BLEED" },
   // "Print" / "Share" standalone portal nav items (only flag as noise in short values)
   { rx: /^\s*(?:Print|Share|Download|Save)\s*$/i, signal: "PORTAL_ACTION_BUTTON_TEXT" },
+  // Extraction-label echo: several extracted fields concatenated WITH their own
+  // labels into one value, e.g.
+  //   "<entity> Procuring Entity / Client Name: <entity> Legal Client Name:
+  //    <entity> Project Name: <project>"
+  //
+  // Two detectors disagreed about that string, and the gates read the wrong one.
+  // metadata-validators.isClientNameContaminated has recognised this shape for
+  // some time -- its own comment quotes it as observed live -- but it is only
+  // consulted by pre-generation-validation and the dashboard badge. The
+  // generation, export and Final-ZIP gates all descend from
+  // Tender.metadataContaminated, which canonical-analysis-update computes with
+  // THIS table, and this table knew only about portal scrape noise.
+  //
+  // So on 2026-09-15 a client name carrying three embedded field labels came
+  // back EXTRACTED_AND_GROUNDED, isValid, and eligible for generation, export
+  // and ZIP -- while the other detector, looking at the same bytes, called it
+  // contaminated. Acceptance criterion 6 says such a value must block final
+  // generation, and it did not.
+  //
+  // The vocabulary is imported, not restated, so there is one authority. It
+  // covers every field this table is applied to (client name, legal name,
+  // donor, implementing agency, both addresses, contact name): an identity
+  // value that contains the NAME OF A FIELD is a concatenation artefact
+  // whichever field it landed in.
+  { rx: EMBEDDED_FIELD_LABEL, signal: "EMBEDDED_FIELD_LABEL_BLEED" },
 ];
 
 export function detectMetadataContamination(value?: string | null): { contaminated: boolean; signal: string | null } {
@@ -261,12 +294,8 @@ export const DOCUMENT_PLACEHOLDER_PATTERNS: RegExp[] = _DOCUMENT_PLACEHOLDER_PAT
  */
 export function detectDocumentPlaceholders(content?: string | null): number {
   if (!content || typeof content !== "string") return 0;
-  let count = 0;
-  for (const rx of DOCUMENT_PLACEHOLDER_PATTERNS) {
-    const matches = content.match(new RegExp(rx.source, rx.flags + (rx.flags.includes("g") ? "" : "g")));
-    if (matches) count += matches.length;
-  }
-  return count;
+  // One authority for document prose — see documentPlaceholderMatches().
+  return documentPlaceholderOccurrences(content);
 }
 
 /**
@@ -344,12 +373,28 @@ export function assessTenderMetadataCompleteness(
   // Accept either clientName or procuringEntityName — if the AI set procuringEntityName
   // but the back-fill into clientName hasn't run yet, do not block generation.
   const effectiveClientName = input.clientName || input.procuringEntityName;
-  checkCritical("clientName", effectiveClientName, "Client / procuring entity name is required for cover letter and declarations.");
+  // Owner policy ABSENT_TENDER_FACT_IS_NOT_REQUIRED (tender-fact-authority): a
+  // client, method or deadline the tender does not state is not required of
+  // the bid. A PRESENT value that is a placeholder is still critical (it would
+  // put false information into the bid); an absent one is advisory. The title
+  // stays critical, and so does the endpoint a stated method depends on.
+  const checkStatedCritical = (field: CriticalMetadataField & NonCriticalMetadataField, value: unknown, reason: string) => {
+    if (isPresent(value)) {
+      checkCritical(field, value, reason);
+    } else if (isNotApplicable(field)) {
+      notApplicableFields.push({ field, reason });
+    } else if (!isOverrideResolved(field)) {
+      missingNonCritical.push({ field, reason: `Not stated in the tender — the proposal is built without it. ${reason}` });
+    }
+  };
+  checkStatedCritical("clientName", effectiveClientName, "Client / procuring entity name is used in the cover letter and declarations.");
   checkCritical("title", input.title, "Tender title is required throughout the proposal.");
-  checkCritical("submissionMethod", input.submissionMethod, "Submission method (portal / sealed envelope / email) drives package mode and final ZIP behaviour.");
+  checkStatedCritical("submissionMethod", input.submissionMethod, "Submission method (portal / sealed envelope / email) drives package mode and final ZIP behaviour.");
   // submissionEndpoint = either an email list, a submission address, or a portal URL
   const hasAnyEndpoint = isValidPresent(input.submissionEmails) || isValidPresent(input.submissionAddress);
-  if (!hasAnyEndpoint) {
+  const statedMethodNeedsEndpoint = isPhysicalSubmissionMethod(input.submissionMethod)
+    || (typeof input.submissionMethod === "string" && /e-?mail/i.test(input.submissionMethod) && !/no.{0,30}e-?mail|e-?mail.{0,30}not.{0,10}(accepted|allowed)/i.test(input.submissionMethod));
+  if (!hasAnyEndpoint && statedMethodNeedsEndpoint) {
     const endpointField = "submissionEndpoint";
     if (isNotApplicable(endpointField)) {
       notApplicableFields.push({ field: endpointField, reason: "Submission endpoint (email or address) is required for the cover letter and submission package label." });
@@ -357,7 +402,7 @@ export function assessTenderMetadataCompleteness(
       missingCritical.push({ field: endpointField, reason: "Submission endpoint (email or address) is required for the cover letter and submission package label." });
     }
   }
-  checkCritical("deadline", input.deadline, "Submission deadline is required for scheduling and final approval rules.");
+  checkStatedCritical("deadline", input.deadline, "Submission deadline is used for scheduling and final approval rules.");
   if ((input.requirementCount ?? 0) === 0) {
     const reqField = "requiredDocuments";
     if (!isOverrideResolved(reqField)) {

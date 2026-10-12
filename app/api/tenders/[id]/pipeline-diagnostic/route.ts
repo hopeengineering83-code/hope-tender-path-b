@@ -15,7 +15,9 @@ import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
 import { isExtractionCorrupted } from "../../../../../lib/engine/extraction-quality-gate";
 import { assessTenderMetadataCompleteness } from "../../../../../lib/engine/tender-metadata-completeness";
 import { getFinalSubmissionReadiness } from "../../../../../lib/engine/final-submission-readiness";
-import { safeParseJsonArray } from "../../../../../lib/safe-json";
+import { getCurrentConfirmedBuildPlan } from "../../../../../lib/engine/build-plan";
+import { getCanonicalTenderWorkflowDecision } from "../../../../../lib/engine/canonical-workflow-decision";
+import { presentTwoActionWorkflowDecision } from "../../../../../lib/engine/two-action-workflow-presentation";
 
 export const dynamic = "force-dynamic";
 
@@ -44,9 +46,6 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       procuringEntityName: true,
       submissionMethod: true,
       deadline: true,
-      exactFileNaming: true,
-      exactFileOrder: true,
-      notes: true,
       // client fields for metadata completeness
       country: true,
       clientContactName: true,
@@ -166,8 +165,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     : 100;
 
   // ── Step 6: Build Plan ────────────────────────────────────────────────────
-  const planFiles = safeParseJsonArray(tender.exactFileNaming);
-  const hasPlan = planFiles.length > 0;
+  const currentBuildPlan = await getCurrentConfirmedBuildPlan(prisma, id, actor.id);
+  const hasPlan = currentBuildPlan.ok;
+  const planFileCount = currentBuildPlan.ok ? currentBuildPlan.items.length : 0;
+  const buildPlanBlocker = currentBuildPlan.ok ? null : currentBuildPlan.blocker;
 
   // ── Step 7: Generated documents ───────────────────────────────────────────
   const activeDocs = tender.generatedDocuments;
@@ -196,9 +197,12 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     | "FIX_EXTRACTION"
     | "RUN_AI_ANALYZE"
     | "CONFIRM_METADATA"
-    | "CONFIRM_REQUIREMENTS"
+    | "GROUND_REQUIREMENTS"
+    | "RUN_ENGINE"
     | "BUILD_PLAN"
     | "CONFIRM_EVIDENCE"
+    | "AUTOMATIC_PROCESSING"
+    | "STATUS_UNAVAILABLE"
     | "GENERATE_DOCUMENTS"
     | "VALIDATE_DOCUMENTS"
     | "REVIEW_MANIFEST"
@@ -232,24 +236,42 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       const blockers: string[] = tender!.requirements.length === 0
         ? ["No requirements extracted — re-run AI Analyze"]
         : [`${mandatoryReqs.length - tracedReqs.length} mandatory requirements lack source traceability`];
-      return { step: "CONFIRM_REQUIREMENTS", label: "Confirm extracted requirements", reason: "Requirements have not been extracted or lack source traceability.", blockers };
+      return { step: "GROUND_REQUIREMENTS", label: "Ground requirements from source", reason: "Requirements must be verified from the active source. Re-run AI Analyze; if they remain unprovable, upload a better source or make a genuine source correction. Confirmation cannot promote unsupported provenance.", blockers };
     }
-    if (!hasPlan) return { step: "BUILD_PLAN", label: "Build submission plan", reason: "No submission plan has been built yet.", blockers: ["Submission plan is empty"] };
-    if (!hasGeneratedDocs) return { step: "GENERATE_DOCUMENTS", label: "Generate proposal documents", reason: "No documents have been generated yet.", blockers: [] };
-    if (!validationPassed) return { step: "VALIDATE_DOCUMENTS", label: "Validate and review generated documents", reason: "One or more documents have not passed validation.", blockers: ["Documents need review before export"] };
+    if (!hasPlan) return {
+      step: "RUN_ENGINE",
+      label: "Run Engine",
+      reason: "No current source-verified Build Plan exists. Run Engine uses the verified source and current AI analysis to create and verify it automatically.",
+      blockers: [buildPlanBlocker ?? "Build Plan is not confirmed"],
+    };
+    if (!hasGeneratedDocs) return { step: "AUTOMATIC_PROCESSING", label: "Processing automatically", reason: "The durable post-Engine workflow owns document generation.", blockers: [] };
+    if (!validationPassed) return { step: "AUTOMATIC_PROCESSING", label: "Processing automatically", reason: "The durable post-Engine workflow owns validation and finalization.", blockers: [] };
     if (criticalGaps.length > 0) return { step: "VALIDATE_DOCUMENTS", label: "Resolve critical compliance gaps", reason: `${criticalGaps.length} unresolved critical compliance gap(s).`, blockers: criticalGaps.map((g) => `Critical gap: ${g.id}`) };
     if (!exportReady) {
       const blockers = [
         ...(canonical?.tenderLevelBlockers.map((b) => b.title) ?? []),
         ...(canonical?.documentBlockers.flatMap((b) => b.reasons) ?? []),
       ].slice(0, 5);
-      return { step: "REVIEW_MANIFEST", label: "Review final package manifest", reason: "Export readiness gate is not satisfied.", blockers };
+      return { step: "STATUS_UNAVAILABLE", label: "Canonical status unavailable", reason: "The canonical workflow decision could not be resolved. No manual workflow action is inferred.", blockers };
     }
     if (tender!.status !== "EXPORTED") return { step: "EXPORT_ZIP", label: "Export final ZIP package", reason: "All gates passed — ready to export.", blockers: [] };
     return { step: "COMPLETE", label: "Submission package complete", reason: "Tender has been exported.", blockers: [] };
   }
 
-  const nextAction = deriveNextAction();
+  // Diagnostics must not invent a competing workflow action. In particular,
+  // an Engine/Build Plan failure cannot be masked by this route's legacy
+  // sequential guesses about requirements, generation, or validation.
+  const workflowDecision = presentTwoActionWorkflowDecision(
+    await getCanonicalTenderWorkflowDecision(prisma, actor.id, id),
+  );
+  const nextAction = workflowDecision && workflowDecision.currentBlockingStage !== "EXPORT_ZIP_READY"
+    ? {
+        step: workflowDecision.nextRequiredAction,
+        label: workflowDecision.nextRequiredActionLabel,
+        reason: workflowDecision.nextRequiredActionReason,
+        blockers: workflowDecision.blockerDetails.slice(0, 5),
+      }
+    : deriveNextAction();
 
   return NextResponse.json({
     tenderId: id,
@@ -262,12 +284,13 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       aiAnalyze: { ok: aiAnalyzeOk, analyzed: aiAnalyzed, extractionStatus: analysisStatus ?? "NOT_RUN" },
       metadata: { ok: metadataOk, missingCritical: metadataReport.missingCritical.map((f) => f.field), notApplicable: metadataReport.notApplicableFields.map((f) => f.field), placeholders: metadataReport.placeholderCount, contaminated: tender.metadataContaminated },
       requirements: { ok: requirementsOk, total: tender.requirements.length, mandatory: mandatoryReqs.length, traced: tracedReqs.length, traceabilityPercent: traceabilityRatio },
-      buildPlan: { ok: hasPlan, planFileCount: planFiles.length },
+      buildPlan: { ok: hasPlan, planFileCount, blocker: buildPlanBlocker },
       generateDocs: { ok: hasGeneratedDocs, totalActive: activeDocs.length, generated: generatedCount },
       validation: { ok: validationPassed, totalDocs: activeDocs.filter((d) => d.generationStatus === "GENERATED").length },
       exportReadiness: { ok: exportReady, criticalGaps: criticalGaps.length, readinessScore: canonical?.summary.readinessScore ?? 0 },
     },
     nextAction,
+    canonicalDecision: workflowDecision,
   });
 
   } catch (err) {

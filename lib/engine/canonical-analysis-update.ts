@@ -20,6 +20,7 @@
 // `metadataContaminated` flag. That keeps it trivially unit-testable without a
 // database.
 
+import { stripTrailingClauseWords } from "./proposal-labels";
 import type { AIAnalysisResult } from "../ai";
 import {
   containsMetadataPlaceholder,
@@ -28,8 +29,15 @@ import {
   isValidReferenceNumber,
 } from "./metadata-validators";
 import { detectMetadataContamination } from "./tender-metadata-completeness";
+import { findStatedDeadline, findSubmissionMethodClause, submissionEmailStanding } from "./submission-source-clauses";
+import { locateQuoteProvenPage } from "./page-provenance";
+import { sourceGroundedTenderFileNames, type UploadedSourceFile } from "./source-grounded-file-name";
 
 export type CanonicalAnalysisExisting = {
+  // The tender's active uploaded files (names + extracted text). When given,
+  // exactFileNaming / exactFileOrder keep only names the tender states, and
+  // never an upload's own name (sourceGroundedTenderFileNames).
+  sourceFiles?: readonly (UploadedSourceFile & { id?: string; totalPages?: number | null })[];
   // Existing canonical values that gate whether the AI value is allowed to
   // overwrite them (mirrors the route's conditional spreads exactly).
   clientName?: string | null;
@@ -68,9 +76,41 @@ export type CanonicalAnalysisUpdate = {
   metadataContaminated: boolean;
 };
 
+function canonicalEvaluationMethodology(aiResult: AIAnalysisResult): string | null {
+  const methodology = aiResult.evaluationMethodology?.trim();
+  if (methodology) return methodology;
+  const criteria = aiResult.evaluationCriteriaSource;
+  if (!Array.isArray(criteria) || criteria.length === 0) return null;
+  const lines = criteria
+    .map((item) => {
+      const criterion = item?.criterion?.trim();
+      if (!criterion) return null;
+      // Weight is source text (for example "40 points", "25%", or
+      // "pass/fail"), not necessarily a percentage. Preserve it verbatim;
+      // coercing every value to `%` silently changes the tender's scoring rule.
+      const statedWeight = typeof item.weight === "string" ? item.weight.trim() : "";
+      const weight = statedWeight ? ` — ${statedWeight}` : " — weight not stated";
+      return `${criterion}${weight}`;
+    })
+    .filter((line): line is string => Boolean(line));
+  return lines.length > 0 ? lines.join("\n") : null;
+}
+
 // The single note line every AI promotion appends, after stripping any prior
 // analysis-source / fallback-diagnostics lines.
 const AI_ANALYSIS_NOTE = "Analysis source: AI (re-run via AI Analyze button).";
+
+/**
+ * An intake-captured client name that is the analysed procuring entity plus
+ * the verb of its source sentence ("Sample Networks PLC is" beside "Sample
+ * Networks PLC"). Replacing it is a correction, not an override: any other
+ * stored name, including one the owner typed, is kept.
+ */
+function isClauseCaptureOf(stored: string, analysed: string): boolean {
+  const a = analysed.trim();
+  const s = stored.trim();
+  return s !== a && s.startsWith(a) && stripTrailingClauseWords(s) === a;
+}
 
 export function buildAnalysisNotes(existingNotes: string | null | undefined): string | null {
   const lines = (existingNotes ?? "").split("\n");
@@ -183,6 +223,9 @@ export function buildCanonicalAnalysisTenderUpdate(
     detectMetadataContamination(aiResult.submissionAddress).contaminated ||
     detectMetadataContamination(aiResult.clientContactName).contaminated;
 
+  const stated = (names: string[] | null | undefined): string[] =>
+    existing.sourceFiles ? sourceGroundedTenderFileNames(names ?? [], existing.sourceFiles) : (names ?? []);
+
   const data: Record<string, unknown> = {
     analysisSummary: aiResult.summary,
     ...(aiResult.tenderTitle && !containsMetadataPlaceholder(aiResult.tenderTitle) ? { title: aiResult.tenderTitle } : {}),
@@ -201,15 +244,15 @@ export function buildCanonicalAnalysisTenderUpdate(
     ...(aiResult.deadlineSourcePage !== undefined ? { deadlineSourcePage: aiResult.deadlineSourcePage } : {}),
     ...(aiResult.deadlineSourceQuote !== undefined ? { deadlineSourceQuote: aiResult.deadlineSourceQuote } : {}),
     ...(existing.deadlineSourceFileId !== undefined ? { deadlineSourceFileId: existing.deadlineSourceFileId } : {}),
-    evaluationMethodology: aiResult.evaluationMethodology || null,
-    exactFileNaming: JSON.stringify(aiResult.exactFileNaming),
-    exactFileOrder: JSON.stringify(aiResult.exactFileOrder),
+    evaluationMethodology: canonicalEvaluationMethodology(aiResult),
+    exactFileNaming: JSON.stringify(stated(aiResult.exactFileNaming)),
+    exactFileOrder: JSON.stringify(stated(aiResult.exactFileOrder)),
     ...(aiResult.tenderCategory ? { category: aiResult.tenderCategory } : {}),
     notes: buildAnalysisNotes(existing.notes),
     status: "AI_ANALYZED",
     stage: "ANALYSIS",
     ...(aiResult.procuringEntityName != null && !containsMetadataPlaceholder(aiResult.procuringEntityName)
-      ? { procuringEntityName: aiResult.procuringEntityName, ...(!existing.clientName ? { clientName: aiResult.procuringEntityName } : {}) }
+      ? { procuringEntityName: aiResult.procuringEntityName, ...(!existing.clientName || isClauseCaptureOf(existing.clientName, aiResult.procuringEntityName) ? { clientName: aiResult.procuringEntityName } : {}) }
       : {}),
     ...(aiResult.legalClientName != null && !containsMetadataPlaceholder(aiResult.legalClientName) ? { legalClientName: aiResult.legalClientName } : {}),
     ...(aiResult.donorAgency != null && !containsMetadataPlaceholder(aiResult.donorAgency) ? { donorAgency: aiResult.donorAgency } : {}),
@@ -255,5 +298,72 @@ export function buildCanonicalAnalysisTenderUpdate(
     metadataContaminated,
   };
 
+  groundDeliveryFactsInSource(data, aiResult, existing);
   return { data, metadataContaminated };
+}
+
+/**
+ * Ground the delivery facts in the tender's own clauses when the model's
+ * quote cannot be found in any file (a paraphrase is not evidence), and drop
+ * an e-mail the tender gives for something other than submitting.
+ *
+ * A real ToR (2026-10-06) states "Quotations must be uploaded online through
+ * the following web tendering portal not later than the 2 3rd of September
+ * 2026": the method stayed ungrounded and blocked the Build Plan, the deadline
+ * was not read at all, and a supplier-screening privacy contact was stored as
+ * the submission e-mail. Every value set here is a verbatim clause of an
+ * active file, located the same way a model quote is.
+ */
+function groundDeliveryFactsInSource(
+  data: Record<string, unknown>,
+  aiResult: AIAnalysisResult,
+  existing: CanonicalAnalysisExisting,
+): void {
+  const files = (existing.sourceFiles ?? []).filter(
+    (f): f is UploadedSourceFile & { id: string; extractedText: string; totalPages?: number | null } =>
+      typeof f.id === "string" && typeof f.extractedText === "string" && f.extractedText.length > 0,
+  );
+  if (files.length === 0) return;
+
+  const method = (typeof data.submissionMethod === "string" ? data.submissionMethod : null) ?? existing.submissionMethod ?? null;
+  const methodGrounded = Boolean(data.submissionMethodSourceFileId) && typeof data.submissionMethodSourcePage === "number";
+  if (method && !methodGrounded) {
+    for (const file of files) {
+      const clause = findSubmissionMethodClause(method, file.extractedText);
+      if (!clause) continue;
+      data.submissionMethodSourceFileId = file.id;
+      data.submissionMethodSourceQuote = clause.quote;
+      data.submissionMethodSourcePage = locateQuoteProvenPage(file.extractedText, clause.quote, file.totalPages ?? null);
+      break;
+    }
+  }
+
+  if (!aiResult.deadline) {
+    for (const file of files) {
+      const stated = findStatedDeadline(file.extractedText);
+      if (!stated) continue;
+      data.deadline = stated.date;
+      data.deadlineSourceFileId = file.id;
+      data.deadlineSourceQuote = stated.quote;
+      data.deadlineSourcePage = locateQuoteProvenPage(file.extractedText, stated.quote, file.totalPages ?? null);
+      break;
+    }
+  }
+
+  const emails = (typeof data.submissionEmails === "string" ? data.submissionEmails : null) ?? existing.submissionEmails ?? null;
+  if (emails) {
+    const listed = emails.split(/[\s,;]+/).map((e) => e.trim()).filter(Boolean);
+    const kept = listed.filter((email) => {
+      const standings = files.map((file) => submissionEmailStanding(file.extractedText, email));
+      return standings.includes("submission") || standings.every((s) => s === "absent");
+    });
+    if (kept.length !== listed.length) {
+      data.submissionEmails = kept.length > 0 ? kept.join(", ") : null;
+      if (kept.length === 0) {
+        data.submissionEmailSourceFileId = null;
+        data.submissionEmailSourcePage = null;
+        data.submissionEmailSourceQuote = null;
+      }
+    }
+  }
 }

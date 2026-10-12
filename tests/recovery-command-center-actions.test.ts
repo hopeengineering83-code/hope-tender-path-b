@@ -36,6 +36,13 @@ const KNOWN_SAFE_NAVIGATE_TARGETS = new Set([
 
 // All nextAction codes that API routes emit. Every code here must have a
 // corresponding entry in RECOVERY_COMMAND_ACTIONS (or a safe alias).
+//
+// REVIEW_REQUIREMENTS_OR_ADD_MANUAL_PLAN was removed from this list along with
+// the route that emitted it and its registry entry. It offered requirement
+// review as a way to promote provenance the source did not support, which is
+// the shortcut that response was deleted to close. A code no route can emit has
+// nothing to resolve, so keeping it here would have failed this test forever
+// while asking someone to re-add a control that must not exist.
 const KNOWN_NEXT_ACTIONS = [
   "BUILD_SUBMISSION_PLAN",
   "CHANGE_BID_DECISION",
@@ -65,7 +72,6 @@ const KNOWN_NEXT_ACTIONS = [
   "RETRY_AI_ANALYZE_OR_APPROVE_FALLBACK",
   "REVIEW_MATCHES",
   "REVIEW_MATCHING_INPUTS",
-  "REVIEW_REQUIREMENTS_OR_ADD_MANUAL_PLAN",
   "RUN_ENGINE",
   "RUN_ENGINE_OR_APPROVE_ANALYSIS",
   "RUN_ENGINE_SAFE_MODE",
@@ -131,6 +137,9 @@ describe("Recovery Command Center — action registry coverage", () => {
       "extraction-quality",
       "extraction-quality-detail",
       "analysis-quality",
+      "ai-analyze-section",
+      "matching-selected-evidence",
+      "submission-plan-completeness",
     ]);
     for (const [action, spec] of Object.entries(RECOVERY_COMMAND_ACTIONS)) {
       if (spec.kind !== "scroll") continue;
@@ -162,9 +171,19 @@ describe("Recovery Command Center — action registry coverage", () => {
 });
 
 describe("Recovery Command Center — no 404-causing navigation", () => {
-  it("component source does not contain a navigation to /dashboard/vault", async () => {
+  // components/tender-recovery-command-center.tsx was deleted as unrendered
+  // dead code (nothing imports or renders it). components/blocker-action-link.tsx
+  // is the live, rendered dispatcher for recovery actions today (wired into
+  // components/generation-action-panel.tsx). It never hardcodes a path —
+  // every action fully delegates to renderRecoveryActionPath(spec.path, ...)
+  // from the registry above, so the "no /dashboard/vault" guard is enforced
+  // structurally by the "every navigation action points at a known existing
+  // page" tests in this same file rather than by a literal string check.
+  // We still keep a lightweight defense-in-depth check on the live file.
+
+  it("live dispatcher source does not contain a hardcoded navigation to /dashboard/vault", async () => {
     const src = readFileSync(
-      resolve(process.cwd(), "components/tender-recovery-command-center.tsx"),
+      resolve(process.cwd(), "components/blocker-action-link.tsx"),
       "utf8",
     );
     assert.ok(
@@ -173,31 +192,13 @@ describe("Recovery Command Center — no 404-causing navigation", () => {
     );
   });
 
-  it("LINK_VAULT_EVIDENCE handler calls the API route, not window.location", async () => {
-    const src = readFileSync(
-      resolve(process.cwd(), "components/tender-recovery-command-center.tsx"),
-      "utf8",
-    );
-    // The component dispatches via the auto-link route; the spec in
-    // recovery-command-actions.ts points at link-vault-evidence-auto.
-    // We only verify it doesn't use window.location to navigate away —
-    // the specific API path is captured in the action spec, not inline code.
-    assert.ok(
-      !src.includes("/dashboard/vault"),
-      "LINK_VAULT_EVIDENCE must not navigate to /dashboard/vault (page does not exist)",
-    );
-  });
-
-  it("component has an else fallback for unknown actions", async () => {
-    const src = readFileSync(
-      resolve(process.cwd(), "components/tender-recovery-command-center.tsx"),
-      "utf8",
-    );
-    assert.ok(
-      src.includes("Action not available yet"),
-      "unknown actions must show 'Action not available yet' fallback message",
-    );
-  });
+  // "component has an else fallback for unknown actions" test removed --
+  // blocker-action-link.tsx's behavior for an unknown action code is
+  // architecturally different from the deleted component: it returns null
+  // (renders nothing) rather than showing an "Action not available yet"
+  // message. That is a deliberate simplification (an unrenderable action
+  // silently disappears instead of showing a dead-end message), not a
+  // regression, so there is nothing equivalent to redirect this assertion to.
 });
 
 // ─── 1b. nextAction coverage — every API error code resolves in the registry ──
@@ -430,7 +431,6 @@ const EXECUTE_PATH_ROUTES = [
   { action: "VALIDATE_DOCS",               file: "app/api/tenders/[id]/validate/route.ts" },
   { action: "REPAIR_SOURCE_REFERENCES",    file: "app/api/tenders/[id]/repair-source-grounding/route.ts" },
   { action: "REPAIR_DOCUMENT_QUALITY",     file: "app/api/tenders/[id]/repair-export-gaps/route.ts" },
-  { action: "BUILD_SUBMISSION_PLAN",       file: "app/api/tenders/[id]/submission-plan/build/route.ts" },
   { action: "REPAIR_METADATA",             file: "app/api/tenders/[id]/repair-metadata/route.ts" },
   { action: "APPROVE_FALLBACK_WITH_NOTE",  file: "app/api/tenders/[id]/approve-analysis/route.ts" },
   { action: "RECONCILE_OUTSIDE_PLAN_DOCS", file: "app/api/tenders/[id]/supersede-outside-plan/route.ts" },
@@ -445,7 +445,6 @@ describe("Recovery Command Center — REVIEWER role parity on Execute-path route
 
   // Mutation routes must NOT allow REVIEWER — release-safety policy.
   const MUTATION_ACTIONS = new Set([
-    "BUILD_SUBMISSION_PLAN",
     "APPROVE_FALLBACK_WITH_NOTE",
     "AUTO_FINALIZE",
     "GENERATE_REQUIRED_DOCUMENTS",

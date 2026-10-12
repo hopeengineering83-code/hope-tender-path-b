@@ -66,29 +66,29 @@ function actionForWeakDimension(entityType: "EXPERT" | "PROJECT", dim: Dimension
   const projectOrExpert = entityType === "EXPERT" ? "expert" : "project";
   switch (dim.code) {
     case "DISCIPLINE_FIT":
-      return { severity, dimension: dim.code, title: "Weak discipline fit", action: "Select a reviewed expert whose discipline directly matches the tender requirement, or add a JV/subcontractor mitigation for the missing discipline." };
+      return { severity, dimension: dim.code, title: "Weak discipline fit", action: "Automatic rematching will prefer the strongest eligible source-verified expert whose discipline matches this requirement. If none exists, add the actual missing expert evidence or record a JV/subcontractor mitigation." };
     case "SCOPE_COVERAGE":
-      return { severity, dimension: dim.code, title: "Weak scope coverage", action: `Link a reviewed ${projectOrExpert} evidence record that covers the tender scope, or mark the scope gap as a bid risk with mitigation.` };
+      return { severity, dimension: dim.code, title: "Weak scope coverage", action: `The Engine will automatically link the strongest eligible source-verified ${projectOrExpert} covering the tender scope. If no such evidence exists, add the actual missing Vault source or record the scope gap as a bid risk with mitigation.` };
     case "SENIORITY_OR_SCALE":
-      return { severity, dimension: dim.code, title: "Seniority/scale gap", action: entityType === "EXPERT" ? "Select a more senior reviewed expert or attach credentials proving years of experience." : "Select a larger comparable reviewed project or add project-value evidence." };
+      return { severity, dimension: dim.code, title: "Seniority/scale gap", action: entityType === "EXPERT" ? "Automatic rematching will prefer a more senior eligible expert. Add the actual credential source only when Company Vault contains no evidence proving the required experience." : "Automatic rematching will prefer a larger comparable eligible project. Add actual contract/value evidence only when it is absent from Company Vault." };
     case "SECTOR_FIT":
-      return { severity, dimension: dim.code, title: "Sector-fit gap", action: entityType === "PROJECT" ? "Select the closest reviewed sector-specific project, especially hospital/healthcare/building references where relevant, or add JV mitigation." : "Select an expert with sector-aligned discipline/sector evidence or add a specialist partner." };
+      return { severity, dimension: dim.code, title: "Sector-fit gap", action: entityType === "PROJECT" ? "Automatic rematching will select the closest eligible sector-specific project. If no qualifying reference exists, add the actual missing project source or a specialist/JV mitigation." : "Automatic rematching will prefer an eligible expert with sector-aligned discipline evidence. If none exists, add the actual missing source or a specialist partner." };
     case "ROLE_RECENCY":
-      return { severity, dimension: dim.code, title: "Recency gap", action: `Use a more recent reviewed ${projectOrExpert} record or attach recency evidence before relying on this match.` };
+      return { severity, dimension: dim.code, title: "Recency gap", action: `Automatic rematching will prefer a more recent eligible ${projectOrExpert}. Add recency evidence only when the verified Vault record lacks it.` };
     case "EVIDENCE_QUALITY":
-      return { severity, dimension: dim.code, title: "Evidence quality gap", action: "Attach reviewed source evidence, certificate, CV credential, project completion letter, contract page, or client reference before final generation." };
+      return { severity, dimension: dim.code, title: "Evidence quality gap", action: "Company Vault ingestion and automatic matching will attach current source-verified credentials, CV evidence, completion records, contract pages, or client references. Upload only the actual missing source document." };
     case "COMPLIANCE_CRITICALITY":
-      return { severity, dimension: dim.code, title: "Compliance-critical gap", action: "Link this weak dimension to the mandatory requirement coverage panel and resolve it with reviewed vault evidence or a documented mitigation." };
+      return { severity, dimension: dim.code, title: "Compliance-critical gap", action: "Automatic requirement coverage will persist the strongest current eligible evidence link. If no evidence qualifies, the system will retain a true-gap blocker and request only the missing source document or a documented mitigation." };
     case "PORTFOLIO_CONTRIBUTION":
-      return { severity, dimension: dim.code, title: "Portfolio contribution gap", action: "Select stronger reviewed project references that directly improve the proposal's past-performance evidence." };
+      return { severity, dimension: dim.code, title: "Portfolio contribution gap", action: "Automatic project rematching will prefer source-verified references that most directly improve past-performance coverage. Add a new source only when no qualifying project exists." };
     case "MANDATORY_ELIGIBILITY":
-      return { severity, dimension: dim.code, title: "Mandatory eligibility gap", action: "Attach or review the required license, registration, certificate, financial record, or eligibility evidence before final export." };
+      return { severity, dimension: dim.code, title: "Mandatory eligibility gap", action: "Company Vault will automatically verify and link the required licence, registration, certificate, financial record, or eligibility evidence. Supply the actual missing official source only if no current eligible record exists." };
     case "DELIVERY_RISK":
-      return { severity, dimension: dim.code, title: "Delivery-risk gap", action: "Add a mitigation plan, stronger team role assignment, or lower-risk reviewed project evidence." };
+      return { severity, dimension: dim.code, title: "Delivery-risk gap", action: "The Engine will automatically prefer lower-risk eligible evidence. Where the underlying capability is genuinely absent, persist a mitigation plan, stronger team assignment, or JV response." };
     case "DIFFERENTIATION":
-      return { severity, dimension: dim.code, title: "Differentiation gap", action: "Add a unique value proposition, comparable innovation, or stronger methodology evidence supported by reviewed company records." };
+      return { severity, dimension: dim.code, title: "Differentiation gap", action: "The Engine will derive differentiators only from source-verified company records and current methodology evidence. Add a source document only when the supporting fact is genuinely absent." };
     case "COMMERCIAL_VALUE":
-      return { severity, dimension: dim.code, title: "Commercial-value gap", action: "Use comparable value/scale evidence and avoid pricing claims in technical documents; keep financial details in the financial envelope." };
+      return { severity, dimension: dim.code, title: "Commercial-value gap", action: "Automatic matching will use verified comparable value and scale evidence while keeping pricing out of technical documents and inside the financial envelope." };
   }
 }
 
@@ -205,6 +205,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       hasDimensionData,
       dimensionOrder: DIMENSION_ORDER,
       correctiveActionSummary,
+      remediationMode: "AUTOMATIC_SOURCE_VERIFIED",
+      manualEvidenceLinkingRequired: false,
     });
   } catch (error) {
     logger.error("score-breakdown GET failed", {

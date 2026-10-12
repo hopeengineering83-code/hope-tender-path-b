@@ -54,14 +54,20 @@ describe("optional provider adapters", () => {
 describe("canonical provider chain", () => {
   const source = readFileSync("lib/ai.ts", "utf8");
 
-  it("derives the chain from the registry (zai first, anthropic last)", () => {
+  it("derives the chain from the registry (gemini first, anthropic last)", () => {
     // CANONICAL_PROVIDER_CHAIN is re-exported from the registry; assert via import.
     const { CANONICAL_PROVIDER_CHAIN } = require("../lib/ai");
     const chain = [...CANONICAL_PROVIDER_CHAIN];
-    assert.deepEqual(chain, ["zai", "cerebras", "mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"]);
-    assert.equal(chain[0], "zai", "Z.ai must be first in the canonical chain");
+    assert.deepEqual(chain, ["gemini", "groq", "mistral", "zai", "cerebras", "openrouter", "openai", "together", "deepseek", "anthropic"]);
+    assert.equal(chain[0], "gemini", "Gemini leads the zero-paid chain");
     assert.equal(chain[chain.length - 1], "anthropic", "Anthropic/Claude must be last in the canonical chain");
-    assert.ok(chain.includes("together"), "Together MUST be in the automatic chain (rank 8)");
+    assert.ok(chain.includes("together"), "Together must remain a KNOWN provider so health can report on it");
+  });
+
+  it("keeps every configured provider in the automatic chain", () => {
+    const { getAutomaticProviderOrder } = require("../lib/ai-provider-registry");
+    const automatic = [...getAutomaticProviderOrder()];
+    assert.deepEqual(automatic, ["gemini", "groq", "mistral", "zai", "cerebras", "openrouter", "openai", "together", "deepseek", "anthropic"]);
   });
 
   it("retains explicit adapter cases for all providers", () => {

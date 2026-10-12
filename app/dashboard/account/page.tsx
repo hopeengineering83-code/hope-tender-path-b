@@ -9,6 +9,9 @@ export default function AccountPage() {
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [profileSaving, setProfileSaving] = useState(false);
   const [passwordSaving, setPasswordSaving] = useState(false);
   const [profileMsg, setProfileMsg] = useState("");
@@ -120,36 +123,75 @@ export default function AccountPage() {
           {passwordError && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">{passwordError}</div>}
           {passwordMsg && <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-2 text-sm text-green-700">{passwordMsg}</div>}
           <div>
-            <label className="mb-1.5 block text-sm font-medium text-slate-700">Current Password</label>
-            <input
-              type="password"
-              value={currentPassword}
-              onChange={(e) => setCurrentPassword(e.target.value)}
-              required
-              className="w-full rounded-xl border px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-slate-900"
-            />
+            <label htmlFor="account-current-password" className="mb-1.5 block text-sm font-medium text-slate-700">Current Password</label>
+            <div className="relative">
+              <input
+                id="account-current-password"
+                type={showCurrentPassword ? "text" : "password"}
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                required
+                className="w-full rounded-xl border px-4 py-2.5 pr-12 text-sm outline-none focus:ring-2 focus:ring-slate-900"
+                autoComplete="current-password"
+              />
+              <button
+                type="button"
+                onClick={() => setShowCurrentPassword((s) => !s)}
+                className="absolute inset-y-0 right-0 flex items-center px-3 text-xs font-medium text-slate-600 hover:text-slate-900"
+                aria-label={showCurrentPassword ? "Hide password" : "Show password"}
+                tabIndex={-1}
+              >
+                {showCurrentPassword ? "Hide" : "Show"}
+              </button>
+            </div>
           </div>
           <div>
-            <label className="mb-1.5 block text-sm font-medium text-slate-700">New Password</label>
-            <input
-              type="password"
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              required
-              minLength={8}
-              className="w-full rounded-xl border px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-slate-900"
-              placeholder="At least 8 characters"
-            />
+            <label htmlFor="account-new-password" className="mb-1.5 block text-sm font-medium text-slate-700">New Password</label>
+            <div className="relative">
+              <input
+                id="account-new-password"
+                type={showNewPassword ? "text" : "password"}
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                required
+                minLength={8}
+                className="w-full rounded-xl border px-4 py-2.5 pr-12 text-sm outline-none focus:ring-2 focus:ring-slate-900"
+                placeholder="At least 8 characters"
+                autoComplete="new-password"
+              />
+              <button
+                type="button"
+                onClick={() => setShowNewPassword((s) => !s)}
+                className="absolute inset-y-0 right-0 flex items-center px-3 text-xs font-medium text-slate-600 hover:text-slate-900"
+                aria-label={showNewPassword ? "Hide password" : "Show password"}
+                tabIndex={-1}
+              >
+                {showNewPassword ? "Hide" : "Show"}
+              </button>
+            </div>
           </div>
           <div>
-            <label className="mb-1.5 block text-sm font-medium text-slate-700">Confirm New Password</label>
-            <input
-              type="password"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              required
-              className="w-full rounded-xl border px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-slate-900"
-            />
+            <label htmlFor="account-confirm-password" className="mb-1.5 block text-sm font-medium text-slate-700">Confirm New Password</label>
+            <div className="relative">
+              <input
+                id="account-confirm-password"
+                type={showConfirmPassword ? "text" : "password"}
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                required
+                className="w-full rounded-xl border px-4 py-2.5 pr-12 text-sm outline-none focus:ring-2 focus:ring-slate-900"
+                autoComplete="new-password"
+              />
+              <button
+                type="button"
+                onClick={() => setShowConfirmPassword((s) => !s)}
+                className="absolute inset-y-0 right-0 flex items-center px-3 text-xs font-medium text-slate-600 hover:text-slate-900"
+                aria-label={showConfirmPassword ? "Hide password" : "Show password"}
+                tabIndex={-1}
+              >
+                {showConfirmPassword ? "Hide" : "Show"}
+              </button>
+            </div>
           </div>
           <button
             type="submit"

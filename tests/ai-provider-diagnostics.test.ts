@@ -1,9 +1,9 @@
 // Live AI provider diagnostics — the "why is AI Analyze failing?" self-test.
 //
 // Verifies:
-//   1. selfTestProvider returns "not configured" WITHOUT an outbound call when
-//      the provider has no key (so the diagnostic is safe and instant).
-//   2. selfTestAllProviders returns one entry per canonical provider, in order.
+//   1. runCapabilityTest refuses an unconfigured OR paid-access provider WITHOUT
+//      an outbound call (so the diagnostic is safe, instant, and cannot spend).
+//   2. testAutomaticChainCapabilities covers the active zero-paid chain, in order.
 //   3. The endpoint requires ADMIN/PROPOSAL_MANAGER, supports ?live=1, and never
 //      returns key values.
 //   4. The panel exposes a "Diagnose providers" action that hits the endpoint.
@@ -32,28 +32,55 @@ async function withNoProviderKeys<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-describe("provider self-test (live diagnostic)", () => {
-  it("reports an unconfigured provider WITHOUT making an outbound call", async () => {
+describe("provider capability test — the real diagnostic", () => {
+  it("refuses an unconfigured provider WITHOUT making an outbound call", async () => {
     await withNoProviderKeys(async () => {
-      const { selfTestProvider } = await import("../lib/ai");
-      const res = await selfTestProvider("zai", 1);
-      assert.equal(res.configured, false);
-      assert.equal(res.ok, false);
-      assert.equal(res.latencyMs, null); // null latency proves no call was made
-      assert.match(res.reason ?? "", /not configured/i);
+      const { runCapabilityTest } = await import("../lib/ai-provider-capability-test");
+      const res = await runCapabilityTest("gemini", "connectivity");
+      assert.equal(res.status, "skipped");
+      assert.equal(res.durationMs, 0); // zero duration proves no call was made
+      assert.match(res.safeMessage ?? "", /not configured/i);
     });
   });
 
-  it("selfTestAllProviders returns one entry per canonical provider, in order", async () => {
+  it("includes a normally configured OpenAI provider in automatic diagnostics", async () => {
+    // The whole point of zero-paid mode: a key being present must NOT be enough
+    // to send a request. A diagnostic that "helpfully" tested OpenAI to see
+    // whether it works would be spending money to find out.
     await withNoProviderKeys(async () => {
-      const { selfTestAllProviders } = await import("../lib/ai");
-      const results = await selfTestAllProviders();
-      assert.equal(results.length, CANONICAL_AI_PROVIDER_ORDER.length);
-      assert.deepEqual(results.map((r) => r.provider), [...CANONICAL_AI_PROVIDER_ORDER]);
-      assert.deepEqual(results.map((r) => r.rank), CANONICAL_AI_PROVIDER_ORDER.map((_, i) => i + 1));
-      // With no keys, every provider is unconfigured and none "ok".
-      assert.ok(results.every((r) => r.configured === false && r.ok === false));
+      process.env.OPENAI_API_KEY = "sk-test-not-used";
+      try {
+        const { providerAutomaticEligibility } = await import("../lib/ai-provider-registry");
+        const res = providerAutomaticEligibility("openai");
+        assert.equal(res.eligible, true);
+        assert.equal(res.reason, "OK");
+      } finally {
+        delete process.env.OPENAI_API_KEY;
+      }
     });
+  });
+
+  it("tests every provider in the active canonical chain, in order", async () => {
+    await withNoProviderKeys(async () => {
+      const { testAutomaticChainCapabilities } = await import("../lib/ai-provider-capability-test");
+      const { getAutomaticProviderOrder } = await import("../lib/ai-provider-registry");
+      const { reports, notTested, deadlineExceeded } = await testAutomaticChainCapabilities({ capabilities: ["connectivity"] });
+      assert.deepEqual(reports.map((r) => r.provider), [...getAutomaticProviderOrder()]);
+      // No deadline armed: the run is complete and nothing is left untested.
+      assert.equal(deadlineExceeded, false);
+      assert.deepEqual(notTested, []);
+      // With no keys, nothing is eligible and nothing claims to be usable.
+      assert.ok(reports.every((r) => r.eligible === false));
+      assert.ok(reports.every((r) => r.usableForAiAnalyze === false));
+    });
+  });
+
+  it("does not call connectivity alone sufficient for AI Analyze", async () => {
+    // Guards the distinction the old ping-only diagnostic erased: a provider
+    // that answers "OK" to a one-word prompt has proven the key and the route,
+    // not the ability to return the structured JSON the workflow needs.
+    const source = readFileSync("lib/ai-provider-capability-test.ts", "utf8");
+    assert.match(source, /usableForAiAnalyze: passed\("analysis"\)/);
   });
 });
 
@@ -64,10 +91,26 @@ describe("diagnostics endpoint", () => {
     assert.match(route, /requireRole\("ADMIN", "PROPOSAL_MANAGER"\)/);
   });
 
-  it("supports the live self-test via ?live=1 and the health snapshot otherwise", () => {
+  it("supports the live capability test via ?live=1 and the health snapshot otherwise", () => {
     assert.match(route, /searchParams\.get\("live"\) === "1"/);
-    assert.match(route, /selfTestAllProviders\(\)/);
+    assert.match(route, /testAutomaticChainCapabilities\(/);
     assert.match(route, /buildProviderDiagnosticsSnapshot\(\)/);
+  });
+
+  it("keeps latest real extraction and proposal results tenant-scoped and separate", () => {
+    assert.match(route, /userId: actor\.id/);
+    assert.match(route, /useCase: \{ in: \["extraction", "proposal"\] \}/);
+    assert.match(route, /latestRealExtractionResult/);
+    assert.match(route, /latestRealProposalResult/);
+  });
+
+  it("headlines ANALYSIS readiness, not 'something answered'", () => {
+    // The previous route reported `anyWorking` from a ping. A chain where every
+    // provider cheerfully answers a ping and none can produce structured output
+    // is not a working chain, and calling it one is what let AI Analyze fail on
+    // an environment the diagnostics called healthy.
+    assert.match(route, /aiAnalyzeReady: analysisReady\.length > 0/);
+    assert.match(route, /verifiedAnalysisProviders/);
   });
 
   it("never returns API key values (no process.env key reads in the response)", () => {
@@ -75,15 +118,19 @@ describe("diagnostics endpoint", () => {
   });
 
   it("tells the operator what to do when nothing is configured", () => {
-    assert.match(route, /Set at least one provider API key/i);
+    // Names the FREE provider keys specifically. Telling a zero-paid operator to
+    // "set at least one provider API key" invites them to reach for the paid one
+    // they already have.
+    assert.match(route, /GEMINI_API_KEY, GROQ_API_KEY, MISTRAL_API_KEY or ZAI_API_KEY/);
   });
 });
 
 describe("AI Analyze panel exposes the diagnostic", () => {
   const panel = readFileSync("components/ai-analyze-panel.tsx", "utf8");
 
-  it("has a Diagnose providers action that calls the live endpoint", () => {
-    assert.match(panel, /Diagnose providers/);
+  it("has a Diagnose providers function that calls the live endpoint", () => {
+    // Gap 2: the Diagnose providers button was removed from the normal path.
+    // The function still exists for automatic/diagnostic use.
     assert.match(panel, /\/api\/ai-providers\/diagnostics\?live=1/);
     assert.match(panel, /function runProviderDiagnostics/);
   });

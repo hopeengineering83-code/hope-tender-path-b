@@ -15,8 +15,9 @@
 //   • Missing optional metadata NEVER blocks analysis, draft, support, or review.
 //   • Optional placeholders (TBD, N/A, Unknown, Not specified, Bid-Team to confirm)
 //     become warnings and are omitted from generated output. They do NOT block.
-//   • Missing deadline or extracted requirements allows draft/support/review
-//     but blocks FINAL_SUBMISSION_READY.
+//   • A fact the tender does not state (client, deadline, method) never blocks
+//     any operation (ABSENT_TENDER_FACT_IS_NOT_REQUIRED); a placeholder value
+//     or missing extracted requirements block FINAL_SUBMISSION_READY.
 //   • Portal tender: portal URL is a valid endpoint; no email/address required.
 //   • Email tender: email required only when email is required.
 //   • Physical tender: address required only when physical delivery is required.
@@ -141,9 +142,9 @@ export function resolveTenderOperationGate(input: OperationGateInput): Operation
   const extractionStatus = tender.analysisExtractionStatus ?? null;
   if (extractionStatus === "OCR_REQUIRED") {
     if (operation === "FINAL_SUBMISSION_READY") {
-      blockers.push("Extraction was corrupted and AI Analyze was skipped — re-run OCR + AI Analyze before final submission.");
+      blockers.push("Extraction was corrupted and AI Analyze was skipped — upload a clearer, text-based copy before final submission.");
     } else {
-      warnings.push("Extraction was corrupted — AI Analyze was skipped. Re-run OCR for better results.");
+      warnings.push("Extraction was corrupted — AI Analyze was skipped. Upload a clearer, text-based copy for better results.");
     }
   } else if (extractionStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION") {
     if (operation === "FINAL_SUBMISSION_READY") {
@@ -182,7 +183,21 @@ export function resolveTenderOperationGate(input: OperationGateInput): Operation
     const override = overrides?.find((o) => o.field === field);
     const hasResolvingOverride = !!(override && override.fieldState !== "NOT_APPLICABLE");
     const effectiveValue = hasResolvingOverride ? (override?.overrideValue ?? rawValue) : rawValue;
-    if (!effectiveValue || (typeof effectiveValue === "string" && isPlaceholder(effectiveValue))) {
+    // Owner policy ABSENT_TENDER_FACT_IS_NOT_REQUIRED (tender-fact-authority):
+    // a fact the tender does not state is not required of the bid. An absent
+    // client, deadline or submission method is a warning, and the package is
+    // built from what the tender does state. A tender with no stated deadline
+    // was refused at download as "Critical field deadline is missing"
+    // (2026-10-06). The title stays indispensable: a proposal must carry one.
+    // A value that is PRESENT but a placeholder still blocks, because it
+    // would put false information into the bid.
+    const absent = effectiveValue === null || effectiveValue === undefined
+      || (typeof effectiveValue === "string" && effectiveValue.trim() === "");
+    if (absent && field !== "title") {
+      warnings.push(`"${field}" is not stated in the tender — the package is built without it.`);
+      continue;
+    }
+    if (absent || (typeof effectiveValue === "string" && isPlaceholder(effectiveValue))) {
       blockers.push(`Critical field "${field}" is missing or contains a placeholder — final submission requires a real value.`);
       continue;
     }
@@ -203,7 +218,7 @@ export function resolveTenderOperationGate(input: OperationGateInput): Operation
 
   // ── 3. Confirmed BuildPlan required ──────────────────────────────
   if (!buildPlan || !buildPlan.ok) {
-    blockers.push("No confirmed BuildPlan — build and confirm the submission plan before final submission.");
+    blockers.push("No current source-verified Build Plan — Run Engine creates and verifies it automatically before final submission processing.");
   }
 
   // ── 4. Submission endpoint validation (operation-specific) ───────

@@ -265,7 +265,7 @@ describe("fix area 1 — Tender Detail missing-facts uses intelligence", () => {
     const src = read("app/dashboard/tenders/[id]/tender-intake-detail-panel.tsx");
     assert.ok(src.includes("effectiveMissingFacts"), "must build effectiveMissingFacts");
     assert.ok(src.includes("intelligence"), "must use intelligence for missing-facts");
-    assert.ok(src.includes("!si.deadlineDisplay && !tender.deadline"), "deadline missing only when both parser and scalar are null");
+    assert.ok(!src.includes('effectiveMissingFacts.push({ key: "deadline"'), "an unstated deadline is never listed as missing (ABSENT_TENDER_FACT_IS_NOT_REQUIRED)");
     assert.ok(src.includes("!si.method || si.method === \"Unknown\""), "method missing only when parser says Unknown and scalar is null");
   });
 
@@ -275,12 +275,11 @@ describe("fix area 1 — Tender Detail missing-facts uses intelligence", () => {
     assert.ok(!src.includes("{sourceDetail.missingRelevantCount > 0"), "must NOT use sourceDetail.missingRelevantCount for the missing-facts condition");
   });
 
-  it("intake panel does not list deadline as missing when parser found it", () => {
+  it("intake panel never lists the deadline as missing (found → shown; not stated → not required)", () => {
     const src = read("app/dashboard/tenders/[id]/tender-intake-detail-panel.tsx");
-    // The condition for deadline missing is: !si.deadlineDisplay && !tender.deadline
-    // If the parser found the deadline (si.deadlineDisplay is truthy), the condition is false
-    // → deadline is NOT pushed to effectiveMissingFacts → NOT shown as missing
-    assert.ok(src.includes("!si.deadlineDisplay && !tender.deadline"), "deadline missing requires BOTH parser AND scalar to be null");
+    // Owner policy ABSENT_TENDER_FACT_IS_NOT_REQUIRED (2026-10-06 report: an
+    // unstated deadline was shown as "Required before export").
+    assert.ok(!src.includes('effectiveMissingFacts.push({ key: "deadline"'), "the deadline is never pushed to effectiveMissingFacts");
   });
 
   it("intake panel does not list submissionMethod as missing when parser found it", () => {
@@ -352,6 +351,26 @@ describe("fix area 8 — syncEffectiveFactsToLedger", () => {
     const src = read("lib/engine/tender-facts-ledger-service.ts");
     assert.ok(src.includes("CANDIDATE_NEEDS_REVIEW"), "writes CANDIDATE_NEEDS_REVIEW for parser facts without evidence");
     assert.ok(src.includes("SOURCE_GROUNDED_CONFIRMED"), "writes SOURCE_GROUNDED_CONFIRMED when evidence exists");
+  });
+
+  it("never calls page + quote evidence grounded without an active source file id", () => {
+    const src = read("lib/engine/tender-facts-ledger-service.ts");
+    assert.match(src, /fact\.sourceFileId[\s\S]*fact\.sourcePage[\s\S]*fact\.sourceQuote/);
+    assert.match(src, /existingState === AUTHORITY_STATE\.SOURCE_GROUNDED_CONFIRMED && !hasEvidence/);
+  });
+
+  it("syncs promoted canonical facts through one ownership-checked, locked ledger path", () => {
+    const service = read("lib/engine/tender-facts-ledger-service.ts");
+    const background = read("lib/ai-jobs/analysis-job-service.ts");
+    const route = read("app/api/tenders/[id]/ai-analyze/route.ts");
+    const effective = read("lib/engine/effective-tender-facts.ts");
+    assert.match(service, /export async function syncPersistedTenderFactsToLedger/);
+    assert.match(service, /where: \{ id: tenderId, userId \}/);
+    assert.match(service, /pg_advisory_xact_lock/);
+    assert.match(service, /locateQuoteProvenPage/);
+    assert.match(background, /syncPersistedTenderFactsToLedger/);
+    assert.match(route, /syncPersistedTenderFactsToLedger/);
+    assert.match(effective, /ledgerKeys: \["projectTitle", "title"\]/);
   });
 
   it("sync function is idempotent (upsert by tenderId + semanticKey)", () => {

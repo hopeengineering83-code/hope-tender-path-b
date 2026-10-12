@@ -65,13 +65,15 @@ describe("metadata-override-gate", () => {
     const input = fullInput({ clientName: null });
 
     const before = assessTenderMetadataCompleteness(input);
-    assert.ok(before.missingCritical.some((f) => f.field === "clientName"));
+    // An unstated client is advisory (ABSENT_TENDER_FACT_IS_NOT_REQUIRED).
+    assert.ok(before.missingNonCritical.some((f) => f.field === "clientName"));
 
     // Simulate what happens after an override is saved and the gate is re-run
     const after = assessTenderMetadataCompleteness(input, [
       { field: "clientName", fieldState: "USER_EDITED", overrideValue: "Nairobi City Council" },
     ]);
     assert.ok(!after.missingCritical.some((f) => f.field === "clientName"));
+    assert.ok(!after.missingNonCritical.some((f) => f.field === "clientName"));
     assert.equal(after.blockingForGeneration, false);
   });
 

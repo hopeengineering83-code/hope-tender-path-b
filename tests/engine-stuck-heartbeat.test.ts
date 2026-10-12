@@ -16,11 +16,12 @@ describe("stuck-job constants", () => {
     assert.ok(AI_JOB_STUCK_AFTER_MS >= 15 * 60 * 1000);
   });
 
-  it("AI_JOB_PROGRESS_STUCK_AFTER_MS defaults to 90 seconds (just above Vercel's 60 s kill)", () => {
-    // 90 s default so a Vercel-killed worker (killed at 60 s) is recovered
-    // within ~90 s rather than left orphaned for 5 minutes.
+  it("AI_JOB_PROGRESS_STUCK_AFTER_MS defaults to 180 seconds (gives slow AI providers room)", () => {
+    // 180 s default so a Vercel-killed worker (killed at 60 s, heartbeat
+    // every 10 s → last step at ~50 s) is not prematurely marked FAILED.
+    // The next worker invocation (cron or browser poll) has ~130 s to resume.
     if (process.env.AI_JOB_PROGRESS_STUCK_AFTER_MS === undefined) {
-      assert.equal(AI_JOB_PROGRESS_STUCK_AFTER_MS, 90_000);
+      assert.equal(AI_JOB_PROGRESS_STUCK_AFTER_MS, 180_000);
     } else {
       assert.ok(AI_JOB_PROGRESS_STUCK_AFTER_MS >= 30_000);
     }

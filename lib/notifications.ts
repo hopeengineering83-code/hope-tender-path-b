@@ -1,4 +1,5 @@
 import { prisma } from "./prisma";
+import { logger } from "./observability";
 
 export type NotificationType =
   | "TENDER_ANALYZED"
@@ -30,8 +31,15 @@ export async function createNotification(params: {
         link: params.link ?? null,
       },
     });
-  } catch {
-    // Notifications are non-critical — never crash the main flow
+  } catch (e) {
+    // Notifications are non-critical — never crash the main flow — but surface
+    // the failure so operators can detect notification-pipeline outages (e.g.
+    // users silently missing deadline alerts). Previously bare `catch {}`.
+    logger.warn("[notifications] createNotification failed", {
+      detail: e,
+      userId: params.userId,
+      type: params.type,
+    });
   }
 }
 

@@ -10,12 +10,21 @@ import { logAction } from "./audit";
 
 const invalidReset = { error: "Invalid or expired reset link" };
 
-type ResetRow = {
+export type ResetRow = {
   id: string;
   userId: string;
   expiresAt: Date;
   consumedAt: Date | null;
 };
+
+export type ResetTokenState = "MISSING" | "CONSUMED" | "EXPIRED" | "ACTIVE";
+
+export function classifyPasswordResetToken(row: ResetRow | null | undefined, now = new Date()): ResetTokenState {
+  if (!row) return "MISSING";
+  if (row.consumedAt) return "CONSUMED";
+  if (new Date(row.expiresAt).getTime() <= now.getTime()) return "EXPIRED";
+  return "ACTIVE";
+}
 
 export async function handleSecurePasswordReset(req: Request) {
   const body = await req.json().catch(() => ({})) as { token?: string; password?: string };
@@ -48,7 +57,18 @@ export async function handleSecurePasswordReset(req: Request) {
     await prismaReady;
     const nextHash = await bcrypt.hash(newPassword, 12);
     let changedUserId: string | null = null;
+    // A plain outer `let` narrows to its initializer inside the closure
+    // below for TypeScript's control-flow analysis; an object property
+    // sidesteps that so the post-transaction check below sees the full
+    // ResetTokenState union.
+    const outcome: { tokenState: ResetTokenState } = { tokenState: "MISSING" };
 
+    // The non-ACTIVE branch below must NOT throw inside this transaction:
+    // Prisma rolls back every statement run through `tx` (including raw
+    // queries) when the interactive-transaction callback throws, so the
+    // opportunistic "mark this expired token consumed" UPDATE would never
+    // actually commit. Returning normally instead lets that cleanup persist;
+    // the caller decides the HTTP response from `outcome.tokenState` after.
     await prisma.$transaction(async (tx) => {
       const rows = await tx.$queryRaw<ResetRow[]>`
         SELECT "id", "userId", "expiresAt", "consumedAt"
@@ -57,8 +77,17 @@ export async function handleSecurePasswordReset(req: Request) {
         FOR UPDATE
       `;
       const row = rows[0];
-      if (!row || row.consumedAt || new Date(row.expiresAt).getTime() <= Date.now()) {
-        throw new Error("INVALID_RESET_TOKEN");
+      const tokenState = classifyPasswordResetToken(row);
+      outcome.tokenState = tokenState;
+      if (tokenState !== "ACTIVE") {
+        if (tokenState === "EXPIRED" && row) {
+          await tx.$executeRaw`
+            UPDATE "PasswordResetToken"
+            SET "consumedAt" = NOW()
+            WHERE "id" = ${row.id} AND "consumedAt" IS NULL
+          `;
+        }
+        return;
       }
 
       changedUserId = row.userId;
@@ -75,6 +104,10 @@ export async function handleSecurePasswordReset(req: Request) {
       await tx.session.deleteMany({ where: { userId: row.userId } });
     });
 
+    if (outcome.tokenState !== "ACTIVE") {
+      return NextResponse.json(invalidReset, { status: 400 });
+    }
+
     if (changedUserId) {
       await logAction({
         userId: changedUserId,
@@ -86,9 +119,6 @@ export async function handleSecurePasswordReset(req: Request) {
     }
     return NextResponse.json({ success: true });
   } catch (error) {
-    if (error instanceof Error && error.message === "INVALID_RESET_TOKEN") {
-      return NextResponse.json(invalidReset, { status: 400 });
-    }
     logger.error("[password-reset] request failed", {
       errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
     });

@@ -32,8 +32,20 @@ export function _resetBootstrapAdminWarning(): void {
   // Retained for test compatibility. The login path no longer emits warnings or repairs credentials.
 }
 
-/** Login-time bootstrap repair is permanently disabled. */
-export function resolveBootstrapAdminPolicy(): BootstrapAdminPolicy {
+/**
+ * Login-time bootstrap repair — permanently disabled, in every environment.
+ *
+ * Named for the path it governs. It used to be `resolveBootstrapAdminPolicy`,
+ * which read like the general policy and was called by prisma/seed.ts, whose
+ * own comment described the OTHER function's behaviour. The seed therefore
+ * refused every time it ran, in every environment, while reporting the refusal
+ * as a production opt-in problem. A name that does not say which path it
+ * belongs to is what made that possible, so the name now says it.
+ *
+ * Provisioning goes through resolveRuntimeBootstrapAdminPolicy(): explicit
+ * opt-in, strong password. Signing in never creates or resets an account.
+ */
+export function resolveLoginRepairBootstrapPolicy(): BootstrapAdminPolicy {
   return {
     allowRepair: false,
     password: "",
@@ -41,9 +53,26 @@ export function resolveBootstrapAdminPolicy(): BootstrapAdminPolicy {
   };
 }
 
+/**
+ * Resolve runtime seeding independently from the permanently disabled login
+ * repair path. Runtime admin creation always requires explicit opt-in and a
+ * strong, non-default password, including development and test environments.
+ */
+export function resolveRuntimeBootstrapAdminPolicy(): BootstrapAdminPolicy {
+  if (!envFlag("BOOTSTRAP_ADMIN_ENABLED")) {
+    return { allowRepair: false, password: "", reason: "Runtime bootstrap admin seeding is disabled." };
+  }
+
+  const password = readEnv("BOOTSTRAP_ADMIN_PASSWORD");
+  const passwordError = validateProductionBootstrapPassword(password);
+  if (passwordError) {
+    return { allowRepair: false, password: "", reason: passwordError };
+  }
+
+  return { allowRepair: true, password: password!, reason: null };
+}
+
 /** Runtime seed is allowed only through explicit opt-in and a strong password. */
 export function isRuntimeBootstrapAdminAllowed(): boolean {
-  if (!envFlag("BOOTSTRAP_ADMIN_ENABLED")) return false;
-  const password = readEnv("BOOTSTRAP_ADMIN_PASSWORD");
-  return validateProductionBootstrapPassword(password) === null;
+  return resolveRuntimeBootstrapAdminPolicy().allowRepair;
 }

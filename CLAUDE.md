@@ -5,32 +5,130 @@ Stack: Next.js 15 · React 19 · TypeScript · Prisma 6.19 (PostgreSQL) · Tailw
 
 ---
 
-## Current Main State (SHA: 63369f03)
+## Establishing current state
 
-- **tsc:** PASS (run `npx prisma generate` first to pick up new models)
-- **lint:** PASS
-- **build:** PASS
-- **Tests:** 464 test files, 6000+ tests PASS
-- **Main is stable.** All 5 clusters (A-E) from DECISIONS_NEEDED.md are resolved.
-- **Recent merges:** #1029 (action icons), #1028 (screenshot contradictions), #1027 (generation/buildplan/export truth), #1026 (lifecycle truth), #1025 (canonical readiness counts).
+Do not trust a state summary written into this file — a pinned SHA, test count,
+or "recent merges" list is stale the moment the next commit lands, and an agent
+that believes one reports a green tree it never ran. Establish state by running
+it, and quote what you actually saw:
+
+```bash
+npx prisma generate                 # first — the client must match schema.prisma
+npx tsc --noEmit
+npx next lint
+npm test                            # DB-integration suites need the env below
+npx next build
+```
+
+DB-integration suites are skipped, or fail closed, without a real PostgreSQL and
+`RUN_DB_INTEGRATION=true`. They are the only tests that prove behavior rather
+than source text, so a run without them is not a full run. If the database
+process dies mid-run, every DB suite fails at once with "Can't reach database
+server" — that is an environment failure, not a code regression; restart it and
+re-run before believing the result.
+
+Open work and cross-agent scope: `operator_handoff.md` Active Workboard.
+
+After the owner swaps the Preview database or redeploys the Preview, follow
+`docs/PREVIEW_RECOVERY_RUNBOOK.md`: it records how the recurring
+schema-bootstrap (P2022 `User.deletedAt`) and AI-provider fallback problems were
+actually solved, step by step.
+
+## Product goal (canonical — owner-stated, supersedes earlier phrasing)
+
+Read `OWNER_AUTOMATION_CONTRACT.md` first. It is the current workflow authority.
+
+The owner uploads exactly two things:
+
+1. **Company Vault documents and Brand Assets — ONCE.** Not per tender.
+2. **Tender files — every time**, for each new tender.
+
+Everything else is automatic **except exactly two owner actions**: AI Analyze and
+Run Engine. Those two are deliberate manual gates, not stages to be automated
+away. Every other stage runs on durable server-owned workers through to a
+downloadable ZIP.
+
+```
+Vault + Brand Assets (once)  ─┐
+                              ├─→ extraction + source verification   AUTOMATIC
+Tender files (every tender)  ─┘
+        │
+        ├─→ AI Analyze                                    MANUAL (owner clicks)
+        │
+        ├─→ Run Engine                                    MANUAL (owner clicks)
+        │
+        └─→ Build Plan → evidence matching → DOCX generation →
+            validation → PDF finalization → package
+            reconciliation → ZIP readiness                        AUTOMATIC
+```
+
+The browser may display progress and recovery controls, but it must not own orchestration or need to remain open. Automatic continuation may stop only for fail-closed review conditions defined in `OWNER_AUTOMATION_CONTRACT.md`, including unreadable/conflicting sources, unsupported claims, legal-authority decisions, exhausted external credentials after bounded retry, and final owner approval.
+
+Apart from AI Analyze and Run Engine, no Generate, Confirm, Repair, Validate, Finalize, Refresh, or Re-check click may be mandatory on the normal path. Exceptional recovery may exist only inside collapsed Diagnostics and Recovery.
+
+**Do not "fix" AI Analyze or Run Engine into automatic stages.** Earlier revisions
+of this section described them as server-owned and non-mandatory, which
+contradicted `OWNER_AUTOMATION_CONTRACT.md` — the file this document names as the
+workflow authority — and sent successive sessions back and forth undoing each
+other. The contract and the shipped code agree: both actions require explicit
+owner authority. `createAnalysisJob()` rejects any call without a
+`manualAuthority` bearing `source: "manual-ai-analyze"` and a matching
+`actorUserId`; the engine route requires `manualRequested: true`;
+`continueSuccessfulAnalysis()` always returns `MANUAL_ENGINE_REQUIRED`;
+extraction ends at `EXTRACTION_COMPLETE_MANUAL_AI_ANALYZE_REQUIRED`. Negative
+regression tests pin all of it.
+
+## Resuming after an interrupted session — ask first
+
+If a session ended because a tool/usage limit was reached, **do not resume work on
+the next session automatically.** Report the current state and wait for Hope's
+explicit go-ahead before editing, committing, or pushing anything.
+
+Hope continues the work with a different coding tool while a limit is in effect.
+An agent that picks its previous task back up on refresh is therefore editing on
+top of changes it has not seen, which is how two tools end up fixing the same
+thing at once. That has already happened on PR #1175: `1d746caa` and `f8dd0eb5`
+were concurrent independent fixes to the same test-contention bug, and nothing
+was lost only because they were merged rather than force-pushed.
+
+This applies to autonomous continuation only. A fresh instruction from Hope is
+always permission to proceed.
 
 ## Priority order for all sessions
 
-1. Read `operator_handoff.md` Active Workboard before starting — do not overlap another agent's scope.
-2. Wire `TenderFactsLedger` model into downstream consumers (UI, gates, BuildPlan, document generators).
-3. Write + test backfill script (`scripts/backfill-tender-facts-ledger.ts`) to migrate legacy Tender scalars → TenderFactsLedger.
-4. Add `CONDITIONAL_OR_UNSCHEDULED` status to canonical resolver + wire through STATUS_BADGE maps.
-5. Run DB-integration tests with PostgreSQL to verify all clusters are truly resolved.
-6. Run browser E2E tests at 800×1280 tablet viewport.
+1. Read `OWNER_AUTOMATION_CONTRACT.md` and `operator_handoff.md` Active Workboard before starting — do not overlap another agent's scope. More than one agent pushes to this repo, so re-fetch and confirm the exact head before editing, and rebase rather than discarding someone else's commits.
+2. Establish current state by running the commands above. Quote real output; never restate a status line from a document as if you had verified it.
+3. Take the next item from the `operator_handoff.md` Active Workboard. That file is the open-work list — this one is not.
 
-## Canonical Provider Order (NEVER change)
+This section previously listed four specific engineering tasks (wiring
+`TenderFactsLedger` into consumers, writing `scripts/backfill-tender-facts-ledger.ts`,
+adding `CONDITIONAL_OR_UNSCHEDULED` to the canonical resolver, configuring the
+800×1280 tablet E2E viewport). All four already shipped, and the stale list sent
+each new session to redo finished work. Keep this section about *how* to pick up
+work; track *what* is open in `operator_handoff.md`, which has a defined update
+ritual and one owner per branch.
+
+## AI provider policy
+
+The single canonical automatic chain is:
 
 ```
-Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic
+Gemini → Groq → Mistral → Z.ai → Cerebras → OpenRouter → OpenAI → Together → DeepSeek → Anthropic → deterministic draft fallback
 ```
 
-This is defined in `lib/ai-provider-catalog.cjs` `CANONICAL_AI_PROVIDER_ORDER`.
-All docs, gates, health routes, and UI must match this order.
+`lib/ai-provider-catalog.cjs` owns the order. AI Analyze, extraction, generation, diagnostics, health, readiness, and UI derive from it. Every normally configured provider participates. Missing keys, configuration/model errors, rate limits, timeouts, unusable responses, and provider failures fall through to the next provider. Model identifiers are used exactly as configured and are never silently replaced. The deterministic draft runs only after every AI provider fails and remains non-final-export authority.
+
+### Verified capability, not key presence
+
+A provider is **usable for AI Analyze** only after a real structured-extraction
+test passes. Connectivity proves the key and the route, not the capability.
+`checkAiProviderHealth()` reports `healthy` / `degraded` / `unhealthy`, and
+production readiness passes only on `healthy`.
+
+Diagnostics run the same adapter, model and configuration as the real workload
+(`lib/ai-provider-capability-test.ts` → `callProvider`), inside
+`runAsDiagnostic()` so their observations never impose cooldowns on real work.
+
 OCR is separate from normal AI routing.
 
 ## Frozen / Quarantined PRs
@@ -80,10 +178,14 @@ AI Analyze must extract and display **all available client details** from the te
 **Rules:**
 
 - Do **not** fill missing client fields with placeholders such as "Bid-Team to confirm", "unknown", "not specified", or "N/A" as if they are valid.
-- If a field is missing from the tender source, mark it `MISSING_SOURCE` and require manual confirmation.
+- If a field is missing from the tender source, it is **not required** (owner policy, 2026-09-24:
+  "if particular things are not found in the tender details, that means they are not necessary …
+  the App must act accordingly and use the information available and generate proposals").
+  Mark it not stated (`NOT_STATED_IN_SOURCE`) as an advisory and build the proposal without it.
+  `ABSENT_TENDER_FACT_IS_NOT_REQUIRED` in `lib/engine/tender-fact-authority.ts` is the code authority.
 - If multiple client names appear, distinguish: procuring entity, project owner, funder/donor, implementing agency, and consultant/client contact.
 - If the extracted client name is polluted by unrelated tender portal text, navigation text, old tender alerts, or unrelated tenders, flag it as **contaminated** and block final generation until corrected.
-- Client/procuring entity, submission method, submission endpoint/email/address, and deadline are **critical fields** and must block final generation/export when missing or invalid.
+- Client/procuring entity, submission method, submission endpoint/email/address, and deadline are **critical fields**: a value that is **present but invalid** (placeholder, scaffolding, contamination, ungrounded or mismatched) blocks final generation/export. A value that is **absent** from the tender does not block. The one exception is the delivery endpoint a *stated* method depends on — an email method with no email address, a hand-delivery method with no address, a portal method with no grounded endpoint — because without it the package cannot be delivered.
 
 ---
 
@@ -201,7 +303,7 @@ Every extracted requirement, client detail, submission rule, evaluation criterio
 3. The app extracts client/procuring entity name correctly.
 4. The app extracts all available client contact/submission details with source page/quote.
 5. The app blocks generation when important tender pages are weak or missing.
-6. The app blocks generation when client/procuring details are missing or contaminated.
+6. The app blocks generation when client/procuring details are contaminated or invalid (not when the tender simply does not state them).
 7. The app does not use placeholders as valid metadata.
 8. The app does not build an empty submission plan when requirements exist.
 9. The app does not generate documents before extraction, requirements, client details, and submission plan are usable.

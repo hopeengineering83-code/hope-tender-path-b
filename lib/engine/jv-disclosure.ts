@@ -25,6 +25,8 @@
  * Returns null when consortiaRules is null/empty (tender has no JV clause).
  */
 
+import { possessive } from "./possessive";
+
 const JV_MARKER = "<!-- jv-disclosure:table -->";
 
 const JV_HEADING_RE = /#{1,4}\s+(?:JV|Joint[- ]Venture|Consortium|Consortia|Partnership)\s+(?:Disclosure|Declaration|Statement|Arrangement)/i;
@@ -73,7 +75,7 @@ function buildJvTable(opts: JvDisclosureOpts): string {
     rows.push("| Disclosure Item | Status / Confirmation |");
     rows.push("|---|---|");
     rows.push(`| **Submission type** | Single firm — ${escCell(opts.companyName)} submits as the sole bidder. No consortium or joint-venture arrangement applies to this bid. |`);
-    rows.push(`| **Sub-consultants** | Sub-consultants, if any, are engaged under ${escCell(opts.companyName)}'s sole responsibility and do not constitute a consortium for the purpose of this tender. |`);
+    rows.push(`| **Sub-consultants** | Sub-consultants, if any, are engaged under ${possessive(escCell(opts.companyName))} sole responsibility and do not constitute a consortium for the purpose of this tender. |`);
     rows.push(`| **Conflict of interest** | No consortium partner relationship exists that would create a conflict of interest with the client or other bidders. |`);
     rows.push(`| **Consortium eligibility** | Tender clause noted: _${escCell(opts.consortiaRules.slice(0, 500))}_ — not applicable to this single-firm submission. |`);
   }
@@ -89,8 +91,9 @@ function buildJvTable(opts: JvDisclosureOpts): string {
     framing,
     "",
     ...rows,
-    "",
-    "_If the teaming structure changes before submission, update this section and re-attach the consortium agreement._",
+    // No "_If the teaming structure changes before submission, update this
+    // section and re-attach the consortium agreement._": an instruction to the
+    // bidder, printed in the client's copy (2026-10-05).
     "",
   ].join("\n");
 }

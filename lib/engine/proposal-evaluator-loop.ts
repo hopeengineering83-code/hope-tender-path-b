@@ -1,4 +1,4 @@
-import { DOCUMENT_PLACEHOLDER_PATTERNS, AI_TRACE_PATTERNS } from "./detection-patterns";
+import { documentPlaceholderMatches, AI_TRACE_PATTERNS } from "./detection-patterns";
 import { buildProposalIntelligenceContract, type ProposalExportGate, type ProposalIntelligenceContractInput } from "./proposal-intelligence-contract";
 
 export type ProposalEvaluatorLoopIssue = {
@@ -119,7 +119,7 @@ export function evaluateProposalAgainstContract(input: {
   }
 
   // 1. Check for placeholders and AI traces using centralized patterns
-  const hasPlaceholders = DOCUMENT_PLACEHOLDER_PATTERNS.some(rx => rx.test(markdown));
+  const hasPlaceholders = documentPlaceholderMatches(markdown).length > 0;
   const hasAiTraces = AI_TRACE_PATTERNS.some(rx => rx.test(markdown));
   const placeholders = hasPlaceholders || hasAiTraces;
 

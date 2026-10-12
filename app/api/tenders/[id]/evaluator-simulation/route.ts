@@ -75,7 +75,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
 
   const proposalContext = generatedDocTextFromTender(tender);
   if (!proposalContext || proposalContext.trim().length < 500) {
-    return NextResponse.json({ error: "Proposal/package context is too short to simulate. Run AI Proposal or Generate Docs first to produce a substantive proposal/package.", code: "NO_PROPOSAL" }, { status: 400 });
+    return NextResponse.json({ error: "Proposal/package context is too short to simulate. Produce a substantive proposal/package first — run AI Proposal, or run AI Analyze and Run Engine so the full package is generated automatically.", code: "NO_PROPOSAL" }, { status: 400 });
   }
 
   const qualityScore = (() => {

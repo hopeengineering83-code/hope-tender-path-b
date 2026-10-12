@@ -1,13 +1,10 @@
 import { logger } from "../observability";
-/**
- * Multi-Perspective AI Matcher.
- * Scores experts/projects across twelve evaluator lenses. The route performs
- * the final 20-iteration best-available portfolio selection and persists the
- * selected rows into TenderExpertMatch / TenderProjectMatch.
- */
-
-import { generateWithFallback } from "../ai";
+import { generateWithFallback, runAsAdvisory } from "../ai";
 import { REMATCH_TIMEOUT_MS } from "../timeout-config";
+import { estimateInputTokens } from "../ai-preflight";
+import { resolveActiveModelProfile } from "../ai-model-profiles";
+import type { AiProviderName } from "../ai-provider-registry";
+import { CANONICAL_AI_PROVIDER_ORDER } from "../ai-provider-catalog.cjs";
 import {
   capabilityOverlapScore,
   classifyUniversalTender,
@@ -17,23 +14,169 @@ import {
   type UniversalTenderProfile,
 } from "./universal-tender-taxonomy";
 
+/** Hard upper bound for one provider request. */
+export const MAX_CANDIDATES_PER_MATCHER_BATCH = 20;
 
-async function withRematchTimeout<T>(promise: Promise<T>): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<T>((_, reject) => {
-        timer = setTimeout(
-          () => reject(new Error(`AI rematch timed out after ${Math.round(REMATCH_TIMEOUT_MS / 1000)}s — reduce candidate pool or retry`)),
-          REMATCH_TIMEOUT_MS,
-        );
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
+/**
+ * DIRECTIVE 15: Adaptive batch size by provider. Groq returned HTTP 413 with
+ * 20 candidates — the payload exceeded the provider's request size limit. This
+ * function returns a smaller batch size for providers known to have tighter
+ * TPM/context limits, and the default 20 for providers with generous limits.
+ *
+ * A 413 must trigger deterministic rebatching, not repeated identical calls.
+ */
+export function adaptiveBatchSize(provider: string | null | undefined, requirementLength: number, profileLength: number): number {
+  const max = MAX_CANDIDATES_PER_MATCHER_BATCH;
+  if (!provider) return max;
+  // Estimate total payload size: candidates × (requirement + profile) chars.
+  // If the estimate exceeds 100KB, reduce the batch size.
+  const estimatedPayloadChars = max * (requirementLength + profileLength);
+  if (estimatedPayloadChars > 200_000) return 5;   // Very large requirements → small batches
+  if (estimatedPayloadChars > 100_000) return 10;   // Large requirements → medium batches
+  // Provider-specific limits (Groq is known to 413 on large payloads)
+  if (provider === "groq") return Math.min(10, max);
+  return max;
 }
+
+/**
+ * The largest batch whose prompt every provider in the chain can accept.
+ *
+ * WHY THIS IS MEASURED RATHER THAN CONFIGURED
+ * -------------------------------------------
+ * assessBatches used to slice by MAX_CANDIDATES_PER_MATCHER_BATCH (20) and
+ * nothing else. Measured against the owner's real vault that produces:
+ *
+ *   PROJECT prompt  fixed 2,069 tok + 283 tok/candidate -> batch 20 = 8,416
+ *   EXPERT  prompt  fixed 2,567 tok + 481 tok/candidate -> batch 20 = 10,665
+ *
+ * and Groq's configured budget is 7,088 input tokens — its gpt-oss free tier
+ * allows 8,000 TPM, less the 512-token minimum useful response and the 5%
+ * margin lib/ai-preflight.ts reserves. So EVERY matcher batch was rejected by
+ * preflight before it was sent, on every tender, for a reason entirely inside
+ * this repository. The live log records it as
+ * "Prompt exceeds the configured provider throughput budget (7358 input
+ * tokens)" and "(9097 input tokens)".
+ *
+ * adaptiveBatchSize() above was written for exactly this and returns 10 for
+ * Groq, which measurement confirms fits. It has never been called: its only
+ * importer is lib/liveness.ts, which reports `adaptiveBatchSizeAvailable: true`
+ * — a probe asserting the function exists while the code path it was written
+ * for ignored it. Its 100KB/200KB thresholds could not have helped either;
+ * they never fire on a ~30KB payload.
+ *
+ * Sizing to the TIGHTEST budget in the chain, rather than to the first
+ * provider's, is the point of having a chain: a batch must never fail merely
+ * because provider N has a smaller window than provider 1. Providers with
+ * larger budgets are unaffected — they simply receive a smaller prompt.
+ *
+ * Nothing here reorders the chain, changes a model identifier, alters what a
+ * candidate contributes, or drops a candidate. The same candidates are
+ * assessed with the same fields; only how many share one request changes.
+ */
+export function batchSizeForBudget(opts: {
+  /** Tokens the prompt costs with zero candidates. */
+  fixedTokens: number;
+  /** Additional tokens one candidate costs. */
+  perCandidateTokens: number;
+  /** Smallest safe input budget across the configured chain. */
+  budgetTokens: number;
+  /** Upper bound, so a generous budget cannot produce an unbounded batch. */
+  maxBatch?: number;
+}): number {
+  const max = opts.maxBatch ?? MAX_CANDIDATES_PER_MATCHER_BATCH;
+  if (opts.perCandidateTokens <= 0) return max;
+  const room = opts.budgetTokens - opts.fixedTokens;
+  // A single candidate that cannot fit is still attempted alone: the chain's
+  // larger-budget providers may serve it, and refusing to try would drop the
+  // candidate from matching entirely.
+  if (room <= 0) return 1;
+  return Math.max(1, Math.min(max, Math.floor(room / opts.perCandidateTokens)));
+}
+
+/**
+ * Smallest safe input budget across the configured provider chain.
+ *
+ * Read from the same model profiles preflight uses, so the batch size tracks a
+ * model or TPM override instead of a constant written here.
+ */
+export function tightestChainInputBudget(env: NodeJS.ProcessEnv = process.env): number {
+  let tightest = Number.POSITIVE_INFINITY;
+  for (const provider of CANONICAL_AI_PROVIDER_ORDER as AiProviderName[]) {
+    let profile;
+    try {
+      profile = resolveActiveModelProfile(provider, "proposal", env);
+    } catch {
+      continue;
+    }
+    const ceiling = profile.freeTierTpmLimit ?? profile.contextTokens;
+    if (!Number.isFinite(ceiling) || ceiling <= 0) continue;
+    // Mirror lib/ai-preflight.ts: a useful response and a 5% margin must fit
+    // beside the input, or preflight rejects the request. Then keep operating
+    // headroom below that, so an estimation error does not become a rejection.
+    // The response reserve is NOT subtracted here any more. It scales with
+    // batch size, so it is charged per candidate inside largestFittingBatch;
+    // subtracting a flat 512 as well would reserve for the answer twice and
+    // still be wrong for every batch larger than three candidates.
+    const usable = Math.floor(
+      (ceiling - Math.max(128, Math.ceil(ceiling * 0.05))) * (1 - BATCH_HEADROOM_FRACTION),
+    );
+    if (usable > 0) tightest = Math.min(tightest, usable);
+  }
+  return Number.isFinite(tightest) ? tightest : DEFAULT_BATCH_INPUT_BUDGET_TOKENS;
+}
+
+/** Mirrors MIN_USEFUL_OUTPUT_TOKENS in lib/ai-preflight.ts. */
+const MIN_USEFUL_OUTPUT_TOKENS_FOR_BATCHING = 512;
+
+/**
+ * Output tokens one candidate's assessment costs in the response.
+ *
+ * The batch budget used to reserve a flat 512 output tokens however many
+ * candidates it sent. But the response carries one object PER candidate, and
+ * JSON_SHAPE requires each to hold candidateId, twelve perspective scores,
+ * strength, concern and recommendSelection. Serialised, that object measures
+ * 145 tokens compact and 161 pretty-printed, so a 13-candidate batch — exactly
+ * what the input-only sizing produced — needs about 1,900 output tokens against
+ * the 512 reserved.
+ *
+ * The provider is then asked for a response that cannot fit. Groq recorded the
+ * outcome in production as `openai/gpt-oss-120b returned empty content`: a
+ * reasoning model spends the short allowance on reasoning and emits nothing,
+ * which costs a full attempt and reads like a provider fault rather than a
+ * budget we set ourselves.
+ *
+ * 176 is the pretty-printed measurement plus ~10% slack, because a model may
+ * indent more generously than JSON.stringify does.
+ */
+const RESPONSE_TOKENS_PER_CANDIDATE = 176;
+
+/** Fixed response overhead beyond the per-candidate objects (brackets, commas). */
+const RESPONSE_ENVELOPE_TOKENS = 16;
+
+/**
+ * Operating headroom below the provider's hard budget.
+ *
+ * Filling the budget exactly is not the objective — surviving it is. Token
+ * estimation here is the same 4-chars-per-token heuristic preflight uses, which
+ * under-counts dense text (tables, IDs, non-Latin script: this vault's project
+ * records carry Amharic archive codes), and a provider's own tokenizer is the
+ * one that decides. Fitting to the last token turns a small estimation error
+ * into a rejected request.
+ *
+ * Measured without it, the worst project batch landed 4 tokens under a 7,270
+ * budget. At 12% the same batches carry roughly 850 tokens of slack.
+ */
+const BATCH_HEADROOM_FRACTION = 0.12;
+/** Used only when no provider profile resolves at all. */
+const DEFAULT_BATCH_INPUT_BUDGET_TOKENS = 7_000;
+const MAX_REQUIREMENT_CHARS = 8_000;
+const MAX_METHODOLOGY_CHARS = 2_000;
+const MAX_PROFILE_CHARS = 800;
+// BLOCKER 11: Reduced from 3 to 1. Running multiple complete provider chains
+// inside one worker request can consume the whole serverless invocation.
+// One pass per batch — if it fails, the durable retry state machine re-arms
+// the job for the next invocation instead of looping inline.
+const MAX_FALLBACK_PASSES = 1;
 
 export type MatchPerspective =
   | "DISCIPLINE_FIT"
@@ -79,97 +222,6 @@ export const PERSPECTIVE_KEYS: MatchPerspective[] = [
   "COMMERCIAL_VALUE",
 ];
 
-const PERSPECTIVE_SPEC = `PERSPECTIVES (0-10 each):
-1. DISCIPLINE_FIT — exact professional/service discipline match to the tender's technical scope.
-2. SCOPE_COVERAGE — breadth of tender scope covered, not one keyword.
-3. SENIORITY_OR_SCALE — responsibility level, complexity, value/scale, leadership weight.
-4. SECTOR_FIT — same sector or strongly adjacent sector; unrelated sectors score low.
-5. ROLE_RECENCY — similar role/reference delivered recently; vague/old claims score lower.
-6. EVIDENCE_QUALITY — specificity and verifiability of evidence; named projects, client, value, dates, credentials.
-7. COMPLIANCE_CRITICALITY — ability to satisfy mandatory personnel/reference/eligibility clauses.
-8. PORTFOLIO_CONTRIBUTION — contribution to the whole selected set; fills a missing capability or sector gap.
-9. MANDATORY_ELIGIBILITY — likelihood this candidate passes strict tender eligibility wording without manual rescue.
-10. DELIVERY_RISK — delivery risk if selected; low risk scores high, high ambiguity/availability/fit risk scores low.
-11. DIFFERENTIATION — whether this candidate improves win strategy beyond minimum compliance.
-12. COMMERCIAL_VALUE — value-for-bid perspective: appropriate scale, cost/value credibility, and no obvious commercial mismatch.`;
-
-const JSON_SHAPE = `OUTPUT STRICT JSON ARRAY ONLY:
-[
-  {
-    "candidateId": "<exact id>",
-    "perspectives": {
-      "DISCIPLINE_FIT": 0-10,
-      "SCOPE_COVERAGE": 0-10,
-      "SENIORITY_OR_SCALE": 0-10,
-      "SECTOR_FIT": 0-10,
-      "ROLE_RECENCY": 0-10,
-      "EVIDENCE_QUALITY": 0-10,
-      "COMPLIANCE_CRITICALITY": 0-10,
-      "PORTFOLIO_CONTRIBUTION": 0-10,
-      "MANDATORY_ELIGIBILITY": 0-10,
-      "DELIVERY_RISK": 0-10,
-      "DIFFERENTIATION": 0-10,
-      "COMMERCIAL_VALUE": 0-10
-    },
-    "strength": "short evaluator-style reason to use this candidate",
-    "concern": "short evaluator-style weakness/evidence gap",
-    "recommendSelection": true | false
-  }
-]`;
-
-const UNIVERSAL_TENDER_RULES = `UNIVERSAL TENDER RULES:
-- This app is for multidisciplinary consulting tenders, not one sector only. It must work for EOI, RFP, RFQ, ITT, prequalification, technical proposals, financial proposals, and framework bids.
-- Treat design, interior design, engineering design, supervision, contract administration, geotechnical investigation, urban planning, asset management, feasibility, BOQ/costing, MEP, environmental/social, procurement advisory, and project management as first-class service capabilities.
-- Match across service capability first, tender form second, sector third, and keyword overlap last.
-- A project from a different sector can be relevant when the same service capability is strong, for example supervision/contract administration/geotechnical investigation/design/asset management. Do not reject good multidisciplinary evidence only because the sector is adjacent.
-- But do not select unsafe sector mismatches where both service capability and sector are weak.
-- Best-available below 90 can be selected only after unsafe sector mismatches and mandatory-ineligible records are excluded.`;
-
-const HARD_SECTOR_RULES = `HARD SECTOR SAFETY RULES:
-- For hospital / healthcare / clinic / medical tenders, projects that are only warehouse, logistics, freight, cargo, terminal, supply-chain, or industrial storage experience are NOT comparable references unless the record explicitly says hospital/healthcare/clinical/medical/biomedical/pharmacy/laboratory scope.
-- A warehouse/logistics-only record for a hospital tender must receive SECTOR_FIT <= 2, DISCIPLINE_FIT <= 4, SCOPE_COVERAGE <= 4, MANDATORY_ELIGIBILITY <= 4, DELIVERY_RISK <= 3, and recommendSelection=false.
-- Similar wording applies to other sectors: sector mismatch must be treated as a real evaluator risk, not a keyword match.`;
-
-const EXPERT_MATCHER_SYSTEM_PROMPT = `You are a senior bid director, technical evaluator, and red-team reviewer. You select expert teams for competitive tenders and think like a real evaluation panel, not a keyword search engine.
-
-Score EVERY candidate from TWELVE perspectives using only evidence in the candidate record. Do not invent project roles, certificates, healthcare experience, dates, availability, or responsibilities.
-
-${PERSPECTIVE_SPEC}
-
-${UNIVERSAL_TENDER_RULES}
-
-${HARD_SECTOR_RULES}
-
-${JSON_SHAPE}
-
-Rules:
-- Think multi-dimensionally: technical fit, eligibility, evidence, delivery risk, strategy, and portfolio complement must all influence the score.
-- A weak but best-available candidate can still be useful; do not force 90% scores.
-- If information is missing, score the affected perspective 5 and prefix the concern with INSUFFICIENT_INFO.
-- DELIVERY_RISK is reverse-risk: 10 means low risk, 0 means unacceptable risk.
-- recommendSelection means "would consider for the best-available team", not "perfect match".
-- Output valid JSON only; no markdown fences.`;
-
-const PROJECT_MATCHER_SYSTEM_PROMPT = `You are a senior bid director, technical evaluator, and red-team reviewer. You select comparable project references for competitive tenders and think like a real evaluation panel, not a keyword search engine.
-
-Score EVERY project from TWELVE perspectives using only evidence in the project record. Do not invent clients, healthcare scopes, values, completion dates, certificates, or technical content.
-
-${PERSPECTIVE_SPEC}
-
-${UNIVERSAL_TENDER_RULES}
-
-${HARD_SECTOR_RULES}
-
-${JSON_SHAPE}
-
-Rules:
-- Think multi-dimensionally: technical fit, eligibility, evidence, scale, delivery risk, strategy, and portfolio complement must all influence the score.
-- A weak but best-available reference can still be selected when no perfect reference exists, but unsafe sector mismatches must not be selected.
-- If information is missing, score the affected perspective 5 and prefix the concern with INSUFFICIENT_INFO.
-- DELIVERY_RISK is reverse-risk: 10 means low risk, 0 means unacceptable risk.
-- recommendSelection means "would consider for the best-available reference set", not "perfect match".
-- Output valid JSON only; no markdown fences.`;
-
 export interface ExpertCandidateInput {
   id: string;
   fullName: string;
@@ -197,117 +249,6 @@ export interface ProjectCandidateInput {
   trustLevel?: string | null;
 }
 
-function tenderProfile(opts: { tenderTitle: string; tenderRequirementsText: string; tenderCategory?: string | null }): UniversalTenderProfile {
-  return classifyUniversalTender([opts.tenderTitle, opts.tenderCategory ?? "", opts.tenderRequirementsText].join("\n"));
-}
-
-function expertText(candidate: ExpertCandidateInput): string {
-  return [candidate.fullName, candidate.title, candidate.disciplines.join(" "), candidate.sectors.join(" "), candidate.certifications.join(" "), candidate.profile].filter(Boolean).join(" ");
-}
-
-function projectText(candidate: ProjectCandidateInput): string {
-  return [candidate.name, candidate.clientName, candidate.country, candidate.sector, candidate.serviceAreas.join(" "), candidate.summary].filter(Boolean).join(" ");
-}
-
-function buildExpertUserPrompt(opts: { tenderTitle: string; tenderRequirementsText: string; evaluationMethodology: string; candidates: ExpertCandidateInput[] }): string {
-  const tProfile = tenderProfile(opts);
-  const candidateLines = opts.candidates.map((e) => {
-    const profile = classifyUniversalTender(expertText(e));
-    return [
-      `id: ${e.id}`,
-      `name: ${e.fullName}${e.title ? ` (${e.title})` : ""}`,
-      `years_experience: ${e.yearsExperience ?? "unknown"}`,
-      `disciplines: ${e.disciplines.length ? e.disciplines.join(", ") : "<not specified>"}`,
-      `sectors: ${e.sectors.length ? e.sectors.join(", ") : "<not specified>"}`,
-      `certifications: ${e.certifications.length ? e.certifications.join(", ") : "<none>"}`,
-      `universal_candidate_profile: ${universalProfileSummary(profile)}`,
-      `profile: ${(e.profile ?? "").replace(/\s+/g, " ").slice(0, 800)}`,
-      `trustLevel: ${e.trustLevel ?? "unknown"}`,
-    ].join("\n");
-  }).join("\n---\n");
-
-  return `## TENDER\nTITLE: ${opts.tenderTitle}\nUNIVERSAL_TENDER_PROFILE: ${universalProfileSummary(tProfile)}\n\n## TENDER REQUIREMENTS\n${opts.tenderRequirementsText.slice(0, 8_000)}\n\n## EVALUATION METHODOLOGY\n${opts.evaluationMethodology.slice(0, 4_000) || "(not provided — score against requirements)"}\n\n## CANDIDATE EXPERTS (${opts.candidates.length})\n${candidateLines}\n\nReturn one JSON object per candidate, scoring all twelve perspectives.`;
-}
-
-function buildProjectUserPrompt(opts: { tenderTitle: string; tenderRequirementsText: string; tenderCategory?: string | null; candidates: ProjectCandidateInput[] }): string {
-  const tProfile = tenderProfile(opts);
-  const candidateLines = opts.candidates.map((p) => {
-    const profile = classifyUniversalTender(projectText(p));
-    return [
-      `id: ${p.id}`,
-      `name: ${p.name}`,
-      `client: ${p.clientName ?? "<unknown>"}`,
-      `country: ${p.country ?? "<unknown>"}`,
-      `sector: ${p.sector ?? "<unknown>"}`,
-      `service_areas: ${p.serviceAreas.length ? p.serviceAreas.join(", ") : "<not specified>"}`,
-      `universal_candidate_profile: ${universalProfileSummary(profile)}`,
-      `contract_value: ${p.contractValue ? `${p.currency || "USD"} ${p.contractValue.toLocaleString()}` : "<unknown value>"}`,
-      `period: ${p.startDate ? new Date(p.startDate).getFullYear() : "?"}-${p.endDate ? new Date(p.endDate).getFullYear() : "ongoing"}`,
-      `summary: ${(p.summary ?? "").replace(/\s+/g, " ").slice(0, 800)}`,
-      `trustLevel: ${p.trustLevel ?? "unknown"}`,
-    ].join("\n");
-  }).join("\n---\n");
-
-  return `## TENDER\nTITLE: ${opts.tenderTitle}\nSECTOR: ${opts.tenderCategory ?? "<not specified>"}\nUNIVERSAL_TENDER_PROFILE: ${universalProfileSummary(tProfile)}\n\n## TENDER REQUIREMENTS\n${opts.tenderRequirementsText.slice(0, 8_000)}\n\n## CANDIDATE PROJECTS (${opts.candidates.length})\n${candidateLines}\n\nReturn one JSON object per candidate, scoring all twelve perspectives.`;
-}
-
-function parseAssessmentArray(raw: string): Array<Record<string, unknown>> | null {
-  if (!raw || typeof raw !== "string") return null;
-  const cleaned = raw.replace(/^[\s\S]*?```(?:json)?\s*/i, (m) => m.includes("```") ? "" : m).replace(/```[\s\S]*$/i, "").trim();
-  try {
-    const parsed = JSON.parse(cleaned);
-    if (Array.isArray(parsed)) return parsed as Array<Record<string, unknown>>;
-    if (parsed && typeof parsed === "object") {
-      for (const key of ["candidates", "assessments", "data", "results", "items", "scores"]) {
-        const inner = (parsed as Record<string, unknown>)[key];
-        if (Array.isArray(inner)) return inner as Array<Record<string, unknown>>;
-      }
-    }
-  } catch { /* continue */ }
-
-  const findBalancedArrays = (s: string): string[] => {
-    const out: string[] = [];
-    let depth = 0;
-    let start = -1;
-    for (let i = 0; i < s.length; i += 1) {
-      const ch = s[i];
-      if (ch === "[") { if (depth === 0) start = i; depth += 1; }
-      else if (ch === "]") { depth -= 1; if (depth === 0 && start >= 0) { out.push(s.slice(start, i + 1)); start = -1; } }
-    }
-    return out;
-  };
-  const candidates = findBalancedArrays(cleaned).sort((a, b) => b.length - a.length);
-  for (const c of candidates) {
-    try {
-      const parsed = JSON.parse(c);
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed as Array<Record<string, unknown>>;
-    } catch { /* continue */ }
-  }
-  for (const c of candidates) {
-    try {
-      const parsed = JSON.parse(c.replace(/,(\s*])/g, "$1").replace(/,(\s*})/g, "$1"));
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed as Array<Record<string, unknown>>;
-    } catch { /* continue */ }
-  }
-  const firstBracket = cleaned.indexOf("[");
-  if (firstBracket >= 0) {
-    const tail = cleaned.slice(firstBracket);
-    const lastObjEnd = tail.lastIndexOf("}");
-    if (lastObjEnd > 0) {
-      const truncated = tail.slice(0, lastObjEnd + 1).replace(/,\s*$/, "") + "]";
-      try {
-        const parsed = JSON.parse(truncated);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed as Array<Record<string, unknown>>;
-      } catch { /* fall through */ }
-      try {
-        const parsed = JSON.parse(truncated.replace(/,(\s*])/g, "$1").replace(/,(\s*})/g, "$1"));
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed as Array<Record<string, unknown>>;
-      } catch { /* fall through */ }
-    }
-  }
-  return null;
-}
-
 const PERSPECTIVE_WEIGHTS: Record<MatchPerspective, number> = {
   DISCIPLINE_FIT: 0.16,
   SCOPE_COVERAGE: 0.13,
@@ -323,114 +264,221 @@ const PERSPECTIVE_WEIGHTS: Record<MatchPerspective, number> = {
   COMMERCIAL_VALUE: 0.02,
 };
 
-function clampScore(value: unknown): number {
-  const n = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(n) ? Math.max(0, Math.min(10, n)) : 5;
+const PERSPECTIVE_SPEC = `Score each candidate 0-10 for: DISCIPLINE_FIT, SCOPE_COVERAGE, SENIORITY_OR_SCALE, SECTOR_FIT, ROLE_RECENCY, EVIDENCE_QUALITY, COMPLIANCE_CRITICALITY, PORTFOLIO_CONTRIBUTION, MANDATORY_ELIGIBILITY, DELIVERY_RISK (10 means low risk), DIFFERENTIATION, and COMMERCIAL_VALUE.`;
+
+const JSON_SHAPE = `Return JSON array only. Each object must contain candidateId, perspectives with all twelve keys, strength, concern, and recommendSelection.`;
+
+const SYSTEM_PROMPT = `You are a senior multidisciplinary tender evaluator. Use only supplied evidence. Never invent roles, clients, sectors, values, dates, certificates, or experience. Missing evidence scores 5 or lower and must be noted as INSUFFICIENT_INFO. Unsafe sector mismatches and mandatory-ineligible records must not be recommended. ${PERSPECTIVE_SPEC} ${JSON_SHAPE}`;
+
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
 
-function legacyPerspectiveValue(p: Record<string, unknown>, key: MatchPerspective): unknown {
-  if (key === "ROLE_RECENCY") return p.ROLE_RECENCY ?? p.RECENCY_OR_ROLE;
-  if (key === "MANDATORY_ELIGIBILITY") return p.MANDATORY_ELIGIBILITY ?? p.COMPLIANCE_CRITICALITY;
-  if (key === "DELIVERY_RISK") return p.DELIVERY_RISK ?? p.EVIDENCE_QUALITY;
-  if (key === "DIFFERENTIATION") return p.DIFFERENTIATION ?? p.PORTFOLIO_CONTRIBUTION;
-  if (key === "COMMERCIAL_VALUE") return p.COMMERCIAL_VALUE ?? p.SENIORITY_OR_SCALE;
-  return p[key];
+async function withRematchTimeout<T>(promise: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`AI rematch timed out after ${Math.round(REMATCH_TIMEOUT_MS / 1000)}s`)),
+          REMATCH_TIMEOUT_MS,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
+ * generateWithFallback has a per-request attempt budget. A second bounded pass
+ * is required when that budget is consumed: providers attempted in pass one
+ * enter cooldown, so the next pass advances to remaining configured providers.
+ */
+async function generateMatcherWithExpandedFallback(prompt: string): Promise<string> {
+  const errors: string[] = [];
+  for (let pass = 1; pass <= MAX_FALLBACK_PASSES; pass += 1) {
+    try {
+      return await withRematchTimeout(generateWithFallback(prompt, { systemPrompt: SYSTEM_PROMPT }));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      errors.push(`pass ${pass}: ${message}`);
+      const retryable = /ATTEMPT_BUDGET_EXHAUSTED|rate limit|429|413|timeout|timed out|fetch failed|network|cooldown/i.test(message);
+      if (!retryable || pass === MAX_FALLBACK_PASSES) break;
+      await sleep(250 * pass);
+    }
+  }
+  throw new Error(`MATCHER_PROVIDER_FALLBACK_EXHAUSTED: ${errors.join(" | ").slice(0, 1_500)}`);
+}
+
+function tenderProfile(title: string, requirements: string, category?: string | null): UniversalTenderProfile {
+  return classifyUniversalTender([title, category ?? "", requirements].join("\n"));
+}
+
+function expertText(candidate: ExpertCandidateInput): string {
+  return [
+    candidate.fullName,
+    candidate.title,
+    candidate.disciplines.join(" "),
+    candidate.sectors.join(" "),
+    candidate.certifications.join(" "),
+    candidate.profile,
+  ].filter(Boolean).join(" ");
+}
+
+function projectText(candidate: ProjectCandidateInput): string {
+  return [
+    candidate.name,
+    candidate.clientName,
+    candidate.country,
+    candidate.sector,
+    candidate.serviceAreas.join(" "),
+    candidate.summary,
+  ].filter(Boolean).join(" ");
+}
+
+export function buildExpertUserPrompt(opts: {
+  tenderTitle: string;
+  tenderRequirementsText: string;
+  evaluationMethodology: string;
+  candidates: ExpertCandidateInput[];
+}): string {
+  const required = tenderProfile(opts.tenderTitle, opts.tenderRequirementsText);
+  const candidates = opts.candidates.map((candidate) => {
+    const profile = classifyUniversalTender(expertText(candidate));
+    return [
+      `id=${candidate.id}`,
+      `name=${candidate.fullName}`,
+      `title=${candidate.title ?? "unknown"}`,
+      `years=${candidate.yearsExperience ?? "unknown"}`,
+      `disciplines=${candidate.disciplines.join(", ") || "unknown"}`,
+      `sectors=${candidate.sectors.join(", ") || "unknown"}`,
+      `certifications=${candidate.certifications.join(", ") || "none"}`,
+      `universalProfile=${universalProfileSummary(profile)}`,
+      `profile=${(candidate.profile ?? "").replace(/\s+/g, " ").slice(0, 800)}`,
+      `trust=${candidate.trustLevel ?? "unknown"}`,
+    ].join("\n");
+  }).join("\n---\n");
+
+  return `TENDER=${opts.tenderTitle}\nUNIVERSAL_PROFILE=${universalProfileSummary(required)}\nREQUIREMENTS:\n${opts.tenderRequirementsText.slice(0, 8_000)}\nMETHODOLOGY:\n${opts.evaluationMethodology.slice(0, MAX_METHODOLOGY_CHARS) || "not provided"}\nEXPERTS (${opts.candidates.length}):\n${candidates}`;
+}
+
+export function buildProjectUserPrompt(opts: {
+  tenderTitle: string;
+  tenderRequirementsText: string;
+  tenderCategory?: string | null;
+  candidates: ProjectCandidateInput[];
+}): string {
+  const required = tenderProfile(opts.tenderTitle, opts.tenderRequirementsText, opts.tenderCategory);
+  const candidates = opts.candidates.map((candidate) => {
+    const profile = classifyUniversalTender(projectText(candidate));
+    const value = candidate.contractValue == null
+      ? "unknown"
+      : `${candidate.currency?.trim() || "currency unresolved"} ${candidate.contractValue}`;
+    return [
+      `id=${candidate.id}`,
+      `name=${candidate.name}`,
+      `client=${candidate.clientName ?? "unknown"}`,
+      `country=${candidate.country ?? "unknown"}`,
+      `sector=${candidate.sector ?? "unknown"}`,
+      `services=${candidate.serviceAreas.join(", ") || "unknown"}`,
+      `universalProfile=${universalProfileSummary(profile)}`,
+      `value=${value}`,
+      `period=${candidate.startDate ? new Date(candidate.startDate).getFullYear() : "?"}-${candidate.endDate ? new Date(candidate.endDate).getFullYear() : "ongoing"}`,
+      `summary=${(candidate.summary ?? "").replace(/\s+/g, " ").slice(0, 800)}`,
+      `trust=${candidate.trustLevel ?? "unknown"}`,
+    ].join("\n");
+  }).join("\n---\n");
+
+  return `TENDER=${opts.tenderTitle}\nCATEGORY=${opts.tenderCategory ?? "unknown"}\nUNIVERSAL_PROFILE=${universalProfileSummary(required)}\nREQUIREMENTS:\n${opts.tenderRequirementsText.slice(0, 8_000)}\nPROJECTS (${opts.candidates.length}):\n${candidates}`;
+}
+
+function balancedArrays(value: string): string[] {
+  const out: string[] = [];
+  let start = -1;
+  let depth = 0;
+  let quoted = false;
+  let escaped = false;
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    if (escaped) { escaped = false; continue; }
+    if (char === "\\") { escaped = true; continue; }
+    if (char === '"') { quoted = !quoted; continue; }
+    if (quoted) continue;
+    if (char === "[") { if (depth === 0) start = index; depth += 1; }
+    if (char === "]") {
+      depth -= 1;
+      if (depth === 0 && start >= 0) { out.push(value.slice(start, index + 1)); start = -1; }
+    }
+  }
+  return out;
+}
+
+function parseAssessmentArray(raw: string): Array<Record<string, unknown>> | null {
+  const cleaned = raw.replace(/```(?:json)?/gi, "").replace(/```/g, "").trim();
+  const candidates = [cleaned, ...balancedArrays(cleaned).sort((left, right) => right.length - left.length)];
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (Array.isArray(parsed)) return parsed as Array<Record<string, unknown>>;
+      if (parsed && typeof parsed === "object") {
+        for (const key of ["assessments", "results", "candidates", "items", "data"]) {
+          const nested = (parsed as Record<string, unknown>)[key];
+          if (Array.isArray(nested)) return nested as Array<Record<string, unknown>>;
+        }
+      }
+    } catch {
+      // Try next balanced candidate.
+    }
+  }
+  return null;
+}
+
+function clampScore(value: unknown): number {
+  const score = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(score) ? Math.max(0, Math.min(10, score)) : 5;
+}
+
+function legacyPerspectiveValue(values: Record<string, unknown>, key: MatchPerspective): unknown {
+  if (key === "ROLE_RECENCY") return values.ROLE_RECENCY ?? values.RECENCY_OR_ROLE;
+  if (key === "MANDATORY_ELIGIBILITY") return values.MANDATORY_ELIGIBILITY ?? values.COMPLIANCE_CRITICALITY;
+  if (key === "DELIVERY_RISK") return values.DELIVERY_RISK ?? values.EVIDENCE_QUALITY;
+  if (key === "DIFFERENTIATION") return values.DIFFERENTIATION ?? values.PORTFOLIO_CONTRIBUTION;
+  if (key === "COMMERCIAL_VALUE") return values.COMMERCIAL_VALUE ?? values.SENIORITY_OR_SCALE;
+  return values[key];
 }
 
 function computeOverallScore(perspectives: Record<MatchPerspective, number>): number {
-  const weighted = PERSPECTIVE_KEYS.reduce((sum, key) => sum + perspectives[key] * PERSPECTIVE_WEIGHTS[key], 0);
-  const criticalFloor = Math.min(perspectives.DISCIPLINE_FIT, perspectives.SCOPE_COVERAGE, perspectives.EVIDENCE_QUALITY, perspectives.COMPLIANCE_CRITICALITY, perspectives.MANDATORY_ELIGIBILITY);
-  const riskPenalty = criticalFloor < 4 ? 0.07 : criticalFloor < 5 ? 0.035 : 0;
-  return Math.max(0, Math.min(1, weighted / 10 - riskPenalty));
-}
-
-const HEALTHCARE_RE = /\b(health|healthcare|hospital|medical|clinic|clinical|opd|ward|surgical|radiology|pharmacy|laboratory|biomedical|patient|maternity|emergency|icu|infection|ipc)\b/i;
-const LOGISTICS_RE = /\b(warehouse|logistics|freight|cargo|terminal|supply\s*chain|storage|depot|distribution\s+center|distribution\s+centre)\b/i;
-
-function isHospitalTender(opts: { tenderTitle: string; tenderRequirementsText: string; tenderCategory?: string | null }): boolean {
-  return HEALTHCARE_RE.test([opts.tenderTitle, opts.tenderRequirementsText, opts.tenderCategory ?? ""].join(" "));
-}
-
-function applyUniversalSafety(
-  requiredProfile: UniversalTenderProfile,
-  candidateProfile: UniversalTenderProfile,
-  assessment: CandidateAssessment,
-  reason: string,
-): CandidateAssessment {
-  if (!isUnsafeSectorMismatch(requiredProfile, candidateProfile)) return assessment;
-  const perspectives: Record<MatchPerspective, number> = {
-    ...assessment.perspectives,
-    DISCIPLINE_FIT: Math.min(assessment.perspectives.DISCIPLINE_FIT, 4),
-    SCOPE_COVERAGE: Math.min(assessment.perspectives.SCOPE_COVERAGE, 4),
-    SECTOR_FIT: Math.min(assessment.perspectives.SECTOR_FIT, 2),
-    COMPLIANCE_CRITICALITY: Math.min(assessment.perspectives.COMPLIANCE_CRITICALITY, 4),
-    MANDATORY_ELIGIBILITY: Math.min(assessment.perspectives.MANDATORY_ELIGIBILITY, 4),
-    DELIVERY_RISK: Math.min(assessment.perspectives.DELIVERY_RISK, 3),
-    PORTFOLIO_CONTRIBUTION: Math.min(assessment.perspectives.PORTFOLIO_CONTRIBUTION, 3),
-  };
-  const concern = `UNSAFE_SECTOR_MISMATCH: ${reason}. Tender profile ${universalProfileSummary(requiredProfile)}; candidate profile ${universalProfileSummary(candidateProfile)}.`;
-  return { ...assessment, perspectives, overallScore: computeOverallScore(perspectives), recommendSelection: false, concern: assessment.concern ? `${concern} ${assessment.concern}`.slice(0, 360) : concern.slice(0, 360) };
-}
-
-function applyCapabilityCalibration(requiredProfile: UniversalTenderProfile, candidateProfile: UniversalTenderProfile, assessment: CandidateAssessment): CandidateAssessment {
-  const capabilityScore = capabilityOverlapScore(requiredProfile.serviceCapabilities, candidateProfile.serviceCapabilities);
-  const sectorScore = sectorOverlapScore(requiredProfile.sectorDomains, candidateProfile.sectorDomains);
-  let perspectives = assessment.perspectives;
-
-  if (capabilityScore >= 0.5) {
-    perspectives = {
-      ...perspectives,
-      DISCIPLINE_FIT: Math.max(perspectives.DISCIPLINE_FIT, Math.min(10, 6 + Math.round(capabilityScore * 4))),
-      SCOPE_COVERAGE: Math.max(perspectives.SCOPE_COVERAGE, Math.min(10, 6 + Math.round(capabilityScore * 4))),
-      SECTOR_FIT: sectorScore === 0 ? Math.min(perspectives.SECTOR_FIT, 6) : Math.max(perspectives.SECTOR_FIT, Math.min(10, 6 + Math.round(sectorScore * 4))),
-    };
-  } else if (requiredProfile.serviceCapabilities.length > 0) {
-    perspectives = {
-      ...perspectives,
-      DISCIPLINE_FIT: Math.min(perspectives.DISCIPLINE_FIT, 5),
-      SCOPE_COVERAGE: Math.min(perspectives.SCOPE_COVERAGE, 5),
-    };
-  }
-
-  const overallScore = computeOverallScore(perspectives);
-  const criticalFloor = Math.min(perspectives.DISCIPLINE_FIT, perspectives.SCOPE_COVERAGE, perspectives.EVIDENCE_QUALITY, perspectives.COMPLIANCE_CRITICALITY, perspectives.MANDATORY_ELIGIBILITY);
-  return {
-    ...assessment,
-    perspectives,
-    overallScore,
-    recommendSelection: assessment.recommendSelection || (overallScore >= 0.60 && criticalFloor >= 3 && capabilityScore >= 0.34),
-  };
-}
-
-function applyProjectSectorSafety(opts: { tenderTitle: string; tenderRequirementsText: string; tenderCategory?: string | null }, candidate: ProjectCandidateInput, assessment: CandidateAssessment): CandidateAssessment {
-  const requiredProfile = tenderProfile(opts);
-  const candidateProfile = classifyUniversalTender(projectText(candidate));
-  const candidateText = projectText(candidate);
-  const hospitalTender = isHospitalTender(opts);
-  const candidateHasHealthcare = HEALTHCARE_RE.test(candidateText);
-  const logisticsOnlyCandidate = LOGISTICS_RE.test(candidateText) && !candidateHasHealthcare;
-
-  const calibrated = applyCapabilityCalibration(requiredProfile, candidateProfile, assessment);
-  if (hospitalTender && logisticsOnlyCandidate) {
-    return applyUniversalSafety(requiredProfile, candidateProfile, calibrated, "hospital/healthcare tender but this project is warehouse/logistics-only with no explicit healthcare scope");
-  }
-  return applyUniversalSafety(requiredProfile, candidateProfile, calibrated, "sector and service capability overlap are both weak");
-}
-
-function applyExpertSafety(opts: { tenderTitle: string; tenderRequirementsText: string; tenderCategory?: string | null }, candidate: ExpertCandidateInput, assessment: CandidateAssessment): CandidateAssessment {
-  const requiredProfile = tenderProfile(opts);
-  const candidateProfile = classifyUniversalTender(expertText(candidate));
-  const calibrated = applyCapabilityCalibration(requiredProfile, candidateProfile, assessment);
-  return applyUniversalSafety(requiredProfile, candidateProfile, calibrated, "expert sector and service capability overlap are both weak");
+  const weighted = PERSPECTIVE_KEYS.reduce(
+    (total, key) => total + perspectives[key] * PERSPECTIVE_WEIGHTS[key],
+    0,
+  );
+  const criticalFloor = Math.min(
+    perspectives.DISCIPLINE_FIT,
+    perspectives.SCOPE_COVERAGE,
+    perspectives.EVIDENCE_QUALITY,
+    perspectives.COMPLIANCE_CRITICALITY,
+    perspectives.MANDATORY_ELIGIBILITY,
+  );
+  return Math.max(0, Math.min(1, weighted / 10 - (criticalFloor < 4 ? 0.07 : criticalFloor < 5 ? 0.035 : 0)));
 }
 
 function coerceAssessment(raw: Record<string, unknown>): CandidateAssessment | null {
   const candidateId = typeof raw.candidateId === "string" ? raw.candidateId : null;
   if (!candidateId) return null;
-  const p = (raw.perspectives ?? {}) as Record<string, unknown>;
-  const perspectives = Object.fromEntries(PERSPECTIVE_KEYS.map((key) => [key, clampScore(legacyPerspectiveValue(p, key))])) as Record<MatchPerspective, number>;
+  const values = (raw.perspectives ?? {}) as Record<string, unknown>;
+  const perspectives = Object.fromEntries(
+    PERSPECTIVE_KEYS.map((key) => [key, clampScore(legacyPerspectiveValue(values, key))]),
+  ) as Record<MatchPerspective, number>;
   const overallScore = computeOverallScore(perspectives);
-  const criticalFloor = Math.min(perspectives.DISCIPLINE_FIT, perspectives.SCOPE_COVERAGE, perspectives.EVIDENCE_QUALITY, perspectives.COMPLIANCE_CRITICALITY, perspectives.MANDATORY_ELIGIBILITY);
+  const criticalFloor = Math.min(
+    perspectives.DISCIPLINE_FIT,
+    perspectives.SCOPE_COVERAGE,
+    perspectives.EVIDENCE_QUALITY,
+    perspectives.COMPLIANCE_CRITICALITY,
+    perspectives.MANDATORY_ELIGIBILITY,
+  );
   return {
     candidateId,
     perspectives,
@@ -441,73 +489,321 @@ function coerceAssessment(raw: Record<string, unknown>): CandidateAssessment | n
   };
 }
 
-export async function aiRematchExperts(opts: { tenderTitle: string; tenderRequirementsText: string; evaluationMethodology: string; candidates: ExpertCandidateInput[] }): Promise<MatchAssessmentBatch | null> {
-  if (opts.candidates.length === 0) return null;
-  const t0 = Date.now();
-  let raw: string;
-  try {
-    raw = await withRematchTimeout(generateWithFallback(buildExpertUserPrompt(opts), { systemPrompt: EXPERT_MATCHER_SYSTEM_PROMPT }));
-  } catch (err) {
-    logger.warn(`[ai-multi-perspective-matcher] Expert rematch AI call failed: ${err instanceof Error ? err.message : String(err)}`);
-    return null;
+function calibrate(
+  required: UniversalTenderProfile,
+  candidate: UniversalTenderProfile,
+  assessment: CandidateAssessment,
+): CandidateAssessment {
+  const capability = capabilityOverlapScore(required.serviceCapabilities, candidate.serviceCapabilities);
+  const sector = sectorOverlapScore(required.sectorDomains, candidate.sectorDomains);
+  let perspectives = { ...assessment.perspectives };
+
+  if (capability >= 0.5) {
+    perspectives.DISCIPLINE_FIT = Math.max(perspectives.DISCIPLINE_FIT, Math.min(10, 6 + Math.round(capability * 4)));
+    perspectives.SCOPE_COVERAGE = Math.max(perspectives.SCOPE_COVERAGE, Math.min(10, 6 + Math.round(capability * 4)));
+    if (sector > 0) perspectives.SECTOR_FIT = Math.max(perspectives.SECTOR_FIT, Math.min(10, 6 + Math.round(sector * 4)));
+  } else if (required.serviceCapabilities.length > 0) {
+    perspectives.DISCIPLINE_FIT = Math.min(perspectives.DISCIPLINE_FIT, 5);
+    perspectives.SCOPE_COVERAGE = Math.min(perspectives.SCOPE_COVERAGE, 5);
   }
-  const parsed = parseAssessmentArray(raw);
-  if (!parsed) return null;
-  const byId = new Map(opts.candidates.map((candidate) => [candidate.id, candidate]));
-  const assessments = parsed
-    .map(coerceAssessment)
-    .filter((a): a is CandidateAssessment => a !== null)
-    .map((assessment) => {
-      const candidate = byId.get(assessment.candidateId);
-      return candidate ? applyExpertSafety({ ...opts, tenderCategory: null }, candidate, assessment) : assessment;
-    });
-  return { category: "EXPERT", assessments, durationMs: Date.now() - t0 };
+
+  let concern = assessment.concern;
+  let recommendSelection = assessment.recommendSelection;
+  if (isUnsafeSectorMismatch(required, candidate)) {
+    perspectives = {
+      ...perspectives,
+      DISCIPLINE_FIT: Math.min(perspectives.DISCIPLINE_FIT, 4),
+      SCOPE_COVERAGE: Math.min(perspectives.SCOPE_COVERAGE, 4),
+      SECTOR_FIT: Math.min(perspectives.SECTOR_FIT, 2),
+      COMPLIANCE_CRITICALITY: Math.min(perspectives.COMPLIANCE_CRITICALITY, 4),
+      MANDATORY_ELIGIBILITY: Math.min(perspectives.MANDATORY_ELIGIBILITY, 4),
+      DELIVERY_RISK: Math.min(perspectives.DELIVERY_RISK, 3),
+    };
+    concern = `UNSAFE_SECTOR_MISMATCH: ${concern || "candidate sector and service capability do not support this tender"}`.slice(0, 360);
+    recommendSelection = false;
+  }
+
+  const overallScore = computeOverallScore(perspectives);
+  return { ...assessment, perspectives, overallScore, concern, recommendSelection };
 }
 
-export async function aiRematchProjects(opts: { tenderTitle: string; tenderRequirementsText: string; tenderCategory?: string | null; candidates: ProjectCandidateInput[] }): Promise<MatchAssessmentBatch | null> {
-  if (opts.candidates.length === 0) return null;
-  const t0 = Date.now();
-  let raw: string;
-  try {
-    raw = await withRematchTimeout(generateWithFallback(buildProjectUserPrompt(opts), { systemPrompt: PROJECT_MATCHER_SYSTEM_PROMPT }));
-  } catch (err) {
-    logger.warn(`[ai-multi-perspective-matcher] Project rematch AI call failed: ${err instanceof Error ? err.message : String(err)}`);
-    return null;
+/**
+ * The longest prefix of `candidates` whose built prompt fits `budgetTokens`.
+ *
+ * Seeded from the caller's per-candidate estimate, then measured and shrunk,
+ * because candidates are not uniform: one project summary can cost several
+ * times another, and extrapolating from the first alone produced an
+ * 18-candidate batch measuring 7,747 tokens against a 7,270 budget.
+ *
+ * Always returns at least one candidate. A single candidate too large for the
+ * tightest provider is still attempted: the chain's larger-budget providers may
+ * serve it, and refusing would drop it from matching altogether.
+ */
+/** Output tokens a response covering `size` candidates needs. */
+export function expectedResponseTokens(size: number): number {
+  return RESPONSE_ENVELOPE_TOKENS + (RESPONSE_TOKENS_PER_CANDIDATE * Math.max(0, size));
+}
+
+export function largestFittingBatch<T>(
+  candidates: readonly T[],
+  buildPrompt: (batch: T[]) => string,
+  budgetTokens: number,
+  estimate: { fixedTokens: number; perCandidateTokens: number },
+): T[] {
+  if (candidates.length === 0) return [];
+  // The budget has to cover the answer as well as the question, and the answer
+  // grows with the batch: every extra candidate adds both prompt tokens and a
+  // response object. Charging both to each candidate keeps the seed honest, so
+  // the shrink loop below starts near the answer instead of walking down from a
+  // size that was never going to fit.
+  let size = batchSizeForBudget({
+    fixedTokens: estimate.fixedTokens + RESPONSE_ENVELOPE_TOKENS,
+    perCandidateTokens: estimate.perCandidateTokens + RESPONSE_TOKENS_PER_CANDIDATE,
+    budgetTokens,
+    maxBatch: Math.min(MAX_CANDIDATES_PER_MATCHER_BATCH, candidates.length),
+  });
+  // Candidates are not uniform, so the estimate only seeds the guess: the built
+  // prompt is measured and the batch shrunk until prompt AND response together
+  // fit the budget.
+  while (
+    size > 1
+    && estimateInputTokens(buildPrompt(candidates.slice(0, size) as T[])) + expectedResponseTokens(size) > budgetTokens
+  ) {
+    size -= 1;
   }
-  const parsed = parseAssessmentArray(raw);
-  if (!parsed) return null;
-  const byId = new Map(opts.candidates.map((candidate) => [candidate.id, candidate]));
-  const assessments = parsed
-    .map(coerceAssessment)
-    .filter((a): a is CandidateAssessment => a !== null)
-    .map((assessment) => {
-      const candidate = byId.get(assessment.candidateId);
-      return candidate ? applyProjectSectorSafety(opts, candidate, assessment) : assessment;
+  return candidates.slice(0, Math.max(1, size)) as T[];
+}
+
+/**
+ * Price a matcher batch against the budget the request will actually be judged
+ * against.
+ *
+ * Two things were wrong before. The system prompt travels with every matcher
+ * call and preflight counts it, but the sizing measured only the user prompt,
+ * so every batch was priced ~191 tokens light. And only one of the three batch
+ * drivers consulted a budget at all — aiRematchExperts and aiRematchProjects,
+ * the two that the engine actually calls, sliced by a fixed 20 regardless of
+ * what that produced. The live log recorded the result on the exact head:
+ * "PROJECT batch failed ... groq: Prompt exceeds the configured provider
+ * throughput budget (7358 input tokens)" and the same for EXPERT at 9,097,
+ * against a 6,397-token budget.
+ *
+ * That is not only a lost re-rank. Groq's ceiling is a per-minute throughput
+ * budget, so the oversized matcher calls that Groq refuses still leave the
+ * section writers — which run seconds later in the same minute — colliding with
+ * the same 8,000 TPM window, and they were answered 429 after the payload work
+ * had already made them small enough to send.
+ */
+function matcherBatchSizing<T>(
+  buildPrompt: (batch: T[]) => string,
+  candidates: readonly T[],
+): { budgetTokens: number; fixedTokens: number; perCandidateTokens: number } {
+  // Everything below is measured in USER-prompt tokens, and the system prompt
+  // is reserved out of the budget rather than added to each measurement. The
+  // batch builder and the shrink loop both see the user prompt only, so keeping
+  // one unit throughout is what makes the comparison mean what it says.
+  const systemTokens = estimateInputTokens(SYSTEM_PROMPT);
+  const budgetTokens = Math.max(1, tightestChainInputBudget() - systemTokens);
+  const fixedTokens = estimateInputTokens(buildPrompt([]));
+  const perCandidateTokens = Math.max(
+    1,
+    estimateInputTokens(buildPrompt(candidates.slice(0, 1) as T[])) - fixedTokens,
+  );
+  return { budgetTokens, fixedTokens, perCandidateTokens };
+}
+
+async function assessBatches<T>(
+  category: "EXPERT" | "PROJECT",
+  candidates: T[],
+  buildPrompt: (batch: T[]) => string,
+  calibrateCandidate: (candidate: T, assessment: CandidateAssessment) => CandidateAssessment,
+): Promise<MatchAssessmentBatch | null> {
+  if (candidates.length === 0) return null;
+  const startedAt = Date.now();
+  const assessments: CandidateAssessment[] = [];
+
+  // Size the batch from the prompt this category actually produces, against the
+  // tightest budget in the chain. Measured here rather than assumed: the same
+  // builder that will send the request is used to price a zero-candidate and a
+  // one-candidate prompt, so a change to any field a candidate contributes is
+  // reflected without touching this code.
+  const { budgetTokens, fixedTokens, perCandidateTokens } = matcherBatchSizing(buildPrompt, candidates);
+  logger.info(
+    `[ai-multi-perspective-matcher] ${category} batching: budget ${budgetTokens} tok, fixed ${fixedTokens} tok, `
+    + `~${perCandidateTokens} tok/candidate, ${candidates.length} candidate(s).`,
+  );
+
+  let batchCount = 0;
+  for (let index = 0; index < candidates.length; ) {
+    // Candidates are not uniform — one project summary can cost several times
+    // another — so the estimate only seeds the guess and the built prompt is
+    // then measured and shrunk until it genuinely fits. Extrapolating from the
+    // first candidate alone produced an 18-candidate project batch measuring
+    // 7,747 tokens against a 7,270 budget.
+    const batch = largestFittingBatch(candidates.slice(index), buildPrompt, budgetTokens, {
+      fixedTokens,
+      perCandidateTokens,
     });
-  return { category: "PROJECT", assessments, durationMs: Date.now() - t0 };
+    index += batch.length;
+    batchCount += 1;
+    try {
+      const raw = await generateMatcherWithExpandedFallback(buildPrompt(batch));
+      const parsed = parseAssessmentArray(raw);
+      if (!parsed) continue;
+      const byId = new Map(batch.map((candidate) => [(candidate as { id: string }).id, candidate]));
+      for (const item of parsed) {
+        const assessment = coerceAssessment(item);
+        if (!assessment) continue;
+        const candidate = byId.get(assessment.candidateId);
+        if (candidate) assessments.push(calibrateCandidate(candidate, assessment));
+      }
+    } catch (error) {
+      logger.warn(`[ai-multi-perspective-matcher] ${category} batch failed: ${error instanceof Error ? error.message : String(error)}`);
+      if (assessments.length > 0) break;
+      return null;
+    }
+  }
+
+  return assessments.length > 0
+    ? { category, assessments, durationMs: Date.now() - startedAt }
+    : null;
+}
+
+async function aiRematchExpertsImpl(opts: {
+  tenderTitle: string;
+  tenderRequirementsText: string;
+  evaluationMethodology: string;
+  candidates: ExpertCandidateInput[];
+}): Promise<MatchAssessmentBatch | null> {
+  const required = tenderProfile(opts.tenderTitle, opts.tenderRequirementsText);
+  if (opts.candidates.length === 0) return null;
+  const startedAt = Date.now();
+  const allAssessments: CandidateAssessment[] = [];
+
+  const buildExpertPrompt = (batch: ExpertCandidateInput[]) => buildExpertUserPrompt({ ...opts, candidates: batch });
+  const expertSizing = matcherBatchSizing(buildExpertPrompt, opts.candidates);
+
+  for (let i = 0; i < opts.candidates.length; ) {
+    const batch = largestFittingBatch(
+      opts.candidates.slice(i),
+      buildExpertPrompt,
+      expertSizing.budgetTokens,
+      { fixedTokens: expertSizing.fixedTokens, perCandidateTokens: expertSizing.perCandidateTokens },
+    );
+    i += batch.length;
+    try {
+      const raw = await generateWithFallback(buildExpertPrompt(batch), { systemPrompt: SYSTEM_PROMPT });
+      const parsed = parseAssessmentArray(raw);
+      if (!parsed) continue;
+      const byId = new Map(batch.map((c) => [c.id, c]));
+      for (const item of parsed) {
+        const assessment = coerceAssessment(item);
+        if (!assessment) continue;
+        const candidate = byId.get(assessment.candidateId);
+        if (candidate) allAssessments.push(calibrate(required, classifyUniversalTender(expertText(candidate)), assessment));
+      }
+    } catch (error) {
+      logger.warn(`[ai-multi-perspective-matcher] EXPERT batch failed: ${error instanceof Error ? error.message : String(error)}`);
+      if (allAssessments.length > 0) break;
+      return null;
+    }
+  }
+
+  return allAssessments.length > 0
+    ? { category: "EXPERT", assessments: allAssessments, durationMs: Date.now() - startedAt }
+    : null;
+}
+
+async function aiRematchProjectsImpl(opts: {
+  tenderTitle: string;
+  tenderRequirementsText: string;
+  tenderCategory?: string | null;
+  candidates: ProjectCandidateInput[];
+}): Promise<MatchAssessmentBatch | null> {
+  const required = tenderProfile(opts.tenderTitle, opts.tenderRequirementsText, opts.tenderCategory);
+  if (opts.candidates.length === 0) return null;
+  const startedAt = Date.now();
+  const allAssessments: CandidateAssessment[] = [];
+
+  const buildProjectPrompt = (batch: ProjectCandidateInput[]) => buildProjectUserPrompt({ ...opts, candidates: batch });
+  const projectSizing = matcherBatchSizing(buildProjectPrompt, opts.candidates);
+
+  for (let i = 0; i < opts.candidates.length; ) {
+    const batch = largestFittingBatch(
+      opts.candidates.slice(i),
+      buildProjectPrompt,
+      projectSizing.budgetTokens,
+      { fixedTokens: projectSizing.fixedTokens, perCandidateTokens: projectSizing.perCandidateTokens },
+    );
+    i += batch.length;
+    try {
+      const raw = await generateWithFallback(buildProjectPrompt(batch), { systemPrompt: SYSTEM_PROMPT });
+      const parsed = parseAssessmentArray(raw);
+      if (!parsed) continue;
+      const byId = new Map(batch.map((c) => [c.id, c]));
+      for (const item of parsed) {
+        const assessment = coerceAssessment(item);
+        if (!assessment) continue;
+        const candidate = byId.get(assessment.candidateId);
+        if (candidate) allAssessments.push(calibrate(required, classifyUniversalTender(projectText(candidate)), assessment));
+      }
+    } catch (error) {
+      logger.warn(`[ai-multi-perspective-matcher] PROJECT batch failed: ${error instanceof Error ? error.message : String(error)}`);
+      if (allAssessments.length > 0) break;
+      return null;
+    }
+  }
+
+  return allAssessments.length > 0
+    ? { category: "PROJECT", assessments: allAssessments, durationMs: Date.now() - startedAt }
+    : null;
 }
 
 export function formatAssessmentRationale(assessment: CandidateAssessment): string {
-  const pct = Math.round(assessment.overallScore * 100);
-  const p = assessment.perspectives;
+  const perspectives = assessment.perspectives;
   const breakdown = [
-    `Discipline ${p.DISCIPLINE_FIT}/10`,
-    `Scope ${p.SCOPE_COVERAGE}/10`,
-    `Scale ${p.SENIORITY_OR_SCALE}/10`,
-    `Sector ${p.SECTOR_FIT}/10`,
-    `Role/Recency ${p.ROLE_RECENCY}/10`,
-    `Evidence ${p.EVIDENCE_QUALITY}/10`,
-    `Compliance ${p.COMPLIANCE_CRITICALITY}/10`,
-    `Portfolio ${p.PORTFOLIO_CONTRIBUTION}/10`,
-    `Eligibility ${p.MANDATORY_ELIGIBILITY}/10`,
-    `Low-risk delivery ${p.DELIVERY_RISK}/10`,
-    `Differentiation ${p.DIFFERENTIATION}/10`,
-    `Commercial value ${p.COMMERCIAL_VALUE}/10`,
+    `Discipline ${perspectives.DISCIPLINE_FIT}/10`,
+    `Scope ${perspectives.SCOPE_COVERAGE}/10`,
+    `Scale ${perspectives.SENIORITY_OR_SCALE}/10`,
+    `Sector ${perspectives.SECTOR_FIT}/10`,
+    `Role/Recency ${perspectives.ROLE_RECENCY}/10`,
+    `Evidence ${perspectives.EVIDENCE_QUALITY}/10`,
+    `Compliance ${perspectives.COMPLIANCE_CRITICALITY}/10`,
+    `Portfolio ${perspectives.PORTFOLIO_CONTRIBUTION}/10`,
+    `Eligibility ${perspectives.MANDATORY_ELIGIBILITY}/10`,
+    `Low-risk delivery ${perspectives.DELIVERY_RISK}/10`,
+    `Differentiation ${perspectives.DIFFERENTIATION}/10`,
+    `Commercial value ${perspectives.COMMERCIAL_VALUE}/10`,
   ].join(", ");
-  const criticalFloor = Math.min(p.DISCIPLINE_FIT, p.SCOPE_COVERAGE, p.EVIDENCE_QUALITY, p.COMPLIANCE_CRITICALITY, p.MANDATORY_ELIGIBILITY);
-  const parts = [`[AI Multi-Perspective v5 Universal] Score ${pct}% — ${breakdown}. Critical-floor ${criticalFloor}/10.`];
-  if (assessment.strength) parts.push(`✓ ${assessment.strength}`);
-  if (assessment.concern) parts.push(`⚠ ${assessment.concern}`);
-  if (assessment.recommendSelection) parts.push("Selected by 20-iteration best-available portfolio pass with universal service-capability calibration and critical-floor risk control.");
+  const parts = [`[AI Multi-Perspective v6 Bounded] Score ${Math.round(assessment.overallScore * 100)}% — ${breakdown}.`];
+  if (assessment.strength) parts.push(`Strength: ${assessment.strength}`);
+  if (assessment.concern) parts.push(`Concern: ${assessment.concern}`);
+  if (assessment.recommendSelection) parts.push("Selected by bounded best-available portfolio evaluation.");
   return parts.join(" ");
+}
+
+// ─── Advisory entry points ───────────────────────────────────────────────────
+//
+// The wrapping lives HERE, not at the call sites, because chasing call sites is
+// how this was missed the first time: generate-elite.ts was wrapped while
+// main-engine-ai-rematch.ts (the run-tender-engine path) was not, and the
+// production log showed the unwrapped path still spending "attempt 1/3 ...
+// 2/3" of a rate-limited provider's per-minute budget while the wrapped path
+// made a single attempt. Both callers already treat a null result as normal —
+// "deterministic main-engine matching was kept", "Lexical order kept" — so the
+// advisory property belongs to these functions, not to whoever calls them.
+// A new caller now inherits it automatically.
+
+/** Optional expert re-rank. One attempt per provider; null is a normal result. */
+export async function aiRematchExperts(
+  opts: Parameters<typeof aiRematchExpertsImpl>[0],
+): Promise<MatchAssessmentBatch | null> {
+  return runAsAdvisory(() => aiRematchExpertsImpl(opts));
+}
+
+/** Optional project re-rank. One attempt per provider; null is a normal result. */
+export async function aiRematchProjects(
+  opts: Parameters<typeof aiRematchProjectsImpl>[0],
+): Promise<MatchAssessmentBatch | null> {
+  return runAsAdvisory(() => aiRematchProjectsImpl(opts));
 }

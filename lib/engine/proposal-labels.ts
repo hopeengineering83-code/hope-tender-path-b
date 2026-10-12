@@ -33,6 +33,16 @@ function normalizeLabel(value?: string | null): string {
     .replace(/\bto\s+be\s+confirmed\b/gi, " ")
     .replace(/\bplaceholder\b/gi, " ")
     .replace(/\s+/g, " ")
+    // Leading list and table-cell delimiters. A .docx whose title or
+    // procuring entity sits in a table cell extracts as "| Architectural
+    // Consultancy Services ...", and a bulleted or dashed list extracts as
+    // "- ..." or "\u2022 ...". The punctuation strip in cleanTenderTitle is
+    // anchored to the END of the string, so a leading marker survived into
+    // cleanedTenderTitle -- the client-facing title on every cover page,
+    // document header and cover-letter subject -- and into the "To:" line.
+    // Only markers are stripped: a title may legitimately begin with a digit,
+    // a parenthesis or a quote, and a dash INSIDE a name is not a marker.
+    .replace(/^[|\u2022\u00b7\u25aa\u25e6\u2023*\-\u2013\u2014\s]+/, "")
     .trim();
 }
 
@@ -60,6 +70,18 @@ export function extractLikelyClientName(...values: Array<string | null | undefin
   return null;
 }
 
+// The verb of the sentence an entity name was lifted from. 2026-09-30, a
+// telecom-tower EOI: intake stored "Safaricom Telecommunications Ethiopia PLC
+// is" from "… PLC is seeking expressions of interest", and every paragraph of
+// the proposal addressed "Safaricom Telecommunications Ethiopia PLC is'". An
+// organisation's name does not end in a lowercase clause word, so a trailing
+// run of them after a capitalised word is the sentence, not the name.
+const TRAILING_CLAUSE_WORDS = /(\b[A-Z0-9][^\s]*)(?:\s+(?:is|are|was|were|has|have|had|hereby|herein|now|invites?|intends?|seeks?|seeking|wishes|wants|requests?|requires?|announces?|would|will|shall|plans?|through|with|which|who|that))+$/;
+
+export function stripTrailingClauseWords(value: string): string {
+  return value.replace(TRAILING_CLAUSE_WORDS, "$1");
+}
+
 export function cleanClientName(value?: string | null, fallback?: string | null): string {
   const normalized = normalizeLabel(value);
   const fallbackName = normalizeLabel(fallback);
@@ -67,10 +89,13 @@ export function cleanClientName(value?: string | null, fallback?: string | null)
   if (!candidate) return "Client";
 
   const cleaned = candidate
+    .replace(/\b(?:procuring\s+entity\s*\/\s*client\s+name|legal\s+client\s+name|project\s+name)\s*:.*$/i, "")
     .replace(/\b(full name|relationship|headquarters|not specified in texts)\b.*$/i, "")
     .replace(/\s*\([^)]{0,80}$/g, "")
     .replace(/[.,;:\-–—\s]+$/g, "")
     .trim();
+  const unclaused = stripTrailingClauseWords(cleaned);
+  if (unclaused !== cleaned) return cleanClientName(unclaused);
 
   if (!cleaned || cleaned.length > 90 || isSuspiciousLabel(cleaned)) {
     return extractLikelyClientName(candidate) ?? "Client";
@@ -163,10 +188,181 @@ export function formatRequirementLine(req: { title?: string | null; description?
   return `${base}${pageTag}${sectionTag}${quoteTag}`;
 }
 
+/**
+ * Truncate a display line WITHOUT landing inside — or half-closing — a
+ * provenance tag this module appended.
+ *
+ * WHY THIS FUNCTION EXISTS
+ * ------------------------
+ * formatRequirementLine() above always returns a complete, closed line: the
+ * quote/section/page tags are appended AFTER their values are already sliced,
+ * so `[p.7] (§ SECTION) (quote: "…")` is never malformed at the point this
+ * module builds it. But three DOWNSTREAM deterministic renderers
+ * (lib/engine/tender-response-blueprint.ts, proposal-evaluator-matrix.ts,
+ * proposal-quality-repair.ts) each carried their own copy-pasted `take()`
+ * helper that RE-TRUNCATES an already-complete line with a raw
+ * `line.slice(0, maxLen - 1) + "…"` — with no idea the line ends in
+ * structural syntax.
+ *
+ * On the real Pharo tender (deterministic fallback path — every AI call was
+ * rate-limited, so `formatRequirementLine`'s 506-character, well-formed line
+ * for "Specialized Healthcare Design Experience" was the whole input),
+ * tender-response-blueprint.ts's `take(input.requirements, 16, 320)` cut it
+ * at character 320 — inside the section-heading VALUE, before the tag's own
+ * closing paren — and that fragment flowed, unchanged, into the client-facing
+ * "Section E: Compliance Matrix" of the submitted DOCX and PDF:
+ *
+ *   … Include reviewed healthcare project references. [p.7]
+ *   (§ QUALIFICATIONS AND APP EXTR…
+ *
+ * This is not a model-generation artifact — it is 100% deterministic,
+ * reproducible on stored data with zero AI calls (see
+ * tests/requirement-line-truncates-without-breaking-its-own-tags.test.ts).
+ *
+ * THE FIX
+ * -------
+ * This function is the ONE place that decides how to shorten a line built by
+ * formatRequirementLine(). It never partially prints a tag:
+ *   1. If the line ends in a `(quote: "…")`, `(§ …)` or `[p.N]` tag (in any
+ *      combination formatRequirementLine produces), the tag suffix is
+ *      identified and set aside.
+ *   2. If the core text plus the FULL tag suffix already fits in `maxLen`,
+ *      the line is returned completely unchanged — nothing is touched.
+ *   3. If the core text alone fits but the tags push it over, the tags are
+ *      dropped WHOLESALE (never partially) and the core is returned
+ *      untruncated — the tags are grounding metadata for a writer, not a
+ *      fact the client-facing line loses meaning without.
+ *   4. Only if the core text itself exceeds `maxLen` is it truncated, and
+ *      always at the last word boundary before the limit, with a trailing
+ *      "…" — the same rule truncateAtWordBoundary applies elsewhere in the
+ *      generator (see proposal-intelligence.ts), so a display line never
+ *      stops mid-word regardless of which renderer shortened it.
+ *
+ * Operates on ONE caller-supplied line at a time and never touches `\n`:
+ * every value that reaches formatRequirementLine's output is already
+ * single-line by construction (normalizeLabel collapses all whitespace,
+ * control characters included), so there is no assembled markdown, table
+ * row, or section boundary here for a fix to damage.
+ */
+const TRAILING_QUOTE_TAG = /\s*\(quote:\s*"[^"]*"?\)?\s*$/i;
+const TRAILING_SECTION_TAG = /\s*\(§[^)]*\)?\s*$/;
+const TRAILING_PAGE_TAG = /\s*\[p\.\s*\d+\]\s*$/i;
+
+export function truncateDisplayLine(value: string, maxLen: number): string {
+  const line = value.replace(/\s+/g, " ").trim();
+  if (line.length <= maxLen) return line;
+
+  // Peel known trailing tags off, in the order formatRequirementLine appends
+  // them (quote is always last, then section, then page), so a line with
+  // only some of the three tags is handled the same as one with all three.
+  let core = line;
+  let removedAnyTag = false;
+  for (const tagPattern of [TRAILING_QUOTE_TAG, TRAILING_SECTION_TAG, TRAILING_PAGE_TAG]) {
+    const withoutTag = core.replace(tagPattern, "");
+    if (withoutTag !== core) {
+      core = withoutTag;
+      removedAnyTag = true;
+    }
+  }
+
+  if (removedAnyTag && core.length <= maxLen) {
+    // The core statement — the actual requirement text — fits once the
+    // provenance tags are set aside. Return it whole: no half-open
+    // parenthesis, no ellipsis needed, no fact lost.
+    return core;
+  }
+
+  // Either there were no tags to remove, or even the bare core is too long.
+  // Cut the core at the last word boundary before the limit.
+  const budget = Math.max(1, maxLen - 1);
+  const window = core.slice(0, budget);
+  const lastSpace = window.lastIndexOf(" ");
+  const cut = lastSpace > Math.floor(budget * 0.5) ? window.slice(0, lastSpace) : window;
+  return `${cut.replace(/[\s,;:—–-]+$/, "")}…`;
+}
+
 export function safeFileBaseName(value?: string | null, fallback = "submission-package"): string {
   const cleaned = cleanTenderTitle(value, { fallback })
     .replace(/[^a-zA-Z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 90);
   return cleaned || fallback;
+}
+
+/**
+ * A requirement line with its provenance tags removed, for a page a client reads.
+ *
+ * THE DELIVERED DEFECT
+ * --------------------
+ * formatRequirementLine() appends `[p.N] (§ SECTION) (quote: "…")` because the
+ * writer needs to know where a requirement came from. truncateDisplayLine()
+ * drops those tags when they would not fit — but returns the line untouched
+ * when it does fit, tags and all. Hosted run 34052912750 shipped the result
+ * into "Section E: Compliance Matrix" of the submitted proposal:
+ *
+ *   Proposal in PDF format, strictly named 'Technical Proposal.pdf'. No
+ *   financial proposal should be generated or submitted at this stage. [p.4]
+ *   (§ REQUIRED DOCUMENTS / MANDATORY DOCUMENTS) (quote: "Required Documents:
+ *   Technical Proposal.pdf Mandatory Document: …")
+ *
+ * The client is being shown our own citation apparatus, and the quote repeats
+ * back to them a passage from the tender they wrote.
+ *
+ * Fitting in a cell is not what decides whether a citation belongs on a client
+ * page — the page does. So the renderers that build client-facing tables call
+ * this, and the grounding tags stay where they are useful: in the text handed
+ * to the writer. Tags are removed wholesale wherever they appear, never
+ * partially, and the requirement's own words are untouched.
+ */
+const ANY_QUOTE_TAG = /\s*\(quote:\s*"[^"]*"?\)?/gi;
+// One level of nested parentheses: "(§ 3. Basic Respondents (Bidders)
+// Requirements)" left " Requirements)" on every Section F row (2026-09-30).
+const ANY_SECTION_TAG = /\s*\(§(?:[^()]|\([^()]*\))*\)?/g;
+const ANY_PAGE_TAG = /\s*\[p\.\s*\d+\]/gi;
+
+export function withoutProvenanceTags(value: string): string {
+  return value
+    .replace(ANY_QUOTE_TAG, "")
+    .replace(ANY_SECTION_TAG, "")
+    .replace(ANY_PAGE_TAG, "")
+    .replace(/\s+/g, " ")
+    .replace(/[\s,;:]+$/, "")
+    .trim();
+}
+
+// A tender's required subject line is often a template the bidder completes:
+// "[RFQ#2026-024 Your Company Name]". Copied as-is, the delivered cover page
+// read "Subject: [RFQ#2026-024 Your Company Name]" (PATH Ethiopia, inspect
+// run 37331125113, 2026-10-05). The placeholder is the bidder's name.
+const BIDDER_NAME_PLACEHOLDER = /(?:<\s*)?\b(?:your\s+(?:company|firm|organi[sz]ation)(?:'s)?\s+name|(?:the\s+)?(?:company|firm|bidder|consultant|supplier|applicant|organi[sz]ation)(?:'s)?\s+name|name\s+of\s+(?:the\s+)?(?:company|firm|bidder|consultant|supplier|applicant|organi[sz]ation))\b(?:\s*>)?/gi;
+
+/** Fill a tender template's bidder-name placeholder with the firm's own name. */
+export function withBidderName(text: string | null | undefined, companyName: string | null | undefined): string | null {
+  if (!text) return text ?? null;
+  const name = (companyName ?? "").trim();
+  if (!name) return text;
+  return text.replace(BIDDER_NAME_PLACEHOLDER, name);
+}
+
+/**
+ * A company description that opens with the firm's own name: the predicate
+ * after "is"/"are" ("an architectural consultancy"), or `predicate: null`
+ * when the description goes on some other way ("… was founded in 2019").
+ * Null when the description does not open with the firm's name.
+ */
+export function descriptionAfterOwnName(description: string, names: ReadonlyArray<string | null | undefined>): { predicate: string | null } | null {
+  const text = description.trim();
+  const lower = text.toLowerCase();
+  const ordered = names.map((n) => (n ?? "").trim()).filter((n) => n.length >= 3).sort((a, b) => b.length - a.length);
+  for (const name of ordered) {
+    if (!lower.startsWith(name.toLowerCase())) continue;
+    const rest = text.slice(name.length)
+      .replace(/^\s*\([^)]*\)/, "")
+      .replace(/^[\s,]+/, "")
+      // The legal form the shorter display name leaves behind.
+      .replace(/^(?:P\.?L\.?C\.?|Ltd\.?|Limited|LLC|Inc\.?|S\.?C\.?|Share\s+Company|Co\.?|Corporation|GmbH|S\.?A\.?)(?=\s|,|$)\.?[\s,]*/i, "");
+    const m = rest.match(/^(?:is|are)\s+(.+)$/i);
+    return { predicate: m ? m[1]!.trim() : null };
+  }
+  return null;
 }

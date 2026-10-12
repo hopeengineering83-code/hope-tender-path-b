@@ -84,11 +84,12 @@ describe("metadata-override", () => {
     assert.ok(!report2.missingNonCritical.some((f) => f.field === "country"));
   });
 
-  it("missing clientName with no override → still blocking", () => {
+  it("missing clientName with no override → advisory, not critical (ABSENT_TENDER_FACT_IS_NOT_REQUIRED)", () => {
     const input = baseInput({ clientName: null });
 
     const report = assessTenderMetadataCompleteness(input);
-    assert.ok(report.missingCritical.some((f) => f.field === "clientName"));
+    assert.ok(!report.missingCritical.some((f) => f.field === "clientName"));
+    assert.ok(report.missingNonCritical.some((f) => f.field === "clientName"));
     assert.equal(report.blockingForGeneration, false);
   });
 

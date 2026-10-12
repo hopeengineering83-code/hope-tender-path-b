@@ -1,7 +1,7 @@
 import { logger } from "../../../../lib/observability";
 import { randomUUID } from "crypto";
 import bcrypt from "bcryptjs";
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { generateResetToken } from "../../../../lib/reset-token";
 import { rateLimitPersistent, PASSWORD_RESET_RATE_LIMIT } from "../../../../lib/rate-limit";
@@ -11,7 +11,7 @@ import { logAction } from "../../../../lib/audit";
 
 const GENERIC_RESPONSE = {
   success: true,
-  note: "If that email is registered, password reset instructions will be sent.",
+  note: "If that email is registered and email delivery is configured, password reset instructions will be sent.",
 };
 
 function baseUrl(): string {
@@ -19,7 +19,38 @@ function baseUrl(): string {
   if (configured) return configured.replace(/\/$/, "");
   const vercelUrl = process.env.VERCEL_PROJECT_PRODUCTION_URL ?? process.env.VERCEL_URL;
   if (vercelUrl) return `https://${vercelUrl.replace(/^https?:\/\//, "").replace(/\/$/, "")}`;
+  // SECURITY / OPS: previously this returned "http://localhost:3000" unconditionally.
+  // In self-hosted production (Docker, bare-metal, Electron desktop) where the
+  // Vercel env vars are absent, password-reset emails would contain a
+  // `localhost:3000` link — broken for end users AND a security smell (reset
+  // link points at an attacker-controllable local host on shared machines).
+  // Fail-loud in production; keep the dev convenience fallback for `next dev`.
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "APP_URL (or NEXTAUTH_URL) must be set in production so password-reset emails link to the real site. " +
+      "Refusing to send a reset email with a localhost URL."
+    );
+  }
   return "http://localhost:3000";
+}
+
+/**
+ * Run work after the response is sent. The SMTP round trip (0.3–1.5 s) ran
+ * only on the registered-account path, so the response time told an attacker
+ * which addresses have accounts; now both paths answer at the same point.
+ * Outside a request scope (tests, scripts) the work still runs, unawaited.
+ */
+function afterResponse(task: () => Promise<void>): void {
+  const guarded = () => task().catch((error: unknown) => {
+    logger.error("[forgot-password] delivery task failed", {
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+    });
+  });
+  try {
+    after(guarded);
+  } catch {
+    void guarded();
+  }
 }
 
 export async function POST(req: Request) {
@@ -80,28 +111,33 @@ export async function POST(req: Request) {
     });
 
     const resetUrl = `${baseUrl()}/reset-password?token=${encodeURIComponent(token)}`;
-    const delivery = await sendEmail({
-      to: user.email,
-      subject: "Reset your Hope Tender password",
-      html: `<p>A password reset was requested for your account.</p><p><a href="${resetUrl}">Reset password</a></p><p>This link expires in 20 minutes and can be used once.</p><p>If you did not request this, ignore this email.</p>`,
-    });
+    afterResponse(async () => {
+      const delivery = await sendEmail({
+        to: user.email,
+        subject: "Reset your Hope Tender password",
+        html: `<p>A password reset was requested for your account.</p><p><a href="${resetUrl}">Reset password</a></p><p>This link expires in 20 minutes and can be used once.</p><p>If you did not request this, ignore this email.</p>`,
+        text: `A password reset was requested for your account.\n\nReset password: ${resetUrl}\n\nThis link expires in 20 minutes and can be used once. If you did not request this, ignore this email.`,
+      });
 
-    if (!delivery.delivered) {
-      await prisma.$executeRaw`
-        DELETE FROM "PasswordResetToken"
-        WHERE "id" = ${tokenId}
-      `;
-    }
+      // An undelivered token is removed: no usable reset link exists that its
+      // owner never received.
+      if (!delivery.delivered) {
+        await prisma.$executeRaw`
+          DELETE FROM "PasswordResetToken"
+          WHERE "id" = ${tokenId}
+        `;
+      }
 
-    await logAction({
-      userId: user.id,
-      action: "UPDATE",
-      entityType: "UserSecurity",
-      entityId: user.id,
-      description: delivery.delivered
-        ? "Password reset instructions requested and delivered"
-        : "Password reset instructions requested but delivery was unavailable",
-      metadata: { delivered: delivery.delivered, reason: delivery.reason ?? null },
+      await logAction({
+        userId: user.id,
+        action: "UPDATE",
+        entityType: "UserSecurity",
+        entityId: user.id,
+        description: delivery.delivered
+          ? "Password reset instructions requested and delivered"
+          : "Password reset instructions requested but delivery was unavailable",
+        metadata: { delivered: delivery.delivered, reason: delivery.reason ?? null },
+      });
     });
 
     return NextResponse.json(GENERIC_RESPONSE, { status: 202 });

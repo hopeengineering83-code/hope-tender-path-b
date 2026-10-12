@@ -5,7 +5,12 @@ import { assessTenderAnalysisQuality, type AnalysisQualityReport } from "./analy
 import { assessMatchingQuality, type MatchingQualityReport } from "./matching-quality";
 import { isValidClientName, getClientNameStatus } from "./engine/metadata-validators";
 import { assertAnalysisReadyForFinalGeneration, detectAnalysisSourceWithApproval } from "./engine/analysis-source";
+import { resolveTenderAnalysisState } from "./engine/analysis-state-resolver";
 import { assessTenderMetadataCompleteness } from "./engine/tender-metadata-completeness";
+import { canUseVaultRecord, VAULT_REVIEW_CONSUMER_SELECT, type ReviewRecordState } from "./vault-review-provenance";
+// Same base-name rule the finalize-pdf route uses to find a source, so this
+// warning and that route can never disagree about what is finalizable.
+import { normalizeFileBaseName } from "./engine/workflow/pdf-finalizer";
 // Round follow-up to PR #424/#425 — surface PDF-required + branding/
 // signature/stamp policy in the readiness panel BEFORE the user
 // clicks Download. Operators see the conflict early and fix it
@@ -169,8 +174,8 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
       include: {
         requirements: true,
         complianceGaps: { where: { isResolved: false }, select: { title: true, description: true, mitigationPlan: true, severity: true } },
-        expertMatches: { include: { expert: { select: { trustLevel: true, fullName: true } } } },
-        projectMatches: { include: { project: { select: { trustLevel: true, name: true } } } },
+        expertMatches: { include: { expert: { select: VAULT_REVIEW_CONSUMER_SELECT.EXPERT } } },
+        projectMatches: { include: { project: { select: VAULT_REVIEW_CONSUMER_SELECT.PROJECT } } },
       },
     }),
   ]);
@@ -183,16 +188,48 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
     : [];
   const overrideByField = new Map(metadataOverrides.map(o => [o.field, o]));
 
-  const queryRaw = (client as unknown as { $queryRaw?: <T = unknown>(strings: TemplateStringsArray, ...values: unknown[]) => Promise<T> }).$queryRaw;
-  const [{ extractedTextLength, totalPageCount }] = queryRaw
-    ? await queryRaw<Array<{ extractedTextLength: number; totalPageCount: number }>>`
+  // $queryRaw MUST be invoked on the client, not detached from it.
+  //
+  // This previously read `const queryRaw = (client as …).$queryRaw` and then
+  // called `queryRaw\`SELECT …\``. Prisma's $queryRaw needs its receiver — it
+  // dereferences `this._createPrismaPromise` — so calling the detached
+  // reference threw
+  //
+  //     TypeError: Cannot read properties of undefined (reading '_createPrismaPromise')
+  //
+  // and the `.catch()` beside it could not help, because the throw happens
+  // synchronously while evaluating the tagged template, before any promise
+  // exists. The guard was written to tolerate test mocks that omit $queryRaw,
+  // and it did exactly that — while breaking the real client. Every caller
+  // reaching this line in production crashed, including
+  // app/api/tenders/[id]/download/route.ts:106, which sits on the ZIP path
+  // unconditionally: the final submission package could not be downloaded at
+  // all.
+  //
+  // Kept mock-tolerant, but the capability check is now separate from the call
+  // and the call goes through `client` so the receiver survives. try/catch,
+  // not .catch(), because a synchronous throw is the failure mode that got us
+  // here.
+  const supportsQueryRaw =
+    typeof (client as unknown as { $queryRaw?: unknown }).$queryRaw === "function";
+  let extractedTextLength = 0;
+  let totalPageCount = 0;
+  if (supportsQueryRaw) {
+    try {
+      const rows = await client.$queryRaw<Array<{ extractedTextLength: number; totalPageCount: number }>>`
         SELECT
           COALESCE(SUM(char_length("extractedText")), 0)::int AS "extractedTextLength",
           COALESCE(SUM(COALESCE("totalPages", 0)), 0)::int AS "totalPageCount"
         FROM "TenderFile"
         WHERE "tenderId" = ${tenderId}
-      `.catch(() => [{ extractedTextLength: 0, totalPageCount: 0 }])
-    : [{ extractedTextLength: 0, totalPageCount: 0 }];
+      `;
+      extractedTextLength = rows[0]?.extractedTextLength ?? 0;
+      totalPageCount = rows[0]?.totalPageCount ?? 0;
+    } catch {
+      extractedTextLength = 0;
+      totalPageCount = 0;
+    }
+  }
 
   // Check derived-draft plan state (generatedDocuments not in main query).
   // Defensive: test mocks may not implement generatedDocument — default to 0 on any error.
@@ -227,6 +264,11 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
     vaultReviewedProjects: companyReadiness.totals.reviewedProjects,
   });
   const resolvedAnalysisSource = await detectAnalysisSourceWithApproval(client, tenderId, tender).catch(() => "UNKNOWN" as const);
+  // The notes marker above survives a later failure, so it cannot answer "is
+  // this analysis release-ready right now?". The state resolver is the one
+  // authority on that. Used for WORDING only — the readiness blockers below
+  // are unchanged, and analysisGate remains the gate.
+  const analysisStateDetail = await resolveTenderAnalysisState(client, tenderId, userId).catch(() => null);
 
   const analysisQuality = assessTenderAnalysisQuality({
     requirements: tender.requirements,
@@ -250,9 +292,10 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
     submissionAddress: tender.submissionAddress,
     submissionEmails: tender.submissionEmails,
     analysisExtractionStatus: tender.analysisExtractionStatus,
-    selectedReviewedExperts: tender.expertMatches.filter((m) => m.isSelected && m.expert.trustLevel === "REVIEWED").length,
-    selectedReviewedProjects: tender.projectMatches.filter((m) => m.isSelected && m.project.trustLevel === "REVIEWED").length,
+    selectedReviewedExperts: tender.expertMatches.filter((m) => m.isSelected && canUseVaultRecord(m.expert as ReviewRecordState, "GENERATION")).length,
+    selectedReviewedProjects: tender.projectMatches.filter((m) => m.isSelected && canUseVaultRecord(m.project as ReviewRecordState, "GENERATION")).length,
     analysisSource: resolvedAnalysisSource,
+    analysisState: analysisStateDetail?.state ?? null,
   });
 
   const blockers: GenerationReadinessItem[] = companyReadiness.blockers.map((message) => ({ code: "COMPANY_INGESTION_NOT_READY", message, nextAction: "OPEN_COMPANY_READINESS" }));
@@ -271,7 +314,7 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
   // METADATA IS NO LONGER A BLOCKER OR WARNING (unified runtime model).
 
   if (analysisQuality.severity === "POOR" || analysisQuality.severity === "UNSAFE") {
-    blockers.push({ code: "ANALYSIS_QUALITY_POOR", message: `Tender analysis quality is poor (${analysisQuality.score}/100). Re-run AI Analyze / Run Engine and verify evaluation criteria, submission rules, and source references before generation.`, nextAction: "OPEN_ANALYSIS_QUALITY" });
+    blockers.push({ code: "ANALYSIS_QUALITY_POOR", message: `Tender analysis quality is poor (${analysisQuality.score}/100). Verify or improve the extracted source, then re-run AI Analyze. Run Engine only after the current analysis is trustworthy; it starts matching and Build Plan/downstream processing, not source verification.`, nextAction: "OPEN_ANALYSIS_QUALITY" });
   } else if (analysisQuality.severity === "WARNING") {
     warnings.push({ code: "ANALYSIS_QUALITY_WARNING", message: `Tender analysis quality has warnings (${analysisQuality.score}/100). Review before final generation/export.`, nextAction: "OPEN_ANALYSIS_QUALITY" });
   }
@@ -281,9 +324,12 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
   if (tender.status === "NO_BID") {
     blockers.push({ code: "NO_BID_BLOCK", message: "Tender is marked NO_BID. Apply a BID or BID_WITH_CONDITIONS decision before generation." });
   }
-  if (tender.requirements.length === 0) {
-    blockers.push({ code: "NO_REQUIREMENTS", message: "No tender requirements are extracted. Run AI Analyze / Run Engine first, or add requirements manually.", nextAction: "RUN_ENGINE" });
-  }
+  // Gap 1: NO_REQUIREMENTS is no longer a blocker. Readable, integrity-
+  // verified extracted tender text must proceed even when there are no
+  // structured requirements. Source-text-only generation uses the extracted
+  // scope, tender type, requested services, deliverables, forms and
+  // submission instructions. Genuinely absent information is stored as
+  // NOT_STATED — never invented.
 
   const hardBlocks = tender.complianceGaps.filter((gap) => gap.severity === "CRITICAL" && criticalGapIsHardBlock(gap));
   for (const gap of hardBlocks) blockers.push({ code: "HARD_COMPLIANCE_BLOCKER", message: gap.title, nextAction: "RESOLVE_COMPLIANCE_GAPS" });
@@ -297,10 +343,10 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
   const projectRequirementExists = tender.requirements.some((req) => req.requirementType === "PROJECT_EXPERIENCE");
   const selectedExperts = tender.expertMatches.filter((match) => match.isSelected);
   const selectedProjects = tender.projectMatches.filter((match) => match.isSelected);
-  const reviewedExpertMatches = tender.expertMatches.filter((match) => match.expert.trustLevel === "REVIEWED");
-  const reviewedProjectMatches = tender.projectMatches.filter((match) => match.project.trustLevel === "REVIEWED");
-  const reviewedSelectedExperts = selectedExperts.filter((match) => match.expert.trustLevel === "REVIEWED");
-  const reviewedSelectedProjects = selectedProjects.filter((match) => match.project.trustLevel === "REVIEWED");
+  const reviewedExpertMatches = tender.expertMatches.filter((match) => canUseVaultRecord(match.expert as ReviewRecordState, "GENERATION"));
+  const reviewedProjectMatches = tender.projectMatches.filter((match) => canUseVaultRecord(match.project as ReviewRecordState, "GENERATION"));
+  const reviewedSelectedExperts = selectedExperts.filter((match) => canUseVaultRecord(match.expert as ReviewRecordState, "GENERATION"));
+  const reviewedSelectedProjects = selectedProjects.filter((match) => canUseVaultRecord(match.project as ReviewRecordState, "GENERATION"));
 
   // PR #398 follow-up to #394 — BEST-AVAILABLE detection. The
   // selection policy's second-pass fallback (main-engine-selection-
@@ -369,7 +415,15 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
   if (matchingQuality.state === "VAULT_AWAITS_ENGINE") {
     fullProposalBlockers.push({
       code: "FULL_PROPOSAL_ENGINE_NOT_RUN",
-      message: `Full proposal generation is blocked: Run Engine has not been triggered for this tender (vault has ${matchingQuality.vaultReviewedExperts} reviewed expert(s) and ${matchingQuality.vaultReviewedProjects} reviewed project(s) ready).`,
+      // State only what is actually known here. VAULT_AWAITS_ENGINE means "the
+      // vault holds reviewed evidence but no tender-specific matches exist yet".
+      // It does NOT mean the user never pressed Run Engine: this function has no
+      // knowledge of job state, and the condition stays true for the whole time
+      // an Engine job is running. The previous wording asserted "Run Engine has
+      // not been triggered for this tender", which contradicted the evidence
+      // panel ("An Engine job is already running for this revision") and the
+      // release banner ("Processing automatically") on the same screen.
+      message: `Full proposal generation is blocked: no tender-specific evidence matches exist yet (vault has ${matchingQuality.vaultReviewedExperts} reviewed expert(s) and ${matchingQuality.vaultReviewedProjects} reviewed project(s) ready). Run Engine if it has not been started; if it is already running, matching will populate automatically.`,
       nextAction: "RUN_ENGINE",
     });
   } else if (matchingQuality.state === "NO_VAULT" && (expertRequirementExists || projectRequirementExists)) {
@@ -484,8 +538,8 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
   if (derivedDraftCount > 0 && derivedDraftCount === totalPlannedCount && totalPlannedCount > 0) {
     fullProposalBlockers.push({
       code: "FULL_PROPOSAL_DERIVED_PLAN_UNCONFIRMED",
-      message: "Full proposal generation is blocked: the submission plan was automatically derived from requirement keywords and has not been confirmed against the actual tender document. Review the plan, verify each required document, and confirm before generating.",
-      nextAction: "CONFIRM_SUBMISSION_PLAN",
+      message: "Full proposal generation is blocked: only a derived draft plan exists. Run Engine to create and source-verify the authoritative Build Plan from the current verified source and current AI analysis.",
+      nextAction: "RUN_ENGINE",
     });
   }
 
@@ -675,11 +729,46 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
     );
     const missingPdfNames = requiredPdfNames.filter((name) => !coveredPdfNames.has(name.trim().toLowerCase()));
     if (missingPdfNames.length > 0) {
-      warnings.push({
-        code: "TENDER_REQUIRES_PDF",
-        message: `Tender submission plan requires PDF output (${missingPdfNames.join(", ")}). Final export will block with PDF_REQUIRED_CONVERSION_UNAVAILABLE until the required PDF is finalized from an approved source document (Finalize PDF) or the tender-issued PDF is uploaded.`,
-        nextAction: "FINALIZE_REQUIRED_PDF",
-      });
+      // Offering "Finalize PDF" only makes sense when there is something to
+      // finalize FROM. app/api/tenders/[id]/finalize-pdf/route.ts converts a
+      // GENERATED .docx whose base name matches the required PDF; with no such
+      // source it answers PDF_REQUIRED_CONVERSION_UNAVAILABLE. Previously this
+      // warning always carried nextAction FINALIZE_REQUIRED_PDF, so the panel
+      // rendered an enabled Finalize button whose only possible outcome was
+      // that rejection — click, error, nothing changes, click again. Decide
+      // here, where the source documents are already in hand, and name the
+      // real prerequisite when it is missing.
+      const docxSourceModel = (client as unknown as Record<string, unknown>).generatedDocument as
+        | undefined
+        | { findMany: (q: unknown) => Promise<Array<{ exactFileName: string | null; name?: string | null }>> };
+      const docxRows = docxSourceModel?.findMany
+        ? await docxSourceModel
+            .findMany({ where: { tenderId, generationStatus: "GENERATED" }, select: { exactFileName: true, name: true } })
+            .catch(() => [] as Array<{ exactFileName: string | null; name?: string | null }>)
+        : [];
+      const docxBaseNames = new Set(
+        (docxRows ?? [])
+          .map((row) => (row.exactFileName ?? row.name ?? "").trim())
+          .filter((value) => value.toLowerCase().endsWith(".docx"))
+          .map((value) => normalizeFileBaseName(value)),
+      );
+      const finalizable = missingPdfNames.filter((name) => docxBaseNames.has(normalizeFileBaseName(name)));
+      const notFinalizable = missingPdfNames.filter((name) => !docxBaseNames.has(normalizeFileBaseName(name)));
+
+      if (finalizable.length > 0) {
+        warnings.push({
+          code: "TENDER_REQUIRES_PDF",
+          message: `Tender submission plan requires PDF output (${finalizable.join(", ")}). A matching approved source document exists, so the required PDF can be finalized now; final export blocks with PDF_REQUIRED_CONVERSION_UNAVAILABLE until it is.`,
+          nextAction: "FINALIZE_REQUIRED_PDF",
+        });
+      }
+      if (notFinalizable.length > 0) {
+        warnings.push({
+          code: "TENDER_REQUIRES_PDF_SOURCE_MISSING",
+          message: `Tender submission plan requires PDF output (${notFinalizable.join(", ")}), and no generated source document matches ${notFinalizable.length === 1 ? "it" : "them"}. Finalizing is not possible yet: generate the matching document first, or upload the tender-issued PDF.`,
+          nextAction: "OPEN_TENDER_DETAIL",
+        });
+      }
     }
   }
   if (!exportAssetStatus.brandingAllowed && exportAssetStatus.brandingApplied === false && (appSettingsRow?.allowBrandingDefault ?? true)) {

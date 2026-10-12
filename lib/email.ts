@@ -1,8 +1,11 @@
+import nodemailer from "nodemailer";
 import { logger } from "./observability";
 type EmailPayload = {
   to: string;
   subject: string;
   html: string;
+  /** Plain-text alternative; mail clients and spam filters expect one. */
+  text?: string;
 };
 
 export type EmailDeliveryResult = {
@@ -10,15 +13,37 @@ export type EmailDeliveryResult = {
   reason?: "NOT_CONFIGURED" | "DELIVERY_FAILED";
 };
 
-export async function sendEmail(payload: EmailPayload): Promise<EmailDeliveryResult> {
-  const { to, subject, html } = payload;
-  const host = process.env.SMTP_HOST;
-  const port = Number.parseInt(process.env.SMTP_PORT ?? "587", 10);
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
-  const from = process.env.EMAIL_FROM ?? "noreply@hopetender.com";
+export type EmailDeliveryConfig = {
+  host: string;
+  port: number;
+  user: string;
+  pass: string;
+  from: string;
+};
 
-  if (!host || !user || !pass) {
+export function getEmailDeliveryConfig(): EmailDeliveryConfig | null {
+  const host = process.env.SMTP_HOST?.trim();
+  const port = Number.parseInt(process.env.SMTP_PORT ?? "587", 10);
+  const user = process.env.SMTP_USER?.trim();
+  const pass = process.env.SMTP_PASS?.trim();
+  const from = process.env.EMAIL_FROM?.trim();
+
+  if (!host || !user || !pass || !from || !Number.isFinite(port) || port <= 0) {
+    return null;
+  }
+
+  return { host, port, user, pass, from };
+}
+
+export function isEmailDeliveryConfigured(): boolean {
+  return getEmailDeliveryConfig() !== null;
+}
+
+export async function sendEmail(payload: EmailPayload): Promise<EmailDeliveryResult> {
+  const { to, subject, html, text } = payload;
+  const config = getEmailDeliveryConfig();
+
+  if (!config) {
     if (process.env.NODE_ENV !== "production") {
       logger.warn("[email] SMTP is not configured; message was not delivered");
     }
@@ -26,14 +51,13 @@ export async function sendEmail(payload: EmailPayload): Promise<EmailDeliveryRes
   }
 
   try {
-    const nodemailer = require("nodemailer") as any;
     const transporter = nodemailer.createTransport({
-      host,
-      port,
-      secure: port === 465,
-      auth: { user, pass },
+      host: config.host,
+      port: config.port,
+      secure: config.port === 465,
+      auth: { user: config.user, pass: config.pass },
     });
-    await transporter.sendMail({ from, to, subject, html });
+    await transporter.sendMail({ from: config.from, to, subject, html, ...(text ? { text } : {}) });
     return { delivered: true };
   } catch (error) {
     logger.error("[email] Delivery failed", {

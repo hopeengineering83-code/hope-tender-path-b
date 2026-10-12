@@ -27,7 +27,18 @@ describe("Tender Regression Tests (Phase 7)", () => {
       };
       const result = validateDocumentQuality(doc);
       assert.equal(result.status, "BLOCKED");
-      assert.ok(result.aiTrace.includes("as an ai"));
+      // The reported hit is the phrase as it appears in the document, not the
+      // regex source with its metacharacters stripped. This used to assert
+      // "as an ai" — a lowercased fragment of /as an ai/i's source that occurs
+      // nowhere in the document an owner would be asked to fix.
+      assert.ok(result.aiTrace.length > 0);
+      for (const hit of result.aiTrace) {
+        assert.ok(
+          doc.fileContent.toLowerCase().includes(hit.toLowerCase()),
+          `reported AI-trace hit ${JSON.stringify(hit)} does not appear in the document`,
+        );
+      }
+      assert.ok(result.aiTrace.some((hit) => /^as an ai$/i.test(hit)));
     });
 
     it("should detect envelope mismatch: financial in technical", () => {

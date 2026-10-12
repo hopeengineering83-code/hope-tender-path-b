@@ -13,8 +13,7 @@ import { logger } from "../../../../../lib/observability";
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { resolveSubmissionPlanCompleteness } from "../../../../../lib/engine/submission-plan-completeness";
-import { getCurrentConfirmedBuildPlan } from "../../../../../lib/engine/build-plan";
+import { loadSubmissionPlanCompleteness } from "../../../../../lib/engine/submission-plan-completeness";
 import { extractRequestId } from "../../../../../lib/request-id";
 
 export const dynamic = "force-dynamic";
@@ -34,68 +33,20 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     await prismaReady;
     const { id } = await params;
 
-    const tender = await prisma.tender.findFirst({
-      where: { id, userId: actor.id },
-      select: {
-        id: true,
-        title: true,
-        exactFileNaming: true,
-        exactFileOrder: true,
-        pageLimit: true,
-        requirements: {
-          select: {
-            id: true,
-            title: true,
-            description: true,
-            requirementType: true,
-            priority: true,
-            exactFileName: true,
-            exactOrder: true,
-            requiredQuantity: true,
-            pageLimit: true,
-            restrictions: true,
-            sectionReference: true,
-          },
-        },
-        generatedDocuments: {
-          orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
-          select: {
-            id: true,
-            name: true,
-            exactFileName: true,
-            exactOrder: true,
-            documentType: true,
-            format: true,
-            generationStatus: true,
-            validationStatus: true,
-            reviewStatus: true,
-            storagePath: true,
-            contentSummary: true,
-          },
-        },
-      },
-    });
-    if (!tender) return err("Tender not found", 404, { code: "TENDER_NOT_FOUND" });
+    // One loader, shared with the automatic finalize pipeline: the panel and
+    // the pipeline must never disagree about how many required files a package
+    // still owes. It is metadata-only (no fileContent) and computes
+    // completeness against the CONFIRMED Build Plan items when one exists, so
+    // this view cannot diverge from the plan the gates enforce.
+    const loaded = await loadSubmissionPlanCompleteness(prisma, id, actor.id);
+    if (!loaded) return err("Tender not found", 404, { code: "TENDER_NOT_FOUND" });
 
-    // Keep this endpoint metadata-only to avoid loading GeneratedDocument.fileContent
-    // on every dashboard poll. Deep content/quality checks remain in the canonical
-    // export-readiness and admin audit routes that intentionally inspect bytes.
-    const qualityFailedIds = new Set<string>();
-
-    // AUTHORITATIVE: when a current confirmed Build Plan exists, completeness
-    // is computed against ITS items so this panel can never disagree with the
-    // plan the generation/export gates enforce.
-    const confirmedPlan = await getCurrentConfirmedBuildPlan(prisma, id, actor.id);
-    const report = resolveSubmissionPlanCompleteness({
-      tender,
-      generatedDocuments: tender.generatedDocuments.map((doc) => ({ ...doc, fileContent: null })),
-      qualityFailedIds,
-      confirmedPlanItems: confirmedPlan.ok ? confirmedPlan.items : null,
-    });
+    const { report } = loaded;
+    const automaticPlanPending = !loaded.hasConfirmedPlan;
 
     return NextResponse.json({
       success: true,
-      tender: { id: tender.id, title: tender.title },
+      tender: loaded.tender,
       summary: {
         totalRequired: report.totalRequired,
         totalGenerated: report.totalGenerated,
@@ -108,10 +59,19 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
         requirementCount: report.requirementCount,
         hasExplicitScope: report.hasExplicitScope,
         planState: report.planState,
-        requiresUserConfirmation: report.requiresUserConfirmation,
+        // Retained as a compatibility field. The current workflow never needs
+        // a generic human confirmation; missing/stale plans are rebuilt and
+        // source-verified automatically by the Engine or recovery action.
+        requiresUserConfirmation: false,
+        automaticPlanPending,
+        automaticPlanBlocker: loaded.planBlocker,
       },
       rows: report.rows,
-      warnings: report.warnings,
+      warnings: report.warnings.map((warning) =>
+        warning
+          .replace(/Build and confirm it before generation or export\./g, "The Engine will build and source-verify it automatically before generation or export.")
+          .replace(/Confirm tender-issued file names\/order before final export/g, "The server will verify tender-issued file names/order before final export"),
+      ),
     });
   } catch (error) {
     logger.error("submission-plan route failed", {

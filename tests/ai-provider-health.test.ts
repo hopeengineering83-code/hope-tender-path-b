@@ -9,34 +9,41 @@ import {
   restoreProviderState,
 } from "../lib/ai-provider-health";
 
+// These exercise the generic health STATE MACHINE, so they use a free-tier
+// provider. They previously used "openai", whose availability is now a
+// deliberate product answer rather than a neutral example: under zero-paid mode
+// a paid provider is BILLING_BLOCKED and therefore never `available`, no matter
+// what its health state says. Testing the state machine through it would have
+// been testing the money gate instead.
 describe("provider health logic", () => {
   beforeEach(() => {
     resetProviderHealth();
-    process.env.OPENAI_API_KEY = "sk-test";
+    process.env.GROQ_API_KEY = "gsk-test";
+    process.env.GROQ_PROPOSAL_MODEL = "llama-3.1-8b-instant";
     process.env.GEMINI_API_KEY = "AIza-test";
   });
 
   it("newly initialized provider with key is available", () => {
-    assert.equal(getProviderRuntimeSnapshot("openai").available, true);
+    assert.equal(getProviderRuntimeSnapshot("groq").available, true);
   });
 
   it("successful call clears failure state", () => {
-    recordProviderFailure("openai", new Error("Rate limit"));
-    assert.equal(getProviderRuntimeSnapshot("openai").available, false);
-    recordProviderSuccess("openai");
-    assert.equal(getProviderRuntimeSnapshot("openai").available, true);
-    assert.equal(getProviderRuntimeSnapshot("openai").consecutiveFailures, 0);
+    recordProviderFailure("groq", new Error("Rate limit"));
+    assert.equal(getProviderRuntimeSnapshot("groq").available, false);
+    recordProviderSuccess("groq");
+    assert.equal(getProviderRuntimeSnapshot("groq").available, true);
+    assert.equal(getProviderRuntimeSnapshot("groq").consecutiveFailures, 0);
   });
 
   it("multiple failures increase backoff", () => {
     const now = Date.now();
-    recordProviderFailure("openai", new Error("Rate limit"));
-    const snap1 = getProviderStateSnapshot("openai");
+    recordProviderFailure("groq", new Error("Rate limit"));
+    const snap1 = getProviderStateSnapshot("groq");
     assert.ok(snap1);
     const cooldown1 = snap1.cooldownUntil! - now;
 
-    recordProviderFailure("openai", new Error("Rate limit"));
-    const snap2 = getProviderStateSnapshot("openai");
+    recordProviderFailure("groq", new Error("Rate limit"));
+    const snap2 = getProviderStateSnapshot("groq");
     assert.ok(snap2);
     const cooldown2 = snap2.cooldownUntil! - now;
 
@@ -47,12 +54,13 @@ describe("provider health logic", () => {
 describe("cross-instance restore merging", () => {
   it("DB cooldown remains authoritative when memory says provider is available", () => {
     resetProviderHealth();
-    process.env.OPENAI_API_KEY = "sk-test";
-    recordProviderSuccess("openai");
-    assert.equal(getProviderRuntimeSnapshot("openai").available, true);
+    process.env.GROQ_API_KEY = "gsk-test";
+    process.env.GROQ_PROPOSAL_MODEL = "llama-3.1-8b-instant";
+    recordProviderSuccess("groq");
+    assert.equal(getProviderRuntimeSnapshot("groq").available, true);
 
     const now = Date.now();
-    restoreProviderState("openai", {
+    restoreProviderState("groq", {
       lastSuccessAt: null,
       lastPingSucceededAt: null,
       lastGenerationSucceededAt: null,
@@ -64,7 +72,7 @@ describe("cross-instance restore merging", () => {
       cooldownUntil: now + 60_000,
     });
 
-    const runtime = getProviderRuntimeSnapshot("openai");
+    const runtime = getProviderRuntimeSnapshot("groq");
     assert.equal(runtime.coolingDown, true);
     assert.equal(runtime.rateLimited, true);
     assert.equal(runtime.available, false);
@@ -119,6 +127,55 @@ describe("provider health DB persistence order", () => {
     // ALL_PROVIDERS now derives from CANONICAL_AI_PROVIDER_ORDER (single source).
     assert.match(source, /ALL_PROVIDERS[\s\S]*?=\s*CANONICAL_AI_PROVIDER_ORDER/);
     const { CANONICAL_AI_PROVIDER_ORDER } = await import("../lib/ai-provider-registry");
-    assert.deepEqual([...CANONICAL_AI_PROVIDER_ORDER], ["zai", "cerebras", "mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"]);
+    assert.deepEqual([...CANONICAL_AI_PROVIDER_ORDER], ["gemini", "groq", "mistral", "zai", "cerebras", "openrouter", "openai", "together", "deepseek", "anthropic"]);
+  });
+});
+
+describe("billing lockout — actual billing failures remain blocked", () => {
+  beforeEach(() => {
+    resetProviderHealth();
+  });
+
+  it("reports a normally configured provider as configured before any billing failure", async () => {
+    // The behaviour that replaced "openai" as a neutral example above: under
+    // zero-paid mode, holding a paid provider's key does not make it available.
+    // It is visible, it is reported, and it is never called.
+    const { deriveProviderStatus, getProviderRuntimeSnapshot } = await import("../lib/ai-provider-health");
+    const saved = process.env.OPENAI_API_KEY;
+    process.env.OPENAI_API_KEY = "sk-test";
+    try {
+      assert.equal(deriveProviderStatus("openai"), "CONFIGURED");
+      const snap = getProviderRuntimeSnapshot("openai");
+      assert.equal(snap.billingBlocked, false);
+      assert.equal(snap.available, true);
+    } finally {
+      if (saved === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = saved;
+    }
+  });
+
+  it("locks a free provider out for good once it demands payment", async () => {
+    // A cooldown is the wrong instrument here: it expires, and the chain tries
+    // again, and "this account has no money" has not changed. Ten minutes later
+    // it spends another attempt discovering the same thing.
+    const {
+      recordProviderFailure: record,
+      isBillingLockedOut,
+      clearBillingLockout,
+      deriveProviderStatus,
+    } = await import("../lib/ai-provider-health");
+    const saved = process.env.GROQ_API_KEY;
+    process.env.GROQ_API_KEY = "gsk-test";
+    try {
+      assert.equal(isBillingLockedOut("groq"), false);
+      record("groq", new Error("HTTP 402: You have exceeded your free tier quota, please add a payment method"));
+      assert.equal(isBillingLockedOut("groq"), true);
+      assert.equal(deriveProviderStatus("groq"), "BILLING_BLOCKED");
+      // Only an operator clears it, never a timer.
+      clearBillingLockout("groq");
+      assert.equal(isBillingLockedOut("groq"), false);
+    } finally {
+      if (saved === undefined) delete process.env.GROQ_API_KEY; else process.env.GROQ_API_KEY = saved;
+      resetProviderHealth();
+    }
   });
 });

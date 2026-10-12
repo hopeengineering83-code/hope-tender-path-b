@@ -268,7 +268,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     });
     return NextResponse.json({
       ok: false,
-      error: "Facts ledger update failed. Refresh to retry.",
+      error: "Facts ledger update failed.",
       action: body.action,
       semanticKey,
       diagnosticId,

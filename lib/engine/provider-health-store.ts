@@ -1,4 +1,5 @@
 import { logger } from "../observability";
+import { redactSecrets } from "../sanitize-error";
 // Provider health store — DB-backed persistence for cold-start recovery.
 //
 // This module provides a higher-level API over the ProviderHealthSnapshot table.
@@ -45,13 +46,12 @@ let healthLoaded = false;
 
 /**
  * Redacts API keys and URLs from an error message so it is safe to store.
+ * Delegates secret redaction to the canonical redactSecrets() helper so
+ * patterns cannot diverge across the 5 call sites.
  */
 function redactError(raw: string | null | undefined): string {
   if (!raw) return "";
-  return raw
-    .replace(/sk-[a-zA-Z0-9_-]{8,}/g, "[KEY_REDACTED]")
-    .replace(/AIza[a-zA-Z0-9_-]{20,}/g, "[KEY_REDACTED]")
-    .replace(/Bearer\s+[a-zA-Z0-9._-]{10,}/gi, "Bearer [REDACTED]")
+  return redactSecrets(raw)
     .replace(/https?:\/\/\S+/g, "[URL_REDACTED]")
     .replace(/\s+/g, " ")
     .trim()
@@ -60,17 +60,26 @@ function redactError(raw: string | null | undefined): string {
 
 /**
  * Map a failure class string to an AiProviderFailureCategory.
- * QUOTA_EXHAUSTED maps to RATE_LIMIT for in-memory tracking parity.
+ *
+ * QUOTA_EXHAUSTED is BILLING, not RATE_LIMIT. It was mapped to RATE_LIMIT "for
+ * in-memory tracking parity", which made the two indistinguishable exactly
+ * where the difference matters: a rate limit clears by waiting and is worth
+ * retrying, an exhausted quota clears only by paying and must remove the
+ * provider from the automatic chain. Under that mapping an exhausted free tier
+ * got a 60-second cooldown and was then tried again, forever.
  */
 function toFailureCategory(failureClass: string): AiProviderFailureCategory {
   const map: Record<string, AiProviderFailureCategory> = {
     RATE_LIMIT: "RATE_LIMIT",
-    QUOTA_EXHAUSTED: "RATE_LIMIT",
+    QUOTA_EXHAUSTED: "BILLING",
+    BILLING: "BILLING",
     AUTH: "AUTH",
     TIMEOUT: "TIMEOUT",
     MODEL_UNAVAILABLE: "MODEL_UNAVAILABLE",
+    PROVIDER_OVERLOAD: "PROVIDER_OVERLOAD",
     NETWORK: "NETWORK",
     MALFORMED_RESPONSE: "MALFORMED_RESPONSE",
+    PROVIDER_ERROR: "PROVIDER_ERROR",
     UNKNOWN: "UNKNOWN",
   };
   return map[failureClass] ?? "UNKNOWN";
@@ -264,6 +273,8 @@ export async function loadProviderHealthIntoMemory(
         lastFailureMessage: snap.lastSafeErrorMessage ?? null,
         consecutiveFailures: snap.consecutiveFailures,
         cooldownUntil: cooldownUntilMs,
+        latestAnalysisResult: null,
+        latestGenerationResult: null,
       });
 
       // If caller passed an explicit map (for testing), also write into it

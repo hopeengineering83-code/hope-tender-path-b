@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { logAction } from "../audit";
+import { redactSecrets } from "../sanitize-error";
 
 export type TenderWorkflowOperation =
   | "UPLOAD_SOURCE"
@@ -311,7 +312,14 @@ function isUniqueConstraintError(error: unknown): boolean {
 }
 
 export function safeErrorMessage(message: string): string {
-  return message.replace(/(sk-[a-z0-9_-]+|AIza[\w-]+|AQ[\w-]+|postgres(?:ql)?:\/\/[^\s)]+)/gi, "[REDACTED]").slice(0, 500);
+  // Was a fifth private redaction regex. It knew sk-, AIza, AQ and Postgres
+  // URLs, and not Bearer tokens, gsk_/csk_/dsk-, ant-, JWTs or Vercel tokens —
+  // so which secrets got redacted depended on which code path reported the
+  // error. The connection-string rule is kept because it is the one pattern
+  // this site added; everything else comes from the shared redactor.
+  return redactSecrets(message)
+    .replace(/postgres(?:ql)?:\/\/[^\s)]+/gi, "[REDACTED]")
+    .slice(0, 500);
 }
 
 async function auditWorkflow(prisma: PrismaClient, userId: string, result: TenderWorkflowResult, inputHash: string | null, outputHash: string | null, errorCode: string | null) {
@@ -337,8 +345,7 @@ async function auditWorkflow(prisma: PrismaClient, userId: string, result: Tende
       errorCode,
       timestamp: new Date().toISOString(),
     },
-  });
-  void prisma;
+  }, prisma);
 }
 
 export function resultFromRunRow(row: WorkflowRunRow): TenderWorkflowResult {

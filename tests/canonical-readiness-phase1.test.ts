@@ -115,36 +115,20 @@ describe("canonical readiness dependency propagation", () => {
   });
 });
 
-describe("Generate Documents canonical availability", () => {
-  for (const state of ["BLOCKED", "STALE", "PARTIAL", "NOT_RUN"] as const) {
-    it(`is disabled for ${state}`, () => assert.equal(isGenerationActionEnabled(state, true), false));
+describe("Generate Documents canonical availability (Gap 2+3: button removed)", () => {
+  // Gap 2+3: isGenerationActionEnabled always returns false now — there is
+  // no manual Generate Docs button. Processing is automatic.
+  for (const state of ["BLOCKED", "STALE", "PARTIAL", "NOT_RUN", "READY", "WARNING"] as const) {
+    it(`is disabled for ${state} (no manual generate button)`, () => assert.equal(isGenerationActionEnabled(state, true), false));
   }
 
-  it("is enabled only for READY by default", () => {
-    assert.equal(isGenerationActionEnabled("READY", true), true);
-    assert.equal(isGenerationActionEnabled("WARNING", false), false);
-    assert.equal(isGenerationActionEnabled("WARNING", true), true);
-  });
-
-  it("renders a disabled Generate Documents button for blocked canonical state", () => {
-    const html = renderToStaticMarkup(React.createElement(GenerationActionButton, {
-      canonicalGenerationState: "BLOCKED",
-      fullProposalReady: false,
-      busy: false,
-      blockedReason: "Canonical generation is blocked.",
-    }));
-    assert.match(html, /disabled=""/);
-    assert.match(html, /Resolve blockers first/);
-  });
-
-  it("renders an enabled Generate Documents button only for ready canonical state", () => {
+  it("GenerationActionButton renders nothing (no-op)", () => {
     const html = renderToStaticMarkup(React.createElement(GenerationActionButton, {
       canonicalGenerationState: "READY",
       fullProposalReady: true,
       busy: false,
-    }));
-    assert.doesNotMatch(html, /disabled=""/);
-    assert.match(html, /Generate Docs/);
+    } as any));
+    assert.equal(html, "");
   });
 });
 
@@ -165,23 +149,24 @@ describe("migrated UI canonical rendering", () => {
     assert.equal(isGenerationActionEnabled(payload.generation.state, true), false);
   });
 
-  it("existing recovery action labels remain available in the generation panel source", () => {
+  it("the generation panel uses text-based status (no Repair button)", () => {
     const source = readFileSync("components/generation-action-panel.tsx", "utf8");
-    assert.match(source, /Repair evaluation criteria only/);
-    assert.match(source, /Repair all empty fields from source/);
+    // Gap 2+3: Repair Tender Details button removed. Text-based status instead.
+    assert.match(source, /PROCESSING_AUTOMATICALLY/);
+    assert.doesNotMatch(source, /Repair Tender Details from source/);
   });
 });
 
 describe("phase 1 architectural guardrails", () => {
-  it("migrated areas do not introduce a second readiness/severity mapping", () => {
+  it("migrated areas do not introduce a second readiness/severity authority", () => {
+    // components/tender-release-state-panel.tsx was itself later deleted as
+    // unrendered dead code (nothing imports or renders it).
     for (const file of [
-      "app/dashboard/tenders/[id]/executive-snapshot.tsx",
-      "components/tender-health-score-panel.tsx",
       "components/generation-action-panel.tsx",
     ]) {
       const source = readFileSync(file, "utf8");
-      assert.doesNotMatch(source, /UISeverity/);
-      assert.doesNotMatch(source, /good['\"]?\s*[,|]|warning['\"]?\s*[,|]|poor['\"]?\s*[,|]|muted['\"]?\s*[,|]/i);
+      assert.doesNotMatch(source, /\btype\s+UISeverity\b|\binterface\s+UISeverity\b/);
+      assert.doesNotMatch(source, /(?:const|let|var)\s+(?:severityMap|readinessMap|statusSeverityMap)\s*=/i);
       assert.doesNotMatch(source, /generationReady\s*=|canGenerateFromLocal|localGenerationReadiness/);
     }
   });

@@ -25,6 +25,12 @@ export type ClientReadyProposal = {
   score: BenchmarkScore;
   firstScore: BenchmarkScore;
   internalSummary: string;
+  /**
+   * Spots in the delivered document that read "to be confirmed by bid team"
+   * because the pipeline could not resolve a real value. Reported explicitly
+   * so a caller never has to infer completeness from a score alone.
+   */
+  unresolvedPlaceholderCount: number;
 };
 
 const BENCHMARK_SECTIONS = [
@@ -63,7 +69,26 @@ function headingExists(markdown: string, label: string): boolean {
     });
 }
 
+// The phrase normalizeWeakText() substitutes in for every placeholder, TBD,
+// TODO, template variable and AI refusal it finds. It must be detectable here.
+//
+// It previously was not, and the ordering made that a laundering step rather
+// than a repair: normalizeWeakText() runs first and rewrites every pattern
+// hasForbiddenWeakness() looks for into this phrase, which matched none of its
+// tests. A proposal left full of unresolved spots therefore scored +5 and
+// collected the strength "No obvious AI/placeholder/TBD language detected" —
+// the document asserting confidence precisely where it had none. Substituting
+// readable wording for a raw `${var}` is still worth doing; claiming the result
+// is clean is not.
+const UNRESOLVED_PLACEHOLDER_RX = /\bto be confirmed by bid[-\s]team\b|\bbid[-\s]team to confirm\b/gi;
+
+/** How many unresolved spots the client-ready document still carries. */
+export function countUnresolvedPlaceholders(markdown: string): number {
+  return markdown.match(UNRESOLVED_PLACEHOLDER_RX)?.length ?? 0;
+}
+
 function hasForbiddenWeakness(markdown: string): boolean {
+  if (countUnresolvedPlaceholders(markdown) > 0) return true;
   if (/\b(as an ai|i am an ai|language model|placeholder|tbd|todo|insert name|insert date|n\/a \(pending\)|to be determined|i apologize but)\b/i.test(markdown)) return true;
   if (/\bI cannot\b|\bI'm unable\b|\bI am unable\b/i.test(markdown)) return true;
   // Square-bracket stubs — extended to 200 chars to catch verbose placeholders
@@ -133,29 +158,45 @@ function normalizeWeakText(markdown: string): string {
 
 function removeInternalQualityHeadings(markdown: string): string {
   // Strip internal bid-review and evaluator-matrix headings that must not appear in the client document.
+  // Each block runs to the next heading or to the END OF THE TEXT. It ended
+  // at "\s*$", which under the m flag matches the end of the heading line
+  // itself, so only the heading was removed and the internal instructions
+  // under it ("Confirm that all expert/project claims ... marked for bid-team
+  // confirmation") stayed in the client document.
   return markdown
-    .replace(/^#{1,3}\s*Benchmark Quality Review[\s\S]*?(?=^#{1,3}\s|\s*$)/gim, "")
-    .replace(/^#{1,3}\s*Benchmark Auto-Repair Addendum[\s\S]*?(?=^#{1,3}\s|\s*$)/gim, "")
-    .replace(/^#{1,3}\s*Benchmark Completion Addendum[\s\S]*?(?=^#{1,3}\s|\s*$)/gim, "")
-    .replace(/^#{1,3}\s*AI Bid Writer Fallback Note[\s\S]*?(?=^#{1,3}\s|\s*$)/gim, "")
-    .replace(/^#{1,3}\s*Evaluator Response Matrix[\s\S]*?(?=^#{1,3}\s|\s*$)/gim, "")
-    .replace(/^#{1,3}\s*Claim-to-Evidence Proof Map[\s\S]*?(?=^#{1,3}\s|\s*$)/gim, "")
-    .replace(/^#{1,3}\s*Unsupported Claim Control[\s\S]*?(?=^#{1,3}\s|\s*$)/gim, "")
-    .replace(/^#{1,3}\s*Delivery Methodology Work Plan[\s\S]*?(?=^#{1,3}\s|\s*$)/gim, "")
-    .replace(/^#{1,3}\s*Evidence-Based Appendix Register[\s\S]*?(?=^#{1,3}\s|\s*$)/gim, "")
-    .replace(/^#{1,3}\s*Final Submission Control Checklist[\s\S]*?(?=^#{1,3}\s|\s*$)/gim, "")
-    .replace(/^#{1,3}\s*Win Themes and Differentiators[\s\S]*?(?=^#{1,3}\s|\s*$)/gim, "")
-    .replace(/^#{1,3}\s*Submission Control Note[\s\S]*?(?=^#{1,3}\s|\s*$)/gim, "")
-    .replace(/^#{1,3}\s*Expert and Team Evidence Mapping[\s\S]*?(?=^#{1,3}\s|\s*$)/gim, "")
-    .replace(/^#{1,3}\s*Project Reference Mapping[\s\S]*?(?=^#{1,3}\s|\s*$)/gim, "")
-    .replace(/^#{1,3}\s*Detailed Technical Methodology[\s\S]*?(?=^#{1,3}\s|\s*$)/gim, "")
-    .replace(/^#{1,3}\s*Submission Compliance Controls[\s\S]*?(?=^#{1,3}\s|\s*$)/gim, "")
-    .replace(/^#{1,3}\s*Final Submission Controls[\s\S]*?(?=^#{1,3}\s|\s*$)/gim, "")
+    .replace(/^#{1,3}\s*Benchmark Quality Review[\s\S]*?(?=^#{1,3}\s|(?![\s\S]))/gim, "")
+    .replace(/^#{1,3}\s*Benchmark Auto-Repair Addendum[\s\S]*?(?=^#{1,3}\s|(?![\s\S]))/gim, "")
+    .replace(/^#{1,3}\s*Benchmark Completion Addendum[\s\S]*?(?=^#{1,3}\s|(?![\s\S]))/gim, "")
+    .replace(/^#{1,3}\s*AI Bid Writer Fallback Note[\s\S]*?(?=^#{1,3}\s|(?![\s\S]))/gim, "")
+    .replace(/^#{1,3}\s*Evaluator Response Matrix[\s\S]*?(?=^#{1,3}\s|(?![\s\S]))/gim, "")
+    .replace(/^#{1,3}\s*Claim-to-Evidence Proof Map[\s\S]*?(?=^#{1,3}\s|(?![\s\S]))/gim, "")
+    .replace(/^#{1,3}\s*Unsupported Claim Control[\s\S]*?(?=^#{1,3}\s|(?![\s\S]))/gim, "")
+    .replace(/^#{1,3}\s*Delivery Methodology Work Plan[\s\S]*?(?=^#{1,3}\s|(?![\s\S]))/gim, "")
+    .replace(/^#{1,3}\s*Evidence-Based Appendix Register[\s\S]*?(?=^#{1,3}\s|(?![\s\S]))/gim, "")
+    .replace(/^#{1,3}\s*Final Submission Control Checklist[\s\S]*?(?=^#{1,3}\s|(?![\s\S]))/gim, "")
+    .replace(/^#{1,3}\s*Win Themes and Differentiators[\s\S]*?(?=^#{1,3}\s|(?![\s\S]))/gim, "")
+    .replace(/^#{1,3}\s*Submission Control Note[\s\S]*?(?=^#{1,3}\s|(?![\s\S]))/gim, "")
+    .replace(/^#{1,3}\s*Expert and Team Evidence Mapping[\s\S]*?(?=^#{1,3}\s|(?![\s\S]))/gim, "")
+    .replace(/^#{1,3}\s*Project Reference Mapping[\s\S]*?(?=^#{1,3}\s|(?![\s\S]))/gim, "")
+    .replace(/^#{1,3}\s*Detailed Technical Methodology[\s\S]*?(?=^#{1,3}\s|(?![\s\S]))/gim, "")
+    .replace(/^#{1,3}\s*Submission Compliance Controls[\s\S]*?(?=^#{1,3}\s|(?![\s\S]))/gim, "")
+    .replace(/^#{1,3}\s*Final Submission Controls[\s\S]*?(?=^#{1,3}\s|(?![\s\S]))/gim, "")
     .trim();
 }
 
+// Headings that answer a benchmark section under the name the document
+// actually uses. A model-written Section B titled "B.1 Client References" /
+// "B.2 Project Portfolio" was reported as missing "Relevant Experience", and
+// the repair appended a second, generic "Relevant Experience" after the
+// Declaration.
+const SECTION_ALIASES: Partial<Record<string, RegExp>> = {
+  "Relevant Experience": /^#+\s*(?:section\s+b\b|b\.\d+\s|.*\b(?:project portfolio|client references|project references|project experience|relevant projects)\b)/im,
+  "Proposed Team": /^#+\s*.*\b(?:project team|proposed team|key personnel|team composition|team structure)\b/im,
+  "Company Profile": /^#+\s*(?:section\s+a\b|.*\bcompany\s+(?:background|overview|profile)\b)/im,
+};
+
 export function benchmarkMissingSections(markdown: string): string[] {
-  return BENCHMARK_SECTIONS.filter((section) => !headingExists(markdown, section));
+  return BENCHMARK_SECTIONS.filter((section) => !headingExists(markdown, section) && !SECTION_ALIASES[section]?.test(markdown));
 }
 
 export function scoreBenchmarkProposalMarkdown(markdown: string, input: BenchmarkGuardInput): BenchmarkScore {
@@ -183,7 +224,7 @@ export function scoreBenchmarkProposalMarkdown(markdown: string, input: Benchmar
     score += 5;
     strengths.push("Executive Summary opens with specific evidence — project name or contract value.");
   } else if (execSummaryMatch.length > 0) {
-    gaps.push("Executive Summary lacks a specific project name or contract value in the opening — must lead with 'We have already delivered this assignment.'");
+    gaps.push("Executive Summary lacks a specific project name or contract value in the opening — must lead with the closest comparable project by name and scale.");
   }
 
   if (input.expertCount > 0 && /expert|team|cv|personnel|specialist|key staff/i.test(markdown)) {
@@ -273,9 +314,15 @@ export function scoreBenchmarkProposalMarkdown(markdown: string, input: Benchmar
     }
   }
 
+  const unresolved = countUnresolvedPlaceholders(markdown);
   if (!hasForbiddenWeakness(markdown)) {
     score += 5;
     strengths.push("No obvious AI/placeholder/TBD language detected.");
+  } else if (unresolved > 0) {
+    // Named separately from raw placeholder text: these are spots the pipeline
+    // already rewrote into readable wording, so a reader skimming the document
+    // will not recognise them as gaps. The count is the whole point.
+    gaps.push(`Proposal still has ${unresolved} unresolved spot(s) reading "to be confirmed by bid team" — each one needs a real value before submission.`);
   } else gaps.push("Proposal contains placeholder or AI-disclaimer language that must be removed.");
 
   const finalScore = Math.max(0, Math.min(100, score));
@@ -284,32 +331,40 @@ export function scoreBenchmarkProposalMarkdown(markdown: string, input: Benchmar
 
 function completeMissingClientSections(markdown: string, input: BenchmarkGuardInput): string {
   let output = markdown.trim();
-  const missing = benchmarkMissingSections(output);
+  // "Technical Proposal" is the document's own title: the rendered document
+  // carries it on its cover page. Appended here as a section it was a heading
+  // and a "Prepared by" line printed after the Declaration.
+  // No "Relevant Experience" stub without a selected project: it pointed the
+  // client at "project references ... in Section B" that did not exist
+  // (2026-10-01).
+  const missing = benchmarkMissingSections(output)
+    .filter((section) => section !== "Technical Proposal")
+    .filter((section) => section !== "Relevant Experience" || input.projectCount > 0);
   for (const section of missing) {
     output += `\n\n## ${section}\n`;
     if (section === "Cover Letter") {
-      output += `To: ${input.clientName}\n\n${input.companyName} is pleased to submit this technical proposal for ${input.tenderTitle}. The response is based on the tender scope, selected company evidence, reviewed experts, reviewed project references, and senior bid-review controls.\n`;
+      output += `To: ${input.clientName}\n\n${input.companyName} is pleased to submit this technical proposal for ${input.tenderTitle}. The response is prepared from the tender scope, the firm's records, its proposed experts and its project references.\n`;
     } else if (section === "Technical Proposal") {
       output += `${input.tenderTitle}\n\nPrepared by ${input.companyName} for ${input.clientName}.\n`;
     } else if (section === "Table of Contents") {
       output += BENCHMARK_SECTIONS.map((item, index) => `${index + 1}. ${item}`).join("\n") + "\n";
     } else if (section === "Executive Summary") {
-      output += `${input.companyName} presents this technical proposal in response to ${input.tenderTitle}. The proposal has been structured to address each evaluation criterion with direct evidence from the company's reviewed portfolio, expert team, and compliance records. ${input.projectCount > 0 ? `${input.projectCount} directly relevant project reference(s) are included in Section B.` : "Project references should be selected and reviewed before final submission."} ${input.expertCount > 0 ? `${input.expertCount} specialist expert(s) are proposed in Section A.` : "Expert CVs should be confirmed before final submission."} The technical approach in Section C is tailored specifically to the scope requirements of this tender.\n`;
+      output += `${input.companyName} presents this technical proposal in response to ${input.tenderTitle}. The proposal has been structured to address each evaluation criterion with direct evidence from the company's reviewed portfolio, expert team, and compliance records. ${input.projectCount > 0 ? `${input.projectCount} directly relevant project reference(s) are included in Section B.` : ""} ${input.expertCount > 0 ? `${input.expertCount} specialist expert(s) are proposed in Section A.` : ""} The technical approach in Section C is tailored specifically to the scope requirements of this tender.\n`;
     } else if (section === "Company Profile") {
-      output += `${input.companyName} is an established consultancy firm with a multidisciplinary team covering architecture, engineering, and project management. Company registration documents, licence details, staff credentials, and service line information are stored in the company knowledge vault and should be incorporated in the final submission. Key company data — founding year, licence grade, staff count, and total completed projects — must be confirmed and added by the bid team before export.\n`;
+      output += `Section A presents ${input.companyName}'s registration, service lines, staff and completed projects as recorded in the firm's own documents.\n`;
     } else if (section === "Proposed Team") {
-      output += `${input.expertCount > 0 ? `${input.expertCount} reviewed expert record(s) are selected for this response. Each expert's CV, professional licence, and relevant project history are available in the company knowledge vault.` : "Expert CVs and professional credentials must be reviewed and selected in the application before final submission."} The bid team should confirm that each proposed expert: (a) holds the professional licence or qualification required by the tender, (b) is named on their CV with their proposed role clearly stated, and (c) can be mapped to a comparable previous project. Any expert required by the tender who is not yet selected must be identified before final submission.\n`;
+      output += `${input.expertCount > 0 ? `${input.expertCount} expert(s) are proposed, each named with the role, professional registration and project history stated in their own CV.` : "The proposed team is presented in Section A."}\n`;
     } else if (section === "Relevant Experience") {
-      output += `${input.projectCount > 0 ? `${input.projectCount} reviewed project reference(s) are included. Each reference includes the project name, client, country, sector, scope, and contract value where available.` : "Project references must be reviewed and selected in the application before final submission."} The bid team should confirm that each reference: (a) is comparable to the tender scope in sector, scale, and services, (b) has a verifiable client contact for reference letters, and (c) is supported by documentation (completion certificates, photos, drawings, or contracts) that can be attached to the submission.\n`;
+      output += `${input.projectCount > 0 ? `${input.projectCount} project reference(s) are presented in Section B, each with the project name, client, country, sector and scope the firm's record states.` : ""}\n`;
     } else if (section === "Technical Approach") {
       output += "The technical approach is structured to directly address the scope of services and key technical requirements specified in the tender. The delivery methodology follows a staged process: (1) inception and document review, (2) stakeholder consultation and site data collection, (3) technical assessment and gap analysis, (4) concept and schematic design, (5) detailed design, specifications, BOQ, and cost estimates, (6) quality assurance review and client validation, and (7) construction-document finalisation and submission support. Each stage defines inputs, outputs, responsible experts, quality review checkpoints, and client approval milestones. The methodology incorporates risk controls for technical coordination, regulatory compliance, schedule management, and evidence sufficiency.\n";
     } else if (section === "Compliance and Bid Review Strategy") {
-      output += "The proposal proceeds with the strongest reviewed evidence and carries unresolved evidence gaps as senior bid-review actions rather than unsupported claims.\n";
+      output += "The compliance matrix sets each tender requirement beside the section of this proposal that answers it.\n";
       output += input.complianceLines.slice(0, 10).map((line) => `- ${line}`).join("\n") + "\n";
     } else if (section === "Appendix Register") {
-      output += "Appendices should include only verified or bid-team-confirmed items: company registration, tax/legal documents, audited/financial documents, reviewed CVs, project references, certificates, forms, declarations, photos/drawings, and tender-specific schedules.\n";
+      output += "Company registration, tax and legal documents, financial statements, CVs, project references and certificates are available on request.\n";
     } else if (section === "Declaration") {
-      output += `We confirm that this technical proposal for ${input.tenderTitle} has been prepared using tender information and reviewed company evidence available in the app, subject to final human bid-team verification before submission.\n`;
+      output += `We confirm that this technical proposal for ${input.tenderTitle} has been prepared from the tender documents and the firm's own records.\n`;
     }
   }
   if (input.submissionNotes && !/submission control note/i.test(output)) {
@@ -360,6 +415,7 @@ export function finalizeClientReadyProposalMarkdown(markdown: string, input: Ben
   const repaired = repairClientReadyMarkdown(completed, input, firstScore);
   const clientReady = removeInternalQualityHeadings(normalizeWeakText(repaired));
   const score = scoreBenchmarkProposalMarkdown(clientReady, input);
-  const internalSummary = `Benchmark score ${score.score}/100 (${score.passed ? "PASS" : "NEEDS REVIEW"}); first score ${firstScore.score}/100; strengths: ${score.strengths.length}; gaps: ${score.gaps.length}${score.gaps.length ? ` — ${score.gaps.join(" | ")}` : ""}`;
-  return { markdown: clientReady, score, firstScore, internalSummary };
+  const unresolvedPlaceholderCount = countUnresolvedPlaceholders(clientReady);
+  const internalSummary = `Benchmark score ${score.score}/100 (${score.passed ? "PASS" : "NEEDS REVIEW"}); first score ${firstScore.score}/100; strengths: ${score.strengths.length}; gaps: ${score.gaps.length}${unresolvedPlaceholderCount > 0 ? `; unresolved placeholders: ${unresolvedPlaceholderCount}` : ""}${score.gaps.length ? ` — ${score.gaps.join(" | ")}` : ""}`;
+  return { markdown: clientReady, score, firstScore, internalSummary, unresolvedPlaceholderCount };
 }

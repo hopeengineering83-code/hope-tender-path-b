@@ -109,13 +109,35 @@ export async function getSession(): Promise<string | null> {
     await prismaReady;
     const session = await prisma.session.findUnique({
       where: { token: hashToken(token) },
-      select: { userId: true, expiresAt: true },
+      select: { userId: true, expiresAt: true, user: { select: { deletedAt: true } } },
     });
     if (!session || session.userId !== data.userId || session.expiresAt.getTime() <= Date.now()) {
       return null;
     }
+    // Audit C-5: enforce soft-delete here, not only in getCurrentUser. Many API
+    // routes authorize on getSession() alone and never load the user record, so
+    // a check that lives only in getCurrentUser leaves that surface reachable by
+    // a deactivated account. This is the same reasoning getCurrentUser already
+    // documents for stolen cookies, applied at the choke point every caller
+    // shares. The user row is fetched in the existing session query rather than
+    // a second round trip, so no extra query is added per request.
+    if (session.user?.deletedAt) return null;
     return session.userId;
-  } catch {
+  } catch (e) {
+    // SECURITY / OBSERVABILITY: previously this catch was bare (`catch {}`),
+    // silently returning `null` on DB errors. That made every DB outage look
+    // like "user logged out" — operators had no signal to detect a session-DB
+    // outage through this path. Compare with `deleteCookieSession` (lines 72-77)
+    // which already logs at error level for the same class of failure.
+    //
+    // We still return null (fail-closed for auth — a DB we can't read cannot
+    // confirm the session is valid), but now we surface the failure so
+    // monitoring can catch it.
+    logger.error(
+      `[auth] getSession DB failure — treating as logged out. ` +
+      `Token hash (first 16 chars): ${hashToken(token).slice(0, 16)}...`,
+      { detail: e }
+    );
     return null;
   }
 }
@@ -136,7 +158,14 @@ export async function getCurrentUser() {
   const userId = await getSession();
   if (!userId) return null;
   await prismaReady;
-  return prisma.user.findUnique({ where: { id: userId } });
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  // Audit C-5: reject soft-deleted users. Even if a stolen cookie still
+  // resolves to a session row (e.g. the soft-delete transaction committed
+  // after the session was checked), the deletedAt field marks the user as
+  // no longer authorized. This is the auth-layer enforcement of the
+  // soft-delete pattern.
+  if (user?.deletedAt) return null;
+  return user;
 }
 
 export async function requireUser() {

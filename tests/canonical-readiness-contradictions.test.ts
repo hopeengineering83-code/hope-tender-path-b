@@ -515,4 +515,16 @@ describe("canonical-status-badge component exists and exports correctly", () => 
       assert.match(source, new RegExp(moduleName), `canonical resolver must compute state for module ${moduleName}`);
     }
   });
+
+  it("RUNNING and STALE are not visually identical despite sharing a base glyph", () => {
+    // Both intentionally use RefreshIcon per the canonical status model design
+    // (docs/audits/icon-status-contradiction-audit.md section 5: both listed
+    // as "⟳", with RUNNING calling for "+ spinner"). Without the spinner,
+    // "actively running now" and "outdated, needs a rerun" render as the
+    // exact same static icon — a real contradiction, not just a design nuance.
+    const source = readFileSync("lib/engine/canonical-readiness-state.ts", "utf8");
+    const runningLine = source.split("\n").find((line) => line.trimStart().startsWith("RUNNING:"));
+    assert.ok(runningLine, "RUNNING entry must exist in CANONICAL_STATUS_CONFIG");
+    assert.match(runningLine!, /animate-spin/, "RUNNING's icon must animate so it is distinguishable from STALE's static refresh icon");
+  });
 });

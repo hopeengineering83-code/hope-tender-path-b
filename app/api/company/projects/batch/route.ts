@@ -3,9 +3,21 @@ import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { ensureCompanyForUser } from "../../../../../lib/company-workspace";
-import { logAction } from "../../../../../lib/audit";
 import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
+import { logAction } from "../../../../../lib/audit";
+import {
+  buildReviewProvenance,
+  buildPartialSourceVerificationProvenance,
+  projectReviewFields,
+  publicVaultIdentifier,
+} from "../../../../../lib/vault-review-provenance";
+
+type RejectedReview = {
+  id: string;
+  code: "NOT_FOUND_OR_NOT_OWNED" | "SOURCE_DOCUMENT_REQUIRED" | "SOURCE_TEXT_REQUIRED" | "PROVENANCE_REQUIRED" | "FIELD_EVIDENCE_REQUIRED" | "CONCURRENT_UPDATE";
+  missingEvidenceFields?: string[];
+};
 
 export async function PATCH(req: Request) {
   let actor;
@@ -29,21 +41,15 @@ export async function PATCH(req: Request) {
 
   await prismaReady;
   const body = await req.json().catch(() => null) as Record<string, unknown> | null;
-  if (!body) {
-    return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 });
-  }
+  if (!body) return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 });
 
   const ids = Array.from(new Set(
     Array.isArray(body.ids)
       ? body.ids.filter((value): value is string => typeof value === "string" && value.trim().length > 0).map((value) => value.trim())
       : [],
   ));
-  if (ids.length === 0) {
-    return NextResponse.json({ error: "ids array is required and must not be empty" }, { status: 400 });
-  }
-  if (ids.length > 200) {
-    return NextResponse.json({ error: "Maximum 200 unique ids per batch" }, { status: 400 });
-  }
+  if (ids.length === 0) return NextResponse.json({ error: "ids array is required and must not be empty" }, { status: 400 });
+  if (ids.length > 200) return NextResponse.json({ error: "Maximum 200 unique ids per batch" }, { status: 400 });
   if (body.trustLevel !== "REVIEWED") {
     return NextResponse.json(
       { error: "trustLevel must be explicitly set to REVIEWED", code: "INVALID_TRUST_LEVEL" },
@@ -52,29 +58,208 @@ export async function PATCH(req: Request) {
   }
 
   const company = await ensureCompanyForUser(prisma, actor.id);
-  const result = await prisma.project.updateMany({
+  const records = await prisma.project.findMany({
     where: { id: { in: ids }, companyId: company.id, deletedAt: null },
-    data: {
-      trustLevel: "REVIEWED",
-      reviewedBy: actor.id,
-      reviewedAt: new Date(),
-      reviewNotes: "Batch approved by an authorized reviewer.",
+    select: {
+      id: true,
+      name: true,
+      clientName: true,
+      country: true,
+      sector: true,
+      serviceAreas: true,
+      contractValue: true,
+      currency: true,
+      sourceDocumentId: true,
+      sourceDocument: {
+        select: {
+          id: true,
+          companyId: true,
+          extractedText: true,
+          contentSha256: true,
+          contentByteLength: true,
+          integrityStatus: true,
+          metadata: true,
+        },
+      },
     },
   });
+  const byId = new Map(records.map((record) => [record.id, record]));
+  const reviewedAt = new Date();
+  const rejected: RejectedReview[] = [];
+  // Defect 4: candidates now carry a `partial` flag. When true, the record
+  // is persisted as SOURCE_VERIFIED (not REVIEWED) with the partial
+  // provenance payload — identity verified, inferred fields unverified.
+  const candidates: Array<{
+    id: string;
+    serialized: string;
+    sourceContentHash: string;
+    sourceByteLength: number;
+    sourceTextHash: string;
+    evidenceFields: string[];
+    partial?: boolean;
+    verifiedFields?: string[];
+    unverifiedFields?: string[];
+  }> = [];
 
-  void logAction({
-    userId: actor.id,
-    action: "UPDATE",
-    entityType: "Project",
-    description: `Batch approved ${result.count} project(s) as REVIEWED`,
-    metadata: { ids, trustLevel: "REVIEWED", updated: result.count },
-    requestId,
-  }).catch((error) => {
-    logger.warn("project batch-review audit persistence failed", {
+  for (const id of ids) {
+    const record = byId.get(id);
+    if (!record) {
+      rejected.push({ id, code: "NOT_FOUND_OR_NOT_OWNED" });
+      continue;
+    }
+    const ownedSource = record.sourceDocument?.companyId === company.id ? record.sourceDocument : null;
+    const provenance = buildReviewProvenance({
+      recordType: "PROJECT",
+      sourceDocument: ownedSource,
+      fields: projectReviewFields(record),
+      reviewerId: actor.id,
+      reviewedAt,
+    });
+    if (!provenance.ok) {
+      // Defect 4: try partial source verification before rejecting.
+      const partial = buildPartialSourceVerificationProvenance({
+        recordType: "PROJECT",
+        sourceDocument: ownedSource,
+        fields: projectReviewFields(record),
+        verificationMethod: "HYBRID",
+        verifiedAt: reviewedAt,
+      });
+      if (!partial.ok) {
+        rejected.push({
+          id,
+          code: partial.code ?? "FIELD_EVIDENCE_REQUIRED",
+          ...(partial.unverifiedFields.length ? { missingEvidenceFields: partial.unverifiedFields.slice(0, 8) } : {}),
+        });
+        continue;
+      }
+      candidates.push({
+        id,
+        serialized: partial.serialized!,
+        sourceContentHash: partial.sourceContentHash!,
+        sourceByteLength: partial.sourceByteLength!,
+        sourceTextHash: partial.sourceTextHash!,
+        evidenceFields: partial.verifiedFields,
+        partial: true,
+        verifiedFields: partial.verifiedFields,
+        unverifiedFields: partial.unverifiedFields,
+      });
+      continue;
+    }
+    candidates.push({ id, ...provenance });
+  }
+
+  try {
+    const updatedIds = await prisma.$transaction(async (tx) => {
+      const completed: Array<{ id: string; status: "REVIEWED" | "SOURCE_VERIFIED" }> = [];
+      for (const candidate of candidates) {
+        const updated = await tx.project.updateMany({
+          where: { id: candidate.id, companyId: company.id, deletedAt: null },
+          data: candidate.partial
+            ? {
+                trustLevel: "SOURCE_VERIFIED",
+                reviewedBy: null,
+                reviewedAt: null,
+                reviewNotes: candidate.serialized,
+              }
+            : {
+                trustLevel: "REVIEWED",
+                reviewedBy: actor.id,
+                reviewedAt,
+                reviewNotes: candidate.serialized,
+              },
+        });
+        if (updated.count !== 1) {
+          rejected.push({ id: candidate.id, code: "CONCURRENT_UPDATE" });
+          continue;
+        }
+
+        await tx.auditLog.create({
+          data: {
+            userId: actor.id,
+            action: "PROJECT_REVIEW",
+            entityType: "Project",
+            entityId: candidate.id,
+            description: candidate.partial
+              ? `Project record was partially source-verified (identity verified, ${candidate.unverifiedFields?.length ?? 0} inferred field(s) unverified: ${candidate.unverifiedFields?.join(", ") ?? ""}).`
+              : "Project record was reviewed and approved.",
+            metadata: JSON.stringify({
+              requestId,
+              recordRef: publicVaultIdentifier(candidate.id),
+              ...(candidate.partial
+                ? {
+                    partialVerification: true,
+                    verifiedFields: candidate.verifiedFields,
+                    unverifiedFields: candidate.unverifiedFields,
+                    sourceContentHash: candidate.sourceContentHash,
+                    sourceByteLength: candidate.sourceByteLength,
+                    sourceTextHash: candidate.sourceTextHash,
+                  }
+                : {
+                    reviewerId: actor.id,
+                    sourceContentHash: candidate.sourceContentHash,
+                    sourceByteLength: candidate.sourceByteLength,
+                    sourceTextHash: candidate.sourceTextHash,
+                    evidenceFields: candidate.evidenceFields,
+                    reviewedAt: reviewedAt.toISOString(),
+                  }),
+            }),
+          },
+        });
+        completed.push({ id: candidate.id, status: candidate.partial ? "SOURCE_VERIFIED" : "REVIEWED" });
+      }
+      return completed;
+    });
+
+    return NextResponse.json({
+      success: rejected.length === 0,
+      updated: updatedIds.length,
+      accepted: updatedIds,
+      rejected,
+      requestId,
+    }, { status: updatedIds.length > 0 ? 200 : 422 });
+  } catch (error) {
+    logger.error("project batch review failed", {
       requestId,
       errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
     });
+    return NextResponse.json(
+      { error: "Project review failed. Retry with the request ID.", code: "PROJECT_REVIEW_FAILED", requestId },
+      { status: 500 },
+    );
+  }
+}
+
+/**
+ * Bulk delete ALL projects for the company (soft-delete with deletedAt + deletedBy).
+ * Used by the "Delete All Projects" button in the Company Vault UI.
+ */
+export async function DELETE(_req: Request) {
+  let actor;
+  try {
+    actor = await requireRole("ADMIN", "PROPOSAL_MANAGER");
+  } catch (error) {
+    return error instanceof Error && error.message === "Forbidden"
+      ? forbiddenResponse()
+      : unauthorizedResponse();
+  }
+
+  await prismaReady;
+  const company = await prisma.company.findUnique({ where: { userId: actor.id } });
+  if (!company) return NextResponse.json({ error: "Company not found" }, { status: 404 });
+
+  const result = await prisma.project.updateMany({
+    where: { companyId: company.id, deletedAt: null },
+    data: { deletedAt: new Date(), deletedBy: actor.id },
   });
 
-  return NextResponse.json({ success: true, updated: result.count });
+  await logAction({
+    userId: actor.id,
+    action: "PROJECT_BULK_DELETE",
+    entityType: "Project",
+    entityId: company.id,
+    description: `Bulk deleted ${result.count} project record(s).`,
+    metadata: { companyId: company.id, deletedCount: result.count },
+  });
+
+  return NextResponse.json({ success: true, deletedCount: result.count });
 }

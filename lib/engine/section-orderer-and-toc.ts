@@ -60,6 +60,9 @@ const CANONICAL_ORDER: RegExp[] = [
   /^#\s+Section\s+G\b/i,
   /^#\s+Section\s+H\b/i,
   /^#\s+(?:Annex(?:\s*(?:&|and|\+)\s*Appendix)?\s+Register|Appendix\s+Register|Appendices)\b/i,
+  // The Annex Schedule lists the documents the owner attaches; it closes the
+  // body of the proposal, ahead of the signed Declaration.
+  /^#\s+Annex\s+Schedule\b/i,
   /^#\s+(?:Formal\s+)?Declaration\b/i,
   /^#\s+(?:Submission\s+Readiness\s+Checklist|Pre-Submission\s+Checklist|Final\s+Submission\s+Checklist)\b/i,
 ];

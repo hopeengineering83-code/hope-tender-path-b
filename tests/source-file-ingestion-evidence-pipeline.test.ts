@@ -272,10 +272,10 @@ describe("chunking", () => {
 // ─── 7. Extraction quality tests ───────────────────────────────────────────
 
 describe("extraction quality", () => {
-  const { assessExtractionQuality } = require("../lib/extraction/tender-extraction-quality");
+  const { assessTenderExtractionQuality } = require("../lib/extraction/tender-extraction-quality");
 
   it("good text returns good quality", () => {
-    const result = assessExtractionQuality({
+    const result = assessTenderExtractionQuality({
       tenderId: "t1",
       files: [{
         fileId: "f1", fileName: "tender.pdf", extractionStatus: "extracted",
@@ -288,7 +288,7 @@ describe("extraction quality", () => {
   });
 
   it("partial extraction returns partial, not blocked", () => {
-    const result = assessExtractionQuality({
+    const result = assessTenderExtractionQuality({
       tenderId: "t1",
       files: [{
         fileId: "f1", fileName: "tender.pdf", extractionStatus: "partial",
@@ -301,7 +301,7 @@ describe("extraction quality", () => {
   });
 
   it("encrypted PDF blocks with next action", () => {
-    const result = assessExtractionQuality({
+    const result = assessTenderExtractionQuality({
       tenderId: "t1",
       files: [{
         fileId: "f1", fileName: "tender.pdf", extractionStatus: "encrypted",
@@ -314,7 +314,7 @@ describe("extraction quality", () => {
   });
 
   it("OCR-required but unavailable blocks with next action", () => {
-    const result = assessExtractionQuality({
+    const result = assessTenderExtractionQuality({
       tenderId: "t1",
       files: [{
         fileId: "f1", fileName: "tender.pdf", extractionStatus: "ocr_required",
@@ -326,7 +326,7 @@ describe("extraction quality", () => {
   });
 
   it("no submission instructions creates warning, not extraction failure", () => {
-    const result = assessExtractionQuality({
+    const result = assessTenderExtractionQuality({
       tenderId: "t1",
       files: [{
         fileId: "f1", fileName: "tender.pdf", extractionStatus: "extracted",
@@ -435,7 +435,7 @@ describe("API routes — source-level verification", () => {
 
   it("diagnostics returns quality assessment", () => {
     const src = read("app/api/tenders/[id]/extraction-diagnostics/route.ts");
-    assert.ok(src.includes("assessExtractionQuality"), "must assess extraction quality");
+    assert.ok(src.includes("assessTenderExtractionQuality"), "must assess extraction quality");
     assert.ok(src.includes("quality,"), "must return quality object in response");
     assert.ok(src.includes("failedFiles"), "must return failed files list");
     assert.ok(src.includes("ocrRequiredFiles"), "must return OCR-required files list");
@@ -448,8 +448,9 @@ describe("module existence", () => {
   const modules = [
     "lib/extraction/tender-source-ingestion.ts",
     "lib/extraction/tender-file-classifier.ts",
+    // tender-table-extractor.ts was deleted: it had no production importer,
+    // and tender-text-extractor.ts already returns the tables it duplicated.
     "lib/extraction/tender-text-extractor.ts",
-    "lib/extraction/tender-table-extractor.ts",
     "lib/extraction/tender-source-evidence-ledger.ts",
     "lib/extraction/tender-chunk-builder.ts",
     "lib/extraction/tender-extraction-quality.ts",

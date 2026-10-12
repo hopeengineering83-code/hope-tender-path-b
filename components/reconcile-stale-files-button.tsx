@@ -10,6 +10,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { emitTenderWorkflowSync } from "../lib/ui/tender-workflow-sync";
 
 type ReconcileSummary = {
   kept: number;
@@ -59,6 +60,10 @@ export function ReconcileStaleFilesButton({ tenderId, staleCount }: { tenderId: 
       const summary = `Reconciled: ${s.kept} kept · ${s.relinked} relinked · ${s.superseded} superseded · ${s.needsRevalidation} flagged for revalidation.`;
       setKind("success");
       setMessage(summary);
+      // The Build Plan panel that hosts this button holds its own fetched
+      // outside-plan count; router.refresh() does not re-run that client
+      // fetch, so without this the reconciled rows would still be counted.
+      emitTenderWorkflowSync({ tenderId, source: "stale-plan-files-reconciled" });
       startTransition(() => router.refresh());
     } catch (error) {
       setKind("error");

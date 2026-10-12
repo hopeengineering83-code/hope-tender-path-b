@@ -86,9 +86,10 @@ a fallback is approved.
 
 **What to check:**
 - Check the AI Health panel for provider status.
-- The provider fallback order is: Z.ai → Cerebras → Mistral → Groq →
-  OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic. If all
-  providers fail, the system falls back to regex extraction.
+- The automatic fallback order is: Gemini → Groq → Mistral → Z.ai → Cerebras →
+  OpenRouter → OpenAI → Together → DeepSeek → Anthropic. Missing, rate-limited,
+  timed-out, misconfigured, or failed providers fall through automatically.
+  Deterministic draft fallback runs only after all configured AI providers fail.
 - Check server logs for `[ai-analyze]` entries with the `failureCategory`.
 - Check `AI_ANALYSIS_TIMEOUT_MS` (default 50s on Hobby, 240s on Pro).
 - If using background mode (?mode=background), check the AiJob status in the
@@ -223,6 +224,83 @@ client-side errors with server-side logs:
 - If a build fails on Vercel, check the build logs for the specific error
   before pushing a fix. Common causes: missing env vars, Prisma generate
   failures, type errors.
+
+---
+
+## Release disposition of the scheduler
+
+Normal Production scheduling is **Vercel Pro Cron → durable AiJob queue →
+exactly-once claim → bounded retries and stuck-job recovery**:
+
+| Path | Schedule (`vercel.json`) | Authenticates with |
+|---|---|---|
+| `/api/ai-jobs/run-next` | every minute | `Authorization: Bearer $CRON_SECRET` |
+| `/api/cron/ai-analyze-retry` | every 5 minutes | `Authorization: Bearer $CRON_SECRET` |
+
+GitHub Actions is **manual / emergency tooling only**. The workflow "Drain AiJob
+queue" (`.github/workflows/drain-ai-job-queue.yml`) has no schedule on this
+release. GitHub runs scheduled workflows only from the default branch, so
+until this release reaches `main` the old Hobby-era `*/5` drain keeps running
+there. **Merging this release into `main` removes the scheduled GitHub drain**
+— nothing has to be switched off by hand — and `vercel.json` on `main` gains
+the two crons above. `tests/the-queue-scheduler-is-vercel-native.test.ts`
+fails the build if any scheduled workflow drives `/api/ai-jobs/run-next` or
+`/api/cron/ai-analyze-retry` again.
+
+Database cost of the cron, measured through a byte-counting proxy: an idle
+`run-next` tick moves about 3–4 KB out of Postgres (about 5 MB a day). It does
+run every minute, so the Production database compute never suspends; on a
+Neon plan that bills or caps compute hours, size the plan for an always-on
+compute. "Keep Neon warm" (`keep-neon-warm.yml`, a GET of `/api/health`)
+becomes redundant once the minute cron runs; it is harmless and may be
+disabled from the Actions tab.
+
+## Post-release scheduler test (Production only)
+
+Vercel Cron runs only on the Production deployment, so a Preview can never
+prove it. After the owner promotes a release, run this once. Every reading
+comes from `/api/admin/diagnostics` (signed in as an admin): `runtime.scheduler`
+(booleans only, never a secret) and `queue` (your own jobs: live jobs by type
+and status, the oldest queued job's age, jobs retried in the last 24 h, the
+last job start, and `duplicateLiveStageJobs`).
+
+1. **CRON_SECRET configured.** `runtime.scheduler.cronSecretConfigured` is
+   `true` and `vercelCronRunsHere` is `true`. If not, set `CRON_SECRET` (at
+   least 16 characters) in the Vercel project's **Production** environment and
+   redeploy; until then every cron call is a 401 and work waits for a browser.
+2. **Both Vercel Cron Jobs exist.** Vercel → Project → Settings → Cron Jobs
+   lists `/api/ai-jobs/run-next` (every minute) and `/api/cron/ai-analyze-retry`
+   (every 5 minutes), and their recent invocations return 200, not 401.
+3. **Start a background job.** On a tender with extracted files, press AI
+   Analyze (or Run Engine).
+4. **Close the browser** immediately.
+5. **The scheduler claims it.** Within about two minutes, `queue.live` shows
+   the job RUNNING (or it has finished), `queue.lastJobStartedAt` is recent,
+   and `queue.oldestQueuedSeconds` is null or under 120. A job still QUEUED
+   after five minutes means the cron is not running: re-check steps 1–2.
+6. **A retry happens.** A provider rate limit or timeout during AI Analyze is
+   re-armed by `/api/cron/ai-analyze-retry`; a stage whose worker died is
+   re-armed by the next `run-next` sweep once its 330 s invocation cap has
+   passed. `queue.retriedLast24h` counts both. Retries cannot be forced
+   safely on Production; if none occurred during the test, record that, and
+   read this counter again after the first provider rate limit — the retry
+   and recovery paths themselves are proven in CI by the tests listed below.
+7. **It recovers.** The re-armed job is claimed again and finishes, or fails
+   with a stated reason once its attempt budget is spent — never RUNNING
+   forever. The tender page shows the stage complete on return.
+8. **No duplicate job, document or export.** `queue.duplicateLiveStageJobs` is
+   `0`; the tender's Documents list holds each planned file once; the package
+   readiness shows no "Duplicate filename" blocker; and the ZIP lists each
+   file once.
+
+The code paths behind steps 5–8 are proven on real PostgreSQL in CI:
+`tests/job-claim-concurrency-stress-db.test.ts` (exactly one winner at 2, 10
+and 25 concurrent claimers, cron and request wakes mixed, no cross-tenant
+claim), `tests/a-killed-worker-does-not-strand-the-package-db.test.ts`
+(re-arm after the invocation cap, attempt budget, idempotent sweep),
+`tests/ai-jobs-stuck-recovery.test.ts`, `tests/engine-worker-wake-constraints.test.ts`
+and `tests/the-queue-scheduler-is-vercel-native.test.ts` (cron bearer, no
+scheduled GitHub driver).
 
 ---
 

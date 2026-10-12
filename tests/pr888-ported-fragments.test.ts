@@ -59,7 +59,10 @@ describe("PR #888 ported fragments", () => {
   });
 
   it("Fragment 5: ai-job-handlers returns code/retryable/correlationId at top level", () => {
-    const src = read("lib/ai-job-handlers.ts");
+    // AI_ANALYZE's implementation lives in ai-job-handlers-legacy.ts —
+    // lib/ai-job-handlers.ts now only re-exports it and locally overrides
+    // EXTRACT_TEXT's getHandler branch.
+    const src = read("lib/ai-job-handlers-legacy.ts");
     assert.ok(
       src.includes("...(finalizeCode ? { code: finalizeCode }"),
       "must return code at top level (not just in output)",

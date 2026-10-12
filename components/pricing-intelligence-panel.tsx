@@ -1,0 +1,297 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { emitTenderWorkflowSync, subscribeTenderWorkflowSync } from "@/lib/ui/tender-workflow-sync";
+import { computeWorkbookTotals, editedLine } from "@/lib/engine/priced-line-amount";
+
+type Confidence = "HIGH" | "MEDIUM" | "LOW" | "NONE";
+type Line = {
+  key: string; category: string; label: string; quantity: number; unit: string;
+  quantityBasis: string; quantityConfidence: Confidence;
+  rate: number | null; amount: number | null;
+  rateBasis: string; rateSource: string; sourceDate: string | null; rateConfidence: Confidence;
+  confidence: Confidence; assumptions: string[];
+  build?: { costRate: number; overheadPct: number; marginPct: number } | null;
+};
+type Warning = { code: string; message: string };
+type BenchmarkRef = { id: string; label: string; source: string; sourceUrl: string | null; effectiveDate: string; confidence: string; origin: "SEED" | "OWNER" };
+type Scenario = { id: string; label: string; description: string; contingencyPct: number; overheadPct?: number; marginPct?: number; build?: { directCost: number; overhead: number; margin: number; feeLines: number }; lines: Line[]; subtotal: number; contingency: number; vat: number; offerTotal: number; complete: boolean; notes: string[] };
+type Estimate = {
+  status: "COMPLETE" | "PARTIAL" | "INSUFFICIENT_EVIDENCE";
+  currency: string; currencyBasis: string;
+  vatPercent: number; vatBasis: string;
+  withholdingPct: number; withholdingBasis: string;
+  validityDays: number; validityBasis: string;
+  durationMonths: number; durationBasis: string;
+  budget: { amount: number; currency: string; basis: string } | null;
+  envelope: { low: number; median: number; high: number; basis: string; confidence: Confidence; comparables: string[] } | null;
+  scenarios: Scenario[];
+  recommended: string;
+  recommendation: string;
+  lowConfidence: string[];
+  evidenceUsed: string[];
+  warnings?: Warning[];
+  evaluation?: { model: string; technicalWeight: number | null; financialWeight: number | null; basis: string };
+  benchmarksUsed?: BenchmarkRef[];
+};
+
+const CONFIDENCE_STYLE: Record<Confidence, string> = {
+  HIGH: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  MEDIUM: "bg-sky-50 text-sky-700 border-sky-200",
+  LOW: "bg-amber-50 text-amber-800 border-amber-300",
+  NONE: "bg-rose-50 text-rose-700 border-rose-300",
+};
+
+function money(value: number, currency: string): string {
+  return `${currency} ${Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+export function PricingIntelligencePanel({ tenderId, canMutate = false }: { tenderId: string; canMutate?: boolean }) {
+  const [estimate, setEstimate] = useState<Estimate | null>(null);
+  const [scope, setScope] = useState<{ required: boolean; basis: string } | null>(null);
+  // Empty until the estimate arrives, so the panel opens on the scenario the
+  // estimator recommends for this tender's evaluation model.
+  const [scenarioId, setScenarioId] = useState<string>("");
+  const [rates, setRates] = useState<Record<string, string>>({});
+  const [quantities, setQuantities] = useState<Record<string, string>>({});
+  const [excluded, setExcluded] = useState<Record<string, boolean>>({});
+  const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [saveToRateCard, setSaveToRateCard] = useState(true);
+
+  const load = useCallback(async () => {
+    setError(null);
+    try {
+      const res = await fetch(`/api/tenders/${tenderId}/pricing/estimate`, { cache: "no-store" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? `Failed to load the estimate (${res.status})`);
+      setScope(data.scope ?? null);
+      setEstimate(data.estimate ?? null);
+      setScenarioId((current) => current || data.estimate?.recommended || "BALANCED");
+    } catch {
+      setError("Failed to load the pricing estimate.");
+    }
+  }, [tenderId]);
+
+  useEffect(() => { void load(); }, [load]);
+  useEffect(() => subscribeTenderWorkflowSync(tenderId, () => { void load(); }), [load, tenderId]);
+
+  const scenario = useMemo(() => estimate?.scenarios.find((s) => s.id === scenarioId) ?? null, [estimate, scenarioId]);
+
+  // Each line as edited, by the approval's own rules, so the amount and the
+  // total on screen are the ones that will be approved and written.
+  const edited = useMemo(() => {
+    const out: Record<string, ReturnType<typeof editedLine>> = {};
+    for (const l of scenario?.lines ?? []) out[l.key] = editedLine(l, rates[l.key], quantities[l.key]);
+    return out;
+  }, [scenario, rates, quantities]);
+
+  const adjusted = useMemo(() => {
+    if (!scenario) return { total: 0, unpriced: 0, invalid: 0 };
+    let unpriced = 0;
+    let invalid = 0;
+    const priced: Array<{ category: string; label: string; quantity: number; unit: string; rate: number }> = [];
+    for (const l of scenario.lines) {
+      if (excluded[l.key]) continue;
+      const e = edited[l.key]!;
+      if (e.invalid) { invalid += 1; continue; }
+      if (e.rate === null || !(e.rate > 0)) { unpriced += 1; continue; }
+      priced.push({ category: l.category, label: l.label, quantity: e.quantity, unit: l.unit, rate: e.rate });
+    }
+    const totals = computeWorkbookTotals(priced, { vatPercent: estimate?.vatPercent ?? 0, contingencyPct: scenario.contingencyPct, withholdingPct: 0 });
+    return { total: totals.offerTotal, unpriced, invalid };
+  }, [scenario, edited, excluded, estimate]);
+
+  async function approve() {
+    if (!scenario) return;
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    // Every value typed is sent as typed; the server refuses an invalid one
+    // rather than this page silently dropping it.
+    const numeric = (m: Record<string, string>) => Object.fromEntries(Object.entries(m).filter(([, v]) => v.trim() !== "").map(([k, v]) => [k, v.trim()]));
+    try {
+      // Rates typed for lines the evidence could not price are filed in the
+      // rate card by the server, by role and seniority, in the same approval.
+      const res = await fetch(`/api/tenders/${tenderId}/pricing/approve`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          scenario: scenario.id,
+          rates: numeric(rates),
+          quantities: numeric(quantities),
+          exclude: Object.entries(excluded).filter(([, v]) => v).map(([k]) => k),
+          saveToRateCard,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const list = Array.isArray(data.unpriced) ? ` ${data.unpriced.map((u: { label: string }) => u.label).join("; ")}` : "";
+        throw new Error(`${data.error ?? "Approval failed."}${Array.isArray(data.invalid) ? "" : list}`);
+      }
+      const filed = Number(data.rateCard?.saved ?? 0);
+      setMessage(`Approved ${scenario.label}: ${money(data.approved.offerTotal, data.approved.currency)}. The financial proposal is being written and packaged automatically.${filed > 0 ? ` ${filed} rate(s) you entered are now in your rate card for future tenders.` : ""}`);
+      emitTenderWorkflowSync({ tenderId, source: "pricing-approve" });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Approval failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // A tender that does not ask for prices gets no estimate and no rate inputs.
+  if (scope && !scope.required) {
+    return (
+      <section className="rounded-lg border border-slate-200 bg-white p-4" aria-labelledby="pricing-intelligence-heading" data-testid="pricing-not-required">
+        <h3 id="pricing-intelligence-heading" className="text-base font-semibold text-slate-900">Pricing Intelligence</h3>
+        <p className="mt-2 text-sm text-slate-700">Financial Proposal: not required by this tender — not generated.</p>
+        <p className="mt-1 text-xs text-slate-500">{scope.basis}</p>
+      </section>
+    );
+  }
+
+  if (!estimate) {
+    return (
+      <section className="rounded-lg border border-slate-200 bg-white p-4" aria-labelledby="pricing-intelligence-heading">
+        <h3 id="pricing-intelligence-heading" className="text-base font-semibold text-slate-900">Pricing Intelligence</h3>
+        <p className="mt-2 text-sm text-slate-600">{error ?? "Preparing the estimated price…"}</p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="rounded-lg border border-slate-200 bg-white p-4" aria-labelledby="pricing-intelligence-heading" data-testid="pricing-intelligence-panel">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h3 id="pricing-intelligence-heading" className="text-base font-semibold text-slate-900">Pricing Intelligence</h3>
+          <p className="text-xs text-slate-500">An estimated bid price from the tender and the firm&apos;s own evidence. Nothing is priced until you approve it.</p>
+        </div>
+        <span className={`rounded border px-2 py-0.5 text-xs font-medium ${estimate.status === "COMPLETE" ? CONFIDENCE_STYLE.MEDIUM : estimate.status === "PARTIAL" ? CONFIDENCE_STYLE.LOW : CONFIDENCE_STYLE.NONE}`}>
+          {estimate.status === "COMPLETE" ? "Estimate complete" : estimate.status === "PARTIAL" ? "Some rates needed" : "Rates needed"}
+        </span>
+      </div>
+
+      <p className="mt-3 rounded bg-slate-50 p-3 text-sm text-slate-800" data-testid="pricing-recommendation">{estimate.recommendation}</p>
+
+      <div className="mt-3 grid gap-2 sm:grid-cols-3" role="radiogroup" aria-label="Pricing scenario">
+        {estimate.scenarios.map((s) => (
+          <button
+            key={s.id}
+            type="button"
+            role="radio"
+            aria-checked={s.id === scenarioId}
+            onClick={() => setScenarioId(s.id)}
+            className={`rounded border p-3 text-left text-sm ${s.id === scenarioId ? "border-slate-900 ring-1 ring-slate-900" : "border-slate-200"}`}
+          >
+            <div className="font-semibold text-slate-900">{s.label}{s.id === estimate.recommended ? " ★" : ""}</div>
+            <div className="mt-1 text-slate-900">{s.complete ? money(s.offerTotal, estimate.currency) : "Rates needed"}</div>
+            <div className="mt-1 text-xs text-slate-500">{s.description}</div>
+          </button>
+        ))}
+      </div>
+
+      {estimate.evaluation ? (
+        <p className="mt-2 text-xs text-slate-600" data-testid="pricing-evaluation"><span className="font-medium">Evaluation:</span> {estimate.evaluation.model === "UNKNOWN" ? "not stated" : estimate.evaluation.model} — {estimate.evaluation.basis}</p>
+      ) : null}
+      {scenario?.build && (scenario.build.directCost > 0 || scenario.build.feeLines > 0) ? (
+        <p className="mt-1 text-xs text-slate-600" data-testid="pricing-build">
+          <span className="font-medium">Price build ({scenario.label}):</span> cost {money(scenario.build.directCost, estimate.currency)} + overhead {money(scenario.build.overhead, estimate.currency)} + margin {money(scenario.build.margin, estimate.currency)} (cost-built personnel) + fee and reimbursable lines {money(scenario.build.feeLines, estimate.currency)} → subtotal {money(scenario.subtotal, estimate.currency)} + contingency {money(scenario.contingency, estimate.currency)} + VAT {money(scenario.vat, estimate.currency)} = offer {money(scenario.offerTotal, estimate.currency)}.{estimate.withholdingPct > 0 ? ` Withholding ${estimate.withholdingPct}% is deducted by the client at payment; it does not reduce the offer.` : ""}
+        </p>
+      ) : null}
+
+      <dl className="mt-3 grid gap-x-4 gap-y-1 text-xs text-slate-600 sm:grid-cols-2">
+        <div><dt className="inline font-medium">Currency:</dt> <dd className="inline">{estimate.currency} — {estimate.currencyBasis}</dd></div>
+        <div><dt className="inline font-medium">VAT:</dt> <dd className="inline">{estimate.vatPercent}% — {estimate.vatBasis}</dd></div>
+        <div><dt className="inline font-medium">Period:</dt> <dd className="inline">{estimate.durationMonths} months — {estimate.durationBasis}</dd></div>
+        <div><dt className="inline font-medium">Validity:</dt> <dd className="inline">{estimate.validityDays} days — {estimate.validityBasis}</dd></div>
+        {estimate.budget ? <div><dt className="inline font-medium">Client budget:</dt> <dd className="inline">{money(estimate.budget.amount, estimate.budget.currency)} — {estimate.budget.basis}</dd></div> : null}
+        {estimate.envelope ? <div><dt className="inline font-medium">Past-contract envelope:</dt> <dd className="inline">{money(estimate.envelope.median, estimate.currency)} median — {estimate.envelope.basis}</dd></div> : null}
+      </dl>
+
+      {scenario ? (
+        <div className="mt-3 overflow-x-auto">
+          <table className="min-w-full text-xs">
+            <thead>
+              <tr className="border-b text-left text-slate-500">
+                <th className="py-1 pr-2">Line</th><th className="py-1 pr-2">Qty</th><th className="py-1 pr-2">Unit</th><th className="py-1 pr-2">Rate</th><th className="py-1 pr-2">Amount</th><th className="py-1 pr-2">Basis / source</th><th className="py-1 pr-2">Confidence</th>{canMutate ? <th className="py-1">Include</th> : null}
+              </tr>
+            </thead>
+            <tbody>
+              {scenario.lines.map((l) => (
+                <tr key={l.key} className={`border-b align-top ${excluded[l.key] ? "opacity-50" : ""}`}>
+                  <td className="py-1 pr-2 font-medium text-slate-900">{l.label}<div className="font-normal text-slate-500">{l.quantityBasis}</div></td>
+                  <td className="py-1 pr-2">
+                    {canMutate && l.unit !== "LUMP_SUM"
+                      ? <input aria-label={`Quantity for ${l.label}`} className={`w-16 rounded border px-1 ${!excluded[l.key] && edited[l.key]?.invalid && quantities[l.key] !== undefined ? "border-rose-400" : ""}`} inputMode="decimal" value={quantities[l.key] ?? String(l.quantity)} onChange={(e) => setQuantities({ ...quantities, [l.key]: e.target.value })} />
+                      : l.quantity}
+                  </td>
+                  <td className="py-1 pr-2">{l.unit}</td>
+                  <td className="py-1 pr-2">
+                    {canMutate
+                      ? <input aria-label={`Rate for ${l.label}`} className={`w-24 rounded border px-1 ${l.rate === null && !rates[l.key] ? "border-rose-400" : ""}`} inputMode="decimal" placeholder="Enter rate" value={rates[l.key] ?? (l.rate === null ? "" : String(l.rate))} onChange={(e) => setRates({ ...rates, [l.key]: e.target.value })} />
+                      : l.rate === null ? "—" : l.rate.toLocaleString()}
+                  </td>
+                  <td className="py-1 pr-2" data-testid={`pricing-amount-${l.key}`}>{edited[l.key]?.amount == null ? "—" : edited[l.key]!.amount!.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                  <td className="py-1 pr-2 text-slate-600">{l.rateBasis}{l.sourceDate ? ` (${l.sourceDate})` : ""}{l.assumptions.length > 0 ? <div className="text-slate-500">{l.assumptions.join(" ")}</div> : null}</td>
+                  <td className="py-1 pr-2"><span className={`rounded border px-1.5 py-0.5 ${CONFIDENCE_STYLE[l.confidence]}`}>{l.confidence}</span></td>
+                  {canMutate ? <td className="py-1"><input type="checkbox" aria-label={`Include ${l.label}`} checked={!excluded[l.key]} onChange={(e) => setExcluded({ ...excluded, [l.key]: !e.target.checked })} /></td> : null}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+
+      {estimate.warnings && estimate.warnings.length > 0 ? (
+        <details className="mt-3 rounded border border-rose-200 bg-rose-50 p-2 text-xs text-rose-900" open data-testid="pricing-warnings">
+          <summary className="cursor-pointer font-medium">Pricing warnings ({estimate.warnings.length})</summary>
+          <ul className="mt-1 list-disc pl-5">{estimate.warnings.map((w) => <li key={`${w.code}:${w.message}`}><span className="font-mono">{w.code}</span> — {w.message}</li>)}</ul>
+        </details>
+      ) : null}
+
+      {estimate.benchmarksUsed && estimate.benchmarksUsed.length > 0 ? (
+        <details className="mt-3 rounded border border-slate-200 p-2 text-xs text-slate-700" data-testid="pricing-sources">
+          <summary className="cursor-pointer font-medium">Benchmark sources ({estimate.benchmarksUsed.length})</summary>
+          <ul className="mt-1 list-disc pl-5">
+            {estimate.benchmarksUsed.map((b) => (
+              <li key={b.id}>
+                {b.label} — {b.origin === "OWNER" ? "your rate card" : b.sourceUrl ? <a className="underline" href={b.sourceUrl} target="_blank" rel="noreferrer noopener">{b.source}</a> : b.source} (effective {b.effectiveDate}, {b.confidence})
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+
+      {estimate.lowConfidence.length > 0 ? (
+        <details className="mt-3 rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900" open={estimate.status !== "COMPLETE"}>
+          <summary className="cursor-pointer font-medium">Check before approving ({estimate.lowConfidence.length})</summary>
+          <ul className="mt-1 list-disc pl-5">{estimate.lowConfidence.map((s) => <li key={s}>{s}</li>)}</ul>
+        </details>
+      ) : null}
+
+      {canMutate && scenario ? (
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={() => { void approve(); }}
+            disabled={busy || adjusted.unpriced > 0 || adjusted.invalid > 0}
+            className="rounded bg-slate-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+            data-testid="pricing-approve"
+          >
+            {busy ? "Approving…" : `Approve ${scenario.label} price — ${money(adjusted.total, estimate.currency)}`}
+          </button>
+          <label className="flex items-center gap-1 text-xs text-slate-600">
+            <input type="checkbox" checked={saveToRateCard} onChange={(e) => setSaveToRateCard(e.target.checked)} />
+            Save rates I enter to the rate card for future tenders
+          </label>
+          <a className="text-xs text-slate-600 underline" href="/dashboard/company/rate-card">Manage the rate card</a>
+          {adjusted.invalid > 0 ? <span className="text-xs text-rose-700">{adjusted.invalid} line(s) have a quantity or rate that is not a positive number. Correct it, or untick the line to leave it out.</span> : null}
+          {adjusted.unpriced > 0 ? <span className="text-xs text-rose-700">Enter a rate for {adjusted.unpriced} line(s) or untick them.</span> : null}
+        </div>
+      ) : null}
+      {message ? <p className="mt-2 text-sm text-emerald-700" role="status">{message}</p> : null}
+      {error ? <p className="mt-2 text-sm text-rose-700" role="alert">{error}</p> : null}
+    </section>
+  );
+}

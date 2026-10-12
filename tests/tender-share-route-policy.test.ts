@@ -15,9 +15,13 @@ describe("tender share API policy", () => {
     assert.match(apiRoute, /rateLimitPersistent/);
   });
 
-  it("creates explicit random bearer tokens", () => {
-    assert.match(apiRoute, /createTenderShareToken\(\)/);
-    assert.match(apiRoute, /token,/);
+  it("creates explicit random bearer tokens (hashed before storage)", () => {
+    // Audit C-4: the route must use generateTenderShareToken() which returns
+    // both a raw token and its SHA-256 hash. The raw token is returned to the
+    // caller ONCE; only the hash is persisted. The token column is set to null.
+    assert.match(apiRoute, /generateTenderShareToken\(\)/, "must use generateTenderShareToken");
+    assert.match(apiRoute, /tokenHash/, "must store the hash");
+    assert.match(apiRoute, /token:\s*null/, "must NOT store the plaintext token");
   });
 
   it("revokes links instead of deleting the audit record", () => {

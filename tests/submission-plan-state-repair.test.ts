@@ -179,7 +179,7 @@ describe("submission-plan-state-repair", () => {
     const outsidePlan = report.rows.filter((r) => r.status === "OUTSIDE_PLAN");
     assert.equal(outsidePlan.length, 0);
 
-    const validStatuses = ["GENERATED", "GENERATED_NEEDS_REVIEW", "GENERATED_QUALITY_FAILED", "PLANNED", "OFFICIAL_ORIGINAL_REQUIRED", "MISSING"];
+    const validStatuses = ["GENERATED", "GENERATED_NEEDS_REVIEW", "GENERATED_QUALITY_FAILED", "PLANNED", "MISSING_TENDER_SOURCE_FORM", "MISSING"];
     for (const row of report.rows) {
       assert.ok(validStatuses.includes(row.status), `Unexpected status ${row.status} for row ${row.name}`);
     }

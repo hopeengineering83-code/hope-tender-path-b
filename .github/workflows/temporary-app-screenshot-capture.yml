@@ -1,0 +1,179 @@
+name: Exact-head app route and screenshot audit
+
+on:
+  pull_request:
+    branches: [integration/controlled-recovery]
+    paths:
+      - "app/**"
+      - "components/**"
+      - "lib/**"
+      - "prisma/**"
+      - "scripts/capture-production-pages.mjs"
+      - "scripts/screenshot-route-manifest.mjs"
+      - "scripts/seed-e2e-user.mjs"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/temporary-app-screenshot-capture.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: app-route-screenshot-evidence-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: hope_screenshot
+          POSTGRES_DB: hope_tender_screenshot
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U hope_screenshot -d hope_tender_screenshot"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      CI: "true"
+      NEXT_TELEMETRY_DISABLED: "1"
+      DATABASE_URL: "postgresql://hope_screenshot@127.0.0.1:5432/hope_tender_screenshot?schema=public"
+      SESSION_SECRET: "screenshot-session-${{ github.run_id }}-${{ github.sha }}"
+      NEXTAUTH_SECRET: "screenshot-nextauth-${{ github.run_id }}-${{ github.sha }}"
+      GEMINI_API_KEY: "screenshot-provider-placeholder-not-used-at-runtime"
+      ANTHROPIC_API_KEY: ""
+      E2E_FULL_AUTH: "true"
+      E2E_SEED_ALLOWED: "true"
+      E2E_TEST_EMAIL: "screenshot-primary@example.test"
+      E2E_TEST_PASSWORD: "ScreenshotPrimary-${{ github.run_id }}-A9!secure"
+      E2E_SECOND_EMAIL: "screenshot-secondary@example.test"
+      E2E_SECOND_PASSWORD: "ScreenshotSecondary-${{ github.run_id }}-B8!secure"
+      ALLOW_DB_FILE_STORAGE: "true"
+      CSRF_MODE: "off"
+      SCREENSHOT_BASE_URL: "http://127.0.0.1:3000"
+      SCREENSHOT_TEST_EMAIL: "screenshot-primary@example.test"
+      SCREENSHOT_TEST_PASSWORD: "ScreenshotPrimary-${{ github.run_id }}-A9!secure"
+      SCREENSHOT_EVIDENCE_MODE: "exact-head-disposable-postgres-repository-route-manifest"
+      SCREENSHOT_SOURCE_SHA: "${{ github.event.pull_request.head.sha || github.sha }}"
+      SCREENSHOT_PRIMARY_TENDER_ID: "11111111-1111-4111-8111-111111111111"
+      SCREENSHOT_PRIMARY_DOCUMENT_ID: "55555555-5555-4555-8555-555555555555"
+      SCREENSHOT_PRIMARY_FILE_ID: "66666666-6666-4666-8666-666666666666"
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Validate route inventory scripts
+        run: |
+          node --check scripts/screenshot-route-manifest.mjs
+          node --check scripts/capture-production-pages.mjs
+
+      - name: Validate and migrate disposable database
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx prisma validate
+          npx prisma generate
+          npx prisma migrate deploy
+          npm run db:check-critical-schema
+
+      - name: Build exact application head
+        run: npm run build
+
+      - name: Install Chromium system dependencies
+        # BEST EFFORT, and deliberately not a gate.
+        #
+        # This installs shared libraries that the ubuntu-latest image already
+        # ships, so it is an optimisation rather than a requirement. It is also
+        # the least reliable thing in the job: apt reaches for
+        # azure.archive.ubuntu.com, gets Ign: on every line when that mirror is
+        # unreachable, falls back to archive.ubuntu.com and can then sit for ten
+        # minutes. Unbounded, that once consumed a whole 55-minute run; bounded
+        # and required, it simply failed the build instead.
+        #
+        # Neither is right for an optimisation. If a library really is missing,
+        # the browser fails to launch in the very next step with an explicit
+        # "error while loading shared libraries", which is a clearer signal than
+        # an apt timeout. The download step below is still strict.
+        timeout-minutes: 10
+        continue-on-error: true
+        run: npx playwright install-deps chromium
+
+      - name: Install Chromium
+        timeout-minutes: 12
+        run: |
+          set -u
+          for attempt in 1 2 3; do
+            if npx playwright install chromium; then
+              exit 0
+            fi
+            echo "playwright browser download failed (attempt ${attempt}/3); retrying"
+            sleep $((attempt * 15))
+          done
+          echo "playwright browser download did not complete after 3 attempts"
+          exit 1
+
+      - name: Seed isolated screenshot fixtures
+        run: node scripts/seed-e2e-user.mjs
+
+      - name: Start exact-head application
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          nohup npm run start -- -p 3000 > artifacts/app-server.log 2>&1 &
+          echo $! > artifacts/app-server.pid
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent --show-error http://127.0.0.1:3000/login > /dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          cat artifacts/app-server.log
+          exit 1
+
+      - name: Capture and audit complete repository route inventory
+        id: capture
+        continue-on-error: true
+        run: node scripts/capture-production-pages.mjs
+
+      - name: Upload indexed route and screenshot package
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hope-tender-exact-head-route-screenshots-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            artifacts/app-screenshots
+            artifacts/app-server.log
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Stop exact-head application
+        if: always()
+        shell: bash
+        run: |
+          if test -f artifacts/app-server.pid; then
+            kill "$(cat artifacts/app-server.pid)" 2>/dev/null || true
+          fi
+
+      - name: Enforce complete route and screenshot audit
+        if: steps.capture.outcome == 'failure'
+        run: |
+          echo "Exact-head audit found missing repository route coverage, a route/browser failure, horizontal overflow, or an unclassified warning. Download the indexed artifact and repair every finding."
+          exit 1

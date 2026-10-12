@@ -119,10 +119,18 @@ describe("AC#6/#7 — placeholders and contamination block, never count as valid
     assert.equal(r.blockingForExport, true);
   });
 
-  it("a missing client name blocks generation (AC#6)", () => {
+  // AC#6: block when client details are contaminated or invalid — "not when
+  // the tender simply does not state them" (CLAUDE.md).
+  it("a client name the tender does not state is advisory, not critical (AC#6)", () => {
     const r = assessTenderMetadataCompleteness(input({ clientName: null, procuringEntityName: null }));
-    assert.equal(r.missingCritical.some((f) => f.field === "clientName"), true);
+    assert.equal(r.missingCritical.some((f) => f.field === "clientName"), false);
+    assert.equal(r.missingNonCritical.some((f) => f.field === "clientName"), true);
     assert.equal(r.blockingForGeneration, false);
+  });
+
+  it("a placeholder client name stays critical (AC#6)", () => {
+    const r = assessTenderMetadataCompleteness(input({ clientName: "Bid-Team to confirm", procuringEntityName: null }));
+    assert.equal(r.missingCritical.some((f) => f.field === "clientName"), true);
   });
 
   it("a fully-usable tender does not block", () => {

@@ -63,6 +63,7 @@ test("snapshot type has required fields", () => {
       total: 0,
       covered: 0,
       coveragePercent: 0,
+      notMachineDecidable: 0,
     },
     buildPlan: {
       documentCount: 0,

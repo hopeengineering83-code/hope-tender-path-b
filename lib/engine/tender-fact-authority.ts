@@ -66,7 +66,10 @@ import {
   isPhysicalSubmissionMethod,
   isPortalSubmissionMethod,
 } from "./submission-method-policy";
-import { OPERATIONAL_WARNING_FIELDS as CANONICAL_OPERATIONAL_WARNING_FIELDS } from "./draft-final-gate-separation";
+import {
+  OPERATIONAL_WARNING_FIELDS as CANONICAL_OPERATIONAL_WARNING_FIELDS,
+  SUBMISSION_CRITICAL_FIELDS as CANONICAL_SUBMISSION_CRITICAL_FIELDS,
+} from "./draft-final-gate-separation";
 
 // ─── Authority classes ─────────────────────────────────────────────────────
 
@@ -143,14 +146,13 @@ export const OPERATIONAL_WARNING_FIELDS = CANONICAL_OPERATIONAL_WARNING_FIELDS;
  *
  * `submissionEndpoint` is virtual — it's either `submissionEmails` or
  * `submissionAddress` depending on the method.
+ *
+ * Re-exported (not re-declared) from draft-final-gate-separation.ts, the
+ * canonical source, so the two modules cannot silently drift apart.
+ * Previously this was a byte-for-byte duplicate Set declaration —
+ * consolidated to prevent divergence.
  */
-export const SUBMISSION_CRITICAL_FIELDS = new Set([
-  "clientName",
-  "title",
-  "deadline",
-  "submissionMethod",
-  "submissionEndpoint",
-]);
+export const SUBMISSION_CRITICAL_FIELDS = CANONICAL_SUBMISSION_CRITICAL_FIELDS;
 
 /**
  * Check if a field is an operational-warning field (never blocks).
@@ -312,6 +314,24 @@ export type AuthorityClassification = {
  *      - For operational fields: no block.
  *      - For submission-critical fields: blocks final export only.
  */
+/**
+ * OWNER POLICY (2026-09-24, Hope): "if particular things are not found in the
+ * tender details, that means they are not necessary ... Some tenders may not
+ * have all necessary details, so the App must act accordingly, use the
+ * information available and generate proposals."
+ *
+ * A tender fact that is ABSENT from the source — client, reference, deadline,
+ * submission method/address/email, anything — is NOT_STATED_IN_SOURCE and
+ * never blocks draft or final work. This supersedes the earlier rule that
+ * absent critical fields block final export.
+ *
+ * What still blocks is a value that is PRESENT but wrong: a placeholder
+ * ("Not", "TBD"), extractor scaffolding, portal contamination, an ungrounded
+ * or mismatched manual edit. Those would put false information into the bid;
+ * an absent detail puts nothing in, and the proposal simply omits it.
+ */
+export const ABSENT_TENDER_FACT_IS_NOT_REQUIRED = true;
+
 export function classifyTenderFactAuthority(
   input: AuthorityClassificationInput,
 ): AuthorityClassification {
@@ -339,10 +359,10 @@ export function classifyTenderFactAuthority(
     return {
       authority: "NOT_STATED_IN_SOURCE",
       blocksDraft: false, // Never blocks draft
-      blocksFinalExport: isCritical, // Blocks final only for critical fields
-      blockerReason: isCritical
-        ? `Field "${field}" is submission-critical and was confirmed not stated in the tender source. Provide a HUMAN_CONFIRMED_OPERATIONAL value from an external source to proceed with final export.`
-        : null,
+      // Owner policy (see ABSENT_TENDER_FACT_IS_NOT_REQUIRED): a detail the
+      // tender does not state is not required of the bid.
+      blocksFinalExport: false,
+      blockerReason: null,
       audit: null,
       auditSufficientForFinal: false,
     };
@@ -383,14 +403,14 @@ export function classifyTenderFactAuthority(
     };
   }
 
-  // Rule 7: UNKNOWN
+  // Rule 7: no value → NOT_STATED_IN_SOURCE, never blocking.
+  // Owner policy (see ABSENT_TENDER_FACT_IS_NOT_REQUIRED): a detail the tender
+  // does not state is not required; the bid is built from what IS stated.
   return {
-    authority: "UNKNOWN",
+    authority: "NOT_STATED_IN_SOURCE",
     blocksDraft: false, // Never blocks draft
-    blocksFinalExport: isCritical, // Blocks final only for critical fields
-    blockerReason: isCritical
-      ? `Field "${field}" is submission-critical and has no value. Enter a value manually or extract from the tender source to proceed with final export.`
-      : null,
+    blocksFinalExport: false,
+    blockerReason: null,
     audit: null,
     auditSufficientForFinal: false,
   };

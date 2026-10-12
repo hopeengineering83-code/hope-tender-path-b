@@ -1,14 +1,27 @@
 import { logger } from "../../../../lib/observability";
 import { extractRequestId } from "../../../../lib/request-id";
+import { scheduleRequestScopedWorkerWake } from "../../../../lib/ai-jobs/request-scoped-worker-wake";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
+
+type UploadFirstResponse = {
+  pipelineStage?: "EXTRACT_TEXT_QUEUED" | null;
+  queuedExtractionFiles?: number;
+};
 
 export async function POST(req: Request) {
   const requestId = extractRequestId(req);
   try {
     const { handleUploadFirstTender } = await import("../../../../lib/tender-upload-first");
-    return await handleUploadFirstTender(req);
+    const response = await handleUploadFirstTender(req);
+    if (response.ok) {
+      const payload = await response.clone().json().catch(() => null) as UploadFirstResponse | null;
+      if (payload?.pipelineStage === "EXTRACT_TEXT_QUEUED") {
+        scheduleRequestScopedWorkerWake(req, "EXTRACT_TEXT", payload.queuedExtractionFiles ?? 1);
+      }
+    }
+    return response;
   } catch (error) {
     logger.error("[upload-first route] wrapper failure", {
       requestId,

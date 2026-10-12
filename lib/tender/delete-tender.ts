@@ -31,7 +31,7 @@ export async function executeTenderDeletion(
 ): Promise<{ storageCleanupTaskId: string | null }> {
   const logPhase = (phase: string, model: string) => {
     const msg = `[tender-delete] Phase: ${phase} | Model: ${model}`;
-    console.log(`${msg} | tenderId: ${tenderId} | correlationId: ${correlationId}`);
+    logger.info(`${msg} | tenderId: ${tenderId} | correlationId: ${correlationId}`);
     logger.info(msg, { phase, model, tenderId, correlationId });
   };
 

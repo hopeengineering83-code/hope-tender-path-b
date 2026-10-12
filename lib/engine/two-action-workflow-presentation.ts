@@ -1,0 +1,76 @@
+import { OWNER_PRICING_ACTION, OWNER_PRICING_ACTION_LABEL } from "./owner-pricing-stop";
+import type { CanonicalWorkflowDecision } from "./canonical-workflow-decision";
+
+/**
+ * Product-level presentation of the canonical workflow decision.
+ *
+ * This does not change readiness, blockers, stage states, or export gates. It
+ * maps server-owned intermediate stages onto the two normal user actions:
+ * AI Analyze and Run Engine. Genuine source, quality, authority, and legal
+ * blockers remain explicit.
+ */
+export function presentTwoActionWorkflowDecision(
+  decision: CanonicalWorkflowDecision | null,
+): CanonicalWorkflowDecision | null {
+  if (!decision) return null;
+
+  if ([
+    "NO_CONFIRMED_BUILD_PLAN",
+    "MANDATORY_NO_COMPLIANCE_ROWS",
+  ].includes(decision.currentBlockingStage)) {
+    return {
+      ...decision,
+      nextRequiredAction: "RUN_ENGINE",
+      nextRequiredActionLabel: "Run Engine",
+      nextRequiredActionReason:
+        "Run Engine uses the current verified source and current AI analysis, then starts matching and Build Plan creation. Valid downstream stages continue automatically.",
+    };
+  }
+
+  // The only files still missing are ones the owner must sign or supply
+  // (bidder declarations, tender-issued forms, certified originals). Saying
+  // "Processing automatically" there left the owner waiting on a worker that
+  // had nothing left to do (2026-09-30, Preview, a telecom-tower EOI).
+  const awaiting = decision.awaitingOwnerOriginalFileNames ?? [];
+  const pricing = decision.awaitingOwnerPricingFileNames ?? [];
+  const missing = Math.max(0, decision.requiredDocumentsTotal - decision.generatedDocumentsTotal);
+  if (decision.currentBlockingStage === "REQUIRED_DOCS_NOT_GENERATED" && pricing.length > 0 && missing <= awaiting.length + pricing.length) {
+    // The financial proposal waits for the owner's prices; the app never sets
+    // a price. Any signed originals still due are named alongside.
+    const originals = awaiting.length > 0
+      ? ` When assembling the submission, also attach the signed original of: ${awaiting.join("; ")}.`
+      : "";
+    return {
+      ...decision,
+      nextRequiredAction: "ENTER_OWNER_PRICING",
+      nextRequiredActionLabel: OWNER_PRICING_ACTION_LABEL,
+      nextRequiredActionReason:
+        `Everything the app can prepare is done. ${OWNER_PRICING_ACTION} (${pricing.join("; ")}). The package completes automatically after that.${originals}`,
+    };
+  }
+  if (decision.currentBlockingStage === "REQUIRED_DOCS_NOT_GENERATED" && awaiting.length > 0 && missing <= awaiting.length) {
+    return {
+      ...decision,
+      nextRequiredAction: "UPLOAD_SIGNED_ORIGINALS",
+      nextRequiredActionLabel: "Proposal complete — attach originals manually",
+      nextRequiredActionReason:
+        `PROPOSAL COMPLETE — MANUAL ORIGINAL ATTACHMENTS REQUIRED. Everything the App generates is done and can be downloaded now; the submission also needs ${awaiting.length === 1 ? "a document" : "documents"} your company signs or supplies: ${awaiting.join("; ")}. Attach each manually when assembling the final submission, as the checklist lists it. Optional: upload the signed original on the tender's Documents page and the App packages it.`,
+    };
+  }
+
+  if ([
+    "REQUIRED_DOCS_NOT_GENERATED",
+    "PDF_REQUIRED_UNAVAILABLE",
+    "DOCS_NOT_VALIDATED",
+  ].includes(decision.currentBlockingStage)) {
+    return {
+      ...decision,
+      nextRequiredAction: "AUTOMATIC_PROCESSING",
+      nextRequiredActionLabel: "Processing automatically",
+      nextRequiredActionReason:
+        "The post-Engine durable workflow owns generation, validation, finalization and package assembly. Intervene only when a specific source, evidence, quality, integrity, authority or legal blocker is reported.",
+    };
+  }
+
+  return decision;
+}

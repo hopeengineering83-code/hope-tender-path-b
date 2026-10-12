@@ -29,6 +29,8 @@
 // re-injection).
 
 import type { ExpertRecord } from "./benchmark-tables";
+import { resolveJurisdictionTokens } from "./jurisdiction-instruments";
+import { isHealthcareSector } from "./assignment-subject";
 
 export interface DeliverableQaChecklistOpts {
   tenderText: string;
@@ -74,7 +76,7 @@ function sectorChecklistRows(sector: string, experts: ExpertRecord[], dCodes: st
   const all = dCodes.length > 0 ? dCodes.join(", ") : "All deliverables";
   const sub = (n: number[]) => dCodes.length > 0 ? n.map((i) => dCodes[i - 1] ?? `D${i}`).filter(Boolean).join(", ") : `Deliverables ${n.join(", ")}`;
 
-  if (/health|hospital|medical|clinic/.test(s)) {
+  if (isHealthcareSector(s)) {
     return [
       { check: "All programme rooms present (clinical, support, public, MEP zones) and labelled per the brief", responsibleRole: rolesByKeyword(experts, ["architect"]), deliverables: sub([1, 2, 4]), acceptance: "Zero missing rooms; every clinical zone labelled" },
       { check: "Room dimensions cross-checked against equipment + furniture footprints with clearances", responsibleRole: rolesByKeyword(experts, ["architect"]), deliverables: sub([2, 6]), acceptance: "All clearances ≥ 1.2 m; no equipment-clash flags" },
@@ -99,7 +101,7 @@ function sectorChecklistRows(sector: string, experts: ExpertRecord[], dCodes: st
     return [
       { check: "Topographic survey accuracy verified at control points", responsibleRole: rolesByKeyword(experts, ["surveyor", "highway"]), deliverables: sub([1, 2]), acceptance: "Closure error ≤ 1:5000; benchmark tied to national datum" },
       { check: "Geotechnical + CBR / Proctor results match pavement design assumptions", responsibleRole: rolesByKeyword(experts, ["geotechnical"]), deliverables: sub([2, 3]), acceptance: "CBR ≥ design; Proctor density supports thickness assumptions" },
-      { check: "Pavement design follows AASHTO / ERA standard with traffic loading inputs", responsibleRole: rolesByKeyword(experts, ["highway"]), deliverables: sub([3]), acceptance: "Design follows current code; AADT and ESAL documented" },
+      { check: "Pavement design follows the {{JURISDICTION:ROAD_DESIGN_STANDARD}} standard with traffic loading inputs", responsibleRole: rolesByKeyword(experts, ["highway"]), deliverables: sub([3]), acceptance: "Design follows current code; AADT and ESAL documented" },
       { check: "Drainage capacity sized for design storm (10 / 25 / 50 yr per class)", responsibleRole: rolesByKeyword(experts, ["highway", "drainage"]), deliverables: sub([3, 4]), acceptance: "Hydraulic capacity ≥ design flow; outlet protection specified" },
       { check: "Road-safety audit performed at design and pre-handover", responsibleRole: "Road Safety Auditor", deliverables: sub([3, 5]), acceptance: "Audit report on file; recommendations closed or accepted" },
       { check: "BOQ verified against drawing takeoff", responsibleRole: rolesByKeyword(experts, ["quantity", "qs"]), deliverables: sub([4]), acceptance: "Cross-check accuracy ≥ 98%" },
@@ -198,7 +200,7 @@ export function injectDeliverableQaChecklist(markdown: string, opts: Deliverable
   const dCodes = (opts.deliverableCodes && opts.deliverableCodes.length > 0)
     ? opts.deliverableCodes
     : detectDeliverableCodes(opts.tenderText);
-  const rows = sectorChecklistRows(opts.primarySector, opts.experts, dCodes);
+  const rows = sectorChecklistRows(opts.primarySector, opts.experts, dCodes).map((r) => ({ ...r, check: resolveJurisdictionTokens(r.check, opts.tenderText) }));
   const head = "| QA Check Item | Responsible | Deliverable | Acceptance Standard |";
   const sep = "|---------------|-------------|-------------|---------------------|";
   const body = rows.map((r) => `| ${r.check} | ${r.responsibleRole} | ${r.deliverables} | ${r.acceptance} |`);

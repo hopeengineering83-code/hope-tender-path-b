@@ -1,58 +1,12 @@
 import { PrismaClient } from "@prisma/client";
+import {
+  REQUIRED_COLUMNS,
+  REQUIRED_FUNCTIONS,
+  REQUIRED_TABLES,
+  findCriticalSchemaGaps,
+} from "./critical-schema-contract.mjs";
 
 const prisma = new PrismaClient();
-
-const REQUIRED_TABLES = [
-  "User",
-  "Company",
-  "Tender",
-  "TenderFile",
-  "TenderRequirement",
-  "GeneratedDocument",
-  "DocumentReview",
-  "DocumentComment",
-  "AiJob",
-  "AiJobStep",
-  "RateLimitBucket",
-  "PasswordResetToken",
-  "SubmissionPlanState",
-  "ExportPackage",
-  "AuditLog",
-  // ─── Lane B addition: tables the generation-readiness gate, AI jobs,
-  // final-submission path, and operation-lock depend on. If any of these
-  // are missing (e.g. a rolled-back migration), the post-deploy gate
-  // must fail BEFORE the app serves traffic. Previously, check-critical-schema
-  // passed even if these tables were absent, leading to P2021 runtime errors
-  // on first request. ───
-  "Session", // auth-critical (session-based auth)
-  "BuildPlan", // generation-readiness-gate.ts (confirmedPlan check)
-  "TenderMetadataOverride", // canonical-field-state.ts (override resolver)
-  "FallbackApprovalRecord", // readiness-overrides.ts (fallback authorization)
-  "TenderWorkflowRun", // tender-operation-lock.ts (operation-level lock)
-  "TenderFactsLedger", // tender-facts-ledger-service.ts (effective facts)
-  "AiAnalyzeChunk", // chunk-recovery.ts + runtime-readiness-facts.ts
-  "AiAnalyzeRetryState", // retry-service.ts (AI analyze retry scheduler)
-  "ExtractionQualityOverride", // tender-release-snapshot.ts (override resolver)
-  "AiUsageRecord", // AI usage tracking
-  "TenderShare", // share-link security
-  "ProviderHealthSnapshot", // provider health persistence
-];
-
-const REQUIRED_COLUMNS = {
-  Tender: ["id", "userId", "status", "stage", "analysisExtractionStatus"],
-  TenderFile: ["id", "tenderId", "storagePath", "fileContent", "extractedText", "deletionStatus", "lastDeletionError", "deletedAt"],
-  TenderRequirement: ["id", "tenderId", "sourceTenderFileId", "sourcePageNumber", "sourceExactQuote"],
-  GeneratedDocument: ["id", "tenderId", "fileContent", "reviewStatus", "generationStatus"],
-  DocumentReview: ["id", "documentId", "reviewerId", "action", "priorStatus", "newStatus"],
-  AiJob: ["id", "userId", "tenderId", "jobType", "status", "input"],
-  RateLimitBucket: ["keyHash", "count", "resetAt", "createdAt", "updatedAt"],
-};
-
-const REQUIRED_FUNCTIONS = [
-  "resolve_tender_requirement_source_file",
-  "guard_canonical_requirement_set_delete",
-  "refresh_submission_plan_state",
-];
 
 function migrationHistoryRequired() {
   const explicit = String(process.env.REQUIRE_MIGRATION_HISTORY ?? "").trim().toLowerCase();
@@ -70,34 +24,17 @@ function redact(value) {
 
 async function main() {
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required");
-  const failures = [];
 
   const tableRows = await prisma.$queryRaw`
     SELECT table_name AS "tableName"
     FROM information_schema.tables
     WHERE table_schema = current_schema()
   `;
-  const tables = new Set(tableRows.map((row) => row.tableName));
-  const missingTables = REQUIRED_TABLES.filter((name) => !tables.has(name));
-  if (missingTables.length > 0) failures.push(`Missing required tables: ${missingTables.join(", ")}`);
-
   const columnRows = await prisma.$queryRaw`
     SELECT table_name AS "tableName", column_name AS "columnName"
     FROM information_schema.columns
     WHERE table_schema = current_schema()
   `;
-  const columnsByTable = new Map();
-  for (const row of columnRows) {
-    const columns = columnsByTable.get(row.tableName) ?? new Set();
-    columns.add(row.columnName);
-    columnsByTable.set(row.tableName, columns);
-  }
-  for (const [tableName, expectedColumns] of Object.entries(REQUIRED_COLUMNS)) {
-    const actual = columnsByTable.get(tableName) ?? new Set();
-    const missing = expectedColumns.filter((column) => !actual.has(column));
-    if (missing.length > 0) failures.push(`Missing columns on ${tableName}: ${missing.join(", ")}`);
-  }
-
   const functionRows = await prisma.$queryRaw`
     SELECT proname
     FROM pg_proc
@@ -107,24 +44,23 @@ async function main() {
       'refresh_submission_plan_state'
     )
   `;
-  const functions = new Set(functionRows.map((row) => row.proname));
-  const missingFunctions = REQUIRED_FUNCTIONS.filter((name) => !functions.has(name));
-  if (missingFunctions.length > 0) failures.push(`Missing required functions: ${missingFunctions.join(", ")}`);
-
+  let unfinishedMigrations = [];
   if (migrationHistoryRequired()) {
-    if (!tables.has("_prisma_migrations")) {
-      failures.push("Prisma migration history table is missing");
-    } else {
-      const unfinished = await prisma.$queryRaw`
+    if (tableRows.some((row) => row.tableName === "_prisma_migrations")) {
+      unfinishedMigrations = await prisma.$queryRaw`
         SELECT migration_name AS "migrationName"
         FROM "_prisma_migrations"
         WHERE finished_at IS NULL AND rolled_back_at IS NULL
       `;
-      if (unfinished.length > 0) {
-        failures.push(`Unfinished migrations: ${unfinished.map((row) => row.migrationName).join(", ")}`);
-      }
     }
   }
+  const failures = findCriticalSchemaGaps({
+    tableRows,
+    columnRows,
+    functionRows,
+    migrationHistoryRequired: migrationHistoryRequired(),
+    unfinishedMigrations,
+  });
 
   const summary = {
     ok: failures.length === 0,

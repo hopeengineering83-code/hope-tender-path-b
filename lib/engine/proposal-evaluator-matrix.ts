@@ -1,4 +1,5 @@
 import { filterCleanLines } from "./pattern-filter";
+import { truncateDisplayLine, withoutProvenanceTags } from "./proposal-labels";
 import { classifyUniversalTender, universalProfileSummary } from "./universal-tender-taxonomy";
 import { renderTenderResponseBlueprint } from "./tender-response-blueprint";
 import { applyProposalQualityRepairAddenda } from "./proposal-quality-repair";
@@ -18,6 +19,8 @@ export type EvaluatorMatrixInput = {
   projectEvidenceLines: string[];
   complianceLines: string[];
   differentiators: string[];
+  /** Each requirement's stated priority, so Section F does not guess it from wording. */
+  requirementPriorities?: ReadonlyArray<{ title: string; priority: string | null }>;
 };
 
 type EvidencePick = {
@@ -47,7 +50,7 @@ function take(lines: string[], count: number, maxLen = 260): string[] {
     .filter(Boolean)
     .filter((line) => filterCleanLines([line]).length > 0)
     .slice(0, count)
-    .map((line) => line.length > maxLen ? `${line.slice(0, maxLen - 1)}…` : line);
+    .map((line) => truncateDisplayLine(line, maxLen));
 }
 
 function tokenize(value: string): string[] {
@@ -127,7 +130,7 @@ function matrixTable(requirements: string[], input: EvaluatorMatrixInput): strin
   requirements.forEach((requirement, index) => {
     const evidence = pickEvidence(requirement, input, index);
     const action = evidence.supportLevel === "DIRECT" ? "Use as proposal proof and attach/source-check before final export." : evidence.supportLevel === "PARTIAL" ? "Strengthen narrative with more direct document evidence before submission." : "Do not overclaim; add reviewed evidence or soften the claim.";
-    rows.push(`| ${index + 1} | ${clean(requirement)}<br>${evaluatorAngle(requirement)} | ${responseStrategy(requirement)} | ${clean(evidence.line)} | ${evidence.supportLevel} | ${action} |`);
+    rows.push(`| ${index + 1} | ${withoutProvenanceTags(clean(requirement))}<br>${evaluatorAngle(requirement)} | ${responseStrategy(requirement)} | ${clean(evidence.line)} | ${evidence.supportLevel} | ${action} |`);
   });
   return rows.join("\n");
 }

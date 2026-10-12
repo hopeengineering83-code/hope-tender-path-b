@@ -12,12 +12,12 @@
 // - direct use of .message in public response bodies
 
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 const files = execFileSync("git", ["ls-files", "app/api", "lib/engine", "lib/secure-password-reset.ts", "lib/tender-upload-first.ts", "lib/liveness.ts"], { encoding: "utf8" })
   .trim()
   .split("\n")
-  .filter((file) => file.endsWith(".ts") && !file.endsWith(".test.ts") && !file.endsWith(".d.ts"));
+  .filter((file) => existsSync(file) && file.endsWith(".ts") && !file.endsWith(".test.ts") && !file.endsWith(".d.ts"));
 
 const findings = [];
 

@@ -1,3 +1,4 @@
+import { secretMatches } from "../../../../lib/secret-compare";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { getStorageAdapter } from "../../../../lib/storage";
@@ -15,7 +16,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const auth = req.headers.get("authorization");
-  if (auth !== `Bearer ${secret}`) {
+  if (!secretMatches(auth, `Bearer ${secret}`)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

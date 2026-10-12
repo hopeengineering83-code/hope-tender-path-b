@@ -407,29 +407,29 @@ describe("candidate-pipeline — markStaleOnValueChange", () => {
   });
 });
 
-describe("candidate-pipeline — wired into tender-upload-first.ts", () => {
+describe("candidate-pipeline — wired into the durable extraction worker", () => {
   it("imports buildCandidatesFromMetadata", () => {
-    const src = readFileSync("lib/tender-upload-first.ts", "utf8");
+    const src = readFileSync("lib/ai-jobs/tender-extraction-service.ts", "utf8");
     assert.ok(src.includes("buildCandidatesFromMetadata"), "must import buildCandidatesFromMetadata");
-    assert.ok(src.includes('from "./engine/candidate-pipeline"'), "must import from candidate-pipeline");
+    assert.ok(src.includes('from "../engine/candidate-pipeline"'), "must import from candidate-pipeline");
   });
 
   it("invokes the candidate pipeline after enrichment", () => {
-    const src = readFileSync("lib/tender-upload-first.ts", "utf8");
+    const src = readFileSync("lib/ai-jobs/tender-extraction-service.ts", "utf8");
     assert.ok(src.includes("buildCandidatesFromMetadata({"), "must call buildCandidatesFromMetadata");
     assert.ok(src.includes("candidateType: \"regex\""), "must pass candidateType=regex");
-    assert.ok(src.includes("extractionSourcePrefix: \"upload-first"), "must pass extractionSourcePrefix");
+    assert.ok(src.includes("extractionSourcePrefix: \"extract-text-job"), "must pass extractionSourcePrefix");
   });
 
   it("logs rejected/needs-review candidates for observability", () => {
-    const src = readFileSync("lib/tender-upload-first.ts", "utf8");
+    const src = readFileSync("lib/ai-jobs/tender-extraction-service.ts", "utf8");
     assert.ok(src.includes("candidatePipeline.summary.rejected"), "must check rejected count");
     assert.ok(src.includes("candidatePipeline.summary.needsReview"), "must check needsReview count");
     assert.ok(src.includes("logger.warn"), "must log warnings");
   });
 
   it("wraps the candidate pipeline in try/catch (best-effort, non-fatal)", () => {
-    const src = readFileSync("lib/tender-upload-first.ts", "utf8");
-    assert.ok(src.includes("candidate pipeline failed"), "must catch and log candidate pipeline failures");
+    const src = readFileSync("lib/ai-jobs/tender-extraction-service.ts", "utf8");
+    assert.ok(src.includes("source enrichment failed after durable extraction"), "must catch and log candidate/enrichment failures");
   });
 });

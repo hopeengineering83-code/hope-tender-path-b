@@ -44,6 +44,13 @@
 export interface ClientNameEnforcerOpts {
   canonicalClientName: string;
   knownFirmClients: string[]; // names of clients from the firm's vault history
+  // The tender's own title and project name. A subject line reads
+  // "Technical Proposal — <tender title>", and the subject-line detector took
+  // that title for a substituted client: run 36049851073 then replaced the
+  // title with the client name wherever it appeared, printing "Pharo Ventures
+  // requires Pharo Ventures" and "in response to Pharo Ventures issued by
+  // Pharo Ventures". A name listed here is never treated as a wrong client.
+  protectedNames?: Array<string | null | undefined>;
 }
 
 export interface ClientNameEnforcerResult {
@@ -123,7 +130,15 @@ export function enforceClientName(
       }
     }
   }
+  const protectedNames = (opts.protectedNames ?? [])
+    .map((name) => (name ?? "").replace(/\*+/g, "").replace(/\s+/g, " ").trim().toLowerCase())
+    .filter((name) => name.length >= 3);
+  const isProtected = (name: string): boolean => {
+    const normalized = name.replace(/\*+/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+    return protectedNames.some((p) => p === normalized || (p.includes(normalized) && normalized.length >= 12));
+  };
   for (const s of subjectLines) {
+    if (isProtected(s)) continue;
     if (!namesToReplace.includes(s)) namesToReplace.push(s);
   }
 
