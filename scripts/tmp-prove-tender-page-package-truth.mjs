@@ -37,6 +37,10 @@ console.log(`tender page HTTP ${response?.status()}`);
 
 const header = page.locator("#workflow-state");
 const release = page.locator("#generated-documents");
+// The Release Status panel sits in the collapsed "Generation and review"
+// stage; open it the way the owner does, by clicking its summary.
+const stage = page.locator("details:has(#generated-documents)");
+if (!(await stage.evaluate((details) => details.open))) await stage.locator(":scope > summary").click();
 await header.waitFor({ timeout: 60_000 });
 await release.waitFor({ timeout: 60_000 });
 const headerText = (await header.innerText()).replace(/\s+/g, " ").trim();
