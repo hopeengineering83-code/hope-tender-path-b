@@ -212,7 +212,7 @@ export function isAnyProviderEligible(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
   return getAutomaticProviderOrder(env).some((provider) => {
-    if (!providerAutomaticEligibility(provider, env).eligible) return false;
+    if (!providerAutomaticEligibility(provider, env, useCase).eligible) return false;
     const exactModel = getProviderModel(provider, useCase, env);
     if (isBillingLockedOut(provider) || isProviderCooledDown(provider)) return false;
     return true;

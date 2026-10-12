@@ -569,23 +569,21 @@ export function isProviderConfigured(
   env: NodeJS.ProcessEnv = process.env,
   useCase?: AiUseCase,
 ): boolean {
-  if (provider === "openrouter") {
-    return Boolean(readProviderKey(provider, env)) && getProviderModel(provider, "proposal", env).length > 0;
-  }
+  // Only the slot the request will use is checked. Requiring every slot
+  // skipped Groq for AI Analyze when only GROQ_ANALYSIS_MODEL was set, and
+  // skipped Z.ai for proposal writing when only its fast model was invalid;
+  // checking the proposal slot alone skipped OPENROUTER_ANALYSIS_MODEL.
+  const useCases: readonly AiUseCase[] = useCase ? [useCase] : ["proposal", "extraction", "fast"];
   if (provider === "zai") {
     // Z.ai requires a valid endpoint/model pairing — Coding Plan keys cannot
     // use General models and vice versa. Skip the provider if the
     // configuration is invalid instead of burning an attempt on a 400.
-    return resolveZaiConfiguration("proposal", env).valid
-      && resolveZaiConfiguration("extraction", env).valid
-      && resolveZaiConfiguration("fast", env).valid;
+    return useCases.some((u) => resolveZaiConfiguration(u, env).valid);
   }
-  if (provider === "groq") {
-    // Groq has no default model, so each use case needs its own configured
-    // model. Requiring all three skipped Groq for AI Analyze whenever only
-    // its analysis model was set.
+  if (provider === "openrouter" || provider === "groq") {
+    // No default model: a use case is configured only by its own model (or
+    // the proposal model it falls back to).
     if (!readProviderKey(provider, env)) return false;
-    const useCases: readonly AiUseCase[] = useCase ? [useCase] : ["proposal", "extraction", "fast"];
     return useCases.some((u) => getProviderModel(provider, u, env).length > 0);
   }
   return Boolean(readProviderKey(provider, env));

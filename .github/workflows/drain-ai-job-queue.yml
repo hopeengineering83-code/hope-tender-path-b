@@ -175,6 +175,11 @@ jobs:
               exit 0
             fi
 
+            if [ "$result_code" = "ENGINE_SOURCE_SUPERSEDED" ]; then
+              echo "Stage superseded by a newer Engine source revision; its replacement is already queued — non-failure."
+              exit 0
+            fi
+
             if [ "$terminal_status" = "FAILED" ] && [ "$retryable" = "false" ]; then
               echo "::error::Terminal non-retryable job failure: resultCode=$result_code. Manual intervention required."
               exit 1

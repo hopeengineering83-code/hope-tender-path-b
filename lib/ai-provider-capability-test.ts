@@ -414,7 +414,9 @@ export async function runCapabilityTest(
 ): Promise<CapabilityTestResult> {
   const env = opts?.env ?? process.env;
   const spec = CAPABILITY_SPEC[capability];
-  const eligibility = providerAutomaticEligibility(provider, env);
+  // Eligible for THIS capability's use case: Groq configured with only an
+  // analysis model is not configured for generation, and says so.
+  const eligibility = providerAutomaticEligibility(provider, env, spec.useCase);
 
   // Before eligibility, before the key read, before anything: if the request has
   // no budget left, say so honestly rather than starting a call whose only

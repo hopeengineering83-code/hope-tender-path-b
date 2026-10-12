@@ -3,14 +3,9 @@
 import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { ShareIcon, RefreshIcon, CheckIcon, CrossIcon } from "./icons";
+import { activeShares, createdShareAfterRevoke, shareLinkFor, type CreatedShare, type ShareListEntry } from "../lib/ui/share-links";
 
-interface ShareEntry {
-  id: string;
-  token: string;
-  label: string | null;
-  createdAt: string;
-  expiresAt: string | null;
-}
+type ShareEntry = ShareListEntry;
 
 interface TenderSharePanelProps {
   tenderId: string;
@@ -22,7 +17,8 @@ export function TenderSharePanel({ tenderId, canMutate = false }: TenderSharePan
   const [shares, setShares] = useState<ShareEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
-  const [newShareUrl, setNewShareUrl] = useState<string | null>(null);
+  const [created, setCreated] = useState<CreatedShare | null>(null);
+  const newShareUrl = created?.url ?? null;
   const [copied, setCopied] = useState(false);
   const [revoking, setRevoking] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
@@ -33,7 +29,7 @@ export function TenderSharePanel({ tenderId, canMutate = false }: TenderSharePan
       const res = await fetch(`/api/tenders/${tenderId}/share`);
       if (res.ok) {
         const data = await res.json();
-        const nextShares = data.shares ?? [];
+        const nextShares = activeShares<ShareEntry>(data.shares ?? []);
         setShares(nextShares);
         setOpen(nextShares.length > 0);
       }
@@ -61,7 +57,7 @@ export function TenderSharePanel({ tenderId, canMutate = false }: TenderSharePan
       if (res.ok) {
         const data = await res.json();
         const fullUrl = window.location.origin + data.shareUrl;
-        setNewShareUrl(fullUrl);
+        setCreated({ id: data.share.id, url: fullUrl });
         await loadShares();
         router.refresh();
       }
@@ -82,10 +78,7 @@ export function TenderSharePanel({ tenderId, canMutate = false }: TenderSharePan
       });
       if (res.ok) {
         setShares((prev) => prev.filter((s) => s.id !== shareId));
-        if (newShareUrl) {
-          const match = shares.find((s) => s.id === shareId);
-          if (match && newShareUrl.includes(match.token)) setNewShareUrl(null);
-        }
+        setCreated((prev) => createdShareAfterRevoke(prev, shareId));
       }
     } catch {
       // ignore
@@ -153,10 +146,14 @@ export function TenderSharePanel({ tenderId, canMutate = false }: TenderSharePan
             <p className="text-xs text-slate-400">No active share links.</p>
           ) : (
             <div className="divide-y divide-slate-100">
-              {shares.map((share) => (
+              {shares.map((share) => {
+                const link = shareLinkFor(share, created, window.location.origin);
+                return (
                 <div key={share.id} className="flex items-center justify-between gap-2 py-2">
                   <div className="min-w-0">
-                    <p className="max-w-[180px] truncate font-mono text-xs text-slate-600">{window.location.origin}/share/{share.token}</p>
+                    {link
+                      ? <p className="max-w-[180px] truncate font-mono text-xs text-slate-600">{link}</p>
+                      : <p className="text-xs text-slate-600">{share.label ?? "Share link"} <span className="text-slate-400">(the link was shown once, when it was created)</span></p>}
                     <p className="text-xs text-slate-400">Created {new Date(share.createdAt).toLocaleDateString()}{share.expiresAt ? ` · Expires ${new Date(share.expiresAt).toLocaleDateString()}` : ""}</p>
                   </div>
                   {canMutate && (
@@ -165,7 +162,8 @@ export function TenderSharePanel({ tenderId, canMutate = false }: TenderSharePan
                   </button>
                   )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

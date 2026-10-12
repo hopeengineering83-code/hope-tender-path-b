@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { logger } from "../../../../lib/observability";
 import { requireRole, unauthorizedResponse } from "../../../../lib/auth";
 import { completeJob, failJob, rearmDurableStageJob } from "../../../../lib/ai-jobs";
-import { classifyStageRetry, isDurableRetryJobType, isSupersededStageFailure } from "../../../../lib/engine/stage-retry-policy";
+import { classifyStageRetry, isDurableRetryJobType, isSupersededStageFailure, reportedRetryable } from "../../../../lib/engine/stage-retry-policy";
 import { continueSuccessfulAnalysis } from "../../../../lib/ai-jobs/engine-continuation-service";
 import { continueSuccessfulEngineToProposal } from "../../../../lib/ai-jobs/proposal-continuation-service";
 import { ensureAutoFinalizeContinuationJob } from "../../../../lib/ai-jobs/auto-finalize-continuation-job";
@@ -577,8 +577,9 @@ export async function POST(req: Request) {
       // AiAnalyzeRetryState).
       let retryScheduled = false;
       let stageBlockerCode: string | undefined;
+      let decision: ReturnType<typeof classifyStageRetry> | null = null;
       if (isDurableRetryJobType(claimed.jobType)) {
-        const decision = classifyStageRetry(message, claimed.retries);
+        decision = classifyStageRetry(message, claimed.retries);
         stageBlockerCode = decision.blockerCode;
         if (decision.retryable && decision.delayMs !== null) {
           retryScheduled = await rearmDurableStageJob(claimed.id, {
@@ -602,9 +603,11 @@ export async function POST(req: Request) {
         jobType: claimed.jobType,
         status: retryScheduled ? "QUEUED" : "FAILED",
         terminalStatus: retryScheduled ? undefined : "FAILED",
-        resultCode: retryScheduled ? "STAGE_RETRY_SCHEDULED" : "JOB_EXECUTION_FAILED",
+        // A superseded stage is named as such: it is not retried and needs no
+        // one (the drain workflow reads this code as a non-failure).
+        resultCode: retryScheduled ? "STAGE_RETRY_SCHEDULED" : stageBlockerCode === "ENGINE_SOURCE_SUPERSEDED" ? "ENGINE_SOURCE_SUPERSEDED" : "JOB_EXECUTION_FAILED",
         correlationId,
-        retryable: !retryScheduled,
+        retryable: reportedRetryable(decision, retryScheduled),
         retryScheduled,
         generationBlockerCode: stageBlockerCode,
       });

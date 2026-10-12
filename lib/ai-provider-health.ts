@@ -697,7 +697,7 @@ export function isProviderAnalysisUsable(provider: AiProviderName): boolean {
 /** Providers with a verified analysis capability, in automatic-chain order. */
 export function analysisUsableProviders(): AiProviderName[] {
   return getAutomaticProviderOrder().filter((provider) => {
-    if (!providerAutomaticEligibility(provider).eligible) return false;
+    if (!providerAutomaticEligibility(provider, process.env, "extraction").eligible) return false;
     return isProviderAnalysisUsable(provider);
   });
 }

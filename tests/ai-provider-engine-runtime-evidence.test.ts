@@ -75,7 +75,8 @@ describe("Fix 2 — Invalid model does not consume useful attempt budget", () =>
     // WITHOUT consuming an attempt.
     assert.match(
       src,
-      /if \(provider === "zai"\) \{[\s\S]*resolveZaiConfiguration\("proposal"/,
+      // …for the use case the request will actually use, not all three.
+      /if \(provider === "zai"\) \{[\s\S]*?resolveZaiConfiguration\(u, env\)\.valid/,
       "Z.ai configured check must call resolveZaiConfiguration",
     );
   });

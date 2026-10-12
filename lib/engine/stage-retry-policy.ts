@@ -37,6 +37,19 @@ export function classifyStageRetry(errorCodeOrMessage: string, retryCount: numbe
   return { retryable: true, blockerCode: "TRANSIENT_STAGE_FAILURE", delayMs: BACKOFF_MS[retryCount] };
 }
 
+/**
+ * What the worker reports as `retryable` for a failed job: whether the failure
+ * will be retried, which is the classifier's decision. It used to report the
+ * inverse of whether re-arming succeeded, so a terminal authority or integrity
+ * failure read as retryable (the drain workflow only warned) and a queued
+ * retry read as terminal. A job type the policy does not classify keeps its
+ * previous answer: the next tick may retry it.
+ */
+export function reportedRetryable(decision: RetryDecision | null, retryScheduled: boolean): boolean {
+  if (retryScheduled) return true;
+  return decision ? decision.retryable : true;
+}
+
 /** True when a stage failure is an expected supersede, not an incident. */
 export function isSupersededStageFailure(errorCodeOrMessage: string): boolean {
   return SUPERSEDED.test(errorCodeOrMessage.slice(0, 500));

@@ -226,15 +226,15 @@ export function statedDurationMonths(text: string): { months: number; quote: str
   return best;
 }
 
-const MONEY = String.raw`(?:ETB|Birr|Br\.?|USD|US\$|\$|EUR|€|GBP|£|KES|UGX|TZS|RWF)`;
+// Any currency the shared reference knows — a hand-written regional list here
+// missed "Budget: NGN 5,000,000" and "GHS 500,000" — plus "Br" for birr.
+// Case-sensitive like CURRENCY_TOKEN_ALTERNATION itself: patterns built from
+// it never take the "i" flag.
+const MONEY = String.raw`(?<![A-Za-z])(?:${CURRENCY_TOKEN_ALTERNATION}|Br\.?)`;
 
-function currencyCode(token: string): string {
-  const t = token.toUpperCase().replace(/\.$/, "");
-  if (t === "BIRR" || t === "BR") return "ETB";
-  if (t === "US$" || t === "$") return "USD";
-  if (t === "€") return "EUR";
-  if (t === "£") return "GBP";
-  return t;
+function currencyCode(token: string): string | null {
+  const t = token.trim().replace(/\.$/, "");
+  return t === "Br" ? "ETB" : resolveCurrencyToken(t);
 }
 
 // Sentences for money statements: a label and its value stay together
@@ -257,16 +257,25 @@ const NOT_THIS_ASSIGNMENTS_MONEY = /\b(?:similar|(?:previously|successfully)\s+(
  * however it is worded ("two similar contracts, each with an estimated
  * contract value of USD 1,000,000"), and the search goes on past it.
  */
+const BUDGET_WORDS = /\b(?:budget|ceiling|maximum\s+(?:amount|price|contract\s+(?:value|price|amount))|amount\s+payable|not\s+(?:to\s+)?exceed|estimated\s+(?:cost|value|budget|contract\s+(?:value|amount))\s+(?:of|for)\s+(?:this|the)\s+(?:assignment|services|consultancy|contract|procurement|project|works))\b/gi;
+const BUDGET_AMOUNT = new RegExp(String.raw`(${MONEY})\s?([\d][\d,]*(?:\.\d+)?)\s*([Mm]illion\b|[Mm]\b)?`);
+
 export function statedBudget(text: string): { amount: number; currency: string; quote: string; inclusiveOfVat: boolean } | null {
-  const re = new RegExp(String.raw`\b(?:budget|ceiling|maximum\s+(?:amount|price|contract\s+(?:value|price|amount))|amount\s+payable|not\s+(?:to\s+)?exceed|estimated\s+(?:cost|value|budget|contract\s+(?:value|amount))\s+(?:of|for)\s+(?:this|the)\s+(?:assignment|services|consultancy|contract|procurement|project|works))\b[^.;]{0,80}?(${MONEY})\s?([\d][\d,]*(?:\.\d+)?)\s*(million|m\b)?`, "i");
   for (const s of moneyClauses(text)) {
     if (NOT_THIS_ASSIGNMENTS_MONEY.test(s)) continue;
-    const m = re.exec(s);
-    if (!m) continue;
-    let amount = Number(m[2]!.replace(/,/g, ""));
-    if (m[3]) amount *= 1_000_000;
-    if (!Number.isFinite(amount) || amount <= 0) continue;
-    return { amount, currency: currencyCode(m[1]!), quote: snippet(s), inclusiveOfVat: !/\b(?:exclusive\s+of|excluding|excl\.?|before)\s+vat\b/i.test(s) };
+    // The budget words are matched without regard to case, the amount's
+    // currency in its real case; the amount follows within 80 characters of
+    // the words, in the same clause.
+    for (const words of s.matchAll(BUDGET_WORDS)) {
+      const after = s.slice(words.index! + words[0].length);
+      const m = BUDGET_AMOUNT.exec(after);
+      if (!m || m.index > 80 || /[.;]/.test(after.slice(0, m.index))) continue;
+      const currency = currencyCode(m[1]!);
+      let amount = Number(m[2]!.replace(/,/g, ""));
+      if (m[3]) amount *= 1_000_000;
+      if (!currency || !Number.isFinite(amount) || amount <= 0) continue;
+      return { amount, currency, quote: snippet(s), inclusiveOfVat: !/\b(?:exclusive\s+of|excluding|excl\.?|before)\s+vat\b/i.test(s) };
+    }
   }
   return null;
 }
@@ -341,21 +350,34 @@ function statedWithholding(text: string): { pct: number; quote: string } | null 
   return null;
 }
 
+// What a validity period belongs to. A bid security, guarantee or bond has its
+// own validity — usually longer than the offer's ("the bid security shall be
+// valid for 120 days"; "proposals shall remain valid for 90 days") — and the
+// financial proposal promises the OFFER's.
+const SECURITY_SUBJECT = /\b(?:securit(?:y|ies)|securing\s+declaration|guarantees?|bonds?|insurance|warrant(?:y|ies))\b/gi;
+const OFFER_SUBJECT = /\b(?:proposals?|bids?|offers?|tenders?|quotations?)\b(?!\s+(?:securit|securing|guarantee|bond))/gi;
+const lastIndex = (re: RegExp, text: string) => Math.max(-1, ...[...text.matchAll(re)].map((m) => m.index!));
+
 function statedValidityDays(text: string): { days: number; quote: string } | null {
-  for (const s of sentences(text)) {
-    const m = /\bvalid(?:ity)?\b[^.;]{0,60}?\b(\d{2,3})\s*(?:\(\s*\d+\s*\)\s*)?(?:calendar\s+)?days\b/i.exec(s);
-    if (m) return { days: Number(m[1]), quote: snippet(s) };
+  for (const s of moneyClauses(text)) {
+    for (const m of s.matchAll(/\bvalid(?:ity)?\b[^.;]{0,60}?\b(\d{2,3})\s*\)?\s*(?:\(\s*\d+\s*\)\s*)?(?:calendar\s+)?days\b/gi)) {
+      // The subject named nearest before the number decides whose validity it is.
+      const lead = s.slice(Math.max(0, m.index! - 80), m.index! + m[0].length);
+      if (lastIndex(SECURITY_SUBJECT, lead) > lastIndex(OFFER_SUBJECT, lead)) continue;
+      return { days: Number(m[1]), quote: snippet(s) };
+    }
   }
   return null;
 }
 
 /** A rate the tender fixes for an item ("per diem of ETB 1,200 per day"). */
 function prescribedRate(text: string, keyword: RegExp): { rate: number; currency: string; quote: string } | null {
-  const re = new RegExp(String.raw`(${MONEY})\s?([\d][\d,]*(?:\.\d+)?)\s*(?:per|/)\s*(?:day|night|month|person|trip|km|unit|each)`, "i");
+  const re = new RegExp(String.raw`(${MONEY})\s?([\d][\d,]*(?:\.\d+)?)\s*(?:[Pp]er|/)\s*(?:[Dd]ay|[Nn]ight|[Mm]onth|[Pp]erson|[Tt]rip|km|[Uu]nit|[Ee]ach)`);
   for (const s of sentences(text)) {
     if (!keyword.test(s)) continue;
     const m = re.exec(s);
-    if (m) return { rate: Number(m[2]!.replace(/,/g, "")), currency: currencyCode(m[1]!), quote: snippet(s) };
+    const currency = m ? currencyCode(m[1]!) : null;
+    if (m && currency) return { rate: Number(m[2]!.replace(/,/g, "")), currency, quote: snippet(s) };
   }
   return null;
 }

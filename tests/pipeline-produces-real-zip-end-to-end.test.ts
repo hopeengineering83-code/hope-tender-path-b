@@ -459,7 +459,9 @@ before(async () => {
   // The owner adjusts the team leader's input and rate and drops every other
   // line, so the approved figures below are exact.
   // No expert is selected for this tender and it names no roles, so fees are
-  // one lump sum; either form is approved at the same 360,000 subtotal.
+  // one lump sum; either form is approved at the same 360,000 subtotal. A lump
+  // sum is one item: its quantity is not editable (the server refuses any
+  // other quantity with PRICING_INVALID_EDIT), so only a day rate gets 40 days.
   const leader = pricingEstimate.scenarios.find((sc: any) => sc.id === "BALANCED").lines.find((l: any) => l.category === "PERSONNEL");
   assert.ok(leader, `the estimate prices professional fees: ${JSON.stringify(pricingEstimate.scenarios[1].lines.map((l: any) => [l.label, l.unit]))}`);
   approvedLeaderLabel = leader.label;
@@ -469,7 +471,7 @@ before(async () => {
     body: JSON.stringify({
       scenario: "BALANCED",
       rates: { [leader.key]: leader.unit === "LUMP_SUM" ? 360000 : 9000 },
-      quantities: { [leader.key]: 40 },
+      quantities: leader.unit === "LUMP_SUM" ? {} : { [leader.key]: 40 },
       exclude: pricingEstimate.scenarios[1].lines.filter((l: any) => l.key !== leader.key).map((l: any) => l.key),
     }),
   }), { params: Promise.resolve({ id: tenderId }) });

@@ -62,7 +62,7 @@ a pass: two intermediate SHAs on this branch (`5e2518ca`, `20d2d7db`) show
 
 | Owner tool | Branch / PR | Scope | Locked files or areas | Status | Next action |
 |---|---|---|---|---|---|
-| Codex → Claude Code | `release/consolidated-recovery-20260717` (PR #1175, draft, base `integration/controlled-recovery`) | Consolidated release recovery: 10-provider fallback chain, provider-diversity request planning, durable fallback staging, canonical readiness/export convergence, artifact identity, real DOCX/PDF/ZIP bytes | `lib/ai.ts`, `lib/ai-jobs/analysis-job-service.ts`, `lib/ai-analyze/retry-service.ts`, `lib/engine/*`, `app/api/tenders/[id]/*`, `docs/pr1175-frozen-regression-ledger.md` | Open (draft). Current head, CI and Preview: see the newest Session Log entry (2026-10-11) — verify them yourself; this cell is not updated per push. | **DO NOT MERGE OR PROMOTE PRODUCTION.** Continue exact-head Preview artifact acceptance only when requested/authorized. |
+| Codex → Claude Code | `release/consolidated-recovery-20260717` (PR #1175, draft, base `integration/controlled-recovery`) | Consolidated release recovery: 10-provider fallback chain, provider-diversity request planning, durable fallback staging, canonical readiness/export convergence, artifact identity, real DOCX/PDF/ZIP bytes | `lib/ai.ts`, `lib/ai-jobs/analysis-job-service.ts`, `lib/ai-analyze/retry-service.ts`, `lib/engine/*`, `app/api/tenders/[id]/*`, `docs/pr1175-frozen-regression-ledger.md` | Open (draft). Current head, CI and Preview: see the newest Session Log entry (2026-10-12, final closure) — verify them yourself; this cell is not updated per push. | **DO NOT MERGE OR PROMOTE PRODUCTION.** Continue exact-head Preview artifact acceptance only when requested/authorized. |
 
 #### CURRENT STATE — see the newest Session Log entry (2026-10-07)
 
@@ -212,6 +212,22 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 - Avoid unnecessary Vercel previews; run local checks before pushing work.
 
 ## Session Log
+
+### 2026-10-12 UTC (final closure) — Claude Code (PR #1175: provider use-case slots, ZIP e2e fixture, six latest review findings)
+
+Branch `release/consolidated-recovery-20260717`, PR #1175 (NOT merged). Started at `2b7bee18` (re-fetched; unchanged) with four uncommitted provider call-site edits from the previous turn, kept and finished. Scope: the owner's "FINAL RELEASE CLOSURE" list only.
+
+- **Provider use cases (finding 7 completion + Codex finding 2).** `isProviderConfigured(provider, env, useCase)` now checks only the slot the request will use for Groq, OpenRouter and Z.ai (no use case = any slot). It had required all three Z.ai slots (an invalid fast model removed Z.ai from proposal writing) and checked only OpenRouter's proposal slot (`OPENROUTER_ANALYSIS_MODEL` alone was skipped for AI Analyze). The remaining callers that knew their use case now pass it: AI Analyze chunk planning (`planAnalysisChunks`, "extraction"), the AI Analyze retry gate (`isAnyProviderEligible`, its own use case), each capability test (`spec.useCase`, so a slot that is not configured is skipped as not configured, never sent with no model), `analysisUsableProviders` ("extraction"). Canonical ten-provider order, cooldowns, preflight, budgets and deterministic fallback unchanged.
+- **CI failure on `2b7bee18`:** `tests/pipeline-produces-real-zip-end-to-end.test.ts` sent quantity 40 for a LUMP_SUM line, which the server correctly refuses (`PRICING_INVALID_EDIT`, 422); its before-hook failed and cancelled all 11 children. Fixture fixed (no quantity for a lump sum; same 360,000 subtotal). Server validation unchanged. 11/11 pass.
+- **Codex review of `2b7bee18`, six findings — all reproduced and fixed:**
+  1. *Budget in NGN/GHS not read.* `statedBudget` (and `prescribedRate`) used a ten-currency regional list. Now the shared `CURRENCY_TOKEN_ALTERNATION` (case-sensitive; the budget words are matched separately so the alternation never takes the `i` flag) plus "Br". Thresholds still rejected.
+  2. *Z.ai/OpenRouter slots.* As above.
+  3. *Bid-security validity promised as the offer's.* `statedValidityDays` took the first "valid … N days". It now takes a validity whose nearest subject is the proposal/bid/offer, skipping a security, guarantee, bond or insurance; none stated → 90 days assumed, said so. `Tender.validityDays` is deliberately not used as a fallback: its extractor has the same first-match shape (adjacent risk, not changed here).
+  4. *Worker `retryable` inverted.* run-next reported `!retryScheduled`. Now `reportedRetryable(decision, retryScheduled)` (the classifier's decision; unclassified job types keep the old `true`). A superseded stage reports `resultCode: ENGINE_SOURCE_SUPERSEDED`, which `drain-ai-job-queue.yml` treats as a non-failure before the terminal check, so a benign supersede does not page anyone.
+  5. *`/share/null`.* `components/tender-share-panel.tsx` built every row URL from `share.token` (null for hash-only shares). New `lib/ui/share-links.ts`: a hash-only share shows no URL after reload ("shown once, when it was created"); the share created now shows its one-time URL tied to its id; revoking that share clears it; revoked shares are not listed as active. The API and the hash-only storage are unchanged.
+  6. *Deactivated users listed as active.* `GET /api/users` now lists `deletedAt: null` only; creating a user with a deactivated account's email says so (409).
+- **Tests:** `tests/a-provider-is-configured-for-the-use-case-it-serves.test.ts` (11; 6 fail on `2b7bee18`, the rest are invariants such as chain order), `tests/the-six-latest-review-findings-hold.test.ts` + `tests/the-six-latest-review-findings-db.test.ts` (16; 12 fail on `2b7bee18`). One source pin updated (`ai-provider-engine-runtime-evidence`: Z.ai check per use case). Affected suites: 140 files, 1704/1704. tsc and lint clean.
+- **Merge status:** NOT merged. DO NOT MERGE OR PROMOTE PRODUCTION without the owner's explicit instruction.
 
 ### 2026-10-12 UTC (later) — Claude Code (PR #1175: the nine confirmed review findings)
 

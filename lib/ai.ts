@@ -2859,7 +2859,7 @@ export function planAnalysisChunks(
   env: NodeJS.ProcessEnv = process.env,
 ): AnalysisChunkPlan {
   const configuredProviders = CANONICAL_AI_PROVIDER_ORDER.filter((provider) =>
-    registryIsProviderConfigured(provider, env)
+    registryIsProviderConfigured(provider, env, "extraction")
   );
   const fullChunks = [content];
   const fullRequestEligibleProviders = providersEligibleForEveryChunk(fullChunks, configuredProviders, env);
