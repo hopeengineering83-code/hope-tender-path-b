@@ -10,14 +10,14 @@
 //
 // A figure is the offer's only when the tender says so: the offer is named
 // on the validity ("Proposal validity: 90 days", "the validity of the bids"),
-// is the subject it is predicated of ("Bids shall remain valid for 90 days",
-// "The bid shall include a security and remain valid for 90 days"), or is
-// the subject of the sentence before a pronoun that is ("Proposals must be in
-// English. They shall remain valid for 90 days"). A security named right after
-// the figure ("120 days for the bid security") makes it the security's. Any
-// other validity — a security's, a licence's, a bare "Validity: 90 days" — is
-// not read as the offer's: a reader then reports it as not stated rather than
-// risk promising some other period. Fail closed, never open.
+// or is the subject it is predicated of ("Bids shall remain valid for 90
+// days", "The bid shall be signed and remain valid for 90 days" when no
+// security is named before the "and"). A security named right after the
+// figure ("120 days for the bid security") makes it the security's. Any other
+// validity — a security's, a licence's, a pronoun's ("It shall remain valid"),
+// a bare "Validity: 90 days" — is not read as the offer's: a reader then
+// reports it as not stated rather than risk promising some other period. Fail
+// closed, never open.
 
 const SECURITY_WORD = /\b(?:securit(?:y|ies)|securing\s+declaration|guarantees?|bonds?|insurance|warrant(?:y|ies)|EMD|earnest\s+money(?:\s+deposit)?)\b/i;
 const OFFER_NOUN = String.raw`(?:proposals?|bids?|offers?|tenders?|quotations?)(?!\s+(?:securit|securing|guarantee|bond))`;
@@ -36,9 +36,6 @@ const COORDINATED_PREDICATE = /\band\s+(?:(?:shall|must|will|should|is\s+to|are\
 // "120 days for the bid security", "… of the performance guarantee": a security
 // named in a phrase directly after the figure.
 const SECURITY_QUALIFIER = new RegExp(String.raw`^\s*(?:for|of|on|under|covering)\s+(?:(?:the|its|a|an|any|each|such)\s+)?(?:[A-Za-z-]+\s+){0,2}?` + SECURITY_WORD.source, "i");
-// "It shall remain valid", "They are valid", "Its validity:" — the validity of
-// a pronoun opening the sentence, whose subject is the sentence before's.
-const PRONOUN_SUBJECT_BEFORE = /^\s*["“(]?(?:it|they|its|their)\s+(?:(?:shall|must|will|should|is|are)\s+){0,2}(?:remain\s+|be\s+)?$/i;
 
 // Only a full stop, exclamation or question mark followed by the start of a
 // new sentence ends one — never one closing a common abbreviation, a month, an
@@ -82,14 +79,10 @@ export function isOfferValidity(text: string, index: number, length: number): bo
   if (SECURITY_QUALIFIER.test(text.slice(index + length, index + length + 120))) return false;
   // The offer named on the validity, or the subject it is predicated of.
   if (OFFER_LABEL_IN_MATCH.test(match) || OFFER_OF_IN_MATCH.test(match) || OFFER_LABEL_BEFORE.test(before) || OFFER_SUBJECT_BEFORE.test(before)) return true;
-  // A coordinated predicate of a sentence whose subject is the offer.
-  if (COORDINATED_PREDICATE.test(before) && OFFER_OPENING.test(sentence)) return true;
-  // A pronoun whose antecedent, the previous sentence's subject, is the offer
-  // — and that sentence names no security the pronoun could mean instead.
-  if (PRONOUN_SUBJECT_BEFORE.test(before)) {
-    const previous = window.slice(Math.max(0, ...ends.filter((end) => end < sentenceStart)), sentenceStart);
-    return OFFER_OPENING.test(previous) && !SECURITY_WORD.test(previous);
-  }
+  // A coordinated predicate of a sentence whose subject is the offer — unless
+  // a security named before it could be what it is predicated of ("a bid
+  // security, which shall be issued by a bank and remain valid").
+  if (COORDINATED_PREDICATE.test(before) && OFFER_OPENING.test(sentence) && !SECURITY_WORD.test(before)) return true;
   return false;
 }
 

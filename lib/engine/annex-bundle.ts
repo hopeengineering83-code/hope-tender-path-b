@@ -123,8 +123,8 @@ const nameParts = (fullName: string) => {
  * The selected expert a file the owner named is filed under, or null.
  *
  * Every part of the expert's name must appear in the file name as a whole
- * word (titles and accents aside), and no other expert of the firm may fit
- * the file as well: "Mohammed_Ahmed_Hassan_Licence.pdf" is not Mohammed Ahmed
+ * word, as often as the name has it (titles and accents aside), and no other
+ * expert of the firm may fit the file as well: "Mohammed_Ahmed_Hassan_Licence.pdf" is not Mohammed Ahmed
  * Ali's, and when the firm also has a Mohammed Ahmed Hassan it is not
  * Mohammed Ahmed's either — the fullest name that fits wins, and a tie binds
  * nothing, as does a name two of the firm's experts share. A one-word name
@@ -133,7 +133,10 @@ const nameParts = (fullName: string) => {
  * the original to the owner.
  */
 export function expertFiledUnder(fileName: string, selectedExperts: readonly string[], companyExperts: readonly string[] = []): string | null {
-  const words = new Set(nameWords(fileName.replace(/\.[a-z0-9]{1,5}$/i, "")));
+  // Each word with how often the file name has it: "Ali Ali" needs it twice.
+  const words = new Map<string, number>();
+  for (const word of nameWords(fileName.replace(/\.[a-z0-9]{1,5}$/i, ""))) words.set(word, (words.get(word) ?? 0) + 1);
+  const fitsFile = (parts: string[]) => parts.every((part) => (words.get(part) ?? 0) >= parts.filter((p) => p === part).length);
   const key = (name: string) => nameParts(name).join(" ");
   const selected = new Set(selectedExperts.map(key));
   // How many of the firm's experts carry each name. The firm's list includes
@@ -144,7 +147,7 @@ export function expertFiledUnder(fileName: string, selectedExperts: readonly str
   for (const name of selected) if (!people.has(name)) people.set(name, 1);
   const fits = [...people.keys()].filter((name) => {
     const parts = name.split(" ").filter(Boolean);
-    return parts.length >= 2 && parts.every((part) => words.has(part));
+    return parts.length >= 2 && fitsFile(parts);
   });
   if (fits.length === 0) return null;
   const fullest = Math.max(...fits.map((name) => name.split(" ").length));

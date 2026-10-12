@@ -95,6 +95,8 @@ describe("1. a separately stored certificate counts for the selected expert", ()
     assert.equal(expertFiledUnder("Doe_Licence.pdf", ["Doe, JOHN"], ["Doe, JOHN"]), null, "a segment not written as a name is never read as one, and the rest is too short");
     assert.ok(expertFiledUnder("John_A_Doe_Licence.pdf", ["Doe, John A."], ["Doe, John A."]), "an initial is skipped, not a reason to drop the given name");
     assert.ok(expertFiledUnder("John_Doe_Licence.pdf", ["Doe, John A."], ["Doe, John A."]));
+    assert.equal(expertFiledUnder("Ali_Licence.pdf", ["Ali Ali"], ["Ali Ali"]), null, "a repeated name part is needed as often as the name has it");
+    assert.ok(expertFiledUnder("Ali_Ali_Licence.pdf", ["Ali Ali"], ["Ali Ali"]));
   });
 
   it("without the firm's expert list nothing is bound by name", () => {
@@ -116,13 +118,16 @@ describe("4. the tender's validity is the offer's, never a bid security's", () =
     ["The bid security shall be issued by ABC Bank Ltd. and shall remain valid for 120 days. Proposals shall remain valid for 90 days.", 90],
     ["EMD validity: 120 days. Proposal validity: 90 days.", 90],
     ["The bid security shall be issued by U.S. Bank and shall remain valid for 120 days. Proposals shall remain valid for 90 days.", 90],
-    ["The bid shall include a bid security and shall remain valid for 120 days.", 120],
-    ["The bid shall include a bid security and remain valid for 120 days.", 120],
-    ["Bids must be accompanied by a bid security valid for 120 days and remain valid for 60 days.", 60],
+    ["The bid shall include a bid security and shall remain valid for 120 days.", null],
+    ["The bid shall include a bid security and remain valid for 120 days.", null],
+    ["Bids must be accompanied by a bid security valid for 120 days and remain valid for 60 days.", null],
+    ["The bid shall be signed and remain valid for 90 days.", 90],
+    ["The bid shall include a bid security, which shall be issued by a bank and remain valid for 120 days. Proposals shall remain valid for 90 days.", 90],
+    ["A bid security is required. The bid shall include this instrument. It shall remain valid for 120 days. Proposals shall remain valid for 90 days.", 90],
     ["The tender security is required. It shall remain valid for 120 days. Proposals shall remain valid for 60 days.", 60],
     ["The bid security is required. Its validity: 120 days. Proposal validity: 90 days.", 90],
     ["If a bid security is required, the bid shall include it and remain valid for 120 days.", null],
-    ["Proposals must be submitted in English. It shall remain valid for 90 days.", 90],
+    ["Proposals must be submitted in English. It shall remain valid for 90 days.", null],
     ["The earnest money deposit shall be valid for 120 days. Bids shall remain valid for 90 days.", 90],
     ["The bid security shall be\nvalid for 120 days after the deadline.", null],
     ["The bid security shall be issued by 31 Jan. 2027 and remain valid for 120 days. Proposals shall remain valid for 90 days.", 90],
@@ -132,7 +137,7 @@ describe("4. the tender's validity is the offer's, never a bid security's", () =
     ["The bidder must hold a business licence valid for 365 days. Proposals shall remain valid for 90 days.", 90],
     ["Validity: 120 days for the bid security. Proposal validity: 90 days.", 90],
     ["Validity: 90 days.", null],
-    ["Proposals must be submitted in English. They shall remain valid for 90 days.", 90],
+    ["Proposals must be submitted in English. They shall remain valid for 90 days.", null],
   ];
 
   it("the tender-detail field extractor", () => {
