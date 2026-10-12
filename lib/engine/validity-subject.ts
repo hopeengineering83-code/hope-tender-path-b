@@ -18,11 +18,24 @@ const OFFER_SUBJECT = /\b(?:proposals?|bids?|offers?|tenders?|quotations?)\b(?!\
 // mid-sentence ("the bid security shall be\nvalid for 120 days").
 const ABBREVIATIONS = new Set(["ltd", "co", "inc", "plc", "corp", "llc", "no", "nos", "art", "sec", "cl", "para", "e.g", "i.e", "etc", "mr", "mrs", "ms", "dr", "eng", "st", "vs", "approx"]);
 const SENTENCE_END_CANDIDATE = /([A-Za-z.]*)[.!?](?=\s+["“(]?[A-Z0-9])/g;
+// Initials and dotted initialisms ("J. Smith", "U.S. Bank", "E.U.") do not end a sentence either.
+const isAbbreviation = (word: string) => {
+  const w = word.toLowerCase().replace(/^\.+/, "");
+  return ABBREVIATIONS.has(w) || /^[a-z]$/.test(w) || /^(?:[a-z]\.)+[a-z]$/.test(w);
+};
 const sentenceEnds = (text: string): number[] => [...text.matchAll(SENTENCE_END_CANDIDATE)]
-  .filter((m) => !ABBREVIATIONS.has(m[1]!.toLowerCase().replace(/^\.+/, "")))
+  .filter((m) => !isAbbreviation(m[1]!))
   .map((m) => m.index! + m[0].length);
 
 const lastIndexOf = (re: RegExp, text: string) => Math.max(-1, ...[...text.matchAll(re)].map((m) => m.index!));
+
+// A security that is the object of an earlier verb, with the validity in a
+// clause coordinated after it ("The bid shall include a bid security and shall
+// remain valid for 120 days"), is not the subject of that validity.
+const COORDINATED_VALIDITY = /^[\s,]*and\s+(?:shall|must|will|should|is\s+to|are\s+to)\s+(?:remain\s+|be\s+)?valid\b/i;
+const lastSecuritySubject = (lead: string) => Math.max(-1, ...[...lead.matchAll(SECURITY_SUBJECT)]
+  .filter((m) => !COORDINATED_VALIDITY.test(lead.slice(m.index! + m[0].length)))
+  .map((m) => m.index!));
 
 // How far back a sentence is looked for. Only a bound on the work done: a
 // sentence is read from its own start ("The bid security shall be issued by a
@@ -42,7 +55,7 @@ export function validityBelongsToSecurity(text: string, index: number, length: n
   // A sentence end is recognised by what follows it, so look into the match.
   const sentenceStart = Math.max(0, ...sentenceEnds(window).filter((end) => end <= index - start));
   const lead = window.slice(sentenceStart);
-  return lastIndexOf(SECURITY_SUBJECT, lead) > lastIndexOf(OFFER_SUBJECT, lead);
+  return lastSecuritySubject(lead) > lastIndexOf(OFFER_SUBJECT, lead);
 }
 
 /** The sentence around `index`, for quoting where a figure came from. */

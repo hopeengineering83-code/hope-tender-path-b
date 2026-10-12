@@ -85,14 +85,23 @@ type KindRule = {
 
 const name = (doc: AnnexVaultDocument) => doc.originalFileName.toLowerCase();
 
-const HONORIFICS = new Set(["dr", "eng", "engr", "mr", "mrs", "ms", "miss", "prof", "ato", "wro", "arch", "ir"]);
+// Titles before a name. "Eng", "Ir" and "Arch" are also names, so they count
+// as titles only when written with their full stop ("Eng. Abebe").
+const TITLES = new Set(["dr", "mr", "mrs", "ms", "miss", "prof", "engr", "ato"]);
+const DOTTED_TITLES = /^\s*(?:(?:w\/ro|eng|engr|arch|ir|dr|mr|mrs|ms|prof|ato)\.\s*)+/i;
 const nameWords = (text: string) => text.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").split(/[^a-z0-9]+/).filter(Boolean);
 
 // Credentials stored after a name ("Dr. John Doe, Ph.D.") are not part of
 // it. Only unambiguous ones: "Ma" or "Ba" can be a surname.
 const CREDENTIALS = new Set(["phd", "msc", "bsc", "mba", "meng", "beng", "pe", "peng", "ceng", "pmp", "frics", "mice", "jr", "sr", "esq"]);
-const nameParts = (fullName: string) => nameWords(fullName.replace(/\.(?=[A-Za-z])/g, ""))
-  .filter((word) => word.length >= 2 && !HONORIFICS.has(word) && !CREDENTIALS.has(word));
+// Titles are dropped only from the front and credentials only from the end:
+// "Peng Li Wang" keeps "peng"; "Dr. John Doe, Ph.D." is John Doe.
+const nameParts = (fullName: string) => {
+  const words = nameWords(fullName.replace(DOTTED_TITLES, "").replace(/\.(?=[A-Za-z])/g, ""));
+  while (words.length > 0 && TITLES.has(words[0]!)) words.shift();
+  while (words.length > 0 && CREDENTIALS.has(words[words.length - 1]!)) words.pop();
+  return words.filter((word) => word.length >= 2);
+};
 
 /**
  * The selected expert a file the owner named is filed under, or null.

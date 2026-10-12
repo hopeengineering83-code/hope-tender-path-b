@@ -75,6 +75,9 @@ describe("1. a separately stored certificate counts for the selected expert", ()
     assert.equal(expertFiledUnder("Abebe_Kebede_Licence.pdf", ["Abebe Kebede"], ["Abebe Kebede", "Eng. Abebe Kebede"]), null, "two of the firm's experts share the name");
     assert.ok(expertFiledUnder("John_Doe_Licence.pdf", ["Dr. John Doe, Ph.D."], ["Dr. John Doe, Ph.D."]), "credentials after the name are not part of it");
     assert.ok(expertFiledUnder("Jane_Roe_Licence.pdf", ["Jane Roe, PE"], ["Jane Roe, PE"]), "PE is a credential");
+    assert.equal(expertFiledUnder("Li_Wang_Licence.pdf", ["Peng Li Wang"], ["Peng Li Wang"]), null, "a name part that looks like a credential is still a name part");
+    assert.ok(expertFiledUnder("Peng_Li_Wang_Licence.pdf", ["Peng Li Wang"], ["Peng Li Wang"]));
+    assert.equal(expertFiledUnder("Wei_Ming_Licence.pdf", ["Eng Wei Ming"], ["Eng Wei Ming"]), null, "Eng without a full stop is a surname");
     assert.ok(expertFiledUnder("Ma_Jun_Licence.pdf", ["Ma Jun"], ["Ma Jun"]), "a surname that looks like a degree is kept");
   });
 
@@ -96,6 +99,8 @@ describe("4. the tender's validity is the offer's, never a bid security's", () =
     ["The bid security shall be issued by a reputable bank acceptable to the employer and shall remain valid for 120 days. Proposals shall remain valid for 90 days.", 90],
     ["The bid security shall be issued by ABC Bank Ltd. and shall remain valid for 120 days. Proposals shall remain valid for 90 days.", 90],
     ["EMD validity: 120 days. Proposal validity: 90 days.", 90],
+    ["The bid security shall be issued by U.S. Bank and shall remain valid for 120 days. Proposals shall remain valid for 90 days.", 90],
+    ["The bid shall include a bid security and shall remain valid for 120 days.", 120],
     ["The earnest money deposit shall be valid for 120 days. Bids shall remain valid for 90 days.", 90],
     ["The bid security shall be\nvalid for 120 days after the deadline.", null],
   ];
