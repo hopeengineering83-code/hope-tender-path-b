@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { emitTenderWorkflowSync, subscribeTenderWorkflowSync } from "@/lib/ui/tender-workflow-sync";
+import { computeWorkbookTotals, editedLine } from "@/lib/engine/priced-line-amount";
 
 type Confidence = "HIGH" | "MEDIUM" | "LOW" | "NONE";
 type Line = {
@@ -78,28 +79,38 @@ export function PricingIntelligencePanel({ tenderId, canMutate = false }: { tend
 
   const scenario = useMemo(() => estimate?.scenarios.find((s) => s.id === scenarioId) ?? null, [estimate, scenarioId]);
 
+  // Each line as edited, by the approval's own rules, so the amount and the
+  // total on screen are the ones that will be approved and written.
+  const edited = useMemo(() => {
+    const out: Record<string, ReturnType<typeof editedLine>> = {};
+    for (const l of scenario?.lines ?? []) out[l.key] = editedLine(l, rates[l.key], quantities[l.key]);
+    return out;
+  }, [scenario, rates, quantities]);
+
   const adjusted = useMemo(() => {
-    if (!scenario) return { total: 0, unpriced: 0 };
-    let subtotal = 0;
+    if (!scenario) return { total: 0, unpriced: 0, invalid: 0 };
     let unpriced = 0;
+    let invalid = 0;
+    const priced: Array<{ category: string; label: string; quantity: number; unit: string; rate: number }> = [];
     for (const l of scenario.lines) {
       if (excluded[l.key]) continue;
-      const rate = rates[l.key] !== undefined && rates[l.key] !== "" ? Number(rates[l.key]) : l.rate;
-      const qty = quantities[l.key] !== undefined && quantities[l.key] !== "" ? Number(quantities[l.key]) : l.quantity;
-      if (!rate || !(rate > 0)) { unpriced += 1; continue; }
-      subtotal += rate * qty;
+      const e = edited[l.key]!;
+      if (e.invalid) { invalid += 1; continue; }
+      if (e.rate === null || !(e.rate > 0)) { unpriced += 1; continue; }
+      priced.push({ category: l.category, label: l.label, quantity: e.quantity, unit: l.unit, rate: e.rate });
     }
-    const contingency = subtotal * scenario.contingencyPct / 100;
-    const vat = (subtotal + contingency) * (estimate?.vatPercent ?? 0) / 100;
-    return { total: subtotal + contingency + vat, unpriced };
-  }, [scenario, rates, quantities, excluded, estimate]);
+    const totals = computeWorkbookTotals(priced, { vatPercent: estimate?.vatPercent ?? 0, contingencyPct: scenario.contingencyPct, withholdingPct: 0 });
+    return { total: totals.offerTotal, unpriced, invalid };
+  }, [scenario, edited, excluded, estimate]);
 
   async function approve() {
     if (!scenario) return;
     setBusy(true);
     setError(null);
     setMessage(null);
-    const numeric = (m: Record<string, string>) => Object.fromEntries(Object.entries(m).filter(([, v]) => v !== "" && Number(v) > 0).map(([k, v]) => [k, Number(v)]));
+    // Every value typed is sent as typed; the server refuses an invalid one
+    // rather than this page silently dropping it.
+    const numeric = (m: Record<string, string>) => Object.fromEntries(Object.entries(m).filter(([, v]) => v.trim() !== "").map(([k, v]) => [k, v.trim()]));
     try {
       // Rates typed for lines the evidence could not price are filed in the
       // rate card by the server, by role and seniority, in the same approval.
@@ -117,7 +128,7 @@ export function PricingIntelligencePanel({ tenderId, canMutate = false }: { tend
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         const list = Array.isArray(data.unpriced) ? ` ${data.unpriced.map((u: { label: string }) => u.label).join("; ")}` : "";
-        throw new Error(`${data.error ?? "Approval failed."}${list}`);
+        throw new Error(`${data.error ?? "Approval failed."}${Array.isArray(data.invalid) ? "" : list}`);
       }
       const filed = Number(data.rateCard?.saved ?? 0);
       setMessage(`Approved ${scenario.label}: ${money(data.approved.offerTotal, data.approved.currency)}. The financial proposal is being written and packaged automatically.${filed > 0 ? ` ${filed} rate(s) you entered are now in your rate card for future tenders.` : ""}`);
@@ -211,8 +222,8 @@ export function PricingIntelligencePanel({ tenderId, canMutate = false }: { tend
                 <tr key={l.key} className={`border-b align-top ${excluded[l.key] ? "opacity-50" : ""}`}>
                   <td className="py-1 pr-2 font-medium text-slate-900">{l.label}<div className="font-normal text-slate-500">{l.quantityBasis}</div></td>
                   <td className="py-1 pr-2">
-                    {canMutate
-                      ? <input aria-label={`Quantity for ${l.label}`} className="w-16 rounded border px-1" inputMode="decimal" value={quantities[l.key] ?? String(l.quantity)} onChange={(e) => setQuantities({ ...quantities, [l.key]: e.target.value })} />
+                    {canMutate && l.unit !== "LUMP_SUM"
+                      ? <input aria-label={`Quantity for ${l.label}`} className={`w-16 rounded border px-1 ${!excluded[l.key] && edited[l.key]?.invalid && quantities[l.key] !== undefined ? "border-rose-400" : ""}`} inputMode="decimal" value={quantities[l.key] ?? String(l.quantity)} onChange={(e) => setQuantities({ ...quantities, [l.key]: e.target.value })} />
                       : l.quantity}
                   </td>
                   <td className="py-1 pr-2">{l.unit}</td>
@@ -221,7 +232,7 @@ export function PricingIntelligencePanel({ tenderId, canMutate = false }: { tend
                       ? <input aria-label={`Rate for ${l.label}`} className={`w-24 rounded border px-1 ${l.rate === null && !rates[l.key] ? "border-rose-400" : ""}`} inputMode="decimal" placeholder="Enter rate" value={rates[l.key] ?? (l.rate === null ? "" : String(l.rate))} onChange={(e) => setRates({ ...rates, [l.key]: e.target.value })} />
                       : l.rate === null ? "—" : l.rate.toLocaleString()}
                   </td>
-                  <td className="py-1 pr-2">{l.amount === null ? "—" : l.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                  <td className="py-1 pr-2" data-testid={`pricing-amount-${l.key}`}>{edited[l.key]?.amount == null ? "—" : edited[l.key]!.amount!.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                   <td className="py-1 pr-2 text-slate-600">{l.rateBasis}{l.sourceDate ? ` (${l.sourceDate})` : ""}{l.assumptions.length > 0 ? <div className="text-slate-500">{l.assumptions.join(" ")}</div> : null}</td>
                   <td className="py-1 pr-2"><span className={`rounded border px-1.5 py-0.5 ${CONFIDENCE_STYLE[l.confidence]}`}>{l.confidence}</span></td>
                   {canMutate ? <td className="py-1"><input type="checkbox" aria-label={`Include ${l.label}`} checked={!excluded[l.key]} onChange={(e) => setExcluded({ ...excluded, [l.key]: !e.target.checked })} /></td> : null}
@@ -264,7 +275,7 @@ export function PricingIntelligencePanel({ tenderId, canMutate = false }: { tend
           <button
             type="button"
             onClick={() => { void approve(); }}
-            disabled={busy || adjusted.unpriced > 0}
+            disabled={busy || adjusted.unpriced > 0 || adjusted.invalid > 0}
             className="rounded bg-slate-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
             data-testid="pricing-approve"
           >
@@ -275,6 +286,7 @@ export function PricingIntelligencePanel({ tenderId, canMutate = false }: { tend
             Save rates I enter to the rate card for future tenders
           </label>
           <a className="text-xs text-slate-600 underline" href="/dashboard/company/rate-card">Manage the rate card</a>
+          {adjusted.invalid > 0 ? <span className="text-xs text-rose-700">{adjusted.invalid} line(s) have a quantity or rate that is not a positive number. Correct it, or untick the line to leave it out.</span> : null}
           {adjusted.unpriced > 0 ? <span className="text-xs text-rose-700">Enter a rate for {adjusted.unpriced} line(s) or untick them.</span> : null}
         </div>
       ) : null}

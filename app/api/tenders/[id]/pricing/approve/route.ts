@@ -11,8 +11,10 @@ function numberMap(value: unknown): Record<string, number> | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const out: Record<string, number> = {};
   for (const [key, raw] of Object.entries(value as Record<string, unknown>).slice(0, 500)) {
-    const n = Number(raw);
-    if (key.length <= 200 && Number.isFinite(n)) out[key] = n;
+    // An unreadable value is passed on as NaN, so the approval refuses it
+    // instead of quietly keeping the estimate's value. An empty entry is no edit.
+    if (key.length > 200 || raw === null || raw === undefined || (typeof raw === "string" && raw.trim() === "")) continue;
+    out[key] = typeof raw === "number" || typeof raw === "string" ? Number(String(raw).replace(/,/g, "")) : Number.NaN;
   }
   return out;
 }
@@ -51,7 +53,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     },
   });
   if (!result.ok) {
-    return NextResponse.json({ error: result.error, code: result.code, unpriced: result.unpriced }, { status: result.status });
+    return NextResponse.json({ error: result.error, code: result.code, unpriced: result.unpriced, invalid: result.invalid }, { status: result.status });
   }
   if (result.finalize === "REQUEUED") scheduleRequestScopedWorkerWake(req, "AUTO_FINALIZE");
   return NextResponse.json({

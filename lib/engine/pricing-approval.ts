@@ -22,6 +22,7 @@ import { loadPricingScope } from "./pricing-submission-scope";
 import { approvedLineNotes, rateCardSlotFor, type PricingEstimate, type PricingScenarioId } from "./pricing-intelligence";
 import { saveOwnerRates, type OwnerRateEntry } from "./pricing-rate-card";
 import { computeWorkbookTotals } from "./financial-proposal";
+import { MAX_PRICED_QUANTITY, MAX_PRICED_RATE, ownerEdit, pricedLineAmount } from "./priced-line-amount";
 import { isFinancialProposalFile } from "./owner-pricing-stop";
 
 export type PricingApprovalRequest = {
@@ -40,10 +41,10 @@ export type PricingApprovalRequest = {
 
 export type PricingApprovalResult =
   | { ok: true; scenario: PricingScenarioId; offerTotal: number; currency: string; lineCount: number; finalize: string; estimate: PricingEstimate; rateCard: { saved: number; unavailable: boolean } }
-  | { ok: false; status: number; code: string; error: string; unpriced?: Array<{ key: string; label: string }> };
+  | { ok: false; status: number; code: string; error: string; unpriced?: Array<{ key: string; label: string }>; invalid?: Array<{ key: string; label: string; field: "rate" | "quantity"; value: unknown }> };
 
-const MAX_RATE = 1_000_000_000_000;
-const MAX_QUANTITY = 1_000_000_000;
+const MAX_RATE = MAX_PRICED_RATE;
+const MAX_QUANTITY = MAX_PRICED_QUANTITY;
 const APP_WRITTEN_FINANCIAL = /^(?:Priced financial proposal for|Owner pricing required for)/;
 
 function positive(value: unknown, max: number): number | null {
@@ -68,6 +69,30 @@ export async function approvePricingEstimate(
   if (!estimate) return { ok: false, status: 404, code: "TENDER_NOT_FOUND", error: "Tender not found" };
   const scenario = estimate.scenarios.find((s) => s.id === request.scenario)!;
   const exclude = new Set(request.exclude ?? []);
+
+  // Every value the owner typed is used exactly or refused — never replaced by
+  // the estimate's value. A zero or negative quantity used to fall back to the
+  // original quantity, so the price approved was not the price on screen.
+  // Leaving a line out is the explicit exclusion (the line's Include box),
+  // never a quantity of zero.
+  const invalid: NonNullable<Extract<PricingApprovalResult, { ok: false }>["invalid"]> = [];
+  for (const l of scenario.lines) {
+    if (exclude.has(l.key)) continue;
+    const rateEdit = ownerEdit(request.rates?.[l.key] as never, MAX_RATE);
+    if (rateEdit.kind === "INVALID") invalid.push({ key: l.key, label: l.label, field: "rate", value: request.rates?.[l.key] });
+    const quantityEdit = ownerEdit(request.quantities?.[l.key] as never, MAX_QUANTITY);
+    // A lump sum is one item; only its amount (the rate) can be adjusted.
+    if (quantityEdit.kind === "INVALID" || (l.unit === "LUMP_SUM" && quantityEdit.kind === "VALUE" && quantityEdit.value !== l.quantity)) {
+      invalid.push({ key: l.key, label: l.label, field: "quantity", value: request.quantities?.[l.key] });
+    }
+  }
+  if (invalid.length > 0) {
+    return {
+      ok: false, status: 422, code: "PRICING_INVALID_EDIT",
+      error: `${invalid.length} edited value(s) cannot be approved: ${invalid.map((i) => `${i.label} — ${i.field} ${JSON.stringify(i.value)}`).join("; ")}. A quantity or rate must be a positive number (a lump sum is one item; adjust its rate). To leave a line out of the price, untick it.`,
+      invalid,
+    };
+  }
 
   const lines = scenario.lines
     .filter((l) => !exclude.has(l.key))
@@ -124,7 +149,7 @@ export async function approvePricingEstimate(
           quantity: l.quantity,
           unit: l.line.unit,
           rate: l.rate as number,
-          total: Math.round((l.quantity * (l.rate as number) + Number.EPSILON) * 100) / 100,
+          total: pricedLineAmount(l.quantity, l.rate as number),
           expertId: l.line.expertId ?? null,
           notes: l.notes,
         },
@@ -154,13 +179,16 @@ export async function approvePricingEstimate(
   // Rates the owner typed for lines the evidence could not price. A rate that
   // only adjusts an evidence-priced line is already kept as an approved rate.
   const tenderTitle = await db.tender.findFirst({ where: { id: tenderId, userId }, select: { title: true } }).then((t: { title: string } | null) => t?.title ?? "a tender").catch(() => "a tender");
-  const ownerRates: OwnerRateEntry[] = request.saveToRateCard
+  // Filed for this tender's market only. A tender with no recorded country
+  // has none, and its rates are not filed: filed as "ET" by default they
+  // priced Ethiopian tenders with rates from anywhere.
+  const ownerRates: OwnerRateEntry[] = request.saveToRateCard && estimate.market
     ? lines.flatMap((l) => {
         if (l.line.rate !== null || !(Number(request.rates?.[l.line.key]) > 0)) return [];
         const slot = rateCardSlotFor(l.line);
         if (!slot) return [];
         return [{
-          ...slot, unit: l.line.unit, currency: estimate.currency, market: estimate.market ?? "ET", rate: l.rate as number,
+          ...slot, unit: l.line.unit, currency: estimate.currency, market: estimate.market as string, rate: l.rate as number,
           source: `Rate entered by ${args.actorLabel} when approving the price for "${tenderTitle.slice(0, 160)}"`,
         }];
       })

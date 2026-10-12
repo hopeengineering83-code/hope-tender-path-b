@@ -558,9 +558,16 @@ export function readProviderKey(
   return undefined;
 }
 
+/**
+ * Whether a provider can be called. With a use case, whether it can be called
+ * for THAT use case: Groq configured with only GROQ_ANALYSIS_MODEL can do AI
+ * Analyze (extraction) and nothing else. Without one, whether it is configured
+ * for any use case at all.
+ */
 export function isProviderConfigured(
   provider: AiProviderName,
   env: NodeJS.ProcessEnv = process.env,
+  useCase?: AiUseCase,
 ): boolean {
   if (provider === "openrouter") {
     return Boolean(readProviderKey(provider, env)) && getProviderModel(provider, "proposal", env).length > 0;
@@ -574,11 +581,12 @@ export function isProviderConfigured(
       && resolveZaiConfiguration("fast", env).valid;
   }
   if (provider === "groq") {
-    return Boolean(readProviderKey(provider, env))
-      && (["proposal", "extraction", "fast"] as const).every((useCase) => {
-        const model = getProviderModel(provider, useCase, env);
-        return model.length > 0;
-      });
+    // Groq has no default model, so each use case needs its own configured
+    // model. Requiring all three skipped Groq for AI Analyze whenever only
+    // its analysis model was set.
+    if (!readProviderKey(provider, env)) return false;
+    const useCases: readonly AiUseCase[] = useCase ? [useCase] : ["proposal", "extraction", "fast"];
+    return useCases.some((u) => getProviderModel(provider, u, env).length > 0);
   }
   return Boolean(readProviderKey(provider, env));
 }
@@ -831,6 +839,7 @@ export type ProviderEligibility = {
 export function providerAutomaticEligibility(
   provider: AiProviderName,
   env: NodeJS.ProcessEnv = process.env,
+  useCase?: AiUseCase,
 ): ProviderEligibility {
   const entry = REGISTRY[provider];
 
@@ -843,7 +852,7 @@ export function providerAutomaticEligibility(
     };
   }
 
-  if (!isProviderConfigured(provider, env)) {
+  if (!isProviderConfigured(provider, env, useCase)) {
     return {
       provider,
       eligible: false,

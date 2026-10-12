@@ -13,34 +13,9 @@
 
 import { Document, Packer, Paragraph, Table, TableCell, TableRow, TextRun, WidthType, AlignmentType, HeadingLevel } from "docx";
 
-export type PricedLine = { category: string; label: string; quantity: number; unit: string; rate: number; total?: number | null };
-export type WorkbookSettings = { currency: string; validityDays: number; vatPercent: number; contingencyPct: number; withholdingPct: number };
+import { computeWorkbookTotals, lineAmount, type PricedLine, type WorkbookSettings } from "./priced-line-amount";
 
-const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
-
-/** A line's amount: its stored total when set, else quantity × rate. */
-export function lineAmount(line: PricedLine): number {
-  const stored = Number(line.total ?? 0);
-  return round2(stored > 0 ? stored : (Number(line.quantity) || 0) * (Number(line.rate) || 0));
-}
-
-/**
- * The offer price and what the client withholds from it.
- *
- * Withholding tax is deducted by the client from each payment; it is not a
- * discount on the offer. The pricing page used to subtract it from the "grand
- * total", so the price a bidder read — and would have quoted — was below the
- * contract sum it was offering.
- */
-export function computeWorkbookTotals(lines: readonly PricedLine[], s: Pick<WorkbookSettings, "vatPercent" | "contingencyPct" | "withholdingPct">) {
-  const subtotal = round2(lines.reduce((sum, l) => sum + lineAmount(l), 0));
-  const contingency = round2(subtotal * (s.contingencyPct || 0) / 100);
-  const beforeTax = round2(subtotal + contingency);
-  const vat = round2(beforeTax * (s.vatPercent || 0) / 100);
-  const offerTotal = round2(beforeTax + vat);
-  const withholding = round2(beforeTax * (s.withholdingPct || 0) / 100);
-  return { subtotal, contingency, beforeTax, vat, offerTotal, withholding, netAfterWithholding: round2(offerTotal - withholding) };
-}
+export { computeWorkbookTotals, lineAmount, type PricedLine, type WorkbookSettings };
 
 export { isFinancialProposalFile } from "./owner-pricing-stop";
 

@@ -202,25 +202,75 @@ export function seniorityOf(title: string, years?: number | null): BenchmarkSeni
 const SENIORITY_ORDER: BenchmarkSeniority[] = ["JUNIOR", "MID", "SENIOR", "EXPERT"];
 const PERSONNEL_CATEGORIES: ReadonlySet<BenchmarkCategory> = new Set(["PERSONNEL_FEE", "PERSONNEL_SALARY"]);
 
-const MARKETS: Array<{ code: string; test: RegExp }> = [
-  { code: "ET", test: /\bethiopia/i },
-  { code: "KE", test: /\bkenya/i },
-  { code: "UG", test: /\buganda/i },
-  { code: "TZ", test: /\btanzania/i },
-  { code: "RW", test: /\brwanda/i },
-  { code: "SS", test: /\bsouth\s+sudan/i },
-  { code: "SD", test: /\bsudan/i },
-  { code: "SO", test: /\bsomali/i },
-  { code: "DJ", test: /\bdjibouti/i },
-  { code: "ER", test: /\beritrea/i },
+// Country names are matched against every region the runtime knows (ISO 3166
+// alpha-2, named by Intl.DisplayNames), not a hand-written regional list: a
+// ten-country list read "Nigeria", "Ghana" or "India" as no market at all, and
+// a rate approved there then priced a tender anywhere in the same currency.
+// The aliases cover common spellings the ISO English names do not use.
+const MARKET_ALIASES: ReadonlyArray<[string, string]> = [
+  ["ivory coast", "CI"], ["cote d ivoire", "CI"],
+  ["democratic republic of the congo", "CD"], ["democratic republic of congo", "CD"], ["dr congo", "CD"], ["drc", "CD"],
+  ["republic of the congo", "CG"], ["congo brazzaville", "CG"],
+  ["united states of america", "US"], ["usa", "US"], ["united kingdom of great britain", "GB"], ["great britain", "GB"], ["uk", "GB"],
+  ["burma", "MM"], ["swaziland", "SZ"], ["cape verde", "CV"], ["the gambia", "GM"], ["east timor", "TL"],
+  ["palestine", "PS"], ["vatican", "VA"], ["turkiye", "TR"], ["czechia", "CZ"], ["north macedonia", "MK"],
 ];
 
-/** The market code for a country as a tender records it ("Ethiopia", "ET"); null when unknown. */
+const normalizePlace = (value: string) => value
+  .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+  .toLowerCase().replace(/[^a-z]+/g, " ").trim();
+
+// Withdrawn, transitional and non-country codes the runtime still names
+// ("BU" = Myanmar, "YU" = Serbia, "EU", "UN", "ZZ" …). A country resolves to
+// its current code only.
+const NOT_A_CURRENT_COUNTRY = new Set(["AN", "BU", "CS", "DD", "DY", "FX", "HV", "NH", "RH", "SU", "TP", "UK", "VD", "YD", "YU", "ZR", "EU", "EZ", "UN", "QO", "XA", "XB", "ZZ"]);
+
+let regionNames: Array<{ name: string; code: string }> | null = null;
+function regionIndex(): Array<{ name: string; code: string }> {
+  if (regionNames) return regionNames;
+  const byName = new Map<string, Set<string>>();
+  try {
+    const names = new Intl.DisplayNames(["en"], { type: "region" });
+    for (let a = 65; a <= 90; a++) {
+      for (let b = 65; b <= 90; b++) {
+        const code = String.fromCharCode(a, b);
+        if (NOT_A_CURRENT_COUNTRY.has(code)) continue;
+        let name: string | undefined;
+        try { name = names.of(code); } catch { name = undefined; }
+        if (!name || name === code) continue;
+        // "Congo - Kinshasa", "Myanmar (Burma)": the name before any qualifier is also a name.
+        for (const variant of new Set([name, name.split(/\s+[-(]/)[0]!])) {
+          const normalized = normalizePlace(variant);
+          if (normalized.length >= 3) (byName.get(normalized) ?? byName.set(normalized, new Set()).get(normalized)!).add(code);
+        }
+      }
+    }
+  } catch {
+    // No region data in this runtime: the aliases and two-letter codes still resolve.
+  }
+  // A name two countries share ("congo") names neither.
+  const entries = [...byName].filter(([, codes]) => codes.size === 1).map(([name, codes]) => ({ name, code: [...codes][0]! }));
+  entries.push(...MARKET_ALIASES.map(([name, code]) => ({ name, code })));
+  // Longest first, so "south sudan" is read before "sudan" and "nigeria" before "niger".
+  regionNames = entries.sort((x, y) => y.name.length - x.name.length);
+  return regionNames;
+}
+
+/**
+ * The market for a country as a tender records it ("Ethiopia", "ET",
+ * "Federal Republic of Nigeria"). Any recognised country resolves to its ISO
+ * code; a name the runtime does not know becomes a market of its own (its
+ * normalised name), so it never matches another country. Null only when no
+ * country is recorded.
+ */
 export function marketOf(country: string | null | undefined): string | null {
   const value = String(country ?? "").trim();
   if (!value) return null;
   if (/^[A-Za-z]{2}$/.test(value)) return value.toUpperCase();
-  return MARKETS.find((m) => m.test.test(value))?.code ?? null;
+  const place = ` ${normalizePlace(value)} `;
+  if (!place.trim()) return null;
+  const hit = regionIndex().find((entry) => place.includes(` ${entry.name} `));
+  return hit ? hit.code : place.trim().toUpperCase();
 }
 
 /**
@@ -302,7 +352,9 @@ export function validateBenchmark(raw: Record<string, unknown>): BenchmarkValida
   return {
     ok: true,
     value: {
-      market: (str("market", 8) || "ET").toUpperCase(),
+      // A market is an ISO code or, for a country the runtime does not name,
+      // the normalised country name (marketOf); long enough for either.
+      market: (str("market", 40) || "ET").toUpperCase(),
       category, serviceKey, label,
       seniority: SENIORITY_ORDER.includes(seniority as BenchmarkSeniority) ? (seniority as BenchmarkSeniority) : null,
       unit, currency, low, median, high,

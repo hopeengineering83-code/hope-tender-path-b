@@ -247,12 +247,17 @@ export function buildOwnerAttachmentChecklist(input: ChecklistInput): OwnerAttac
 
   // Tender-issued forms the owner completes and signs (not the priced
   // financial proposal, which the owner approves rather than attaches).
+  // When the tender requires one combined file, the signed form goes inside
+  // it, in order, like every other annex — not in a separate envelope the
+  // tender never asked for.
   for (const form of input.formsAwaitingOriginal) {
     const req = input.requirements.find((r) => (r.exactFileName ?? "").toLowerCase() === form.fileName.toLowerCase()) ?? null;
     const text = req ? `${req.sourceExactQuote ?? ""} ${req.description ?? ""}` : form.fileName;
     const envelope = inferEnvelope(form.documentType ?? "", form.fileName) as OwnerAttachmentItem["envelope"];
+    const annexNo = items.length + 1;
+    const insideCombined = mode === "COMBINED_FILE" && Boolean(combined);
     items.push({
-      order: items.length + 1,
+      order: annexNo,
       kind: "Tender-issued form",
       document: form.fileName,
       source: { requirementId: req?.id ?? null, requirementTitle: req?.title ?? null, page: req?.sourcePageNumber ?? null, quote: req?.sourceExactQuote ?? null },
@@ -261,10 +266,14 @@ export function buildOwnerAttachmentChecklist(input: ChecklistInput): OwnerAttac
       stampRequired: /\b(?:stamp(?:ed)?|seal(?:ed)?)\b/i.test(text),
       copies: copiesOf(text),
       envelope,
-      location: `${ENVELOPE_LABEL[envelope]} envelope, as "${form.fileName}"`,
+      location: insideCombined
+        ? `Inside "${combined}", after the proposal pages, as Annex ${annexNo} ("${form.fileName}")`
+        : `${ENVELOPE_LABEL[envelope]} envelope, as "${form.fileName}"`,
       vault: { status: "NOT_APPLICABLE", documents: [] },
       status: "OWNER_TO_ATTACH",
-      ownerAction: `Complete and sign the tender's form "${form.fileName}" and include it in the ${envelope.toLowerCase()} envelope when assembling the final submission. Optional: attach the signed original to this tender and the App packages it.`,
+      ownerAction: insideCombined
+        ? `Complete and sign the tender's form "${form.fileName}" and insert it into "${combined}" as Annex ${annexNo} when assembling the file. Optional: attach the signed original to this tender and the App packages it.`
+        : `Complete and sign the tender's form "${form.fileName}" and include it in the ${envelope.toLowerCase()} envelope when assembling the final submission. Optional: attach the signed original to this tender and the App packages it.`,
     });
   }
 

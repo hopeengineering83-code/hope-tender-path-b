@@ -29,6 +29,7 @@
  */
 
 import { SEED_BENCHMARKS, BENCHMARK_STALE_AFTER_MONTHS, benchmarkAgeMonths, classifyRole, findBenchmark, marketOf, seniorityOf, type BenchmarkCategory, type BenchmarkSeniority, type PricingBenchmark } from "./pricing-benchmarks";
+import { CURRENCY_TOKEN_ALTERNATION, resolveCurrencyToken } from "./currency-reference";
 
 export type PricingConfidence = "HIGH" | "MEDIUM" | "LOW" | "NONE";
 export type PricingScenarioId = "AGGRESSIVE" | "BALANCED" | "CONSERVATIVE";
@@ -236,10 +237,30 @@ function currencyCode(token: string): string {
   return t;
 }
 
-/** A budget, ceiling or estimated cost the tender states. */
+// Sentences for money statements: a label and its value stay together
+// ("Currency of the bid: EUR", "Budget: USD 250,000"), so a colon does not end one.
+function moneyClauses(text: string): string[] {
+  return text.replace(/\s+/g, " ").split(/(?<=[.;!?])\s+(?=[A-Z0-9•\-(])/).map((c) => c.trim()).filter(Boolean);
+}
+
+// A sentence about something other than this assignment's money: a
+// qualification threshold, a security, turnover, insurance, a past contract or
+// an example. Its figure is never the client's budget, nor the offer currency.
+const NOT_THIS_ASSIGNMENTS_MONEY = /\b(?:similar|(?:previously|successfully)\s+(?:completed|executed|implemented)|(?:past|previous|completed|executed|prior)\s+(?:contracts?|projects?|assignments?|works?|experience)|(?:general|specific|relevant)\s+experience|experience\s+(?:of|in|with)\s+(?:at\s+least|a\s+minimum|\d)|at\s+least|minimum|not\s+less\s+than|no\s+less\s+than|turnover|annual\s+(?:revenue|income|sales)|average\s+annual|(?:bid|tender|performance|advance\s+payment)\s+(?:security|bond|guarantee)|security\s+(?:of|amount|in\s+the\s+(?:form|amount))|insurance|insured|liability|each\s+with|(?:contracts|projects|assignments)\s+(?:of|with|valued|worth)|line\s+of\s+credit|liquid\s+assets|cash\s+flow|net\s+worth|e\.g\.|for\s+example)\b/i;
+
+/**
+ * The client's budget or ceiling for this assignment, when the tender states
+ * one. Only budget or ceiling language counts — an available, maximum, fixed
+ * or procurement budget, a financial or contract ceiling, a maximum amount
+ * payable, a price that shall not exceed. A minimum similar-contract value,
+ * turnover, a security, insurance or an example figure is not the budget,
+ * however it is worded ("two similar contracts, each with an estimated
+ * contract value of USD 1,000,000"), and the search goes on past it.
+ */
 export function statedBudget(text: string): { amount: number; currency: string; quote: string; inclusiveOfVat: boolean } | null {
-  const re = new RegExp(String.raw`\b(?:budget|ceiling|estimated\s+(?:cost|value|contract\s+(?:value|amount))|maximum\s+(?:amount|price)|not\s+(?:to\s+)?exceed)\b[^.;]{0,80}?(${MONEY})\s?([\d][\d,]*(?:\.\d+)?)\s*(million|m\b)?`, "i");
-  for (const s of sentences(text)) {
+  const re = new RegExp(String.raw`\b(?:budget|ceiling|maximum\s+(?:amount|price|contract\s+(?:value|price|amount))|amount\s+payable|not\s+(?:to\s+)?exceed|estimated\s+(?:cost|value|budget|contract\s+(?:value|amount))\s+(?:of|for)\s+(?:this|the)\s+(?:assignment|services|consultancy|contract|procurement|project|works))\b[^.;]{0,80}?(${MONEY})\s?([\d][\d,]*(?:\.\d+)?)\s*(million|m\b)?`, "i");
+  for (const s of moneyClauses(text)) {
+    if (NOT_THIS_ASSIGNMENTS_MONEY.test(s)) continue;
     const m = re.exec(s);
     if (!m) continue;
     let amount = Number(m[2]!.replace(/,/g, ""));
@@ -248,6 +269,60 @@ export function statedBudget(text: string): { amount: number; currency: string; 
     return { amount, currency: currencyCode(m[1]!), quote: snippet(s), inclusiveOfVat: !/\b(?:exclusive\s+of|excluding|excl\.?|before)\s+vat\b/i.test(s) };
   }
   return null;
+}
+
+// A currency as an instruction names it: an ISO code in its real case, a
+// symbol, or an unambiguous name. Case-sensitive, so prose ("all 3") is never
+// a currency.
+const OFFER_CURRENCY_NAME: ReadonlyArray<[RegExp, string]> = [
+  [/^(?:[Uu]nited\s+[Ss]tates|U\.?S\.?)\s+[Dd]ollars?$/, "USD"],
+  [/^[Ee]uros?$/, "EUR"],
+  [/^(?:[Ee]thiopian\s+)?[Bb]irr$/, "ETB"],
+  [/^[Kk]enyan?\s+[Ss]hillings?$/, "KES"],
+  [/^[Uu]gandan?\s+[Ss]hillings?$/, "UGX"],
+  [/^[Tt]anzanian?\s+[Ss]hillings?$/, "TZS"],
+  [/^[Pp]ounds?\s+[Ss]terling$/, "GBP"],
+];
+const OFFER_CURRENCY_TOKEN = String.raw`((?:[Uu]nited\s+[Ss]tates|U\.?S\.?)\s+[Dd]ollars?|[Ee]uros?|(?:[Ee]thiopian\s+)?[Bb]irr|(?:[Kk]enyan?|[Uu]gandan?|[Tt]anzanian?)\s+[Ss]hillings?|[Pp]ounds?\s+[Ss]terling|${CURRENCY_TOKEN_ALTERNATION})(?![A-Za-z])`;
+const PRICE_SUBJECT = String.raw`(?:[Pp]rices?|[Rr]ates?|[Oo]ffers?|[Bb]ids?|[Qq]uotations?|[Qq]uotes?|[Ff]inancial\s+(?:[Pp]roposals?|[Oo]ffers?|[Bb]ids?)|[Pp]rice\s+[Ss]chedules?|[Bb]ills?\s+of\s+[Qq]uantities|BOQ|[Rr]emuneration|[Ff]ees?|[Cc]ontract\s+[Pp]rice)`;
+// The tender's own instruction on the currency of the price, in the forms
+// tenders use: "prices shall be quoted in …", "the financial proposal shall be
+// in …", "currency of the bid: …", "bid currency …", a price column headed
+// "Unit Price (ETB)".
+const OFFER_CURRENCY_INSTRUCTIONS: readonly RegExp[] = [
+  new RegExp(String.raw`\b${PRICE_SUBJECT}\b[^.;]{0,80}?\b(?:[Ss]hall|[Mm]ust|[Ss]hould|[Ww]ill|[Aa]re\s+to|[Ii]s\s+to)\s+be\s+(?:(?:quoted|expressed|stated|submitted|priced|denominated|presented|prepared|made)\s+)?in\s+(?:the\s+)?${OFFER_CURRENCY_TOKEN}`),
+  new RegExp(String.raw`\b(?:[Qq]uote|[Pp]rice|[Ee]xpress|[Dd]enominate)[ds]?\s+(?:(?:their|its|all|the)\s+)?(?:(?:prices?|rates?|offers?|bids?|financial\s+proposals?)\s+)?in\s+(?:the\s+)?${OFFER_CURRENCY_TOKEN}`),
+  new RegExp(String.raw`\b[Cc]urrenc(?:y|ies)\s+(?:of|for)\s+(?:the\s+)?(?:[Bb]id|[Oo]ffer|[Pp]roposal|[Ff]inancial\s+[Pp]roposal|[Qq]uotation|[Pp]rice|[Tt]ender)s?\b[^.;]{0,40}?${OFFER_CURRENCY_TOKEN}`),
+  new RegExp(String.raw`\b(?:[Bb]id|[Oo]ffer|[Pp]roposal|[Qq]uotation|[Tt]ender)\s+[Cc]urrency\b[^.;]{0,40}?${OFFER_CURRENCY_TOKEN}`),
+  new RegExp(String.raw`\b(?:[Uu]nit\s+(?:[Rr]ate|[Pp]rice)|[Tt]otal\s+(?:[Pp]rice|[Aa]mount|[Cc]ost)|[Rr]ate|[Pp]rice)\s*\(\s*(?:in\s+)?${OFFER_CURRENCY_TOKEN}\s*\)`),
+];
+
+function offerCurrencyCode(token: string): string | null {
+  const t = token.replace(/\s+/g, " ").trim();
+  for (const [name, code] of OFFER_CURRENCY_NAME) if (name.test(t)) return code;
+  return resolveCurrencyToken(t);
+}
+
+/**
+ * The currency the tender tells bidders to price in, from its own instruction
+ * only. A turnover threshold, a security, a budget, a past contract value or
+ * any other figure in a currency says nothing about the offer currency. Two
+ * instructions naming different currencies decide nothing.
+ */
+export function statedOfferCurrency(text: string): { currency: string; quote: string } | { conflict: string[] } | null {
+  const found = new Map<string, string>();
+  for (const s of moneyClauses(text)) {
+    if (NOT_THIS_ASSIGNMENTS_MONEY.test(s)) continue;
+    for (const re of OFFER_CURRENCY_INSTRUCTIONS) {
+      const m = re.exec(s);
+      const code = m ? offerCurrencyCode(m[1]!) : null;
+      if (code && !found.has(code)) found.set(code, snippet(s));
+    }
+  }
+  if (found.size === 0) return null;
+  if (found.size > 1) return { conflict: [...found.keys()] };
+  const [[currency, quote]] = [...found];
+  return { currency: currency!, quote: quote! };
 }
 
 function statedVat(text: string): { pct: number; quote: string } | null {
@@ -462,6 +537,44 @@ function labelSimilarity(a: string, b: string): number {
   return shared / Math.min(ta.size, tb.size);
 }
 
+// Words that name no particular kind of work: they never make two contracts
+// comparable. "Building supervision services" and "Rural water supply
+// services" share a word and nothing else.
+const NON_SUBJECT_WORDS = new Set([
+  "and", "the", "for", "with", "from", "into", "under", "over", "of", "on", "in", "at", "to", "by", "its", "their",
+  "services", "service", "project", "projects", "consultancy", "consulting", "consultant", "consultants", "capacity",
+  "assignment", "contract", "contracts", "works", "work", "provision", "support", "general", "various", "phase", "lot",
+  "package", "firm", "company", "technical", "program", "programme", "activities", "activity", "development",
+  "management", "implementation", "improvement", "national", "regional", "federal", "city", "town", "new", "proposed",
+]);
+// Words that name a kind of task but no subject: they add to a match on the
+// subject ("road design" and "road design B") and can never make one alone
+// ("hospital design" and "road design" are not comparable).
+const TASK_WORDS = new Set([
+  "design", "designs", "detailed", "study", "studies", "supervision", "feasibility", "assessment", "assessments",
+  "review", "preparation", "construction", "planning", "plan", "survey", "surveys", "evaluation", "rehabilitation",
+  "upgrading", "expansion", "renovation", "maintenance", "audit", "training", "documentation", "tender", "bidding",
+]);
+
+/** The words that can count toward comparing two contracts. */
+function comparisonTerms(text: string): string[] {
+  return [...new Set(text.toLowerCase().replace(/[^a-z\s]/g, " ").split(/\s+/)
+    .filter((w) => w.length > 2 && !NON_SUBJECT_WORDS.has(w)))];
+}
+
+/**
+ * Whether a past contract is a pricing comparable for this assignment: it
+ * shares at least one subject word (sector, asset, discipline) AND at least two
+ * counted words in all — a subject plus a task, or two subjects. One shared
+ * word, or task words alone, is not similarity.
+ */
+function contractSimilarity(tenderTerms: readonly string[], contractTerms: readonly string[]): { comparable: boolean; shared: string[] } {
+  const own = new Set(contractTerms);
+  const shared = tenderTerms.filter((w) => own.has(w));
+  const subjects = shared.filter((w) => !TASK_WORDS.has(w));
+  return { comparable: subjects.length >= 1 && shared.length >= 2, shared };
+}
+
 function monthsBetween(start: Date, end: Date): number {
   return Math.max(0, (end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24 * 30.4));
 }
@@ -568,16 +681,34 @@ export function estimateTenderPrice(input: PricingEvidenceInput): PricingEstimat
 
   // ── Currency, tax, validity ────────────────────────────────────────────
   const budgetFromText = statedBudget(text);
-  const isEthiopia = /ethiopia/i.test(String(input.tender.country ?? "")) || /\b(?:ETB|Birr)\b/.test(text);
-  let currency = (input.tender.currency || budgetFromText?.currency || (isEthiopia ? "ETB" : input.companyDefaultCurrency) || "USD").toUpperCase();
+  // The offer currency comes from the tender's currency, its own instruction
+  // on the price currency, or the country's national currency — never from a
+  // figure that happens to be in a currency. A single "ETB" or "Birr" in a
+  // qualification threshold once made a Kenyan tender Ethiopian, in currency
+  // and in VAT.
+  const offerCurrency = statedOfferCurrency(text);
+  const statedCurrency = offerCurrency && "currency" in offerCurrency ? offerCurrency : null;
+  const nationalCurrency = market === "ET" ? "ETB" : null;
+  let currency = (input.tender.currency || statedCurrency?.currency || nationalCurrency || input.companyDefaultCurrency || "USD").toUpperCase();
   const currencyBasis = input.tender.currency
     ? "currency recorded on the tender"
-    : budgetFromText
-      ? `currency of the budget the tender states: "${budgetFromText.quote}"`
-      : isEthiopia
+    : statedCurrency
+      ? `the tender's instruction on the price currency: "${statedCurrency.quote}"`
+      : nationalCurrency
         ? "Ethiopian tender priced in Ethiopian Birr"
-        : "the firm's default currency (the tender states none)";
+        : input.companyDefaultCurrency
+          ? "the firm's default currency (the tender states none)"
+          : "no currency is stated by the tender or set for the firm; USD assumed";
   if (!/^[A-Z]{3,8}$/.test(currency)) currency = "USD";
+  if (offerCurrency && "conflict" in offerCurrency && !input.tender.currency) {
+    lowConfidence.push(`Currency: the tender names more than one price currency (${offerCurrency.conflict.join(", ")}); confirm the currency of the offer.`);
+  }
+  if (!input.tender.currency && !statedCurrency && !nationalCurrency) {
+    lowConfidence.push(`Currency: the tender states no price currency; ${currency} is ${input.companyDefaultCurrency ? "the firm's default" : "assumed"} — confirm it before approving.`);
+  }
+  // Ethiopian tax applies to an Ethiopian tender, or to an ETB offer where no
+  // country is recorded — not to any tender that mentions Birr.
+  const isEthiopia = market === "ET" || (!market && currency === "ETB");
 
   const vatStated = statedVat(text);
   const vatPercent = vatStated ? vatStated.pct : isEthiopia ? 15 : 0;
@@ -858,16 +989,22 @@ export function estimateTenderPrice(input: PricingEvidenceInput): PricingEstimat
   };
 
   // ── Envelope from comparable past contracts ────────────────────────────
-  const tenderWords = new Set(normalizeLabel(`${input.tender.title} ${input.tender.category ?? ""}`));
-  const comparable = input.historicalProjects
+  const tenderTerms = comparisonTerms(`${input.tender.title} ${String(input.tender.category ?? "").replace(/_/g, " ")}`);
+  const dated = input.historicalProjects
     .filter((p) => (p.contractValue ?? 0) > 0 && p.startDate && p.endDate && String(p.currency || currency).toUpperCase() === currency)
     .map((p) => {
       const months = monthsBetween(new Date(p.startDate as string), new Date(p.endDate as string));
-      const words = normalizeLabel(`${p.name} ${p.sector ?? ""} ${(p.serviceAreas ?? []).join(" ")}`);
-      const overlap = words.filter((w) => tenderWords.has(w)).length;
-      return { p, months, perMonth: months >= 0.5 ? (p.contractValue as number) / months : 0, relevant: Boolean(p.selected) || overlap > 0 };
+      const similarity = contractSimilarity(tenderTerms, comparisonTerms(`${p.name} ${p.sector ?? ""} ${(p.serviceAreas ?? []).join(" ")}`));
+      // A contract the owner selected for this tender is comparable by their
+      // choice; any other must share the subject, not just a word.
+      return { p, months, perMonth: months >= 0.5 ? (p.contractValue as number) / months : 0, relevant: Boolean(p.selected) || similarity.comparable, shared: similarity.shared };
     })
-    .filter((c) => c.perMonth > 0 && c.relevant);
+    .filter((c) => c.perMonth > 0);
+  const comparable = dated.filter((c) => c.relevant);
+  const weaklyRelated = dated.filter((c) => !c.relevant && c.shared.length > 0);
+  if (weaklyRelated.length > 0) {
+    lowConfidence.push(`${weaklyRelated.length} past contract(s) share only ${[...new Set(weaklyRelated.flatMap((c) => c.shared))].map((w) => `"${w}"`).join(", ")} with this assignment; not similar enough to price it, so not used.`);
+  }
   const skippedCurrency = input.historicalProjects.filter((p) => (p.contractValue ?? 0) > 0 && p.currency && String(p.currency).toUpperCase() !== currency).length;
   if (skippedCurrency > 0) lowConfidence.push(`${skippedCurrency} past contract value(s) are in another currency and were not used (no exchange rate is assumed).`);
   let envelope: PricingEstimate["envelope"] = null;

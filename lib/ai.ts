@@ -863,14 +863,17 @@ function tableRowAsRead(row: string): string {
   return row.split("|").map((cell) => cell.trim()).filter(Boolean).join(", ");
 }
 
-const MONEY_CELL = new RegExp(`(?:${CURRENCY_TOKEN_ALTERNATION})\\s?\\d`, "i");
+// Case-sensitive, as CURRENCY_TOKEN_ALTERNATION requires: with the "i" flag
+// "Supports all 3 phases" read as three Albanian lek and lost "all 3" from a
+// client-facing table. A code must also stand on its own, not end a word.
+const MONEY_CELL = new RegExp(`(?<![A-Za-z])(?:${CURRENCY_TOKEN_ALTERNATION})\\s?\\d`);
 
 // An amount inside a prose table cell, with the label that says what it is.
 // A value-only cell ("USD 18,900,000" beside "Construction Value of Works") is
 // left to the row check; a cell that also holds words is not.
 const MONEY_AMOUNT_IN_CELL = new RegExp(
-  `\\s*\\(?\\s*(?:${CURRENCY_TOKEN_ALTERNATION})\\s?\\d[\\d,]*(?:\\.\\d+)?\\s*(?:[MKB]\\b|million\\b|billion\\b|thousand\\b)?\\s*\\)?`,
-  "gi",
+  `\\s*\\(?\\s*(?<![A-Za-z])(?:${CURRENCY_TOKEN_ALTERNATION})\\s?\\d[\\d,]*(?:\\.\\d+)?\\s*(?:[MmKkBb]\\b|[Mm]illion\\b|[Bb]illion\\b|[Tt]housand\\b)?\\s*\\)?`,
+  "g",
 );
 const CELL_VALUE_LABEL = /\b(?:construction|contract|project|works?)\s+value\b|\bvalue\s+of\s+(?:the\s+)?works\b|\baggregate\s+value\b/i;
 
@@ -1099,7 +1102,7 @@ function describeUncontactedProviders(attempts: readonly AiProviderAttempt[]): s
   return ` Not contacted: ${parts.join(" | ")}.`;
 }
 
-function isProviderEnabled(name: AiProviderName): boolean {
+function isProviderEnabled(name: AiProviderName, useCase?: AiUseCase): boolean {
   // Single configured check via the registry. A provider whose configuration is
   // invalid (missing key, or no configured model) is treated as "not
   // configured" and skipped WITHOUT consuming an attempt.
@@ -1109,7 +1112,7 @@ function isProviderEnabled(name: AiProviderName): boolean {
   // gates OpenRouter on key + configured model like every other provider. The
   // comment outlived the rule it described, which is how a withdrawn
   // requirement gets "restored" by a later reader who trusts it.
-  return registryIsProviderConfigured(name);
+  return registryIsProviderConfigured(name, process.env, useCase);
 }
 
 /**
@@ -1160,7 +1163,7 @@ export async function callProvider(
 ): Promise<string | null> {
   const useCase = opts?.useCase ?? "proposal";
   const exactModel = opts?.modelOverride ?? getProviderModel(name, useCase);
-  if (!providerAutomaticEligibility(name).eligible) {
+  if (!providerAutomaticEligibility(name, process.env, useCase).eligible) {
     return null;
   }
   const result = await callProviderInner(name, prompt, opts);
@@ -1416,7 +1419,7 @@ export async function generateWithFallback(
   for (const provider of chain) {
     const pacedSkipReason = opts?.providerSkipReasons?.[provider];
     if (pacedSkipReason) {
-      const configured = isProviderEnabled(provider);
+      const configured = isProviderEnabled(provider, useCase);
       const snap = getProviderRuntimeSnapshot(provider);
       providerAttempts.push({
         provider, configured, tried: false, model: getProviderModel(provider, useCase),
@@ -1432,7 +1435,7 @@ export async function generateWithFallback(
     // payment, is skipped here — without consuming an attempt, and without the
     // chain stalling. This is the check that makes "no paid provider can
     // generate accidental charges" true even if a paid key is left configured.
-    const eligibility = providerAutomaticEligibility(provider);
+    const eligibility = providerAutomaticEligibility(provider, process.env, useCase);
     if (!eligibility.eligible && eligibility.reason !== "NOT_CONFIGURED") {
       const snap = getProviderRuntimeSnapshot(provider);
       providerAttempts.push({
@@ -1456,7 +1459,7 @@ export async function generateWithFallback(
       continue;
     }
 
-    const configured = isProviderEnabled(provider);
+    const configured = isProviderEnabled(provider, useCase);
     const coolingDown = isProviderCooledDown(provider);
     // Read the safe runtime snapshot for lastErrorCategory + cooldownUntil.
     // We re-read it AFTER the attempt as well, because a fresh failure will
@@ -2790,7 +2793,7 @@ export function analysisFitsOneConfiguredProvider(content: string): boolean {
   if (content.length > ANALYSIS_MAX_SINGLE_REQUEST_SOURCE_CHARS) return false;
   const prompt = buildAnalysisPromptAsSent(content, 0, 1);
   return CANONICAL_AI_PROVIDER_ORDER.some((provider) =>
-    isProviderEnabled(provider)
+    isProviderEnabled(provider, "extraction")
     && preflightProvider(provider, prompt, {
       systemPrompt: ANALYSIS_SYSTEM_PROMPT,
       useCase: "extraction",
@@ -5328,8 +5331,8 @@ Now write the complete technical proposal. Start with the Cover Letter. The eval
     if (provider === "anthropic") continue; // handled below, and recorded there
 
     const pre = getProviderRuntimeSnapshot(provider);
-    const configured = isProviderEnabled(provider);
-    const eligibility = providerAutomaticEligibility(provider);
+    const configured = isProviderEnabled(provider, "proposal");
+    const eligibility = providerAutomaticEligibility(provider, process.env, "proposal");
     if (!eligibility.eligible) {
       providerAttempts.push({
         provider, configured, tried: false,
@@ -5740,7 +5743,7 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
     // This function's own header already promises the chain is "recorded as
     // it is walked so a fallback can say which providers were tried and why
     // each declined". These two lines were the reason it could not.
-    const eligibility = providerAutomaticEligibility(provider);
+    const eligibility = providerAutomaticEligibility(provider, process.env, "proposal");
     if (!eligibility.eligible) {
       if (pass === "last-resort") {
         attempts.push({ provider, outcome: "SKIPPED_INELIGIBLE", reason: eligibility.reason ?? "not eligible for automatic use" });
