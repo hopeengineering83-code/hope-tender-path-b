@@ -18,14 +18,20 @@ const SENTENCE_END = /[.!?](?=\s)/g;
 
 const lastIndexOf = (re: RegExp, text: string) => Math.max(-1, ...[...text.matchAll(re)].map((m) => m.index!));
 
+// How far back a sentence is looked for. Only a bound on the work done: a
+// sentence is read from its own start ("The bid security shall be issued by a
+// reputable bank acceptable to the employer and shall remain valid for 120
+// days" names the security over 80 characters before the figure).
+const MAX_SENTENCE = 1_000;
+
 /**
  * True when the validity period matched at `index` (`length` characters) in
  * `text` belongs to a security, guarantee, bond, insurance or warranty rather
  * than to the offer. The subject named nearest before the figure, within its
- * own sentence and the 80 characters before the match, decides.
+ * own sentence, decides.
  */
 export function validityBelongsToSecurity(text: string, index: number, length: number): boolean {
-  const start = Math.max(0, index - 80);
+  const start = Math.max(0, index - MAX_SENTENCE);
   const before = text.slice(start, index);
   const sentenceStart = Math.max(0, ...[...before.matchAll(SENTENCE_END)].map((m) => m.index! + 1));
   const lead = before.slice(sentenceStart) + text.slice(index, index + length);

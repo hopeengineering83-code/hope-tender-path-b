@@ -72,6 +72,7 @@ describe("1. a separately stored certificate counts for the selected expert", ()
     assert.ok(expertFiledUnder("Mohammed_Ahmed_Licence.pdf", ["Mohammed Ahmed"], firm));
     assert.equal(expertFiledUnder("Abebe licence.pdf", ["Abebe"], ["Abebe"]), null, "a one-word name binds nothing");
     assert.ok(expertFiledUnder("Jose_Munoz_cert.pdf", ["Dr. José Muñoz"], []), "accents and titles");
+    assert.equal(expertFiledUnder("Abebe_Kebede_Licence.pdf", ["Abebe Kebede"], ["Abebe Kebede", "Eng. Abebe Kebede"]), null, "two of the firm's experts share the name");
   });
 
   it("without the firm's expert list nothing is bound by name", () => {
@@ -89,6 +90,7 @@ describe("4. the tender's validity is the offer's, never a bid security's", () =
     ["The performance guarantee shall be valid for 28 days after completion.", null],
     ["Proposal validity: 90 days.", 90],
     ["Bid security required; validity: 120 days.", null],
+    ["The bid security shall be issued by a reputable bank acceptable to the employer and shall remain valid for 120 days. Proposals shall remain valid for 90 days.", 90],
     ["The bid security shall be\nvalid for 120 days after the deadline.", null],
   ];
 

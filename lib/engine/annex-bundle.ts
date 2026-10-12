@@ -98,22 +98,29 @@ const nameParts = (fullName: string) => nameWords(fullName).filter((word) => wor
  * the file as well: "Mohammed_Ahmed_Hassan_Licence.pdf" is not Mohammed Ahmed
  * Ali's, and when the firm also has a Mohammed Ahmed Hassan it is not
  * Mohammed Ahmed's either — the fullest name that fits wins, and a tie binds
- * nothing. A one-word name binds nothing. A licence bound to the wrong person
+ * nothing, as does a name two of the firm's experts share. A one-word name
+ * binds nothing. A licence bound to the wrong person
  * would be submitted as evidence for the wrong expert, so every doubt leaves
  * the original to the owner.
  */
 export function expertFiledUnder(fileName: string, selectedExperts: readonly string[], companyExperts: readonly string[] = []): string | null {
   const words = new Set(nameWords(fileName.replace(/\.[a-z0-9]{1,5}$/i, "")));
-  const selected = new Set(selectedExperts.map((name) => nameParts(name).join(" ")));
-  const fits = new Map<string, number>();
-  for (const name of [...selectedExperts, ...companyExperts]) {
-    const parts = nameParts(name);
-    if (parts.length >= 2 && parts.every((part) => words.has(part))) fits.set(parts.join(" "), parts.length);
-  }
-  if (fits.size === 0) return null;
-  const fullest = Math.max(...fits.values());
-  const best = [...fits].filter(([, length]) => length === fullest).map(([key]) => key);
-  return best.length === 1 && selected.has(best[0]!) ? best[0]! : null;
+  const key = (name: string) => nameParts(name).join(" ");
+  const selected = new Set(selectedExperts.map(key));
+  // How many of the firm's experts carry each name. The firm's list includes
+  // the selected experts; a selected name missing from it still counts once.
+  // Two experts with the same name cannot be told apart by a file name.
+  const people = new Map<string, number>();
+  for (const name of companyExperts) people.set(key(name), (people.get(key(name)) ?? 0) + 1);
+  for (const name of selected) if (!people.has(name)) people.set(name, 1);
+  const fits = [...people.keys()].filter((name) => {
+    const parts = name.split(" ").filter(Boolean);
+    return parts.length >= 2 && parts.every((part) => words.has(part));
+  });
+  if (fits.length === 0) return null;
+  const fullest = Math.max(...fits.map((name) => name.split(" ").length));
+  const best = fits.filter((name) => name.split(" ").length === fullest);
+  return best.length === 1 && people.get(best[0]!) === 1 && selected.has(best[0]!) ? best[0]! : null;
 }
 
 // Keyed by the names tenderAnnexPolicy returns (annex-policy.ts ANNEX_KINDS).

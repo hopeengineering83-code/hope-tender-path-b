@@ -163,6 +163,30 @@ describe("the four integration follow-ups — real PostgreSQL", () => {
     assert.ok(userLock > -1 && tokenLock > -1 && userLock < tokenLock, "user row first, then the token");
   });
 
+  it("2g. a deactivation that lands mid-request leaves no reset link and sends no mail", async () => {
+    const user = await newUser("followup-mid-request");
+    const { POST: forgot } = await import("../app/api/auth/forgot-password/route");
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    // Deactivation holds the account's row lock while the request runs.
+    const deactivation = prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${user.id} FOR UPDATE`;
+      await gate;
+      await tx.user.update({ where: { id: user.id }, data: { deletedAt: new Date() } });
+      await tx.passwordResetToken.deleteMany({ where: { userId: user.id } });
+    }, { timeout: 30_000 });
+    await new Promise((r) => setTimeout(r, 200));
+    const request = forgot(post("/api/auth/forgot-password", { email: user.email }));
+    await new Promise((r) => setTimeout(r, 1_500));
+    release();
+    await deactivation;
+    const res = await request;
+    assert.equal(res.status, 202);
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(await prisma.passwordResetToken.count({ where: { userId: user.id } }), 0, "no token for the deactivated account");
+    assert.ok(!sent.some((m) => m.to === user.email), "no mail sent");
+  });
+
   it("3. a file whose deletion is pending is not in the extraction-quality report", async () => {
     const tender = await prisma.tender.create({
       data: {

@@ -100,7 +100,16 @@ export async function POST(req: Request) {
     const { token, tokenHash, expiresAt } = generateResetToken();
     const tokenId = randomUUID();
 
+    // The account is re-read under its row lock — the lock deactivation takes
+    // first — so a deactivation that lands after the lookup above either
+    // finishes first (no token, no mail) or waits and then deletes the token.
+    const issue = { stillActive: false };
     await prisma.$transaction(async (tx) => {
+      const live = await tx.$queryRaw<Array<{ deletedAt: Date | null }>>`
+        SELECT "deletedAt" FROM "User" WHERE "id" = ${user.id} FOR UPDATE
+      `;
+      if (!live[0] || live[0].deletedAt) return;
+      issue.stillActive = true;
       await tx.$executeRaw`
         DELETE FROM "PasswordResetToken"
         WHERE "userId" = ${user.id} AND "consumedAt" IS NULL
@@ -111,6 +120,7 @@ export async function POST(req: Request) {
         VALUES (${tokenId}, ${user.id}, ${tokenHash}, ${expiresAt}, NOW())
       `;
     });
+    if (!issue.stillActive) return NextResponse.json(GENERIC_RESPONSE, { status: 202 });
 
     const resetUrl = `${baseUrl()}/reset-password?token=${encodeURIComponent(token)}`;
     afterResponse(async () => {
