@@ -77,10 +77,12 @@ if (packageStatus === "PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED") {
   problems.push(`a panel claims the final ZIP is ready while export-readiness says ${packageStatus}`);
 }
 // One readiness number: the page's "Submission readiness" is the strict score.
-const shown = /Submission readiness\s+(\d+)\s*\/\s*100/.exec(headerText)?.[1];
+// The label is upper-cased by CSS, so innerText reads "SUBMISSION READINESS".
+const shown = /Submission readiness\s+(\d+)\s*\/\s*100/i.exec(headerText)?.[1];
 if (/Readiness score/i.test(headerText)) problems.push('the header still shows an unlabelled "Readiness score"');
+if (strictScore != null && shown == null) problems.push("the header shows no Submission readiness number to compare with /export-readiness");
 if (shown != null && strictScore != null && Number(shown) !== Number(strictScore)) problems.push(`Submission readiness on the page (${shown}) differs from /export-readiness (${strictScore})`);
-console.log(`page Submission readiness: ${shown ?? "not shown"}; bid fit: ${/Bid fit score\s+(\d+)/.exec(headerText)?.[1] ?? "not shown"}`);
+console.log(`page Submission readiness: ${shown ?? "not shown"} (export-readiness ${strictScore}); bid fit: ${/Bid fit score\s+(\d+)/i.exec(headerText)?.[1] ?? "not shown"}`);
 
 if (problems.length > 0) {
   console.error(`Tender page contradicts the export gate: ${problems.join(" | ")}`);
