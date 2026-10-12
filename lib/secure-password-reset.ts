@@ -90,6 +90,20 @@ export async function handleSecurePasswordReset(req: Request) {
         return;
       }
 
+      // A deactivated account cannot set a new password, even with a link
+      // issued before it was deactivated: the link is spent and reported as
+      // invalid, like any other unusable link.
+      const account = await tx.user.findUnique({ where: { id: row.userId }, select: { deletedAt: true } });
+      if (!account || account.deletedAt) {
+        outcome.tokenState = "CONSUMED";
+        await tx.$executeRaw`
+          UPDATE "PasswordResetToken"
+          SET "consumedAt" = NOW()
+          WHERE "id" = ${row.id} AND "consumedAt" IS NULL
+        `;
+        return;
+      }
+
       changedUserId = row.userId;
       await tx.user.update({ where: { id: row.userId }, data: { passwordHash: nextHash } });
       await tx.$executeRaw`

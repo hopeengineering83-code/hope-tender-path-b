@@ -51,7 +51,7 @@ export async function loadAnnexBundlePlan(tenderId: string, userId: string, db: 
     select: {
       exactFileNaming: true,
       requirements: { select: { id: true, title: true, description: true, restrictions: true, requirementType: true, priority: true } },
-      expertMatches: { where: { isSelected: true }, select: { expert: { select: { sourceDocumentId: true } } } },
+      expertMatches: { where: { isSelected: true }, select: { expert: { select: { sourceDocumentId: true, fullName: true } } } },
       projectMatches: { where: { isSelected: true }, select: { project: { select: { sourceDocumentId: true } } } },
     },
   });
@@ -73,6 +73,7 @@ export async function loadAnnexBundlePlan(tenderId: string, userId: string, db: 
     vaultDocuments: vault,
     selectedExpertSourceDocumentIds: tender.expertMatches.map((m: any) => m.expert?.sourceDocumentId).filter(Boolean),
     selectedProjectSourceDocumentIds: tender.projectMatches.map((m: any) => m.project?.sourceDocumentId).filter(Boolean),
+    selectedExpertNames: tender.expertMatches.map((m: any) => m.expert?.fullName).filter(Boolean),
   });
   const loadOriginal = async (doc: AnnexVaultDocument): Promise<Buffer | null> => {
     const row = byId.get(doc.id);

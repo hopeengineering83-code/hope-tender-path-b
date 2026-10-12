@@ -46,11 +46,15 @@ Never claim a fix is complete unless the stated tests passed.
 
 ## Active Workboard
 
-Reconciled against GitHub on **2026-08-29**. **PR #1175 is now the ONLY open pull
-request, and the only active implementation/release lane.** PR #1303 was closed
-as superseded on the owner's explicit instruction — closed, never merged, never
-cherry-picked. Do not reopen it and do not create a replacement PR: all future
-application fixes belong on #1175 alone.
+Reconciled against GitHub on **2026-10-12**. **PR #1175 is MERGED** into
+`integration/controlled-recovery` (merge commit `40560370`, owner's explicit
+instruction, 2026-10-12) — do not reopen it or push to its branch for new work.
+Follow-up fixes go on an isolated `claude/*` branch with its own PR into
+`integration/controlled-recovery`; promotion to `main` goes through a separate
+PR from a `claude/*` branch at the verified integration commit
+(`branch-policy.yml` rejects `integration/controlled-recovery` as a head into
+`main`), merged only with the owner's explicit approval — merging it deploys
+Production. PR #1303 stays closed (superseded, never merged).
 
 **This table's Status column is re-verified on 2026-09-16, not inherited.** It
 previously still named head `e59eca99` and CI green on `d3aa3b9f`, both long
@@ -62,7 +66,8 @@ a pass: two intermediate SHAs on this branch (`5e2518ca`, `20d2d7db`) show
 
 | Owner tool | Branch / PR | Scope | Locked files or areas | Status | Next action |
 |---|---|---|---|---|---|
-| Codex → Claude Code | `release/consolidated-recovery-20260717` (PR #1175, draft, base `integration/controlled-recovery`) | Consolidated release recovery: 10-provider fallback chain, provider-diversity request planning, durable fallback staging, canonical readiness/export convergence, artifact identity, real DOCX/PDF/ZIP bytes | `lib/ai.ts`, `lib/ai-jobs/analysis-job-service.ts`, `lib/ai-analyze/retry-service.ts`, `lib/engine/*`, `app/api/tenders/[id]/*`, `docs/pr1175-frozen-regression-ledger.md` | Open (draft). Current head, CI and Preview: see the newest Session Log entry (2026-10-12, final closure) — verify them yourself; this cell is not updated per push. | **DO NOT MERGE OR PROMOTE PRODUCTION.** Continue exact-head Preview artifact acceptance only when requested/authorized. |
+| Codex → Claude Code | `release/consolidated-recovery-20260717` (PR #1175 → `integration/controlled-recovery`) | Consolidated release recovery | — | **MERGED** 2026-10-12 as `40560370` (head `0b0a4181`). Closed lane. | None. The release branch remains the Preview deployment lane (`vercel.json`); it is fast-forwarded to a verified integration commit only to deploy that commit to the Preview. |
+| Claude Code | `claude/integration-release-followups` (PR → `integration/controlled-recovery`) | The four follow-ups left after #1175: expert certificates in a combined file, password reset for deactivated accounts, pending-deletion files in extraction quality, bid-security validity in tender detail | `lib/engine/annex-bundle*.ts`, `lib/engine/owner-attachment-checklist.ts`, `lib/secure-password-reset.ts`, `app/api/auth/forgot-password`, `app/api/users/[id]`, extraction-quality route/panel, `lib/engine/validity-subject.ts` + its three readers | See the newest Session Log entry (2026-10-12, integration follow-ups); verify yourself. | Merge into integration, verify the exact integration commit, then open the `main` promotion PR. **Production promotion only with the owner's explicit approval.** |
 
 #### CURRENT STATE — see the newest Session Log entry (2026-10-07)
 
@@ -212,6 +217,18 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 - Avoid unnecessary Vercel previews; run local checks before pushing work.
 
 ## Session Log
+
+### 2026-10-12 UTC (integration follow-ups) — Claude Code (after PR #1175 merged)
+
+- **PR #1175 merged** into `integration/controlled-recovery` on the owner's explicit instruction: merge commit `40560370` (merge method `merge`, head `0b0a4181`, which passed 13,238/13,238 locally, CI, Preview health and hosted Pharo acceptance). CI on `40560370` (push): green, dependency audit green. Production untouched; `main` is `05a9470a`, 714 commits behind integration and nothing ahead.
+- **Branch `claude/integration-release-followups`** from `40560370` (the designated `claude/code-review-new-pr-tuhxlk` carries stale commits of closed PR #1117 and would need a force-push). Scope: the four follow-ups only.
+  1. *Expert certificate stored separately never counted* (`annex-bundle.ts`). The certificate rule required the document id to equal the expert's source document — the CV — so a combined file's `COMBINED_FILE_ANNEX_MISSING` could never clear for certificates. A verified CERTIFICATION PDF now also counts when the owner filed it under a selected expert's name (`fileNamedForExpert`: first name plus another part, whole words, accents and titles ignored, one-word names never). No schema change; both loaders pass `selectedExpertNames`; the owner checklist reuses the same rule.
+  2. *Password reset for deactivated accounts*. Deactivation (`DELETE /api/users/[id]`) now also deletes the account's reset tokens; forgot-password answers a deactivated account exactly as an unknown address (no token, no mail, same timing path); `handleSecurePasswordReset` refuses a deactivated account even with an earlier link (generic "Invalid or expired reset link", link consumed, password unchanged). Login and sessions were already blocked.
+  3. *Pending-deletion files in extraction quality*. The extraction-quality route and panel now read `deletionStatus: "ACTIVE"` files only, as readiness does. (The release snapshot and analysis-state resolver also load every file; not changed here.)
+  4. *Bid-security validity as the tender's validity*. New `lib/engine/validity-subject.ts` (`validityBelongsToSecurity`: the subject named nearest before the figure, within its own sentence) is the one rule for the tender-detail field extractor, the upload-time metadata extractor and the pricing estimate; a security's/guarantee's/bond's validity is skipped and the search continues.
+- **Tests:** `tests/the-four-integration-follow-ups-hold.test.ts` + `tests/the-four-integration-follow-ups-db.test.ts` (12; 9 fail on `40560370`, the other 3 are invariants). One source pin widened (`round2-real-gap-fixes` GAP-R2C-3: the unknown-address branch now also answers a deactivated account). Affected suites 122 files, 2055/2055 after the pin; tsc and lint clean.
+- **Preview lane:** `vercel.json` deploys only `main` and `release/consolidated-recovery-20260717`; integration commits have no Preview of their own and the hosted acceptance job's `BASE_URL` is the release branch's alias. To test the exact integration commit on the Preview, the release branch is fast-forwarded (never force-pushed) to that commit.
+- **Merge status:** follow-up PR to be merged into integration after its CI; promotion PR to `main` prepared but NOT merged — merging it deploys Production and needs the owner's explicit approval.
 
 ### 2026-10-12 UTC (final closure) — Claude Code (PR #1175: provider use-case slots, ZIP e2e fixture, six latest review findings)
 

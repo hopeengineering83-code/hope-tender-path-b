@@ -172,6 +172,8 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
       },
     }),
     prisma.session.deleteMany({ where: { userId: id } }),
+    // Outstanding password-reset links die with the account's sessions.
+    prisma.passwordResetToken.deleteMany({ where: { userId: id } }),
   ]);
 
   await logAction({

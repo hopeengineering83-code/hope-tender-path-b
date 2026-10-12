@@ -33,6 +33,7 @@ import {
   containsMetadataPlaceholder,
 } from "./metadata-validators";
 import { cutAtNextFieldLabel } from "./tender-field-extractors";
+import { validityBelongsToSecurity } from "./validity-subject";
 
 export type TenderMetadataDraft = {
   title: string;
@@ -455,13 +456,19 @@ function inferBudget(text: string): { amount: number | null; currency: string | 
 }
 
 function inferValidityDays(text: string): number | null {
-  const raw = firstMatch(text, [
-    /(?:validity|proposal\s+validity|bid\s+validity|offer\s+valid(?:ity)?)\s*[:\-]?\s*(\d{1,3})\s*(?:calendar\s+)?days/i,
-    /valid(?:ity)?\s+for\s+(\d{1,3})\s*(?:calendar\s+)?days/i,
-  ]);
-  if (!raw) return null;
-  const n = Number(raw);
-  return Number.isFinite(n) && n > 0 && n <= 730 ? n : null;
+  // The offer's validity only: a match whose subject is a bid security,
+  // guarantee or bond is that instrument's validity, and the search goes on.
+  for (const pattern of [
+    /(?:validity|proposal\s+validity|bid\s+validity|offer\s+valid(?:ity)?)\s*[:\-]?\s*(\d{1,3})\s*(?:calendar\s+)?days/gi,
+    /valid(?:ity)?\s+for\s+(\d{1,3})\s*(?:calendar\s+)?days/gi,
+  ]) {
+    for (const match of text.matchAll(pattern)) {
+      if (validityBelongsToSecurity(text, match.index!, match[0].length)) continue;
+      const n = Number(match[1]);
+      if (Number.isFinite(n) && n > 0 && n <= 730) return n;
+    }
+  }
+  return null;
 }
 
 function inferBidBond(text: string): { amount: number | null; currency: string | null } {

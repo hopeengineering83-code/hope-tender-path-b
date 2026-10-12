@@ -30,7 +30,11 @@ export async function GET(
       where: { id, userId },
       select: {
         id: true,
+        // Active files only: a file whose deletion is pending (storage
+        // cleanup failed) is no longer part of the tender and must not keep
+        // its pages in the report — the canonical readiness paths agree.
         files: {
+          where: { deletionStatus: "ACTIVE" },
           orderBy: { createdAt: "asc" },
           select: {
             id: true, fileName: true, originalFileName: true, mimeType: true,
@@ -52,7 +56,7 @@ export async function GET(
         COALESCE(char_length("extractedText"), 0)::int AS "extractedCharacterCount",
         LEFT(COALESCE("extractedText", ''), 6000) AS "extractedTextSample"
       FROM "TenderFile"
-      WHERE "tenderId" = ${id}
+      WHERE "tenderId" = ${id} AND "deletionStatus" = 'ACTIVE'
     `;
     const textSampleById = new Map(textSamples.map((row) => [row.id, row]));
 

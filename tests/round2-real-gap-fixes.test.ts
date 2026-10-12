@@ -19,7 +19,8 @@ test("GAP-R2C-3: forgot-password adds timing-equalization for non-existent email
     "utf8",
   );
   assert.ok(src.includes("bcrypt") && src.includes("dummy"));
-  const ifNotUserIdx = src.indexOf("if (!user)");
+  // The unknown-address branch (it also answers a deactivated account).
+  const ifNotUserIdx = src.indexOf("if (!user");
   assert.ok(ifNotUserIdx > -1);
   assert.ok(src.slice(ifNotUserIdx, ifNotUserIdx + 800).includes("bcrypt"));
   assert.ok(src.includes("enumeration") || src.includes("timing"));

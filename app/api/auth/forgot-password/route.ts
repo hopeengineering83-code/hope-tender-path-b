@@ -78,9 +78,11 @@ export async function POST(req: Request) {
     await prismaReady;
     const user = await prisma.user.findUnique({
       where: { email },
-      select: { id: true, email: true },
+      select: { id: true, email: true, deletedAt: true },
     });
-    if (!user) {
+    // A deactivated account gets no reset link: it is answered exactly as an
+    // unknown address is, so the response does not reveal the account state.
+    if (!user || user.deletedAt) {
       // TIMING-SAFE ACCOUNT ENUMERATION GUARD: For existing users, the code
       // below does a DB transaction + sendEmail(), which takes ~300-800ms.
       // For non-existent users, returning immediately (~5ms) allows an

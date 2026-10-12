@@ -73,6 +73,8 @@ export type ChecklistInput = {
   vaultDocuments: AnnexVaultDocument[];
   selectedExpertSourceDocumentIds: string[];
   selectedProjectSourceDocumentIds: string[];
+  /** Full names of the selected experts (a certificate filed under one is theirs). */
+  selectedExpertNames?: string[];
   /** Rows awaiting a tender-issued original (REPLACE_WITH_ORIGINAL), pricing excluded. */
   formsAwaitingOriginal: Array<{ fileName: string; documentType?: string | null }>;
   /** Content hashes bound into the delivered combined file (its marker). */
@@ -287,7 +289,7 @@ export async function loadOwnerAttachmentChecklist(tenderId: string, userId: str
     select: {
       exactFileNaming: true,
       requirements: { select: { id: true, title: true, description: true, requirementType: true, priority: true, restrictions: true, exactFileName: true, sourcePageNumber: true, sourceExactQuote: true } },
-      expertMatches: { where: { isSelected: true }, select: { expert: { select: { sourceDocumentId: true } } } },
+      expertMatches: { where: { isSelected: true }, select: { expert: { select: { sourceDocumentId: true, fullName: true } } } },
       projectMatches: { where: { isSelected: true }, select: { project: { select: { sourceDocumentId: true } } } },
       generatedDocuments: {
         where: { generationStatus: { not: "SUPERSEDED" } },
@@ -314,6 +316,7 @@ export async function loadOwnerAttachmentChecklist(tenderId: string, userId: str
     vaultDocuments: vault,
     selectedExpertSourceDocumentIds: tender.expertMatches.map((m: any) => m.expert?.sourceDocumentId).filter(Boolean),
     selectedProjectSourceDocumentIds: tender.projectMatches.map((m: any) => m.project?.sourceDocumentId).filter(Boolean),
+    selectedExpertNames: tender.expertMatches.map((m: any) => m.expert?.fullName).filter(Boolean),
     formsAwaitingOriginal: tender.generatedDocuments
       .filter((d: any) => String(d.reviewStatus ?? "").toUpperCase() === "REPLACE_WITH_ORIGINAL" && !isAwaitingOwnerPricing(d))
       .map((d: any) => ({ fileName: d.exactFileName ?? d.name, documentType: d.documentType })),

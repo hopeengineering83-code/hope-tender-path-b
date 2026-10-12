@@ -50,6 +50,12 @@ export type AnnexBundleInput = {
   /** Source documents of the experts / projects selected for this tender. */
   selectedExpertSourceDocumentIds: readonly string[];
   selectedProjectSourceDocumentIds: readonly string[];
+  /**
+   * Full names of the selected experts. An expert record has one source
+   * document — the CV — so a professional licence stored as its own Vault
+   * document is bound to the expert by the name the owner filed it under.
+   */
+  selectedExpertNames?: readonly string[];
 };
 
 export type AnnexBundlePart = { kind: string; documents: AnnexVaultDocument[] };
@@ -72,6 +78,22 @@ type KindRule = {
 };
 
 const name = (doc: AnnexVaultDocument) => doc.originalFileName.toLowerCase();
+
+const HONORIFICS = new Set(["dr", "eng", "engr", "mr", "mrs", "ms", "miss", "prof", "ato", "wro", "arch", "ir"]);
+const nameWords = (text: string) => text.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").split(/[^a-z0-9]+/).filter(Boolean);
+
+/**
+ * True when a file the owner named carries an expert's name: the first name
+ * and at least one other part of it, as whole words ("Abebe_Kebede_PE_Licence.pdf"
+ * for Eng. Abebe Kebede Tessema). A one-word name binds nothing — too easily
+ * someone else's.
+ */
+export function fileNamedForExpert(fileName: string, fullName: string): boolean {
+  const parts = nameWords(fullName).filter((word) => word.length >= 2 && !HONORIFICS.has(word));
+  if (parts.length < 2) return false;
+  const words = new Set(nameWords(fileName.replace(/\.[a-z0-9]{1,5}$/i, "")));
+  return words.has(parts[0]!) && parts.slice(1).some((word) => words.has(word));
+}
 
 // Keyed by the names tenderAnnexPolicy returns (annex-policy.ts ANNEX_KINDS).
 const KIND_RULES: Record<string, KindRule> = {
@@ -101,8 +123,13 @@ const KIND_RULES: Record<string, KindRule> = {
     missingReason: "the selected experts have no verified CV PDF in the Company Vault",
   },
   "Professional licences and certificates of the proposed experts": {
-    select: (doc, input) => doc.category === "CERTIFICATION" && input.selectedExpertSourceDocumentIds.includes(doc.id),
-    missingReason: "no verified professional licence / certificate PDF linked to the selected experts",
+    // The expert's own source document when it is the certificate, or a
+    // certificate filed under a selected expert's name. Requiring the CV's id
+    // meant a separately stored certificate could never answer this kind.
+    select: (doc, input) => doc.category === "CERTIFICATION"
+      && (input.selectedExpertSourceDocumentIds.includes(doc.id)
+        || (input.selectedExpertNames ?? []).some((expert) => fileNamedForExpert(doc.originalFileName, expert))),
+    missingReason: "no verified professional licence / certificate PDF linked to the selected experts (file it under the expert's name)",
   },
   "Client reference and completion letters for the cited projects": {
     select: (doc, input) => input.selectedProjectSourceDocumentIds.includes(doc.id),
@@ -126,7 +153,7 @@ export function isVerifiedPdf(doc: AnnexVaultDocument): boolean {
 }
 
 /** The Vault documents that answer one annex kind (verified or not). Empty for a kind with no rule. */
-export function vaultCandidatesForKind(kind: string, input: Pick<AnnexBundleInput, "vaultDocuments" | "selectedExpertSourceDocumentIds" | "selectedProjectSourceDocumentIds">): AnnexVaultDocument[] {
+export function vaultCandidatesForKind(kind: string, input: Pick<AnnexBundleInput, "vaultDocuments" | "selectedExpertSourceDocumentIds" | "selectedProjectSourceDocumentIds" | "selectedExpertNames">): AnnexVaultDocument[] {
   const rule = KIND_RULES[kind];
   if (!rule) return [];
   return input.vaultDocuments.filter((doc) => rule.select(doc, input as AnnexBundleInput));
