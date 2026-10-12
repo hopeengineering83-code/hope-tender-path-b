@@ -134,7 +134,7 @@ describe("CASE 3 — only the strict gate's SUBMISSION_READY says Final ZIP read
   });
   it("canonical readiness requires the strict verdict for readyForFinalExport", () => {
     const src = read("lib/canonical-tender-readiness.ts");
-    assert.match(src, /readyForFinalExport: packageStatus === "SUBMISSION_READY" && /);
+    assert.match(src, /readyForFinalExport: currentDocuments\.length > 0 && packageStatus === "SUBMISSION_READY" && /);
     assert.match(src, /loadFinalSubmission: \(\) => getFinalSubmissionReadiness\(client, \{ tenderId, userId \}\)/);
   });
 });

@@ -347,7 +347,7 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
     matchingState: matching.state,
     readyForSupportPackage: readiness.supportPackageReady,
     readyForFullProposal: readiness.fullProposalReady,
-    readyForFinalExport: packageStatus === "SUBMISSION_READY" && currentDocuments.length > 0 && missing.length === 0 && tenderFormsAwaitingCompletion.length === 0 && blockers.length === 0 && unresolvedCriticalGaps === 0,
+    readyForFinalExport: currentDocuments.length > 0 && packageStatus === "SUBMISSION_READY" && missing.length === 0 && tenderFormsAwaitingCompletion.length === 0 && blockers.length === 0 && unresolvedCriticalGaps === 0,
     packageStatus,
     proposalComplete,
     packageDownloads,
