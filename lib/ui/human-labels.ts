@@ -60,6 +60,8 @@ export function fieldLabel(fieldKey: string): string {
 }
 
 export const ERROR_CODE_LABELS: Record<string, string> = {
+  OWNER_ATTACHMENTS_REQUIRED: "Proposal complete — attach the listed originals manually when assembling the submission",
+  FINAL_SUBMISSION_GATE_BLOCKED: "The final submission package is not ready — see Export Readiness for the reason",
   MISSING_REQUIRED_SECTION: "Required document is missing",
   MISSING_REQUIRED_DOCUMENT: "Required document is missing",
   PLACEHOLDER_DETECTED: "Placeholder text found in document",

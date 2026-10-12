@@ -15,6 +15,7 @@ import { reportError, logger } from "../../../../../lib/observability";
 import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engine/generation-readiness-gate";
 import { resolveTenderOperationGate } from "../../../../../lib/engine/tender-operation-gate";
 import { getCurrentConfirmedBuildPlan } from "../../../../../lib/engine/build-plan";
+import { getFinalSubmissionReadiness, packageDownloadQueries } from "../../../../../lib/engine/final-submission-readiness";
 import { inferType as inferRequirementType } from "../../../../../lib/engine/analysis";
 
 /**
@@ -336,10 +337,35 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       }, { status: 422 });
     }
 
+    // The package verdict comes from the strict final-submission gate — the one
+    // the download route enforces — never from the preflight above alone. The
+    // preflight passed a tender whose originals the owner compiles outside the
+    // App, and this route answered "readyToDownload: true … Download the Final
+    // ZIP" while /download?type=zip refused that ZIP (Pharo, Preview
+    // 2026-10-11). A complete proposal is not a final ZIP.
+    const finalSubmission = await getFinalSubmissionReadiness(prisma, { tenderId: tender.id, userId });
+    if (!finalSubmission?.ok) {
+      const proposalComplete = finalSubmission?.proposalComplete === true;
+      const proposalPackages = finalSubmission && proposalComplete ? packageDownloadQueries(finalSubmission) : [];
+      return NextResponse.json({
+        error: finalSubmission?.message ?? "Export readiness could not be confirmed.",
+        code: "EXPORT_READINESS_BLOCKED",
+        readyToDownload: false,
+        packageStatus: finalSubmission?.packageStatus ?? "IN_PROGRESS",
+        proposalComplete,
+        ...(proposalPackages.length > 0 ? { proposalPackage: proposalPackages[0], proposalPackages } : {}),
+        ownerAttachmentsOutstanding: finalSubmission?.ownerAttachments?.outstanding ?? 0,
+        tenderLevelBlockers: finalSubmission?.tenderLevelBlockers ?? [],
+        advisoryWarnings: finalSubmission?.advisoryWarnings ?? [],
+      }, { status: 409 });
+    }
+
     const generatedFileNames = generatedDocuments
       .sort((left, right) => (left.exactOrder ?? Number.MAX_SAFE_INTEGER) - (right.exactOrder ?? Number.MAX_SAFE_INTEGER))
       .map((document) => document.exactFileName ?? document.name);
-    const downloadUrl = `/api/tenders/${id}/download?type=zip`;
+    // One archive per sealed envelope when the tender requires separate ones.
+    const downloadUrls = packageDownloadQueries(finalSubmission).map((query) => `/api/tenders/${id}/download${query}`);
+    const downloadUrl = downloadUrls[0] ?? `/api/tenders/${id}/download?type=zip`;
 
     await logAction({
       userId,
@@ -358,7 +384,9 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     return NextResponse.json({
       success: true,
       readyToDownload: true,
+      packageStatus: finalSubmission.packageStatus,
       downloadUrl,
+      downloadUrls,
       fileList: generatedFileNames,
       packageName: `${tender.title} Submission Package`,
       format: "ZIP",

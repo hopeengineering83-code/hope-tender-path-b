@@ -32,7 +32,21 @@ export type TenderReleaseState = {
   extractionGrounded: boolean;
   analysisGrounded: boolean;
   readinessCalculable: boolean;
+  /**
+   * Submission readiness — the strict final-submission gate's score, the same
+   * number /export and /export-readiness report as summary.readinessScore.
+   * It measures the complete submission, originals included.
+   */
   readinessScore: number | null;
+  /** Why the submission-readiness score is capped, when it is. */
+  readinessCapReason: string | null;
+  /**
+   * Bid fit — the score behind `verdict` (eligibility, team, references,
+   * compliance, deadline, commercial). A different question from readiness:
+   * it was shown as "Readiness score" (84) beside an export readiness of 60
+   * for the same tender (Pharo, Preview 2026-10-11).
+   */
+  bidScore: number | null;
   verdict: BidDecisionOutcome | null;
   verdictSummary: string | null;
   blockers: TenderReleaseBlocker[];
@@ -161,7 +175,9 @@ export async function getTenderReleaseState(
   const analysisGrounded = snapshot.analysis.eligibleForExport;
   const readinessCalculable = extractionGrounded && analysisGrounded;
 
-  let readinessScore: number | null = null;
+  const readinessScore: number | null = readinessCalculable ? finalSubmission.summary.readinessScore : null;
+  const readinessCapReason: string | null = readinessCalculable ? finalSubmission.summary.readinessCapReason ?? null : null;
+  let bidScore: number | null = null;
   let verdict: BidDecisionOutcome | null = null;
   let verdictSummary: string | null = null;
 
@@ -210,7 +226,7 @@ export async function getTenderReleaseState(
           reviewStatus: document.reviewStatus ?? "",
         })),
       });
-      readinessScore = decision.score;
+      bidScore = decision.score;
       verdict = decision.decision;
       verdictSummary = decision.summary;
     }
@@ -242,6 +258,8 @@ export async function getTenderReleaseState(
     analysisGrounded,
     readinessCalculable,
     readinessScore,
+    readinessCapReason,
+    bidScore,
     verdict,
     verdictSummary,
     blockers,

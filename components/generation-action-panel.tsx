@@ -56,6 +56,10 @@ export type ReleaseStatus =
   | "GENUINE_SOURCE_BLOCKED"
   | "LEGAL_RELEASE_REQUIRED"
   | "READY_TO_DOWNLOAD"
+  // Every App-generated document is complete; only originals the owner
+  // compiles manually remain. The proposal package downloads; the final ZIP is
+  // not claimed ready.
+  | "PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED"
   | "FAILED_SECURITY_OR_INTEGRITY"
   // Readiness could not be resolved. See lib/release-status-classifier.ts.
   | "STATUS_UNAVAILABLE"
@@ -297,6 +301,28 @@ export function GenerationActionButton() {
   return null;
 }
 
+/**
+ * The download buttons for a completed package. The queries come from the
+ * canonical readiness (the strict final-submission gate's verdict), so the
+ * button names exactly what the download route will deliver: the final ZIP
+ * only when SUBMISSION_READY, otherwise the proposal package
+ * (scope=proposal) — never "Final ZIP" while owner originals remain.
+ */
+export function packageDownloadLinks(
+  status: ReleaseStatus,
+  packageDownloads: string[] | null | undefined,
+): Array<{ query: string; label: string }> {
+  const finalZip = status === "READY_TO_DOWNLOAD";
+  const fallback = finalZip ? "?type=zip" : "?type=zip&scope=proposal";
+  const matching = (packageDownloads ?? []).filter((query) => query.includes("scope=proposal") !== finalZip);
+  return (matching.length > 0 ? matching : [fallback])
+    .map((query) => {
+      const envelope = /[?&]envelope=(\w+)/.exec(query)?.[1];
+      const base = finalZip ? "Download Final ZIP" : "Download Proposal Package";
+      return { query, label: envelope ? `${base} — ${envelope.charAt(0).toUpperCase()}${envelope.slice(1)} envelope` : base };
+    });
+}
+
 // Preserve the export name. The panel is now the text-based status surface.
 // Blocker 3: when releaseDecision is provided, use it directly — no
 // client-side recomputation. When not provided (backward compat), fall
@@ -439,14 +465,17 @@ export async function GenerationActionPanel({
           </ul>
         </div>
       )}
-      {status === "READY_TO_DOWNLOAD" && (
-        <div className="mt-4">
-          <a
-            href={`/api/tenders/${_tenderId}/download?type=zip`}
-            className="inline-block rounded-lg bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800"
-          >
-            Download Final ZIP
-          </a>
+      {(status === "READY_TO_DOWNLOAD" || status === "PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED") && (
+        <div className="mt-4 flex flex-wrap gap-2">
+          {packageDownloadLinks(status, canonicalReadiness?.packageDownloads).map((link) => (
+            <a
+              key={link.query}
+              href={`/api/tenders/${_tenderId}/download${link.query}`}
+              className="inline-block rounded-lg bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800"
+            >
+              {link.label}
+            </a>
+          ))}
         </div>
       )}
     </section>

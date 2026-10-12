@@ -519,5 +519,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // canonical resolver the UI reads from /readiness. Both must agree.
   const canonicalReadiness = await getCanonicalReadinessSummary(prisma, actor.id, tenderId);
   const exportReady = readiness.ok && canonicalReadiness?.readyForFinalExport === true;
-  return NextResponse.json({ success: true, status: exportReady ? "COMPLETED" : "IN_PROGRESS", processedCount: processed, remainingCount: Math.max(0, candidates.length - processed), nextAction: exportReady ? "EXPORT_READY" : "AUTOMATIC_PROCESSING", readinessOk: exportReady, byteReadinessOk: readiness.ok, warning, canonicalReadiness });
+  // Only owner originals left: the App's work is COMPLETED, and the final ZIP
+  // is still not called ready — the proposal package is what downloads.
+  const proposalComplete = exportReady || canonicalReadiness?.packageStatus === "PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED";
+  return NextResponse.json({ success: true, status: proposalComplete ? "COMPLETED" : "IN_PROGRESS", processedCount: processed, remainingCount: Math.max(0, candidates.length - processed), nextAction: exportReady ? "EXPORT_READY" : proposalComplete ? "DOWNLOAD_PROPOSAL_PACKAGE" : "AUTOMATIC_PROCESSING", readinessOk: exportReady, byteReadinessOk: readiness.ok, packageStatus: canonicalReadiness?.packageStatus ?? "IN_PROGRESS", proposalComplete, warning, canonicalReadiness });
 }

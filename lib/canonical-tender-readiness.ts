@@ -11,6 +11,58 @@ import { buildCanonicalModulePayload, computeCanonicalModuleStates, type Canonic
 import { resolveCanonicalAnalysisSource } from "./engine/analysis-source";
 import { canUseVaultRecord, VAULT_REVIEW_CONSUMER_SELECT, type ReviewRecordState } from "./vault-review-provenance";
 import { getCanonicalTenderWorkflowDecision } from "./engine/canonical-workflow-decision";
+import { getFinalSubmissionReadiness, packageDownloadQueries, type FinalPackageStatus } from "./engine/final-submission-readiness";
+
+/**
+ * Readiness codes that a tender form awaiting the owner's signed original
+ * also raises (the form is a planned file the App cannot finish). When only
+ * these remain, the strict final-submission gate decides whether the
+ * proposal is complete.
+ */
+const FORM_ORIGINAL_SHORTFALL_CODES = new Set(["MISSING_PLANNED_FILES", "MISSING_TENDER_FORM_FIELDS"]);
+
+type FinalSubmissionVerdict = {
+  packageStatus: FinalPackageStatus;
+  summary: { strictTwoEnvelope: boolean; envelopeBreakdown: Record<"TECHNICAL" | "FINANCIAL" | "ADMIN", number> };
+};
+
+/**
+ * Fold the strict final-submission gate's verdict into the readiness blockers.
+ *
+ * The gate is consulted only when the checks before it found the package done
+ * (no blockers, or only a tender form awaiting the owner's original), because
+ * only then can it change the answer:
+ *
+ *   SUBMISSION_READY                             → blockers unchanged; final ZIP downloads
+ *   PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED → the form shortfall is restated as
+ *                                                  OWNER_ATTACHMENTS_REQUIRED; proposal
+ *                                                  package downloads
+ *   IN_PROGRESS, or the gate unreadable          → FINAL_SUBMISSION_GATE_BLOCKED
+ *
+ * Downloads are the queries the download route serves for that state: one per
+ * non-empty envelope when the tender requires separate sealed envelopes.
+ */
+export async function resolvePackageVerdict(input: {
+  blockers: string[];
+  documentsComplete: boolean;
+  loadFinalSubmission: () => Promise<FinalSubmissionVerdict | null>;
+}): Promise<{ blockers: string[]; packageStatus: FinalPackageStatus; packageDownloads: string[] }> {
+  if (!input.documentsComplete || !input.blockers.every((code) => FORM_ORIGINAL_SHORTFALL_CODES.has(code))) {
+    return { blockers: input.blockers, packageStatus: "IN_PROGRESS", packageDownloads: [] };
+  }
+  const finalSubmission = await input.loadFinalSubmission().catch(() => null);
+  const packageStatus: FinalPackageStatus = finalSubmission?.packageStatus ?? "IN_PROGRESS";
+  if (!finalSubmission || packageStatus === "IN_PROGRESS") {
+    return { blockers: [...input.blockers, "FINAL_SUBMISSION_GATE_BLOCKED"], packageStatus: "IN_PROGRESS", packageDownloads: [] };
+  }
+  const packageDownloads = packageDownloadQueries({ packageStatus, summary: finalSubmission.summary });
+  const blockers = packageStatus === "PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED"
+    // The gate proved the only shortfall is originals the owner supplies
+    // (tender forms included), so that is the reason reported.
+    ? [...input.blockers.filter((code) => !FORM_ORIGINAL_SHORTFALL_CODES.has(code)), "OWNER_ATTACHMENTS_REQUIRED"]
+    : input.blockers;
+  return { blockers, packageStatus, packageDownloads };
+}
 
 export type CanonicalTenderReadiness = {
   readyForAnalysis: boolean;
@@ -20,6 +72,23 @@ export type CanonicalTenderReadiness = {
   readyForSupportPackage: boolean;
   readyForFullProposal: boolean;
   readyForFinalExport: boolean;
+  /**
+   * The strict final-submission gate's package verdict — the one the export
+   * and download routes enforce. SUBMISSION_READY is the only state in which
+   * the final ZIP may be called ready; PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED
+   * means every App-generated document is complete and only originals the
+   * owner compiles manually remain.
+   */
+  packageStatus: FinalPackageStatus;
+  /** Every App-generated document is complete (true in both completed states). */
+  proposalComplete: boolean;
+  /**
+   * The download?… queries that deliver what is downloadable now: the final
+   * ZIP when SUBMISSION_READY, the proposal package (scope=proposal) when only
+   * owner originals remain; one per non-empty envelope when the tender
+   * requires separate sealed envelopes. Empty while work is in progress.
+   */
+  packageDownloads: string[];
   modules: CanonicalModuleStatePayload;
   blockers: string[];
   warnings: string[];
@@ -38,6 +107,8 @@ export type CanonicalTenderReadiness = {
  */
 export type CanonicalReadinessSummary = {
   readyForFinalExport: boolean;
+  packageStatus: FinalPackageStatus;
+  proposalComplete: boolean;
   readyForFullProposal: boolean;
   readyForSupportPackage: boolean;
   blockers: string[];
@@ -67,6 +138,8 @@ export async function getCanonicalReadinessSummary(
   if (!full) return null;
   return {
     readyForFinalExport: full.readyForFinalExport,
+    packageStatus: full.packageStatus,
+    proposalComplete: full.proposalComplete,
     readyForFullProposal: full.readyForFullProposal,
     readyForSupportPackage: full.readyForSupportPackage,
     blockers: full.blockers,
@@ -209,7 +282,7 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
   const canonicalDecision = await getCanonicalTenderWorkflowDecision(client as never, userId, tenderId);
   const canonicalReleaseBlockers = canonicalDecision?.blockerCodes ?? [];
 
-  const blockers = [
+  let blockers: string[] = [
     ...readiness.fullProposalBlockers.map((b) => b.code),
     ...canonicalReleaseBlockers,
     ...(matching.state === "VAULT_AWAITS_ENGINE" ? ["ENGINE_NOT_COMPLETED"] : []),
@@ -222,6 +295,28 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
     ...(tenderFormsAwaitingCompletion.length > 0 ? ["MISSING_TENDER_FORM_FIELDS"] : []),
     ...(confirmedPlan.ok ? [] : ["NO_CURRENT_CONFIRMED_BUILD_PLAN"]),
   ];
+
+  // The package verdict. Everything above reads documents, plan, matching and
+  // the workflow decision; none of it knows that the final ZIP also needs the
+  // originals the owner compiles outside the App. That is the strict
+  // final-submission gate's question — the one /export and the download route
+  // enforce — so when the checks above find nothing left but tender forms
+  // awaiting an original, the same gate is asked here and its verdict is the
+  // answer. Without it the Release Status panel read readyForFinalExport and
+  // printed "The final ZIP package is ready" beside a Next Required Action of
+  // "Proposal complete — attach originals manually", while /export refused
+  // the ZIP (Pharo, Preview 2026-10-11).
+  //
+  // Asked only when it can change the answer, so tenders still in progress pay
+  // nothing for it. A gate that cannot be read never reports the ZIP ready.
+  const verdict = await resolvePackageVerdict({
+    blockers,
+    documentsComplete: currentDocuments.length > 0 && confirmedPlan.ok && unresolvedCriticalGaps === 0,
+    loadFinalSubmission: () => getFinalSubmissionReadiness(client, { tenderId, userId }),
+  });
+  blockers = verdict.blockers;
+  const { packageStatus, packageDownloads } = verdict;
+  const proposalComplete = packageStatus !== "IN_PROGRESS";
 
   const nextActions = Array.from(new Set([
     ...readiness.fullProposalBlockers.map((b) => b.nextAction).filter(Boolean) as string[],
@@ -252,7 +347,10 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
     matchingState: matching.state,
     readyForSupportPackage: readiness.supportPackageReady,
     readyForFullProposal: readiness.fullProposalReady,
-    readyForFinalExport: currentDocuments.length > 0 && missing.length === 0 && tenderFormsAwaitingCompletion.length === 0 && blockers.length === 0 && unresolvedCriticalGaps === 0,
+    readyForFinalExport: packageStatus === "SUBMISSION_READY" && currentDocuments.length > 0 && missing.length === 0 && tenderFormsAwaitingCompletion.length === 0 && blockers.length === 0 && unresolvedCriticalGaps === 0,
+    packageStatus,
+    proposalComplete,
+    packageDownloads,
     modules,
     blockers,
     warnings: readiness.warnings.map((w) => w.code),

@@ -844,6 +844,33 @@ jobs:
             fi
           fi
 
+      - name: Prove the tender page and POST /export state the export gate's package truth
+        # A complete proposal is not a final ZIP. The Release Status panel once
+        # read "Ready to download — The final ZIP package is ready" beside
+        # "Proposal complete — attach originals manually", and POST /export
+        # answered readyToDownload while /download refused the ZIP (Pharo,
+        # 2026-10-11). The rendered page, its readiness number and POST /export
+        # must all agree with /export-readiness.
+        timeout-minutes: 15
+        run: |
+          python3 - <<'PYEOF'
+          import json, re
+          readiness = json.load(open('/tmp/export-readiness-final.json', encoding='utf-8'))
+          raw = open('/tmp/export-response.json', encoding='utf-8').read()
+          body = json.loads(re.sub(r'\n?---STATUS:\d+---\s*$', '', raw.strip()))
+          pkg = readiness.get('packageStatus')
+          print(f"export-readiness packageStatus={pkg}; POST /export: code={body.get('code')} readyToDownload={body.get('readyToDownload')} packageStatus={body.get('packageStatus')} proposalPackage={body.get('proposalPackage')}")
+          if pkg != 'SUBMISSION_READY' and body.get('readyToDownload'):
+              raise SystemExit(f"POST /export says readyToDownload while export-readiness says {pkg}")
+          if pkg == 'PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED':
+              if body.get('code') != 'EXPORT_READINESS_BLOCKED' or body.get('packageStatus') != pkg or 'scope=proposal' not in str(body.get('proposalPackage') or ''):
+                  raise SystemExit('POST /export does not answer proposal-complete with EXPORT_READINESS_BLOCKED and the proposal package')
+          PYEOF
+          mkdir -p /tmp/pw
+          cp scripts/tmp-prove-tender-page-package-truth.mjs /tmp/pw/
+          (cd /tmp/pw && npm init -y >/dev/null && npm install --no-audit --no-fund --silent playwright@1.60.0 && npx playwright install --with-deps chromium >/dev/null)
+          node /tmp/pw/tmp-prove-tender-page-package-truth.mjs /tmp/export-readiness-final.json
+
       - name: Download the final ZIP
         run: |
           curl -sS --connect-timeout 15 --max-time 120 -o /tmp/preview-final.zip \
@@ -1102,6 +1129,7 @@ jobs:
             /tmp/company-assets.json
             /tmp/final-pdf-text.txt
             /tmp/pdf-pages/
+            /tmp/page-proof/
           if-no-files-found: warn
           retention-days: 3
 

@@ -173,6 +173,25 @@ export function finalPackageStatus(verdict: { ok: boolean; proposalComplete?: bo
   return verdict.ok ? "SUBMISSION_READY" : verdict.proposalComplete ? "PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED" : "IN_PROGRESS";
 }
 
+/**
+ * The download?… queries that deliver what a package verdict allows: the final
+ * ZIP for SUBMISSION_READY, the proposal package (scope=proposal) when only
+ * owner originals remain, nothing while in progress. One per non-empty
+ * envelope when the tender requires separate sealed envelopes, because the
+ * download route refuses a mixed archive for such a tender.
+ */
+export function packageDownloadQueries(verdict: {
+  packageStatus: FinalPackageStatus;
+  summary: { strictTwoEnvelope: boolean; envelopeBreakdown: Record<SubmissionEnvelope, number> };
+}): string[] {
+  if (verdict.packageStatus === "IN_PROGRESS") return [];
+  const scope = verdict.packageStatus === "SUBMISSION_READY" ? "" : "&scope=proposal";
+  if (!verdict.summary.strictTwoEnvelope) return [`?type=zip${scope}`];
+  return (["TECHNICAL", "FINANCIAL", "ADMIN"] as const)
+    .filter((envelope) => (verdict.summary.envelopeBreakdown?.[envelope] ?? 0) > 0)
+    .map((envelope) => `?type=zip${scope}&envelope=${envelope.toLowerCase()}`);
+}
+
 export type FinalSubmissionReadiness = {
   ok: boolean;
   /** Every document the app produces is export-ready; only owner attachments remain (or nothing remains). */

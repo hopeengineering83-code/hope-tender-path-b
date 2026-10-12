@@ -198,8 +198,10 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
           <div className="mt-1"><StatusBadge status={tender.status} /></div>
         </div>
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Readiness score</p>
-          <p className="mt-1">
+          {/* The strict final-submission gate's score — the same number /export
+              reports. It measures the complete submission, originals included. */}
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Submission readiness</p>
+          <p className="mt-1" title={releaseState?.readinessCapReason ?? undefined}>
             {releaseState?.readinessCalculable && releaseState.readinessScore != null ? (
               <span className={`text-2xl font-bold ${tone.text}`}>{releaseState.readinessScore}<span className="text-sm font-normal text-slate-500"> / 100</span></span>
             ) : (
@@ -208,8 +210,13 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
           </p>
         </div>
         <div>
+          {/* Bid fit is a different question (eligibility, team, references,
+              compliance, deadline, commercial), so it is named for what it is. */}
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Bid verdict</p>
           <span className={`mt-1 inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-bold ${verdict.tone}`}>{verdict.label}</span>
+          {releaseState?.readinessCalculable && releaseState.bidScore != null ? (
+            <span className="ml-2 text-xs text-slate-600">Bid fit score {releaseState.bidScore} / 100</span>
+          ) : null}
         </div>
       </div>
 
