@@ -30,7 +30,7 @@
 
 import { SEED_BENCHMARKS, BENCHMARK_STALE_AFTER_MONTHS, benchmarkAgeMonths, classifyRole, findBenchmark, marketOf, seniorityOf, type BenchmarkCategory, type BenchmarkSeniority, type PricingBenchmark } from "./pricing-benchmarks";
 import { CURRENCY_TOKEN_ALTERNATION, resolveCurrencyToken } from "./currency-reference";
-import { sentenceAround, validityBelongsToSecurity } from "./validity-subject";
+import { isOfferValidity, sentenceAround } from "./validity-subject";
 
 export type PricingConfidence = "HIGH" | "MEDIUM" | "LOW" | "NONE";
 export type PricingScenarioId = "AGGRESSIVE" | "BALANCED" | "CONSERVATIVE";
@@ -358,7 +358,7 @@ function statedValidityDays(text: string): { days: number; quote: string } | nul
   // still owns the validity after it.
   const flat = text.replace(/\s+/g, " ");
   for (const m of flat.matchAll(/\bvalid(?:ity)?\b[^.;]{0,60}?\b(\d{2,3})\s*\)?\s*(?:\(\s*\d+\s*\)\s*)?(?:calendar\s+)?days\b/gi)) {
-    if (validityBelongsToSecurity(flat, m.index!, m[0].length)) continue;
+    if (!isOfferValidity(flat, m.index!, m[0].length)) continue;
     return { days: Number(m[1]), quote: snippet(sentenceAround(flat, m.index!, m[0].length)) };
   }
   return null;

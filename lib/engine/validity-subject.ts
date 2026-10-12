@@ -7,18 +7,34 @@
 // pricing estimate — took the first "valid … N days" in the text, so a
 // security stated first became the validity the financial proposal promised
 // and the tender detail showed. This is the one rule they share.
+//
+// A figure is the offer's only on positive evidence: the offer named on the
+// validity itself, the offer as the sentence's subject of a coordinated
+// "… and remain valid", or a sentence (with, for a pronoun opening, the one
+// before it) that names no security at all. Anything else is ambiguous and is
+// not read as the offer's: a reader then reports the validity as not stated
+// rather than risk promising a security's period. Fail closed, never open.
 
-const SECURITY_SUBJECT = /\b(?:securit(?:y|ies)|securing\s+declaration|guarantees?|bonds?|insurance|warrant(?:y|ies)|EMD|earnest\s+money(?:\s+deposit)?)\b/gi;
-const OFFER_SUBJECT = /\b(?:proposals?|bids?|offers?|tenders?|quotations?)\b(?!\s+(?:securit|securing|guarantee|bond))/gi;
-// Only a full stop, exclamation or question mark that is followed by the
-// start of a new sentence ends the context, and never one closing a common
-// abbreviation ("issued by ABC Bank Ltd. and shall remain valid…"). A
-// semicolon does not ("Bid security required; validity: 120 days" is the
-// security's), and neither does a line break: extracted PDF text wraps
-// mid-sentence ("the bid security shall be\nvalid for 120 days").
+const SECURITY_WORD = /\b(?:securit(?:y|ies)|securing\s+declaration|guarantees?|bonds?|insurance|warrant(?:y|ies)|EMD|earnest\s+money(?:\s+deposit)?)\b/i;
+const OFFER_NOUN = String.raw`(?:proposals?|bids?|offers?|tenders?|quotations?)(?!\s+(?:securit|securing|guarantee|bond))`;
+// "Proposal validity: 90 days", "bid validity period of 75 days".
+const OFFER_LABEL_BEFORE = new RegExp(String.raw`\b${OFFER_NOUN}\s+$`, "i");
+const OFFER_LABEL_IN_MATCH = new RegExp(String.raw`^${OFFER_NOUN}\s+valid`, "i");
+// "Proposals shall remain valid", "The offer shall be valid", "Offers are valid".
+const OFFER_SUBJECT_BEFORE = new RegExp(String.raw`\b${OFFER_NOUN}\s+(?:(?:shall|must|will|should|is|are|to)\s+){1,2}(?:remain\s+|be\s+)?$`, "i");
+// A sentence whose subject is the offer ("Bids must …", "The bid shall …").
+const OFFER_OPENING = new RegExp(String.raw`^\s*["“(]?(?:(?:the|each|every|all|any|a|an)\s+)?${OFFER_NOUN}\s+(?:shall|must|will|should|is|are)\b`, "i");
+// "… and (shall) remain valid for N days": a predicate coordinated after another.
+const COORDINATED_PREDICATE = /\band\s+(?:(?:shall|must|will|should|is\s+to|are\s+to)\s+(?:remain\s+|be\s+)?|remain\s+|be\s+)$/i;
+// A sentence opening with a pronoun or possessive takes its subject from the one before.
+const PRONOUN_OPENING = /^\s*["“(]?(?:its?|this|that|such|these|those|they|their|the\s+same)\b/i;
+
+// Only a full stop, exclamation or question mark followed by the start of a
+// new sentence ends one — never one closing a common abbreviation, an initial
+// or a dotted initialism ("Ltd.", "No.", "J.", "U.S."). A semicolon does not,
+// and neither does a line break: extracted PDF text wraps mid-sentence.
 const ABBREVIATIONS = new Set(["ltd", "co", "inc", "plc", "corp", "llc", "no", "nos", "art", "sec", "cl", "para", "e.g", "i.e", "etc", "mr", "mrs", "ms", "dr", "eng", "st", "vs", "approx"]);
 const SENTENCE_END_CANDIDATE = /([A-Za-z.]*)[.!?](?=\s+["“(]?[A-Z0-9])/g;
-// Initials and dotted initialisms ("J. Smith", "U.S. Bank", "E.U.") do not end a sentence either.
 const isAbbreviation = (word: string) => {
   const w = word.toLowerCase().replace(/^\.+/, "");
   return ABBREVIATIONS.has(w) || /^[a-z]$/.test(w) || /^(?:[a-z]\.)+[a-z]$/.test(w);
@@ -27,63 +43,37 @@ const sentenceEnds = (text: string): number[] => [...text.matchAll(SENTENCE_END_
   .filter((m) => !isAbbreviation(m[1]!))
   .map((m) => m.index! + m[0].length);
 
-const lastIndexOf = (re: RegExp, text: string) => Math.max(-1, ...[...text.matchAll(re)].map((m) => m.index!));
-
-const firstIndexOf = (re: RegExp, text: string) => {
-  const hit = [...text.matchAll(re)][0];
-  return hit ? hit.index! : -1;
-};
-
-// A validity in a predicate coordinated after another one ("The bid shall
-// include a bid security and (shall) remain valid for 120 days"; "Bids must be
-// accompanied by a bid security valid for 120 days and remain valid for 60
-// days") belongs to the sentence's subject — the first one it names — not to
-// whatever noun the earlier predicate mentioned last.
-const COORDINATED_PREDICATE = /\band\s+(?:(?:shall|must|will|should|is\s+to|are\s+to)\s+(?:remain\s+|be\s+)?|remain\s+|be\s+)$/i;
-// A sentence that opens with a pronoun ("It shall remain valid for 120 days")
-// takes its subject from the sentence before ("The tender security is
-// required.").
-const PRONOUN_OPENING = /^\s*["“(]?(?:it|this|that|such|these|they|the\s+same)\b/i;
-
-type Subject = "SECURITY" | "OFFER" | "NONE";
-function subjectOf(lead: string, coordinated: boolean): Subject {
-  if (coordinated) {
-    const security = firstIndexOf(SECURITY_SUBJECT, lead);
-    const offer = firstIndexOf(OFFER_SUBJECT, lead);
-    if (security < 0 && offer < 0) return "NONE";
-    return offer >= 0 && (security < 0 || offer < security) ? "OFFER" : "SECURITY";
-  }
-  const security = lastIndexOf(SECURITY_SUBJECT, lead);
-  const offer = lastIndexOf(OFFER_SUBJECT, lead);
-  if (security < 0 && offer < 0) return "NONE";
-  return security > offer ? "SECURITY" : "OFFER";
-}
-
-// How far back a sentence is looked for. Only a bound on the work done: a
-// sentence is read from its own start ("The bid security shall be issued by a
-// reputable bank acceptable to the employer and shall remain valid for 120
-// days" names the security over 80 characters before the figure).
+// How far back a sentence is looked for. Only a bound on the work done.
 const MAX_SENTENCE = 1_000;
 
 /**
- * True when the validity period matched at `index` (`length` characters) in
- * `text` belongs to a security, guarantee, bond, insurance or warranty rather
- * than to the offer. The subject named nearest before the figure, within its
- * own sentence, decides.
+ * True only when the validity period matched at `index` (`length` characters)
+ * in `text` is positively the offer's (see the rules above). A security's,
+ * guarantee's or bond's validity, and any attribution that is not clear, is
+ * not.
  */
-export function validityBelongsToSecurity(text: string, index: number, length: number): boolean {
+export function isOfferValidity(text: string, index: number, length: number): boolean {
   const start = Math.max(0, index - MAX_SENTENCE);
   const window = text.slice(start, index + length);
   // A sentence end is recognised by what follows it, so look into the match.
   const ends = sentenceEnds(window).filter((end) => end <= index - start);
   const sentenceStart = Math.max(0, ...ends);
-  const lead = window.slice(sentenceStart);
-  const coordinated = COORDINATED_PREDICATE.test(text.slice(Math.max(start + sentenceStart, index - 40), index));
-  const subject = subjectOf(lead, coordinated);
-  if (subject !== "NONE" || !PRONOUN_OPENING.test(lead)) return subject === "SECURITY";
-  // A pronoun-led sentence with no subject of its own: the previous sentence's.
-  const previousStart = Math.max(0, ...ends.filter((end) => end < sentenceStart));
-  return subjectOf(window.slice(previousStart, sentenceStart), false) === "SECURITY";
+  const sentence = window.slice(sentenceStart);
+  const before = window.slice(sentenceStart, index - start);
+  const match = text.slice(index, index + length);
+
+  // The offer named on the validity itself.
+  if (OFFER_LABEL_IN_MATCH.test(match) || OFFER_LABEL_BEFORE.test(before) || OFFER_SUBJECT_BEFORE.test(before)) return true;
+  // A coordinated predicate of a sentence whose subject is the offer.
+  if (COORDINATED_PREDICATE.test(before) && OFFER_OPENING.test(sentence)) return true;
+  // Otherwise only a sentence that names no security (nor, when it opens with
+  // a pronoun, does the sentence before it).
+  if (SECURITY_WORD.test(sentence)) return false;
+  if (PRONOUN_OPENING.test(sentence)) {
+    const previousStart = Math.max(0, ...ends.filter((end) => end < sentenceStart));
+    if (SECURITY_WORD.test(window.slice(previousStart, sentenceStart))) return false;
+  }
+  return true;
 }
 
 /** The sentence around `index`, for quoting where a figure came from. */

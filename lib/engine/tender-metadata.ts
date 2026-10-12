@@ -33,7 +33,7 @@ import {
   containsMetadataPlaceholder,
 } from "./metadata-validators";
 import { cutAtNextFieldLabel } from "./tender-field-extractors";
-import { validityBelongsToSecurity } from "./validity-subject";
+import { isOfferValidity } from "./validity-subject";
 
 export type TenderMetadataDraft = {
   title: string;
@@ -463,7 +463,7 @@ function inferValidityDays(text: string): number | null {
     /valid(?:ity)?\s+for\s+(\d{1,3})\s*(?:calendar\s+)?days/gi,
   ]) {
     for (const match of text.matchAll(pattern)) {
-      if (validityBelongsToSecurity(text, match.index!, match[0].length)) continue;
+      if (!isOfferValidity(text, match.index!, match[0].length)) continue;
       const n = Number(match[1]);
       if (Number.isFinite(n) && n > 0 && n <= 730) return n;
     }

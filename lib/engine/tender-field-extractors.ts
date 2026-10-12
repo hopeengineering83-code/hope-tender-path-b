@@ -1,6 +1,6 @@
 import { findStatedDeadline, isSubmissionEmailContext } from "./submission-source-clauses";
 import { nonClientEntityLabelPattern, canonicalizeCountry, containsMetadataPlaceholder, isValidReferenceNumber } from "./metadata-validators";
-import { validityBelongsToSecurity } from "./validity-subject";
+import { isOfferValidity } from "./validity-subject";
 
 // Deterministic, source-grounded extractors for tender-metadata scalar fields.
 export type ExtractedField<T> = {
@@ -243,7 +243,7 @@ export function extractValidityDays(input: ExtractorInput): ExtractedFieldOrMiss
     const text = (file?.extractedText ?? "").toString();
     // The offer's validity only: a bid security's, guarantee's or bond's
     // validity is skipped and the search goes on (validity-subject.ts).
-    const offer = (re: RegExp) => [...text.matchAll(re)].find((m) => !validityBelongsToSecurity(text, m.index!, m[0].length));
+    const offer = (re: RegExp) => [...text.matchAll(re)].find((m) => isOfferValidity(text, m.index!, m[0].length));
     const m = offer(/(?:validity|valid)\s*(?:period|for)?\s*[:\-]?\s*(\d{2,3})\s*days/gi);
     if (m) {
         cands.push({ found: true, value: parseInt(m[1], 10), sourceQuote: captureAround(text, m.index!, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index!, file?.totalPages), confidence: "HIGH" });

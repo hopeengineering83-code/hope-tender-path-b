@@ -11,7 +11,7 @@ import { buildOwnerAttachmentChecklist } from "../lib/engine/owner-attachment-ch
 import { extractValidityDays } from "../lib/engine/tender-field-extractors";
 import { inferTenderMetadata } from "../lib/engine/tender-metadata";
 import { estimateTenderPrice } from "../lib/engine/pricing-intelligence";
-import { validityBelongsToSecurity } from "../lib/engine/validity-subject";
+import { isOfferValidity } from "../lib/engine/validity-subject";
 
 const CERTIFICATES = "Professional licences and certificates of the proposed experts";
 const vault = (id: string, category: string, originalFileName: string): AnnexVaultDocument => ({
@@ -74,7 +74,8 @@ describe("1. a separately stored certificate counts for the selected expert", ()
     assert.ok(expertFiledUnder("Jose_Munoz_cert.pdf", ["Dr. José Muñoz"], []), "accents and titles");
     assert.equal(expertFiledUnder("Abebe_Kebede_Licence.pdf", ["Abebe Kebede"], ["Abebe Kebede", "Eng. Abebe Kebede"]), null, "two of the firm's experts share the name");
     assert.ok(expertFiledUnder("John_Doe_Licence.pdf", ["Dr. John Doe, Ph.D."], ["Dr. John Doe, Ph.D."]), "credentials after the name are not part of it");
-    assert.ok(expertFiledUnder("Jane_Roe_Licence.pdf", ["Jane Roe, PE"], ["Jane Roe, PE"]), "PE is a credential");
+    assert.ok(expertFiledUnder("Jane_Roe_Licence.pdf", ["Jane Roe, PE"], ["Jane Roe, PE"]), "PE after a comma is a credential");
+    assert.equal(expertFiledUnder("Chen_Li_Licence.pdf", ["Chen Li Peng"], ["Chen Li Peng"]), null, "a trailing word without a comma is a name part");
     assert.equal(expertFiledUnder("Li_Wang_Licence.pdf", ["Peng Li Wang"], ["Peng Li Wang"]), null, "a name part that looks like a credential is still a name part");
     assert.ok(expertFiledUnder("Peng_Li_Wang_Licence.pdf", ["Peng Li Wang"], ["Peng Li Wang"]));
     assert.equal(expertFiledUnder("Wei_Ming_Licence.pdf", ["Eng Wei Ming"], ["Eng Wei Ming"]), null, "Eng without a full stop is a surname");
@@ -104,6 +105,9 @@ describe("4. the tender's validity is the offer's, never a bid security's", () =
     ["The bid shall include a bid security and remain valid for 120 days.", 120],
     ["Bids must be accompanied by a bid security valid for 120 days and remain valid for 60 days.", 60],
     ["The tender security is required. It shall remain valid for 120 days. Proposals shall remain valid for 60 days.", 60],
+    ["The bid security is required. Its validity: 120 days. Proposal validity: 90 days.", 90],
+    ["If a bid security is required, the bid shall include it and remain valid for 120 days.", null],
+    ["Proposals must be submitted in English. It shall remain valid for 90 days.", 90],
     ["The earnest money deposit shall be valid for 120 days. Bids shall remain valid for 90 days.", 90],
     ["The bid security shall be\nvalid for 120 days after the deadline.", null],
   ];
@@ -139,8 +143,8 @@ describe("4. the tender's validity is the offer's, never a bid security's", () =
   it("the shared rule reads only the sentence the figure is in", () => {
     const text = "The bid security is ETB 50,000. Validity: 90 days.";
     const i = text.indexOf("Validity");
-    assert.equal(validityBelongsToSecurity(text, i, "Validity: 90 days".length), false, "a security in the previous sentence is not this figure's subject");
+    assert.equal(isOfferValidity(text, i, "Validity: 90 days".length), true, "a security in the previous sentence is not this figure's subject");
     const t2 = "The bid security shall be valid for 120 days.";
-    assert.equal(validityBelongsToSecurity(t2, t2.indexOf("valid"), "valid for 120 days".length), true);
+    assert.equal(isOfferValidity(t2, t2.indexOf("valid"), "valid for 120 days".length), false);
   });
 });

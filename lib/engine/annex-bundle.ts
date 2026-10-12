@@ -91,15 +91,14 @@ const TITLES = new Set(["dr", "mr", "mrs", "ms", "miss", "prof", "engr", "ato"])
 const DOTTED_TITLES = /^\s*(?:(?:w\/ro|eng|engr|arch|ir|dr|mr|mrs|ms|prof|ato)\.\s*)+/i;
 const nameWords = (text: string) => text.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").split(/[^a-z0-9]+/).filter(Boolean);
 
-// Credentials stored after a name ("Dr. John Doe, Ph.D.") are not part of
-// it. Only unambiguous ones: "Ma" or "Ba" can be a surname.
-const CREDENTIALS = new Set(["phd", "msc", "bsc", "mba", "meng", "beng", "pe", "peng", "ceng", "pmp", "frics", "mice", "jr", "sr", "esq"]);
-// Titles are dropped only from the front and credentials only from the end:
-// "Peng Li Wang" keeps "peng"; "Dr. John Doe, Ph.D." is John Doe.
+// Titles are dropped only from the front of a name. Credentials are part of a
+// stored name only after a comma ("Dr. John Doe, Ph.D.", "Jane Roe, PE"): a
+// word without one is a name part, however much it looks like a credential
+// ("Peng Li Wang", "Chen Li Peng").
 const nameParts = (fullName: string) => {
-  const words = nameWords(fullName.replace(DOTTED_TITLES, "").replace(/\.(?=[A-Za-z])/g, ""));
+  const name = fullName.split(",")[0] ?? "";
+  const words = nameWords(name.replace(DOTTED_TITLES, ""));
   while (words.length > 0 && TITLES.has(words[0]!)) words.shift();
-  while (words.length > 0 && CREDENTIALS.has(words[words.length - 1]!)) words.pop();
   return words.filter((word) => word.length >= 2);
 };
 
