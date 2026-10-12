@@ -134,6 +134,35 @@ describe("the four integration follow-ups — real PostgreSQL", () => {
     assert.equal(await bcrypt.compare("New-password-5678", (await prisma.user.findUniqueOrThrow({ where: { id: user.id } })).passwordHash), true);
   });
 
+  it("2e. a reset racing a deactivation never deadlocks: both finish, and the account ends deactivated", async () => {
+    const { POST: reset } = await import("../app/api/auth/reset-password/route");
+    const { DELETE } = await import("../app/api/users/[id]/route");
+    for (let round = 0; round < 6; round += 1) {
+      const user = await newUser(`followup-race-${round}`);
+      // A consumed earlier link as well, so both sides touch several token rows.
+      const spent = await issueToken(user.id);
+      await prisma.passwordResetToken.update({ where: { tokenHash: hashResetToken(spent) }, data: { consumedAt: new Date() } });
+      const raw = await issueToken(user.id);
+      const [resetRes, deleteRes] = await Promise.all([
+        reset(post("/api/auth/reset-password", { token: raw, password: "New-password-5678" })),
+        DELETE(new Request(`http://localhost/api/users/${user.id}`, { method: "DELETE" }), { params: Promise.resolve({ id: user.id }) }),
+      ]);
+      assert.ok([200, 400].includes(resetRes.status), `reset answered ${resetRes.status}`);
+      assert.equal(deleteRes.status, 200, "deactivation is never the deadlock victim");
+      const after = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+      assert.ok(after.deletedAt, "the account is deactivated");
+      assert.equal(await prisma.passwordResetToken.count({ where: { userId: user.id, consumedAt: null } }), 0, "no usable link survives");
+    }
+  });
+
+  it("2f. the reset locks the account before its token (deactivation's order)", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("lib/secure-password-reset.ts", "utf8");
+    const userLock = src.indexOf('FROM "User" WHERE "id" = ${holder[0].userId} FOR UPDATE');
+    const tokenLock = src.indexOf("WHERE \"tokenHash\" = ${tokenHash}\n        FOR UPDATE");
+    assert.ok(userLock > -1 && tokenLock > -1 && userLock < tokenLock, "user row first, then the token");
+  });
+
   it("3. a file whose deletion is pending is not in the extraction-quality report", async () => {
     const tender = await prisma.tender.create({
       data: {

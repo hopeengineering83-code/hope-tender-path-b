@@ -66,6 +66,14 @@ export async function loadAnnexBundlePlan(tenderId: string, userId: string, db: 
     select: VAULT_SELECT,
     orderBy: { createdAt: "asc" },
   });
+  // Every expert of the firm (deleted ones too): a certificate is bound to a
+  // selected expert by name only when no other expert fits its file name as
+  // well. If they cannot be read, nothing is bound by name.
+  const companyExpertNames: string[] | undefined = typeof db.expert?.findMany === "function"
+    ? await db.expert.findMany({ where: { company: { userId } }, select: { fullName: true } })
+      .then((rows: Array<{ fullName: string }>) => rows.map((row) => row.fullName))
+      .catch(() => undefined)
+    : undefined;
   const byId = new Map<string, any>(vault.map((doc: any) => [doc.id, doc]));
   const plan = planAnnexBundle({
     combinedFileName,
@@ -74,6 +82,7 @@ export async function loadAnnexBundlePlan(tenderId: string, userId: string, db: 
     selectedExpertSourceDocumentIds: tender.expertMatches.map((m: any) => m.expert?.sourceDocumentId).filter(Boolean),
     selectedProjectSourceDocumentIds: tender.projectMatches.map((m: any) => m.project?.sourceDocumentId).filter(Boolean),
     selectedExpertNames: tender.expertMatches.map((m: any) => m.expert?.fullName).filter(Boolean),
+    companyExpertNames,
   });
   const loadOriginal = async (doc: AnnexVaultDocument): Promise<Buffer | null> => {
     const row = byId.get(doc.id);

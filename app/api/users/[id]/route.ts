@@ -172,7 +172,9 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
       },
     }),
     prisma.session.deleteMany({ where: { userId: id } }),
-    // Outstanding password-reset links die with the account's sessions.
+    // Outstanding password-reset links die with the account's sessions. The
+    // user row is locked first, as handleSecurePasswordReset locks it before
+    // its token, so the two never deadlock.
     prisma.passwordResetToken.deleteMany({ where: { userId: id } }),
   ]);
 

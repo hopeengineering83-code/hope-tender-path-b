@@ -30,7 +30,7 @@
 
 import { SEED_BENCHMARKS, BENCHMARK_STALE_AFTER_MONTHS, benchmarkAgeMonths, classifyRole, findBenchmark, marketOf, seniorityOf, type BenchmarkCategory, type BenchmarkSeniority, type PricingBenchmark } from "./pricing-benchmarks";
 import { CURRENCY_TOKEN_ALTERNATION, resolveCurrencyToken } from "./currency-reference";
-import { validityBelongsToSecurity } from "./validity-subject";
+import { sentenceAround, validityBelongsToSecurity } from "./validity-subject";
 
 export type PricingConfidence = "HIGH" | "MEDIUM" | "LOW" | "NONE";
 export type PricingScenarioId = "AGGRESSIVE" | "BALANCED" | "CONSERVATIVE";
@@ -354,11 +354,12 @@ function statedWithholding(text: string): { pct: number; quote: string } | null 
 // The financial proposal promises the OFFER's validity, never a bid
 // security's or guarantee's (validity-subject.ts).
 function statedValidityDays(text: string): { days: number; quote: string } | null {
-  for (const s of moneyClauses(text)) {
-    for (const m of s.matchAll(/\bvalid(?:ity)?\b[^.;]{0,60}?\b(\d{2,3})\s*\)?\s*(?:\(\s*\d+\s*\)\s*)?(?:calendar\s+)?days\b/gi)) {
-      if (validityBelongsToSecurity(s, m.index!, m[0].length)) continue;
-      return { days: Number(m[1]), quote: snippet(s) };
-    }
+  // The whole text, not clause by clause: a security named before a semicolon
+  // still owns the validity after it.
+  const flat = text.replace(/\s+/g, " ");
+  for (const m of flat.matchAll(/\bvalid(?:ity)?\b[^.;]{0,60}?\b(\d{2,3})\s*\)?\s*(?:\(\s*\d+\s*\)\s*)?(?:calendar\s+)?days\b/gi)) {
+    if (validityBelongsToSecurity(flat, m.index!, m[0].length)) continue;
+    return { days: Number(m[1]), quote: snippet(sentenceAround(flat, m.index!, m[0].length)) };
   }
   return null;
 }

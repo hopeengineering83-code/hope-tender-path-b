@@ -75,6 +75,8 @@ export type ChecklistInput = {
   selectedProjectSourceDocumentIds: string[];
   /** Full names of the selected experts (a certificate filed under one is theirs). */
   selectedExpertNames?: string[];
+  /** Full names of every expert of the firm (see AnnexBundleInput.companyExpertNames). */
+  companyExpertNames?: string[];
   /** Rows awaiting a tender-issued original (REPLACE_WITH_ORIGINAL), pricing excluded. */
   formsAwaitingOriginal: Array<{ fileName: string; documentType?: string | null }>;
   /** Content hashes bound into the delivered combined file (its marker). */
@@ -303,6 +305,14 @@ export async function loadOwnerAttachmentChecklist(tenderId: string, userId: str
     select: { id: true, originalFileName: true, category: true, mimeType: true, contentMimeType: true, detectedFormat: true, integrityStatus: true, contentSha256: true },
     orderBy: { createdAt: "asc" },
   }).catch(() => []);
+  // Every expert of the firm (deleted ones too): a certificate is bound to a
+  // selected expert by name only when no other expert fits its file name as
+  // well. If they cannot be read, nothing is bound by name.
+  const companyExpertNames: string[] | undefined = typeof db.expert?.findMany === "function"
+    ? await db.expert.findMany({ where: { company: { userId } }, select: { fullName: true } })
+      .then((rows: Array<{ fullName: string }>) => rows.map((row) => row.fullName))
+      .catch(() => undefined)
+    : undefined;
   const declaredFileNames = parseStringArray(tender.exactFileNaming);
   const combined = combinedSubmissionFileName(tender.requirements, declaredFileNames);
   let boundHashes: string[] = [];
@@ -317,6 +327,7 @@ export async function loadOwnerAttachmentChecklist(tenderId: string, userId: str
     selectedExpertSourceDocumentIds: tender.expertMatches.map((m: any) => m.expert?.sourceDocumentId).filter(Boolean),
     selectedProjectSourceDocumentIds: tender.projectMatches.map((m: any) => m.project?.sourceDocumentId).filter(Boolean),
     selectedExpertNames: tender.expertMatches.map((m: any) => m.expert?.fullName).filter(Boolean),
+    companyExpertNames,
     formsAwaitingOriginal: tender.generatedDocuments
       .filter((d: any) => String(d.reviewStatus ?? "").toUpperCase() === "REPLACE_WITH_ORIGINAL" && !isAwaitingOwnerPricing(d))
       .map((d: any) => ({ fileName: d.exactFileName ?? d.name, documentType: d.documentType })),

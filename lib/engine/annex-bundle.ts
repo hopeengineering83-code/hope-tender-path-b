@@ -56,6 +56,12 @@ export type AnnexBundleInput = {
    * document is bound to the expert by the name the owner filed it under.
    */
   selectedExpertNames?: readonly string[];
+  /**
+   * Full names of every expert of the firm, so a file is never bound when
+   * another expert's name fits it as well. Without it no certificate is bound
+   * by name at all.
+   */
+  companyExpertNames?: readonly string[];
 };
 
 export type AnnexBundlePart = { kind: string; documents: AnnexVaultDocument[] };
@@ -82,17 +88,32 @@ const name = (doc: AnnexVaultDocument) => doc.originalFileName.toLowerCase();
 const HONORIFICS = new Set(["dr", "eng", "engr", "mr", "mrs", "ms", "miss", "prof", "ato", "wro", "arch", "ir"]);
 const nameWords = (text: string) => text.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").split(/[^a-z0-9]+/).filter(Boolean);
 
+const nameParts = (fullName: string) => nameWords(fullName).filter((word) => word.length >= 2 && !HONORIFICS.has(word));
+
 /**
- * True when a file the owner named carries an expert's name: the first name
- * and at least one other part of it, as whole words ("Abebe_Kebede_PE_Licence.pdf"
- * for Eng. Abebe Kebede Tessema). A one-word name binds nothing — too easily
- * someone else's.
+ * The selected expert a file the owner named is filed under, or null.
+ *
+ * Every part of the expert's name must appear in the file name as a whole
+ * word (titles and accents aside), and no other expert of the firm may fit
+ * the file as well: "Mohammed_Ahmed_Hassan_Licence.pdf" is not Mohammed Ahmed
+ * Ali's, and when the firm also has a Mohammed Ahmed Hassan it is not
+ * Mohammed Ahmed's either — the fullest name that fits wins, and a tie binds
+ * nothing. A one-word name binds nothing. A licence bound to the wrong person
+ * would be submitted as evidence for the wrong expert, so every doubt leaves
+ * the original to the owner.
  */
-export function fileNamedForExpert(fileName: string, fullName: string): boolean {
-  const parts = nameWords(fullName).filter((word) => word.length >= 2 && !HONORIFICS.has(word));
-  if (parts.length < 2) return false;
+export function expertFiledUnder(fileName: string, selectedExperts: readonly string[], companyExperts: readonly string[] = []): string | null {
   const words = new Set(nameWords(fileName.replace(/\.[a-z0-9]{1,5}$/i, "")));
-  return words.has(parts[0]!) && parts.slice(1).some((word) => words.has(word));
+  const selected = new Set(selectedExperts.map((name) => nameParts(name).join(" ")));
+  const fits = new Map<string, number>();
+  for (const name of [...selectedExperts, ...companyExperts]) {
+    const parts = nameParts(name);
+    if (parts.length >= 2 && parts.every((part) => words.has(part))) fits.set(parts.join(" "), parts.length);
+  }
+  if (fits.size === 0) return null;
+  const fullest = Math.max(...fits.values());
+  const best = [...fits].filter(([, length]) => length === fullest).map(([key]) => key);
+  return best.length === 1 && selected.has(best[0]!) ? best[0]! : null;
 }
 
 // Keyed by the names tenderAnnexPolicy returns (annex-policy.ts ANNEX_KINDS).
@@ -128,8 +149,8 @@ const KIND_RULES: Record<string, KindRule> = {
     // meant a separately stored certificate could never answer this kind.
     select: (doc, input) => doc.category === "CERTIFICATION"
       && (input.selectedExpertSourceDocumentIds.includes(doc.id)
-        || (input.selectedExpertNames ?? []).some((expert) => fileNamedForExpert(doc.originalFileName, expert))),
-    missingReason: "no verified professional licence / certificate PDF linked to the selected experts (file it under the expert's name)",
+        || (input.companyExpertNames !== undefined && expertFiledUnder(doc.originalFileName, input.selectedExpertNames ?? [], input.companyExpertNames) !== null)),
+    missingReason: "no verified professional licence / certificate PDF linked to the selected experts (file it under the expert's full name)",
   },
   "Client reference and completion letters for the cited projects": {
     select: (doc, input) => input.selectedProjectSourceDocumentIds.includes(doc.id),
@@ -153,7 +174,7 @@ export function isVerifiedPdf(doc: AnnexVaultDocument): boolean {
 }
 
 /** The Vault documents that answer one annex kind (verified or not). Empty for a kind with no rule. */
-export function vaultCandidatesForKind(kind: string, input: Pick<AnnexBundleInput, "vaultDocuments" | "selectedExpertSourceDocumentIds" | "selectedProjectSourceDocumentIds" | "selectedExpertNames">): AnnexVaultDocument[] {
+export function vaultCandidatesForKind(kind: string, input: Pick<AnnexBundleInput, "vaultDocuments" | "selectedExpertSourceDocumentIds" | "selectedProjectSourceDocumentIds" | "selectedExpertNames" | "companyExpertNames">): AnnexVaultDocument[] {
   const rule = KIND_RULES[kind];
   if (!rule) return [];
   return input.vaultDocuments.filter((doc) => rule.select(doc, input as AnnexBundleInput));
