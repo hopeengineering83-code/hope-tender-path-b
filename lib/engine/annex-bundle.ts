@@ -90,7 +90,7 @@ const nameWords = (text: string) => text.toLowerCase().normalize("NFKD").replace
 
 // Credentials stored after a name ("Dr. John Doe, Ph.D.") are not part of
 // it. Only unambiguous ones: "Ma" or "Ba" can be a surname.
-const CREDENTIALS = new Set(["phd", "msc", "bsc", "mba", "meng", "beng", "peng", "ceng", "pmp", "frics", "mice", "jr", "sr", "esq"]);
+const CREDENTIALS = new Set(["phd", "msc", "bsc", "mba", "meng", "beng", "pe", "peng", "ceng", "pmp", "frics", "mice", "jr", "sr", "esq"]);
 const nameParts = (fullName: string) => nameWords(fullName.replace(/\.(?=[A-Za-z])/g, ""))
   .filter((word) => word.length >= 2 && !HONORIFICS.has(word) && !CREDENTIALS.has(word));
 

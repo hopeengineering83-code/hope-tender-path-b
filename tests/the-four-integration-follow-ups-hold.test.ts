@@ -74,6 +74,7 @@ describe("1. a separately stored certificate counts for the selected expert", ()
     assert.ok(expertFiledUnder("Jose_Munoz_cert.pdf", ["Dr. José Muñoz"], []), "accents and titles");
     assert.equal(expertFiledUnder("Abebe_Kebede_Licence.pdf", ["Abebe Kebede"], ["Abebe Kebede", "Eng. Abebe Kebede"]), null, "two of the firm's experts share the name");
     assert.ok(expertFiledUnder("John_Doe_Licence.pdf", ["Dr. John Doe, Ph.D."], ["Dr. John Doe, Ph.D."]), "credentials after the name are not part of it");
+    assert.ok(expertFiledUnder("Jane_Roe_Licence.pdf", ["Jane Roe, PE"], ["Jane Roe, PE"]), "PE is a credential");
     assert.ok(expertFiledUnder("Ma_Jun_Licence.pdf", ["Ma Jun"], ["Ma Jun"]), "a surname that looks like a degree is kept");
   });
 
