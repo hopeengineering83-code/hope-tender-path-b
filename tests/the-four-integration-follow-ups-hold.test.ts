@@ -101,6 +101,7 @@ describe("4. the tender's validity is the offer's, never a bid security's", () =
     ["EMD validity: 120 days. Proposal validity: 90 days.", 90],
     ["The bid security shall be issued by U.S. Bank and shall remain valid for 120 days. Proposals shall remain valid for 90 days.", 90],
     ["The bid shall include a bid security and shall remain valid for 120 days.", 120],
+    ["The bid shall include a bid security and remain valid for 120 days.", 120],
     ["The earnest money deposit shall be valid for 120 days. Bids shall remain valid for 90 days.", 90],
     ["The bid security shall be\nvalid for 120 days after the deadline.", null],
   ];

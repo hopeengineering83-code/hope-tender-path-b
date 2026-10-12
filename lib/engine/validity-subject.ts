@@ -32,7 +32,7 @@ const lastIndexOf = (re: RegExp, text: string) => Math.max(-1, ...[...text.match
 // A security that is the object of an earlier verb, with the validity in a
 // clause coordinated after it ("The bid shall include a bid security and shall
 // remain valid for 120 days"), is not the subject of that validity.
-const COORDINATED_VALIDITY = /^[\s,]*and\s+(?:shall|must|will|should|is\s+to|are\s+to)\s+(?:remain\s+|be\s+)?valid\b/i;
+const COORDINATED_VALIDITY = /^[\s,]*and\s+(?:(?:shall|must|will|should|is\s+to|are\s+to)\s+(?:remain\s+|be\s+)?|remain\s+|be\s+)valid\b/i;
 const lastSecuritySubject = (lead: string) => Math.max(-1, ...[...lead.matchAll(SECURITY_SUBJECT)]
   .filter((m) => !COORDINATED_VALIDITY.test(lead.slice(m.index! + m[0].length)))
   .map((m) => m.index!));
