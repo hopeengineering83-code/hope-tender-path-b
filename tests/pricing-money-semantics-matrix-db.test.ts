@@ -100,7 +100,7 @@ describe("tender money keeps its meaning — real PostgreSQL", () => {
     const { estimate, workbook } = await approveAll(tenderId);
     assert.equal(estimate.currency, "KES", estimate.currencyBasis);
     assert.equal(estimate.vatPercent, 0, "no Ethiopian VAT");
-    assert.ok(estimate.benchmarksUsed.every((b) => b.market !== "ET"), "no Ethiopian benchmark prices a Kenyan tender");
+    assert.ok(estimate.benchmarksUsed.every((b) => !b.id.startsWith("seed-et-")), "no Ethiopian benchmark prices a Kenyan tender");
     assert.equal(workbook.currency, "KES");
     const b64 = await buildFinancialProposalDocx({ title: "Financial Proposal", tenderTitle: "Kenya", companyName: "Matrix Consulting PLC", settings: workbook, lines: workbook.lines });
     const { value } = await mammoth.extractRawText({ buffer: Buffer.from(b64, "base64") });
@@ -119,7 +119,8 @@ describe("tender money keeps its meaning — real PostgreSQL", () => {
     assert.equal(estimate.market, "NG");
     const leader = estimate.scenarios[1]!.lines.find((l) => /Team Leader/.test(l.label))!;
     assert.equal(leader.rate, 200_000, `${leader.rateBasis}`);
-    assert.ok(!estimate.benchmarksUsed.some((b) => b.market === "GH"));
+    assert.ok(!estimate.benchmarksUsed.some((b) => /\(GH\)/.test(b.label)), "Ghana's entry is not used");
+    assert.ok(estimate.benchmarksUsed.some((b) => /\(NG\)/.test(b.label)), "Nigeria's entry is");
   });
 
   it("a single combined file with a tender form: the form is placed inside the file, in order", async () => {
