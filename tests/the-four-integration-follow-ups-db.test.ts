@@ -187,6 +187,16 @@ describe("the four integration follow-ups — real PostgreSQL", () => {
     assert.ok(!sent.some((m) => m.to === user.email), "no mail sent");
   });
 
+  it("2h. the deferred reset mail re-checks that its link and account are still live before sending", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("app/api/auth/forgot-password/route.ts", "utf8");
+    const task = src.slice(src.indexOf("afterResponse(async () => {"));
+    const check = task.indexOf("where: { id: tokenId, consumedAt: null, user: { deletedAt: null } }");
+    const send = task.indexOf("sendEmail(");
+    assert.ok(check > -1 && send > -1 && check < send, "the liveness check precedes the send");
+    assert.match(task.slice(check, send), /if \(!live\) return;/);
+  });
+
   it("3. a file whose deletion is pending is not in the extraction-quality report", async () => {
     const tender = await prisma.tender.create({
       data: {

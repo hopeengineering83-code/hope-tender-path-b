@@ -124,6 +124,13 @@ export async function POST(req: Request) {
 
     const resetUrl = `${baseUrl()}/reset-password?token=${encodeURIComponent(token)}`;
     afterResponse(async () => {
+      // Re-checked at delivery: a deactivation that committed after the token
+      // was issued has deleted it, and its owner is sent nothing.
+      const live = await prisma.passwordResetToken.findFirst({
+        where: { id: tokenId, consumedAt: null, user: { deletedAt: null } },
+        select: { id: true },
+      });
+      if (!live) return;
       const delivery = await sendEmail({
         to: user.email,
         subject: "Reset your Hope Tender password",

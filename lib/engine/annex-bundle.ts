@@ -88,7 +88,11 @@ const name = (doc: AnnexVaultDocument) => doc.originalFileName.toLowerCase();
 const HONORIFICS = new Set(["dr", "eng", "engr", "mr", "mrs", "ms", "miss", "prof", "ato", "wro", "arch", "ir"]);
 const nameWords = (text: string) => text.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").split(/[^a-z0-9]+/).filter(Boolean);
 
-const nameParts = (fullName: string) => nameWords(fullName).filter((word) => word.length >= 2 && !HONORIFICS.has(word));
+// Credentials stored after a name ("Dr. John Doe, Ph.D.") are not part of
+// it. Only unambiguous ones: "Ma" or "Ba" can be a surname.
+const CREDENTIALS = new Set(["phd", "msc", "bsc", "mba", "meng", "beng", "peng", "ceng", "pmp", "frics", "mice", "jr", "sr", "esq"]);
+const nameParts = (fullName: string) => nameWords(fullName.replace(/\.(?=[A-Za-z])/g, ""))
+  .filter((word) => word.length >= 2 && !HONORIFICS.has(word) && !CREDENTIALS.has(word));
 
 /**
  * The selected expert a file the owner named is filed under, or null.
