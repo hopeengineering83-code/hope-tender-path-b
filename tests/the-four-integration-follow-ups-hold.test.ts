@@ -82,6 +82,19 @@ describe("1. a separately stored certificate counts for the selected expert", ()
     assert.ok(expertFiledUnder("Ma_Jun_Licence.pdf", ["Ma Jun"], ["Ma Jun"]), "a surname that looks like a degree is kept");
   });
 
+  it("a surname-first name keeps its given names; credentials and suffixes after a comma are not name parts", () => {
+    const firm = ["Doe, John", "Kebede, Abebe", "Kebede, Girma"];
+    assert.ok(expertFiledUnder("John_Doe_Licence.pdf", ["Doe, John"], firm), "surname-first");
+    assert.equal(expertFiledUnder("Doe_Licence.pdf", ["Doe, John"], firm), null, "the surname alone is not the expert");
+    assert.ok(expertFiledUnder("Abebe_Kebede_Licence.pdf", ["Kebede, Abebe"], firm));
+    assert.equal(expertFiledUnder("Girma_Kebede_Licence.pdf", ["Kebede, Abebe"], firm), null, "a sibling's file");
+    assert.ok(expertFiledUnder("John_Doe_Licence.pdf", ["Doe, John, PE"], ["Doe, John, PE"]), "given names, then a credential");
+    assert.ok(expertFiledUnder("John_Doe_Licence.pdf", ["Doe, John Jr."], ["Doe, John Jr."]), "a suffix is not a name part");
+    assert.ok(expertFiledUnder("John_Doe_Licence.pdf", ["Doe, Dr. John"], ["Doe, Dr. John"]), "a title before the given names");
+    assert.ok(expertFiledUnder("John_Doe_Licence.pdf", ["John Doe, MSc"], ["John Doe, MSc"]), "MSc is a credential");
+    assert.equal(expertFiledUnder("Doe_Licence.pdf", ["Doe, JOHN"], ["Doe, JOHN"]), null, "a segment not written as a name is never read as one, and the rest is too short");
+  });
+
   it("without the firm's expert list nothing is bound by name", () => {
     const plan = planAnnexBundle({ ...input, companyExpertNames: undefined });
     assert.ok(plan.missing.some((m) => m.kind === CERTIFICATES));
@@ -110,6 +123,10 @@ describe("4. the tender's validity is the offer's, never a bid security's", () =
     ["Proposals must be submitted in English. It shall remain valid for 90 days.", 90],
     ["The earnest money deposit shall be valid for 120 days. Bids shall remain valid for 90 days.", 90],
     ["The bid security shall be\nvalid for 120 days after the deadline.", null],
+    ["The bid security shall be issued by 31 Jan. 2027 and remain valid for 120 days. Proposals shall remain valid for 90 days.", 90],
+    ["The bid security, issued on 3 Sept. 2026, shall remain valid for 120 days.", null],
+    ["The bid security shall be valid for 120 days. 2.1 Validity: 90 days.", 90],
+    ["The bid security shall be valid for 120 days. 18. Bids shall remain valid for 60 days.", 60],
   ];
 
   it("the tender-detail field extractor", () => {

@@ -30,11 +30,19 @@ const COORDINATED_PREDICATE = /\band\s+(?:(?:shall|must|will|should|is\s+to|are\
 const PRONOUN_OPENING = /^\s*["“(]?(?:its?|this|that|such|these|those|they|their|the\s+same)\b/i;
 
 // Only a full stop, exclamation or question mark followed by the start of a
-// new sentence ends one — never one closing a common abbreviation, an initial
-// or a dotted initialism ("Ltd.", "No.", "J.", "U.S."). A semicolon does not,
-// and neither does a line break: extracted PDF text wraps mid-sentence.
-const ABBREVIATIONS = new Set(["ltd", "co", "inc", "plc", "corp", "llc", "no", "nos", "art", "sec", "cl", "para", "e.g", "i.e", "etc", "mr", "mrs", "ms", "dr", "eng", "st", "vs", "approx"]);
-const SENTENCE_END_CANDIDATE = /([A-Za-z.]*)[.!?](?=\s+["“(]?[A-Z0-9])/g;
+// new sentence ends one — never one closing a common abbreviation, a month, an
+// initial or a dotted initialism ("Ltd.", "No.", "Jan.", "J.", "U.S."). A new
+// sentence starts with a capital, or with a clause number before one ("2.1
+// Validity"); a bare figure ("31 Jan. 2027 and …") continues the sentence. A
+// semicolon does not end one, and neither does a line break: extracted PDF
+// text wraps mid-sentence. Every doubt keeps the sentence whole, so a
+// security named in it is never cut off from its validity.
+const ABBREVIATIONS = new Set([
+  "ltd", "co", "inc", "plc", "corp", "llc", "no", "nos", "art", "sec", "cl", "para", "e.g", "i.e", "etc",
+  "mr", "mrs", "ms", "dr", "eng", "st", "vs", "approx",
+  "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec",
+]);
+const SENTENCE_END_CANDIDATE = /([A-Za-z.]*)[.!?](?=\s+(?:\d+(?:\.\d+)*[.)]?\s+)?["“(]?[A-Z])/g;
 const isAbbreviation = (word: string) => {
   const w = word.toLowerCase().replace(/^\.+/, "");
   return ABBREVIATIONS.has(w) || /^[a-z]$/.test(w) || /^(?:[a-z]\.)+[a-z]$/.test(w);
@@ -79,6 +87,7 @@ export function isOfferValidity(text: string, index: number, length: number): bo
 /** The sentence around `index`, for quoting where a figure came from. */
 export function sentenceAround(text: string, index: number, length: number): string {
   const start = Math.max(0, ...sentenceEnds(text.slice(0, index + length)).filter((end) => end <= index));
-  const end = /[.!?](?=\s|$)/.exec(text.slice(index + length));
-  return text.slice(start, end ? index + length + end.index + 1 : text.length).trim();
+  // The same sentence ends as above ("Jan. 2027" does not end one).
+  const end = sentenceEnds(text.slice(index + length))[0];
+  return text.slice(start, end === undefined ? text.length : index + length + end).trim();
 }

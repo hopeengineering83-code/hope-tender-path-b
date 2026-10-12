@@ -94,11 +94,26 @@ const nameWords = (text: string) => text.toLowerCase().normalize("NFKD").replace
 // Titles are dropped only from the front of a name. Credentials are part of a
 // stored name only after a comma ("Dr. John Doe, Ph.D.", "Jane Roe, PE"): a
 // word without one is a name part, however much it looks like a credential
-// ("Peng Li Wang", "Chen Li Peng").
-const nameParts = (fullName: string) => {
-  const name = fullName.split(",")[0] ?? "";
-  const words = nameWords(name.replace(DOTTED_TITLES, ""));
+// ("Peng Li Wang", "Chen Li Peng"). After a comma come either credentials or,
+// in a surname-first name, the given names ("Doe, John"). A segment is given
+// names only when every word in it is written as one — a capital, then small
+// letters, no full stop ("John", not "PE", "PhD", "MSc" or "Ph.D."); any other
+// segment is credentials, and a generational suffix ("Jr.") is neither.
+const SUFFIXES = new Set(["jr", "sr", "ii", "iii", "iv"]);
+const writtenAsName = (word: string) => /^\p{Lu}\p{Ll}+(?:[-'’]\p{Lu}?\p{Ll}+)*$/u.test(word);
+const withoutTitles = (segment: string) => {
+  const words = nameWords(segment.replace(DOTTED_TITLES, ""));
   while (words.length > 0 && TITLES.has(words[0]!)) words.shift();
+  return words;
+};
+const nameParts = (fullName: string) => {
+  const [name = "", ...after] = fullName.split(",");
+  const words = withoutTitles(name);
+  for (const segment of after) {
+    const written = segment.replace(DOTTED_TITLES, "").trim().split(/\s+/)
+      .filter((word) => word && !SUFFIXES.has(word.toLowerCase().replace(/\.$/, "")));
+    if (written.length > 0 && written.every(writtenAsName)) words.push(...withoutTitles(written.join(" ")));
+  }
   return words.filter((word) => word.length >= 2);
 };
 
