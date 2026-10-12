@@ -29,13 +29,35 @@ const sentenceEnds = (text: string): number[] => [...text.matchAll(SENTENCE_END_
 
 const lastIndexOf = (re: RegExp, text: string) => Math.max(-1, ...[...text.matchAll(re)].map((m) => m.index!));
 
-// A security that is the object of an earlier verb, with the validity in a
-// clause coordinated after it ("The bid shall include a bid security and shall
-// remain valid for 120 days"), is not the subject of that validity.
-const COORDINATED_VALIDITY = /^[\s,]*and\s+(?:(?:shall|must|will|should|is\s+to|are\s+to)\s+(?:remain\s+|be\s+)?|remain\s+|be\s+)valid\b/i;
-const lastSecuritySubject = (lead: string) => Math.max(-1, ...[...lead.matchAll(SECURITY_SUBJECT)]
-  .filter((m) => !COORDINATED_VALIDITY.test(lead.slice(m.index! + m[0].length)))
-  .map((m) => m.index!));
+const firstIndexOf = (re: RegExp, text: string) => {
+  const hit = [...text.matchAll(re)][0];
+  return hit ? hit.index! : -1;
+};
+
+// A validity in a predicate coordinated after another one ("The bid shall
+// include a bid security and (shall) remain valid for 120 days"; "Bids must be
+// accompanied by a bid security valid for 120 days and remain valid for 60
+// days") belongs to the sentence's subject — the first one it names — not to
+// whatever noun the earlier predicate mentioned last.
+const COORDINATED_PREDICATE = /\band\s+(?:(?:shall|must|will|should|is\s+to|are\s+to)\s+(?:remain\s+|be\s+)?|remain\s+|be\s+)$/i;
+// A sentence that opens with a pronoun ("It shall remain valid for 120 days")
+// takes its subject from the sentence before ("The tender security is
+// required.").
+const PRONOUN_OPENING = /^\s*["“(]?(?:it|this|that|such|these|they|the\s+same)\b/i;
+
+type Subject = "SECURITY" | "OFFER" | "NONE";
+function subjectOf(lead: string, coordinated: boolean): Subject {
+  if (coordinated) {
+    const security = firstIndexOf(SECURITY_SUBJECT, lead);
+    const offer = firstIndexOf(OFFER_SUBJECT, lead);
+    if (security < 0 && offer < 0) return "NONE";
+    return offer >= 0 && (security < 0 || offer < security) ? "OFFER" : "SECURITY";
+  }
+  const security = lastIndexOf(SECURITY_SUBJECT, lead);
+  const offer = lastIndexOf(OFFER_SUBJECT, lead);
+  if (security < 0 && offer < 0) return "NONE";
+  return security > offer ? "SECURITY" : "OFFER";
+}
 
 // How far back a sentence is looked for. Only a bound on the work done: a
 // sentence is read from its own start ("The bid security shall be issued by a
@@ -53,9 +75,15 @@ export function validityBelongsToSecurity(text: string, index: number, length: n
   const start = Math.max(0, index - MAX_SENTENCE);
   const window = text.slice(start, index + length);
   // A sentence end is recognised by what follows it, so look into the match.
-  const sentenceStart = Math.max(0, ...sentenceEnds(window).filter((end) => end <= index - start));
+  const ends = sentenceEnds(window).filter((end) => end <= index - start);
+  const sentenceStart = Math.max(0, ...ends);
   const lead = window.slice(sentenceStart);
-  return lastSecuritySubject(lead) > lastIndexOf(OFFER_SUBJECT, lead);
+  const coordinated = COORDINATED_PREDICATE.test(text.slice(Math.max(start + sentenceStart, index - 40), index));
+  const subject = subjectOf(lead, coordinated);
+  if (subject !== "NONE" || !PRONOUN_OPENING.test(lead)) return subject === "SECURITY";
+  // A pronoun-led sentence with no subject of its own: the previous sentence's.
+  const previousStart = Math.max(0, ...ends.filter((end) => end < sentenceStart));
+  return subjectOf(window.slice(previousStart, sentenceStart), false) === "SECURITY";
 }
 
 /** The sentence around `index`, for quoting where a figure came from. */

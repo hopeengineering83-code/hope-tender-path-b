@@ -97,6 +97,16 @@ export async function POST(req: Request) {
       return NextResponse.json(GENERIC_RESPONSE, { status: 202 });
     }
 
+    // The same comparison on the active-account path: SMTP is deferred until
+    // after the response, so without it an active account answered faster
+    // than an unknown or deactivated one.
+    try {
+      await bcrypt.compare(
+        "dummy-password-for-timing-equalization",
+        "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy",
+      );
+    } catch { /* rate limit is the primary defense */ }
+
     const { token, tokenHash, expiresAt } = generateResetToken();
     const tokenId = randomUUID();
 

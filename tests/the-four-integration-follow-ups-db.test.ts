@@ -197,6 +197,16 @@ describe("the four integration follow-ups — real PostgreSQL", () => {
     assert.match(task.slice(check, send), /if \(!live\) return;/);
   });
 
+  it("2i. an active account's request does the same timing work as an unknown address's", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("app/api/auth/forgot-password/route.ts", "utf8");
+    const unknownBranch = src.indexOf("if (!user || user.deletedAt)");
+    const tokenIssue = src.indexOf("generateResetToken()");
+    const compares = [...src.matchAll(/bcrypt\.compare\(/g)].map((m) => m.index!);
+    assert.ok(compares.some((i) => i > unknownBranch && i < src.indexOf("return NextResponse.json(GENERIC_RESPONSE, { status: 202 });", unknownBranch)), "the unknown/deactivated path compares");
+    assert.ok(compares.some((i) => i > src.indexOf("return NextResponse.json(GENERIC_RESPONSE, { status: 202 });", unknownBranch) && i < tokenIssue), "the active path compares too, before issuing");
+  });
+
   it("3. a file whose deletion is pending is not in the extraction-quality report", async () => {
     const tender = await prisma.tender.create({
       data: {

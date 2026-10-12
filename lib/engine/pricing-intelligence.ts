@@ -739,7 +739,15 @@ export function estimateTenderPrice(input: PricingEvidenceInput): PricingEstimat
   const withholdingBasis = withholding ? `stated by the tender: "${withholding.quote}"` : "not stated by the tender; none shown";
   const validity = statedValidityDays(text);
   const validityDays = validity?.days ?? 90;
-  const validityBasis = validity ? `stated by the tender: "${validity.quote}"` : "the tender states no validity period; 90 days assumed";
+  // A validity the tender states only for its bid security is not the offer's,
+  // and the assumption is then said, not hidden behind "states no validity".
+  const securityOnlyValidity = !validity && /\bvalid(?:ity)?\b[^.;]{0,60}?\b\d{2,3}\s*\)?\s*(?:\(\s*\d+\s*\)\s*)?(?:calendar\s+)?days\b/i.test(text);
+  const validityBasis = validity
+    ? `stated by the tender: "${validity.quote}"`
+    : securityOnlyValidity
+      ? "the tender's validity periods could not be told apart from its bid security's; 90 days assumed — confirm the offer's validity"
+      : "the tender states no validity period; 90 days assumed";
+  if (securityOnlyValidity) lowConfidence.push("Validity: the tender states validity periods, but none could be attributed to the offer rather than its bid security; 90 days is assumed — confirm it before approving.");
 
   // ── Period ─────────────────────────────────────────────────────────────
   const period = statedDurationMonths(text);
