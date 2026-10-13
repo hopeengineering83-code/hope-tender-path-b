@@ -124,9 +124,8 @@ function visibleXmlText(xml: string): string {
     // note below requires; it adds whitespace only.
     .replace(/<\/w:(p|tr|tc)>/g, "\n")
     .replace(/<[^>]+>/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
+    // One pass (see decodeXmlEntities): "&amp;lt;" is the text "&lt;", not "<".
+    .replace(/&(amp|lt|gt);/g, (_match, name: string) => (name === "amp" ? "&" : name === "lt" ? "<" : ">"))
     // Collapse runs of spaces/tabs, and runs of blank lines, without letting
     // either swallow the other.
     .replace(/[^\S\n]+/g, " ")
