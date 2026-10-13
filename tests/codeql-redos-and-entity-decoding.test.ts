@@ -24,14 +24,17 @@ const elapsed = (run: () => unknown) => {
 
 describe("the flagged regexes run in linear time", () => {
   it("a CV title followed by a long run of '()' before a registration number", () => {
-    const cv = `Licence: Civil Engineer${"()".repeat(55)} x EHT/1234`;
-    const ms = elapsed(() => licencesNamedInCv(cv));
-    assert.ok(ms < 500, `took ${ms.toFixed(0)} ms`);
+    for (const run of ["()", "(()", "(())", "((x)"]) {
+      const cv = `Licence: Civil Engineer${run.repeat(Math.floor(110 / run.length))} x EHT/1234`;
+      const ms = elapsed(() => licencesNamedInCv(cv));
+      assert.ok(ms < 500, `${run}: took ${ms.toFixed(0)} ms`);
+    }
   });
 
   it("the professional title is still read", () => {
     assert.deepEqual(licencesNamedInCv("Professional Engineer (PE) Reg. No. EHT/1234"), ["Professional Engineer (PE), Reg. No. EHT/1234"]);
     assert.deepEqual(licencesNamedInCv("Licensed Civil Engineer (Reg. No. CWA/5678)"), ["Licensed Civil Engineer, Reg. No. CWA/5678"]);
+    assert.deepEqual(licencesNamedInCv("Professional Engineer (Grade I (Civil)) Reg No. EHT/1234"), ["Professional Engineer, Reg. No. EHT/1234"], "a nested qualifier");
   });
 
   it("a long Title-Cased name with doubled whitespace in a tender obligation", () => {

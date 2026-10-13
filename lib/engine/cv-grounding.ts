@@ -82,11 +82,11 @@ const REGISTRATION_CONTEXT = /(?:professional\s+reg|reg(?:istration)?\.?\s*(?:no
 const REFERENCE_CONTEXT = /\bref(?:erence)?\.?\s*(?:no\.?)?\s*:?\s*$/i;
 // What may follow the title before the number: punctuation, "Reg. No.", a
 // closed parenthetical, a date, or the "(" a parenthetical number opens with.
-// A ")" is read only as the end of a parenthetical, and a parenthetical holds
-// no "(": with ")" also a lone punctuation mark, "()" parsed two ways and a
-// long run of them backtracked exponentially (CodeQL; a 140-character window
-// took seconds).
-const REGISTERED_TITLE = /((?:Practicing\s+)?(?:Professional|Licensed)\s+(?:[A-Z][a-z]+\s+){0,3}(?:Engineer|Architect|Planner|Surveyor)(?:\s*\([A-Z]{1,5}\))?(?:\s+in\s+[A-Z][a-z]+(?:\s+(?!Reg\b|No\b)[A-Z][a-z]+){0,2})?|(?:[A-Z][a-z]+\s+){1,2}(?:Engineer|Architect))(?:[\s•·:.,(\-]|Reg(?:istration)?\b|No\b|Number\b|\([^()]{0,40}\)|\d{2}\/\d{2}\/\d{4}|G\.C\.)*$/;
+// A ")" is read only as the end of a parenthetical, which may hold one level
+// of balanced parentheses ("(Grade I (Civil))"): with ")" also a lone
+// punctuation mark, "()" parsed two ways and a long run of them backtracked
+// exponentially (CodeQL; a 140-character window took seconds).
+const REGISTERED_TITLE = /((?:Practicing\s+)?(?:Professional|Licensed)\s+(?:[A-Z][a-z]+\s+){0,3}(?:Engineer|Architect|Planner|Surveyor)(?:\s*\([A-Z]{1,5}\))?(?:\s+in\s+[A-Z][a-z]+(?:\s+(?!Reg\b|No\b)[A-Z][a-z]+){0,2})?|(?:[A-Z][a-z]+\s+){1,2}(?:Engineer|Architect))(?:[\s•·:.,(\-]|Reg(?:istration)?\b|No\b|Number\b|\((?:[^()]|\([^()]{0,40}\)){0,40}\)|\d{2}\/\d{2}\/\d{4}|G\.C\.)*$/;
 
 /**
  * The professional registrations this person's own CV states, as
