@@ -30,6 +30,7 @@
 
 import { SEED_BENCHMARKS, BENCHMARK_STALE_AFTER_MONTHS, benchmarkAgeMonths, classifyRole, findBenchmark, marketOf, seniorityOf, type BenchmarkCategory, type BenchmarkSeniority, type PricingBenchmark } from "./pricing-benchmarks";
 import { CURRENCY_TOKEN_ALTERNATION, resolveCurrencyToken } from "./currency-reference";
+import { isOfferValidity, sentenceAround } from "./validity-subject";
 
 export type PricingConfidence = "HIGH" | "MEDIUM" | "LOW" | "NONE";
 export type PricingScenarioId = "AGGRESSIVE" | "BALANCED" | "CONSERVATIVE";
@@ -350,22 +351,15 @@ function statedWithholding(text: string): { pct: number; quote: string } | null 
   return null;
 }
 
-// What a validity period belongs to. A bid security, guarantee or bond has its
-// own validity — usually longer than the offer's ("the bid security shall be
-// valid for 120 days"; "proposals shall remain valid for 90 days") — and the
-// financial proposal promises the OFFER's.
-const SECURITY_SUBJECT = /\b(?:securit(?:y|ies)|securing\s+declaration|guarantees?|bonds?|insurance|warrant(?:y|ies))\b/gi;
-const OFFER_SUBJECT = /\b(?:proposals?|bids?|offers?|tenders?|quotations?)\b(?!\s+(?:securit|securing|guarantee|bond))/gi;
-const lastIndex = (re: RegExp, text: string) => Math.max(-1, ...[...text.matchAll(re)].map((m) => m.index!));
-
+// The financial proposal promises the OFFER's validity, never a bid
+// security's or guarantee's (validity-subject.ts).
 function statedValidityDays(text: string): { days: number; quote: string } | null {
-  for (const s of moneyClauses(text)) {
-    for (const m of s.matchAll(/\bvalid(?:ity)?\b[^.;]{0,60}?\b(\d{2,3})\s*\)?\s*(?:\(\s*\d+\s*\)\s*)?(?:calendar\s+)?days\b/gi)) {
-      // The subject named nearest before the number decides whose validity it is.
-      const lead = s.slice(Math.max(0, m.index! - 80), m.index! + m[0].length);
-      if (lastIndex(SECURITY_SUBJECT, lead) > lastIndex(OFFER_SUBJECT, lead)) continue;
-      return { days: Number(m[1]), quote: snippet(s) };
-    }
+  // The whole text, not clause by clause: a security named before a semicolon
+  // still owns the validity after it.
+  const flat = text.replace(/\s+/g, " ");
+  for (const m of flat.matchAll(/\bvalid(?:ity)?\b[^.;]{0,60}?\b(\d{2,3})\s*\)?\s*(?:\(\s*\d+\s*\)\s*)?(?:calendar\s+)?days\b/gi)) {
+    if (!isOfferValidity(flat, m.index!, m[0].length)) continue;
+    return { days: Number(m[1]), quote: snippet(sentenceAround(flat, m.index!, m[0].length)) };
   }
   return null;
 }
@@ -745,7 +739,16 @@ export function estimateTenderPrice(input: PricingEvidenceInput): PricingEstimat
   const withholdingBasis = withholding ? `stated by the tender: "${withholding.quote}"` : "not stated by the tender; none shown";
   const validity = statedValidityDays(text);
   const validityDays = validity?.days ?? 90;
-  const validityBasis = validity ? `stated by the tender: "${validity.quote}"` : "the tender states no validity period; 90 days assumed";
+  // A validity the tender does not state as the offer's (a bid security's, a
+  // licence's, a bare "Validity: 90 days") is not used, and the assumption is
+  // then said, not hidden behind "states no validity".
+  const unattributedValidity = !validity && /\bvalid(?:ity)?\b[^.;]{0,60}?\b\d{2,3}\s*\)?\s*(?:\(\s*\d+\s*\)\s*)?(?:calendar\s+)?days\b/i.test(text);
+  const validityBasis = validity
+    ? `stated by the tender: "${validity.quote}"`
+    : unattributedValidity
+      ? "the tender states validity periods, but none as the offer's (a bid security's, for one, is not); 90 days assumed — confirm the offer's validity"
+      : "the tender states no validity period; 90 days assumed";
+  if (unattributedValidity) lowConfidence.push("Validity: the tender states validity periods, but none as the offer's; 90 days is assumed — confirm it before approving.");
 
   // ── Period ─────────────────────────────────────────────────────────────
   const period = statedDurationMonths(text);

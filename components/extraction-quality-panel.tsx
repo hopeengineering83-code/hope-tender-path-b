@@ -91,7 +91,9 @@ export async function ExtractionQualityPanel({ tenderId }: { tenderId: string })
     select: {
       analysisExtractionStatus: true,
       metadataContaminated: true,
+      // Active files only, as the extraction-quality route and readiness read them.
       files: {
+        where: { deletionStatus: "ACTIVE" },
         orderBy: { createdAt: "asc" },
         select: {
           id: true, fileName: true, originalFileName: true,

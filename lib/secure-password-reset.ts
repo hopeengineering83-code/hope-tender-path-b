@@ -70,6 +70,18 @@ export async function handleSecurePasswordReset(req: Request) {
     // actually commit. Returning normally instead lets that cleanup persist;
     // the caller decides the HTTP response from `outcome.tokenState` after.
     await prisma.$transaction(async (tx) => {
+      // Lock order: the account row first, then its reset token — the order
+      // account deactivation takes (user row, then its sessions and tokens),
+      // so a reset racing a deactivation can never deadlock with it. The
+      // unlocked read only finds whose token this is.
+      const holder = await tx.$queryRaw<Array<{ userId: string }>>`
+        SELECT "userId" FROM "PasswordResetToken" WHERE "tokenHash" = ${tokenHash}
+      `;
+      const accounts = holder[0]
+        ? await tx.$queryRaw<Array<{ deletedAt: Date | null }>>`
+            SELECT "deletedAt" FROM "User" WHERE "id" = ${holder[0].userId} FOR UPDATE
+          `
+        : [];
       const rows = await tx.$queryRaw<ResetRow[]>`
         SELECT "id", "userId", "expiresAt", "consumedAt"
         FROM "PasswordResetToken"
@@ -87,6 +99,19 @@ export async function handleSecurePasswordReset(req: Request) {
             WHERE "id" = ${row.id} AND "consumedAt" IS NULL
           `;
         }
+        return;
+      }
+
+      // A deactivated account cannot set a new password, even with a link
+      // issued before it was deactivated: the link is spent and reported as
+      // invalid, like any other unusable link.
+      if (!accounts[0] || accounts[0].deletedAt || holder[0]!.userId !== row.userId) {
+        outcome.tokenState = "CONSUMED";
+        await tx.$executeRaw`
+          UPDATE "PasswordResetToken"
+          SET "consumedAt" = NOW()
+          WHERE "id" = ${row.id} AND "consumedAt" IS NULL
+        `;
         return;
       }
 

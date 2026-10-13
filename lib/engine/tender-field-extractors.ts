@@ -1,5 +1,6 @@
 import { findStatedDeadline, isSubmissionEmailContext } from "./submission-source-clauses";
 import { nonClientEntityLabelPattern, canonicalizeCountry, containsMetadataPlaceholder, isValidReferenceNumber } from "./metadata-validators";
+import { isOfferValidity } from "./validity-subject";
 
 // Deterministic, source-grounded extractors for tender-metadata scalar fields.
 export type ExtractedField<T> = {
@@ -240,12 +241,15 @@ export function extractValidityDays(input: ExtractorInput): ExtractedFieldOrMiss
   const cands: ExtractedField<number>[] = [];
   for (const file of input.files ?? []) {
     const text = (file?.extractedText ?? "").toString();
-    const m = /(?:validity|valid)\s*(?:period|for)?\s*[:\-]?\s*(\d{2,3})\s*days/i.exec(text);
+    // The offer's validity only: a bid security's, guarantee's or bond's
+    // validity is skipped and the search goes on (validity-subject.ts).
+    const offer = (re: RegExp) => [...text.matchAll(re)].find((m) => isOfferValidity(text, m.index!, m[0].length));
+    const m = offer(/(?:validity|valid)\s*(?:period|for)?\s*[:\-]?\s*(\d{2,3})\s*days/gi);
     if (m) {
-        cands.push({ found: true, value: parseInt(m[1], 10), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: "HIGH" });
+        cands.push({ found: true, value: parseInt(m[1], 10), sourceQuote: captureAround(text, m.index!, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index!, file?.totalPages), confidence: "HIGH" });
     } else {
-        const m2 = /(?:validity|valid)\s*(?:period|for)?\s*[:\-]?\s*(\d{1})\s*months/i.exec(text);
-        if (m2) cands.push({ found: true, value: parseInt(m2[1], 10) * 30, sourceQuote: captureAround(text, m2.index, m2[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m2.index, file?.totalPages), confidence: "HIGH" });
+        const m2 = offer(/(?:validity|valid)\s*(?:period|for)?\s*[:\-]?\s*(\d{1})\s*months/gi);
+        if (m2) cands.push({ found: true, value: parseInt(m2[1], 10) * 30, sourceQuote: captureAround(text, m2.index!, m2[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m2.index!, file?.totalPages), confidence: "HIGH" });
     }
   }
   return pickBest(cands);

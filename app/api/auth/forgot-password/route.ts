@@ -78,9 +78,11 @@ export async function POST(req: Request) {
     await prismaReady;
     const user = await prisma.user.findUnique({
       where: { email },
-      select: { id: true, email: true },
+      select: { id: true, email: true, deletedAt: true },
     });
-    if (!user) {
+    // A deactivated account gets no reset link: it is answered exactly as an
+    // unknown address is, so the response does not reveal the account state.
+    if (!user || user.deletedAt) {
       // TIMING-SAFE ACCOUNT ENUMERATION GUARD: For existing users, the code
       // below does a DB transaction + sendEmail(), which takes ~300-800ms.
       // For non-existent users, returning immediately (~5ms) allows an
@@ -95,10 +97,29 @@ export async function POST(req: Request) {
       return NextResponse.json(GENERIC_RESPONSE, { status: 202 });
     }
 
+    // The same comparison on the active-account path: SMTP is deferred until
+    // after the response, so without it an active account answered faster
+    // than an unknown or deactivated one.
+    try {
+      await bcrypt.compare(
+        "dummy-password-for-timing-equalization",
+        "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy",
+      );
+    } catch { /* rate limit is the primary defense */ }
+
     const { token, tokenHash, expiresAt } = generateResetToken();
     const tokenId = randomUUID();
 
+    // The account is re-read under its row lock — the lock deactivation takes
+    // first — so a deactivation that lands after the lookup above either
+    // finishes first (no token, no mail) or waits and then deletes the token.
+    const issue = { stillActive: false };
     await prisma.$transaction(async (tx) => {
+      const live = await tx.$queryRaw<Array<{ deletedAt: Date | null }>>`
+        SELECT "deletedAt" FROM "User" WHERE "id" = ${user.id} FOR UPDATE
+      `;
+      if (!live[0] || live[0].deletedAt) return;
+      issue.stillActive = true;
       await tx.$executeRaw`
         DELETE FROM "PasswordResetToken"
         WHERE "userId" = ${user.id} AND "consumedAt" IS NULL
@@ -109,9 +130,17 @@ export async function POST(req: Request) {
         VALUES (${tokenId}, ${user.id}, ${tokenHash}, ${expiresAt}, NOW())
       `;
     });
+    if (!issue.stillActive) return NextResponse.json(GENERIC_RESPONSE, { status: 202 });
 
     const resetUrl = `${baseUrl()}/reset-password?token=${encodeURIComponent(token)}`;
     afterResponse(async () => {
+      // Re-checked at delivery: a deactivation that committed after the token
+      // was issued has deleted it, and its owner is sent nothing.
+      const live = await prisma.passwordResetToken.findFirst({
+        where: { id: tokenId, consumedAt: null, user: { deletedAt: null } },
+        select: { id: true },
+      });
+      if (!live) return;
       const delivery = await sendEmail({
         to: user.email,
         subject: "Reset your Hope Tender password",
