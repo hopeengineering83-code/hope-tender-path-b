@@ -39,7 +39,40 @@
 // proposal-intelligence outputs. AI calls there would be wasted budget
 // because the source data is already structured.
 
+import { describesTelecomTowerWork, TELECOM_TOWER_SCOPE_ITEMS } from "./telecom-tower-sector";
+import { resolveSignatory, signatoryExpertsFromProofLines, signOffLines } from "./signatory";
 import type { AIBidWriterInput } from "../ai";
+import {
+  selectTenderContext,
+  TENDER_FOCUS_METHODOLOGY,
+  TENDER_FOCUS_EVALUATION,
+} from "./tender-context-selection";
+import { resolveJurisdictionTokens } from "./jurisdiction-instruments";
+import { withoutAIWriterContractPrompt } from "./ai-writer-contract-prompt";
+import { extractScopeItems } from "./scope-delivery-plan";
+import { tenderAsksFor } from "./tender-asks-for";
+import { possessive } from "./possessive";
+import { corporateFactsFromProfile } from "./company-profile-facts";
+import { BENCHMARK_CONTEXT_LINES } from "./proposal-intelligence";
+
+/** Writer directives generate-elite prepends to input.requirements. */
+const WRITER_DIRECTIVE_LINES = new Set(BENCHMARK_CONTEXT_LINES.map((line) => line.trim()));
+
+/** Requirement rows about submitting, credentials or price: answered outside Section C. */
+//
+// 2026-09-30, a telecom-tower EOI: "Declaration of Non-Debarment and
+// Eligibility", "Litigation History Disclosure", "Audited Financial Statements"
+// and "Exclusion of Pricing Information" became methodology subsections and
+// Work Plan stages ("Exclusion of Pricing Information Report").
+const NOT_A_WORK_PHASE = /\b(?:declarations?|disclosures?|litigation|debar(?:ment|red)?|eligib(?:le|ility)|non-?performing|audited|financial\s+(?:statements?|reports?|standing|capacity)|pricing|prices|conflict\s+of\s+interest|undertakings?|affidavits?|bid\s+security|guarantees?|insurance|incorporation|(?<!user\s)experience|site visit|pre-?bid|submi(?:t|ssion)|signature|signed|seal|stamp|validity|valid for|deadline|envelope|financial proposal|price|payment|tax|tin|vat|licen[cs]e|registration|legal documentation|company profile|corporate qualifications?|qualifications? of key|team qualifications|curriculum|cvs?|resumes?|portfolio|years in business|examples of related work|relevant experience|references?)\b/i;
+
+/** "Title — long description" -> "Title", never cut mid-word. */
+function workPhaseTitle(line: string): string {
+  const title = line.split(/\s+[—–-]\s+/)[0]!.replace(/[\s"')(]+$/g, "").trim();
+  if (title.length <= 80) return title;
+  const cut = title.slice(0, 80);
+  return cut.slice(0, Math.max(cut.lastIndexOf(" "), 40)).trim();
+}
 
 // ─── Section-specific system prompts ─────────────────────────────────────────
 // Each persona is the EXACT senior bid-team specialist who would write
@@ -53,7 +86,7 @@ Your operating principles for the Cover Letter and Executive Summary:
 
 1. PROJECT-ANCHORED OPENING. The first paragraph of BOTH the cover letter and the executive summary names the company's strongest 1–2 specific comparable projects BY NAME and contract value. No "we are pleased to submit" boilerplate, ever. The reader must finish the first paragraph thinking "this firm has already done this."
 
-2. SAME-TEAM CONTINUITY. If the proposed lead expert(s) delivered the named comparable project(s), say so explicitly. "The same team that delivered Project X is proposed for this engagement" is the strongest line a cover letter can carry.
+2. PERSONNEL CONTINUITY ONLY WHERE A CV PROVES IT. Say a proposed expert worked on a named project only when that expert's own CV names it, and say it of that person ("X was the lead sanitary engineer on Project Y"). Never write "the same team", "already delivered this assignment" or "directly comparable assignment": no record proves those relationships and the final gate refuses them.
 
 3. EVALUATOR FIRST. The executive summary's middle paragraph addresses the TOP evaluation criterion directly with evidence. Not generic claims of capability — specific evidence of capability against this criterion.
 
@@ -99,7 +132,7 @@ Your operating principles for Section A and Section B:
 
 5. PORTFOLIO AT A GLANCE. Section B includes a concise table of additional projects (name, client, country, value, sector, key services). Quantity matters less than relevance — pick the most comparable, not the most numerous.
 
-6. CLIENT REFERENCES TABLE. Section B includes a Client References table with confirmed client contact and reference letter availability.
+6. CLIENT REFERENCES TABLE. Section B includes a Client References table with the client, location and reference letter as the records state them. A contact the records do not name is not invented.
 
 7. EVIDENCE OVER INTENT. Every paragraph carries at least one specific verifiable fact (project name, contract value, expert name + license, client reference). Generic statements without anchors are forbidden.
 
@@ -109,41 +142,154 @@ Your operating principles for Section A and Section B:
 
 10. LANGUAGE FIDELITY. Match the tender's primary language — if the tender text is in Arabic, French, or Amharic, write the entire proposal in that language (technical acronyms and table headers may remain in English). Default to English only when the tender is in English.`;
 
-export const TECHNICAL_APPROACH_SYSTEM_PROMPT = `You are a senior sector technical lead writing Section C — the Technical Approach — of a competitive technical proposal. Section C is where the proposal demonstrates HOW the firm will deliver. You have led the Technical Approach drafting for 800+ winning bids across every major sector — healthcare, water/sanitation, road/bridge, building, urban planning, environmental and social safeguards, ICT/digital systems, education, agriculture, energy/power, mining, telecoms, transportation, port/logistics, oil & gas, financial services, and public-sector institutional reform. You handle ANY sector — your job is to read the tender text, identify the sector and its conventions, and write methodology in that sector's vocabulary.
+// ─── Sector methodology guidance — selected, never shipped whole ──────────────
+//
+// Section C's system prompt used to carry the entire sector catalogue on every
+// tender — 25 bullets, ~1,690 estimated input tokens, of which at most two or
+// three ever described the assignment in hand. That fixed cost pushed the
+// technical-approach request past the throughput budget of providers early in
+// the canonical chain, so preflight skipped them and the section fell through
+// toward the deterministic writer.
+//
+// The bullets below are the catalogue verbatim. Only the selection is new, and
+// it is made by scoring each bullet's OWN vocabulary against the tender text:
+// no sector is named in the selector, so a road tender retrieves the road
+// bullet by the same rule that gives a healthcare tender the healthcare one,
+// and a bullet added later is matched by the words it already contains.
+
+export type SectorGuidanceBullet = { label: string; bullet: string };
+
+export const SECTOR_METHODOLOGY_GUIDANCE: ReadonlyArray<SectorGuidanceBullet> = [
+  { label: "Healthcare", bullet: "   - Healthcare → clinical zone segregation, IPC, medical gas, radiation shielding, biomedical engineering integration." },
+  { label: "Water/sanitation", bullet: "   - Water/sanitation → hydraulic modelling (WaterCAD/EPANET), source investigation, pipe sizing, pump station design, water quality." },
+  { label: "Road/bridge", bullet: "   - Road/bridge → alignment survey, geotechnical (CBR, Proctor), pavement design, drainage, road safety audit." },
+  { label: "Building/architecture", bullet: "   - Building/architecture → functional brief, MEP coordination, fire safety, accessibility, building permit documentation." },
+  { label: "Urban/master planning", bullet: "   - Urban/master planning → GIS-based land use mapping, demographic analysis, infrastructure demand assessment, phased implementation roadmap." },
+  { label: "Environmental/social", bullet: "   - Environmental/social → ESIA baseline, impact identification matrices, mitigation hierarchy, ESMP, stakeholder engagement, donor safeguard alignment." },
+  { label: "ICT/digital", bullet: "   - ICT/digital → requirements analysis, architecture (app/database/network), data security, integration plan, UAT, training, go-live cutover." },
+  { label: "Education facilities", bullet: "   - Education facilities → space schedule, climate-responsive design, pupil-to-toilet ratio compliance, fire detection." },
+  { label: "Energy/power", bullet: "   - Energy/power → load forecast, generation/transmission/distribution design, grid integration, environmental compliance." },
+  { label: "Agriculture/irrigation", bullet: "   - Agriculture/irrigation → agronomic baseline (FAO Penman-Monteith crop water), yield modelling, irrigation network design (canal/pressurised pipe), WUA governance, post-harvest handling, value-chain analysis." },
+  { label: "Mining/extractive", bullet: "   - Mining/extractive → JORC-compliant resource reporting, block-model resource estimation, slope-stability analysis (three methods), TSF design per MAC/ANCOLD, geotechnical investigation, closure-cost estimation." },
+  { label: "Port/maritime", bullet: "   - Port/maritime → met-ocean analysis, bathymetric/geotechnical survey, fast-time nautical simulation, berth structural design, dredge volume and disposal, ISPS compliance, nautical safety pre-opening review." },
+  { label: "Oil & gas/pipeline", bullet: "   - Oil & gas/pipeline → process flow diagram, P&ID development, HAZOP study (all action items tracked), LOPA for high-severity nodes, pipeline stress analysis (Caesar II), cathodic-protection design, ILI programme specification." },
+  { label: "Financial services/banking", bullet: "   - Financial services/banking → regulatory-gap analysis (KYC/AML/Basel/IFRS), business process mapping, target operating model, core-banking or fintech system architecture, parallel-run cutover, RBAC/encryption/audit-log configuration." },
+  { label: "Telecoms/broadband", bullet: "   - Telecoms/broadband → traffic demand modelling, coverage simulation, RF planning (LTE/5G), base-station siting, backhaul design (fibre/microwave), spectrum licensing pathway, site-acceptance test (SAT) protocol." },
+  { label: "Architecture & interior design", bullet: "   - Architecture & interior design → space programming, concept design, schematic design, FF&E specification, reflected ceiling plan, finishes schedule, joinery, partition, fit-out, shop drawing review, sample approval, snagging, as-built drawings" },
+  { label: "Construction supervision / resident engineer", bullet: "   - Construction supervision / resident engineer → hold-point, witness point, ITP, NCR, interim payment certificate (IPC), progress report, quality assurance, material approval, site diary, commissioning, punch list, DLP, snag list" },
+  { label: "Contract administration / FIDIC", bullet: "   - Contract administration / FIDIC → variation order, Engineer's Instruction, extension of time (EOT), time-impact analysis, final account, payment certificate, retention, performance bond, claims determination, FIDIC Clause references" },
+  { label: "Heritage conservation / adaptive reuse", bullet: "   - Heritage conservation / adaptive reuse → ICOMOS reversibility principle, condition survey, significance assessment, conservation plan, lime mortar compatibility, XRF/petrographic testing, heritage authority approval, photogrammetric survey, historic fabric, minimum-intervention doctrine, conservation philosophy statement, reversible materials specification" },
+  { label: "Industrial & manufacturing", bullet: "   - Industrial & manufacturing → process flow diagram, value-stream mapping (VSM), lean layout design, industrial flooring specification, HVAC/exhaust ventilation, fire suppression, effluent treatment plant, FAT (factory acceptance test), EHS management plan, cleaner production assessment, commissioning sequencing plan, occupational safety assessment" },
+  { label: "High-rise / multi-storey buildings", bullet: "   - High-rise / multi-storey buildings → ETABS/SAP2000 structural analysis, shear wall, core-frame system, seismic design per {{JURISDICTION:SEISMIC_CODE_FAMILY}}, wind load analysis, independent structural peer review, {{JURISDICTION:STRUCTURAL_APPROVAL_AUTHORITY}} structural approval, curtain wall specification, post-tensioned slab, BIM LOD 300+, pile/mat foundation, lift/car-lift system design, BMS architecture, generator/UPS sizing" },
+  { label: "Hospitality & tourism", bullet: "   - Hospitality & tourism → FF&E (furniture, fixtures and equipment), brand standard compliance matrix, RevPAR benchmarking, development programme (room mix, F&B, BOH), guestroom HVAC (VRF/fan-coil), kitchen ventilation, pool/spa mechanical, mock room prototype, pre-opening punch list, GSTC criteria, Green Globe audit, brand-operator sign-off" },
+  { label: "Feasibility studies / pre-feasibility / options analysis / business case", bullet: "   - Feasibility studies / pre-feasibility / options analysis / business case → options comparison matrix (at least three alternatives + do-nothing), technical feasibility (site, engineering, capacity), financial viability (CAPEX/OPEX estimation, NPV, IRR, payback period, sensitivity analysis on key assumptions), economic analysis (cost-benefit ratio, economic rate of return), social and environmental screening, demand/traffic/uptake projections, implementation roadmap with milestones, recommended preferred option with rationale, ToR compliance matrix." },
+  { label: "Government / public procurement (ministry tenders, national procurement board, public tender announcement)", bullet: "   - Government / public procurement (ministry tenders, national procurement board, public tender announcement) → cite applicable public procurement proclamation/regulation by number; address local content and domestic preference rules; acknowledge bid security (amount and form) and performance bond requirements; include government-issued form numbers and annex references by exact name; confirm format restrictions (single/two-envelope, sealed, numbered pages); reference GoE/Ministry standard BOQ or schedule of rates where applicable; address PPPA/PPSD/comparable authority submission portal requirements." },
+  { label: "NGO / donor-funded tenders (World Bank, AfDB, EU, USAID, DFID/FCDO, UN agencies, GFATM, GIZ)", bullet: "   - NGO / donor-funded tenders (World Bank, AfDB, EU, USAID, DFID/FCDO, UN agencies, GFATM, GIZ) → identify the donor procurement framework (ICB, NCB, QCBS, LCS, FBS, CQS, DC) and confirm methodology compliance; include logical framework (logframe) with outputs, outcomes, impact indicators; M&E plan with baseline, midline, endline data collection methods; disbursement-linked indicators where required; align with donor environmental and social safeguard policies (World Bank ESF, IFC Performance Standards, AfDB ISS, EU EIA Directive); include a procurement plan with activity schedule; reference donor anti-corruption and conflict-of-interest requirements; address community engagement and beneficiary feedback mechanisms." },
+];
+
+/**
+ * How weak a match may be, relative to the tender's strongest match, and still
+ * be worth a slot. Purely relative, so no sector is tuned for in code.
+ */
+const SECTOR_GUIDANCE_RELATIVE_FLOOR = 0.4;
+
+/** How many catalogue bullets a single tender may carry. */
+export const MAX_SECTOR_GUIDANCE_BULLETS = 4;
+
+// Words that appear in professional-services prose regardless of sector. They
+// carry no discriminating signal, so scoring on them would rank the longest
+// bullet first on every tender.
+const SECTOR_GUIDANCE_STOP_TERMS = new Set([
+  "analysis", "assessment", "other", "sectors", "listed", "above", "design", "plan",
+  "planning", "management", "study", "studies", "services", "service", "system",
+  "systems", "tender", "tenders", "project", "projects", "review", "report",
+  "reporting", "requirements", "programme", "program", "specification", "standard",
+  "standards", "compliance", "development", "delivery", "technical", "where",
+  "with", "from", "that", "this", "their", "they", "each", "also", "including",
+  "include", "includes", "address", "confirm", "reference", "references",
+]);
+
+function guidanceTerms(text: string): string[] {
+  const terms = text
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((term) => term.length >= 4 && !SECTOR_GUIDANCE_STOP_TERMS.has(term));
+  return Array.from(new Set(terms));
+}
+
+/**
+ * Score one catalogue bullet against the tender text.
+ *
+ * Label terms count double because the label names the sector, while the body
+ * terms are the professional vocabulary that identifies it when the tender
+ * never uses the label word itself — a hospital tender says "clinical" and
+ * "medical" long before it says "healthcare". The divisor normalises for bullet
+ * length so the longest entry does not win every tender on volume alone.
+ */
+function scoreSectorGuidance(entry: SectorGuidanceBullet, haystack: string): number {
+  const labelTerms = guidanceTerms(entry.label);
+  const bodyTerms = guidanceTerms(entry.bullet).filter((term) => !labelTerms.includes(term));
+  const total = labelTerms.length + bodyTerms.length;
+  if (total === 0) return 0;
+  const hits = (terms: string[]) =>
+    terms.filter((term) => new RegExp(`(?<![a-z0-9])${term}(?![a-z0-9])`).test(haystack)).length;
+  const weighted = 2 * hits(labelTerms) + hits(bodyTerms);
+  return weighted / Math.sqrt(total);
+}
+
+/**
+ * Choose the catalogue bullets this tender actually needs.
+ *
+ * When nothing in the catalogue matches the tender at all, the whole catalogue
+ * is returned rather than none of it: an unrecognised sector is exactly the
+ * case where the writer has least to go on, and paying the full prompt cost on
+ * a rare tender is preferable to writing that tender with no guidance.
+ */
+export function selectSectorGuidance(
+  tenderText: string,
+  opts?: { max?: number; catalogue?: ReadonlyArray<SectorGuidanceBullet> },
+): SectorGuidanceBullet[] {
+  const catalogue = opts?.catalogue ?? SECTOR_METHODOLOGY_GUIDANCE;
+  const max = opts?.max ?? MAX_SECTOR_GUIDANCE_BULLETS;
+  const haystack = tenderText.toLowerCase();
+  const scored = catalogue
+    .map((entry, order) => ({ entry, order, score: scoreSectorGuidance(entry, haystack) }))
+    .filter((row) => row.score > 0);
+  if (scored.length === 0) return catalogue.map((entry) => ({ ...entry, bullet: resolveJurisdictionTokens(entry.bullet, tenderText) }));
+  scored.sort((a, b) => (b.score - a.score) || (a.order - b.order));
+  // A bullet that matched on one incidental word — "JORC-compliant" against a
+  // tender that says "compliant", "target operating model" against "operating
+  // theatres" — is a coincidence, not a sector. Keeping it would spend one of
+  // the few slots on guidance for the wrong discipline, which is worse than
+  // sending fewer bullets. The floor is relative to the best match so it needs
+  // no per-sector tuning: whatever the tender is, guidance far weaker than the
+  // strongest signal in the catalogue is noise.
+  const floor = scored[0].score * SECTOR_GUIDANCE_RELATIVE_FLOOR;
+  const chosen = scored.filter((row) => row.score >= floor).slice(0, Math.max(1, max));
+  chosen.sort((a, b) => a.order - b.order);
+  // Catalogue bullets carry {{JURISDICTION:...}} where a named code or authority
+  // would otherwise be asserted for every tender. Selection is the first point
+  // that holds the tender's own text, so it is where those resolve.
+  return chosen.map((row) => ({ ...row.entry, bullet: resolveJurisdictionTokens(row.entry.bullet, tenderText) }));
+}
+
+/** The guidance block as it appears inside the Section C system prompt. */
+export function buildSectorGuidanceBlock(tenderText: string, opts?: { max?: number }): string {
+  return selectSectorGuidance(tenderText, opts).map((entry) => entry.bullet).join("\n");
+}
+
+export function technicalApproachSystemPrompt(sectorGuidanceBlock: string): string {
+  return `You are a senior sector technical lead writing Section C — the Technical Approach — of a competitive technical proposal. Section C is where the proposal demonstrates HOW the firm will deliver. You have led the Technical Approach drafting for 800+ winning bids across every major sector — healthcare, water/sanitation, road/bridge, building, urban planning, environmental and social safeguards, ICT/digital systems, education, agriculture, energy/power, mining, telecoms, transportation, port/logistics, oil & gas, financial services, and public-sector institutional reform. You handle ANY sector — your job is to read the tender text, identify the sector and its conventions, and write methodology in that sector's vocabulary.
 
 Your operating principles for Section C:
 
 1. SECTOR-NEUTRAL THEN SECTOR-SPECIFIC. Read the TENDER TEXT first. Identify the dominant sector(s) and their professional conventions. Then write methodology in those conventions:
-   - Healthcare → clinical zone segregation, IPC, medical gas, radiation shielding, biomedical engineering integration.
-   - Water/sanitation → hydraulic modelling (WaterCAD/EPANET), source investigation, pipe sizing, pump station design, water quality.
-   - Road/bridge → alignment survey, geotechnical (CBR, Proctor), pavement design, drainage, road safety audit.
-   - Building/architecture → functional brief, MEP coordination, fire safety, accessibility, building permit documentation.
-   - Urban/master planning → GIS-based land use mapping, demographic analysis, infrastructure demand assessment, phased implementation roadmap.
-   - Environmental/social → ESIA baseline, impact identification matrices, mitigation hierarchy, ESMP, stakeholder engagement, donor safeguard alignment.
-   - ICT/digital → requirements analysis, architecture (app/database/network), data security, integration plan, UAT, training, go-live cutover.
-   - Education facilities → space schedule, climate-responsive design, pupil-to-toilet ratio compliance, fire detection.
-   - Energy/power → load forecast, generation/transmission/distribution design, grid integration, environmental compliance.
-   - Agriculture/irrigation → agronomic baseline (FAO Penman-Monteith crop water), yield modelling, irrigation network design (canal/pressurised pipe), WUA governance, post-harvest handling, value-chain analysis.
-   - Mining/extractive → JORC-compliant resource reporting, block-model resource estimation, slope-stability analysis (three methods), TSF design per MAC/ANCOLD, geotechnical investigation, closure-cost estimation.
-   - Port/maritime → met-ocean analysis, bathymetric/geotechnical survey, fast-time nautical simulation, berth structural design, dredge volume and disposal, ISPS compliance, nautical safety pre-opening review.
-   - Oil & gas/pipeline → process flow diagram, P&ID development, HAZOP study (all action items tracked), LOPA for high-severity nodes, pipeline stress analysis (Caesar II), cathodic-protection design, ILI programme specification.
-   - Financial services/banking → regulatory-gap analysis (KYC/AML/Basel/IFRS), business process mapping, target operating model, core-banking or fintech system architecture, parallel-run cutover, RBAC/encryption/audit-log configuration.
-   - Telecoms/broadband → traffic demand modelling, coverage simulation, RF planning (LTE/5G), base-station siting, backhaul design (fibre/microwave), spectrum licensing pathway, site-acceptance test (SAT) protocol.
-   - Architecture & interior design → space programming, concept design, schematic design, FF&E specification, reflected ceiling plan, finishes schedule, joinery, partition, fit-out, shop drawing review, sample approval, snagging, as-built drawings
-   - Construction supervision / resident engineer → hold-point, witness point, ITP, NCR, interim payment certificate (IPC), progress report, quality assurance, material approval, site diary, commissioning, punch list, DLP, snag list
-   - Contract administration / FIDIC → variation order, Engineer's Instruction, extension of time (EOT), time-impact analysis, final account, payment certificate, retention, performance bond, claims determination, FIDIC Clause references
-   - Heritage conservation / adaptive reuse → ICOMOS reversibility principle, condition survey, significance assessment, conservation plan, lime mortar compatibility, XRF/petrographic testing, heritage authority approval, photogrammetric survey, historic fabric, minimum-intervention doctrine, conservation philosophy statement, reversible materials specification
-   - Industrial & manufacturing → process flow diagram, value-stream mapping (VSM), lean layout design, industrial flooring specification, HVAC/exhaust ventilation, fire suppression, effluent treatment plant, FAT (factory acceptance test), EHS management plan, cleaner production assessment, commissioning sequencing plan, occupational safety assessment
-   - High-rise / multi-storey buildings → ETABS/SAP2000 structural analysis, shear wall, core-frame system, seismic design per EBCS/ES EN 1998, wind load analysis, independent structural peer review, AA City Authority structural approval, curtain wall specification, post-tensioned slab, BIM LOD 300+, pile/mat foundation, lift/car-lift system design, BMS architecture, generator/UPS sizing
-   - Hospitality & tourism → FF&E (furniture, fixtures and equipment), brand standard compliance matrix, RevPAR benchmarking, development programme (room mix, F&B, BOH), guestroom HVAC (VRF/fan-coil), kitchen ventilation, pool/spa mechanical, mock room prototype, pre-opening punch list, GSTC criteria, Green Globe audit, brand-operator sign-off
-   - Feasibility studies / pre-feasibility / options analysis / business case → options comparison matrix (at least three alternatives + do-nothing), technical feasibility (site, engineering, capacity), financial viability (CAPEX/OPEX estimation, NPV, IRR, payback period, sensitivity analysis on key assumptions), economic analysis (cost-benefit ratio, economic rate of return), social and environmental screening, demand/traffic/uptake projections, implementation roadmap with milestones, recommended preferred option with rationale, ToR compliance matrix.
-   - Government / public procurement (ministry tenders, national procurement board, public tender announcement) → cite applicable public procurement proclamation/regulation by number; address local content and domestic preference rules; acknowledge bid security (amount and form) and performance bond requirements; include government-issued form numbers and annex references by exact name; confirm format restrictions (single/two-envelope, sealed, numbered pages); reference GoE/Ministry standard BOQ or schedule of rates where applicable; address PPPA/PPSD/comparable authority submission portal requirements.
-   - NGO / donor-funded tenders (World Bank, AfDB, EU, USAID, DFID/FCDO, UN agencies, GFATM, GIZ) → identify the donor procurement framework (ICB, NCB, QCBS, LCS, FBS, CQS, DC) and confirm methodology compliance; include logical framework (logframe) with outputs, outcomes, impact indicators; M&E plan with baseline, midline, endline data collection methods; disbursement-linked indicators where required; align with donor environmental and social safeguard policies (World Bank ESF, IFC Performance Standards, AfDB ISS, EU EIA Directive); include a procurement plan with activity schedule; reference donor anti-corruption and conflict-of-interest requirements; address community engagement and beneficiary feedback mechanisms.
+${sectorGuidanceBlock}
    - Other sectors not listed above → use the sector's professional conventions as best you can identify them from the tender text. Do NOT default to generic engineering language.
 
 2. DELIVERABLE-DRIVEN WORK PLAN. Each scope item maps to a deliverable, a responsible expert (named from the proposed team), a quality-review gate, and a timeline. Generic methodology steps like "Stage 1: Planning, Stage 2: Execution" are forbidden.
 
-3. UNDERSTANDING SHOWS DEPTH. Open Section C with an Understanding of the Assignment sub-section — what the client needs, what the key technical challenges are, what the winning proposal must demonstrate. This is the part that distinguishes a thoughtful bidder from a templated one.
+3. UNDERSTANDING SHOWS DEPTH. Open Section C with an Understanding of the Assignment sub-section — what the client needs, what the key technical challenges are, and what this proposal demonstrates in response. Write it for the client, never about how the bid will be scored. This is the part that distinguishes a thoughtful bidder from a templated one.
 
 4. QUALITY ASSURANCE WITH GATES. Include a structured Quality Review gates table — three or four formal review milestones (e.g., 30% Schematic / 60% Design Development / 100% Pre-Issue) with named review authority and required action.
 
@@ -160,6 +306,7 @@ Your operating principles for Section C:
 10. OUTPUT SHAPE. Output Section C only — as a single top-level Markdown heading (# Section C: Technical Approach) followed by sub-sections (## C.1 Understanding…, ## C.2 Methodology with ### C.2.1–C.2.6+ numbered sub-sections, ## C.3 Work Plan…, ## C.4 Quality Assurance…). Do not output any other top-level sections. Do not output cover letter, executive summary, Section A, B, or D. Start directly with # Section C.
 
 11. LANGUAGE FIDELITY. Match the tender's primary language — if the tender text is in Arabic, French, or Amharic, write the entire Section C in that language (technical standards, acronyms, and table headers may remain in English). Default to English only when the tender is in English.`;
+}
 
 export const ADDITIONAL_AND_DECLARATION_SYSTEM_PROMPT = `You are a senior bid reviewer writing the closing artefacts of a competitive technical proposal — Section D (Additional Information & Value), the Appendix Register, and the formal Declaration. These sections are the bid's final impression on the evaluator. You have drafted closing sections for 700+ winning bids.
 
@@ -275,18 +422,22 @@ ${input.evaluationMethodology.slice(0, 4_500)}
 
 ## KEY DIFFERENTIATORS
 ${input.differentiators.slice(0, 1_500)}
+${input.criteriaAlignment ? `\n## CRITERIA ALIGNMENT (internal analysis — use it to decide what to emphasise and which records answer which criterion; never copy it, its headings or its scores into the proposal)\n${input.criteriaAlignment.slice(0, 2_000)}\n` : ""}
 
 ## COMPANY EVIDENCE (use this — do NOT invent anything)
 ${input.companyProfile.slice(0, 3_500)}
 
 ## STRONGEST PROJECTS (pick top 1–2 by direct comparability — name them in the cover letter and the executive summary opening)
-${input.projects.slice(0, 4_000)}
+${structuredEvidenceOnly(input.projects).slice(0, 4_000)}
 
 ## STRONGEST EXPERTS (pick the 1–2 lead names — link them to the named projects)
-${input.experts.slice(0, 3_500)}
+${structuredEvidenceOnly(input.experts).slice(0, 3_500)}
 
-## TENDER TEXT EXCERPT (use to mirror evaluator language back)
-${input.tenderText.slice(0, 4_500)}
+## TENDER TEXT (the passages that carry the evaluator's own language, in document order; elisions are marked)
+${selectTenderContext(input.tenderText, {
+    budgetChars: COVER_TENDER_BUDGET_CHARS,
+    focusTerms: [...TENDER_FOCUS_EVALUATION, ...TENDER_FOCUS_METHODOLOGY],
+  }).text}
 
 ## YOUR OUTPUT
 Two top-level Markdown sections:
@@ -303,9 +454,9 @@ LENGTH REQUIREMENTS (BENCHMARK MATCH — non-negotiable):
 Cover Letter structure (each paragraph ~70–120 words):
 - Para 1 — Opening: Name the firm; address the client (use ONLY the
   CLIENT field); state the exact tender title; reference the strongest
-  1–2 comparable projects BY NAME with contract value AND name the lead
-  expert from each. End with "the same team is proposed for this
-  engagement."
+  1–2 comparable projects BY NAME with the value as the evidence labels
+  it. Name a proposed expert against a project only when that expert's
+  CV names the project; never write "the same team is proposed".
 - Para 2 — Tender understanding: Echo 2–3 verbatim phrases from the
   tender's evaluation criteria or scope. Demonstrate the bidder has
   read the tender end-to-end.
@@ -321,10 +472,11 @@ Cover Letter structure (each paragraph ~70–120 words):
   licence + company).
 
 Executive Summary structure (each paragraph ~70–120 words):
-- Para 1 — Evidence anchor: "We have already delivered this assignment.
-  [Company] designed/supervised/assessed [Project Name] (contract value,
-  Client) — a [parallel description]. The same team is available for
-  this engagement."
+- Para 1 — Evidence anchor: "[Company] designed/supervised/assessed
+  [Project Name] (value as the evidence labels it, Client) — a [parallel
+  description]." Name the closest comparable project. Do not claim the
+  firm has already delivered this assignment or that the same team is
+  proposed: no record proves that relationship.
 - Para 2 — Top evaluation criterion: Address the highest-weighted
   evaluation criterion directly with concrete evidence (project name,
   expert role on it, deliverable that scored).
@@ -409,7 +561,7 @@ Two top-level Markdown sections:
   - ## B.2 Featured Project 1 — full project card (Markdown table) for the most comparable project, plus a 2–3 sentence "Why this anchors THIS tender" narrative under the table
   - ## B.3 Featured Project 2 — full project card (Markdown table) for the second most comparable project, plus a 2–3 sentence "Why this anchors THIS tender" narrative
   - ## B.4 Additional Projects — Markdown table with columns: Name | Client | Country | Value | Sector | Key Services
-  - ## B.5 Client References — Markdown table with columns: Project / Client | Reference Contact & Title | Contact Details | Contract Value
+  - ## B.5 Client References — Markdown table with columns: Project | Client | Location | Reference Letter | Value of Works (only what the records state; no invented contact names)
 
 LENGTH REQUIREMENTS:
 - Section A total: minimum 600 words across A.1 + A.3 prose plus the
@@ -428,6 +580,89 @@ Where evidence is genuinely missing, write a "Bid-Team Action: confirm X before 
 Start directly with "# Section A: Company Profile". Do NOT output any cover letter, executive summary, technical approach, Section D, compliance matrix, declaration, or commentary.`;
 }
 
+/**
+ * Section C needs the evidence FACTS, not the evidence PROSE.
+ *
+ * expertProofLine and projectProofLine both emit structured fields first and
+ * then append up to 600 chars of free text from the source CV or project
+ * summary. Section B is where that prose belongs and Section B still receives
+ * it in full. Section C's own instruction is to "name them inline in the
+ * methodology — who does what": for that it needs the name, title, disciplines,
+ * certifications, client, country, sector, value and services, and the CV blob
+ * behind them is the single largest block in the prompt while adding nothing
+ * the section is asked to write.
+ *
+ * Dropping it is what lets a normal tender's evidence — six experts and six
+ * projects rather than the three and one the live run happened to select —
+ * reach a provider at all, without removing a single fact the writer may cite.
+ */
+const EVIDENCE_FIELD_LABELS = /^(Disciplines|Sectors|Certifications\/Licences|Services):/;
+
+/** Abbreviations whose full stop is not a sentence boundary. */
+const NOT_A_SENTENCE_END = /(?:^|\s)(?:Dr|Mr|Mrs|Ms|Eng|Prof|St|No|Ltd|Inc|Co|approx|est|etc|vs|e\.g|i\.e)\.$/i;
+
+/**
+ * Shortest head that may remain after a prose cut. Deliberately small: the
+ * abbreviation guard is what protects a name like "Dr. Abdul Seid", and a long
+ * minimum here only skipped past that name's real sentence end and kept the
+ * whole summary instead.
+ */
+const MIN_STRUCTURED_HEAD_CHARS = 12;
+
+/**
+ * Trim one evidence line to its structured head.
+ *
+ * A line that carries no free text is returned unchanged, so this can never
+ * shorten a line that was already only facts.
+ */
+export function structuredEvidenceLine(line: string): string {
+  const segments = line.split(" | ");
+  // The expert profile is appended as its own segment and is the only trailing
+  // segment that carries neither a field label nor the years-of-experience
+  // value, so it is identifiable without guessing at its content.
+  if (
+    segments.length > 1
+    && !EVIDENCE_FIELD_LABELS.test(segments[segments.length - 1])
+    && !/^\d+\+ years experience$/.test(segments[segments.length - 1])
+  ) {
+    segments.pop();
+  }
+  // The project summary is appended after the structured parts with ". ", so
+  // it is cut at the first sentence boundary that is genuinely one.
+  const last = segments[segments.length - 1];
+  // A digit begins a sentence as often as a capital in this data: project
+  // summaries routinely open "1. Scope" or "2018 assignment for…".
+  const boundary = /\.\s+(?=[A-Z0-9])/g;
+  let match: RegExpExecArray | null;
+  while ((match = boundary.exec(last)) !== null) {
+    const head = last.slice(0, match.index + 1);
+    if (head.length < MIN_STRUCTURED_HEAD_CHARS) continue;
+    if (NOT_A_SENTENCE_END.test(head)) continue;
+    segments[segments.length - 1] = head;
+    break;
+  }
+  return segments.join(" | ");
+}
+
+/** Trim a whole evidence block to structured facts, line by line. */
+export function structuredEvidenceOnly(block: string): string {
+  return block.split("\n").map((line) => (line.trim().length === 0 ? line : structuredEvidenceLine(line))).join("\n");
+}
+
+/**
+ * Tender-text allowance for the cover letter and executive summary. These
+ * mirror the evaluator's language back rather than answering the scope clause
+ * by clause, so they need less of the tender than Section C does.
+ */
+const COVER_TENDER_BUDGET_CHARS = 3_500;
+
+/**
+ * Tender-text allowance for Section C. Smaller than the head-slice it replaced
+ * because the passages selected into it are the ones the methodology answers,
+ * so less text carries more of the tender.
+ */
+const TECHNICAL_APPROACH_TENDER_BUDGET_CHARS = 5_000;
+
 function buildTechnicalApproachPrompt(input: AIBidWriterInput): string {
   // Criterion evidence map — inject when available so Claude knows
   // exactly which evidence to cite per evaluation criterion, and at
@@ -436,14 +671,27 @@ function buildTechnicalApproachPrompt(input: AIBidWriterInput): string {
     ? `\n## CRITERION-TO-EVIDENCE ALLOCATION (NON-NEGOTIABLE — follow this exactly)\n${input.criterionEvidenceMap}\n\nFor EACH criterion above, write a dedicated sub-section in C.2 that:\n1. Cites the listed PROJECT(s) by name with contract value as proof of delivery\n2. Names the listed EXPERT(s) with their specific role on that project\n3. Allocates word count PROPORTIONAL to the criterion weight — the highest-weight criterion gets the longest, most evidence-dense sub-section\n`
     : "";
 
+  // The tender travels by relevance, not by position. A head-slice spent the
+  // whole allowance on the cover sheet and the instructions to bidders and cut
+  // away the scope of work the methodology is supposed to answer; selecting on
+  // scope/deliverable/standard vocabulary puts the scope in front of the writer
+  // and drops the front matter, which is both a smaller and a better prompt.
+  const tenderContext = selectTenderContext(input.tenderText, {
+    budgetChars: TECHNICAL_APPROACH_TENDER_BUDGET_CHARS,
+    focusTerms: [...TENDER_FOCUS_METHODOLOGY, ...TENDER_FOCUS_EVALUATION],
+  });
+  const tenderHeading = tenderContext.complete
+    ? "## TENDER TEXT (full scope — your methodology must match this exactly)"
+    : "## TENDER TEXT (the scope-bearing passages of the tender, in document order; elisions are marked — your methodology must match what is shown)";
+
   return `Write Section C — the Technical Approach — for this technical proposal.
 
 ## TENDER
 TITLE: ${input.tenderTitle}
 CLIENT: ${input.clientName}
 
-## TENDER TEXT (full scope — your methodology must match this exactly)
-${input.tenderText.slice(0, 8_000)}
+${tenderHeading}
+${tenderContext.text}
 
 ## ANALYSIS SUMMARY
 ${input.analysisSummary.slice(0, 2_500)}
@@ -470,10 +718,10 @@ ${criterionBlock}
 ${input.requirements.slice(0, 4_000)}
 
 ## PROPOSED EXPERTS (name them inline in the methodology — who does what)
-${input.experts.slice(0, 6_000)}
+${structuredEvidenceOnly(input.experts).slice(0, 6_000)}
 
 ## RELEVANT PROJECT EVIDENCE (cite specific projects when they demonstrate a methodology element)
-${input.projects.slice(0, 6_500)}
+${structuredEvidenceOnly(input.projects).slice(0, 6_500)}
 
 ## DETERMINISTIC POST-INJECTION (DO NOT DUPLICATE THESE STRUCTURES)
 After your output is generated, the engine will deterministically inject the
@@ -564,6 +812,7 @@ ${input.submissionNotes.slice(0, 2_500)}
 
 ## KEY DIFFERENTIATORS
 ${input.differentiators.slice(0, 2_000)}
+${input.criteriaAlignment ? `\n## CRITERIA ALIGNMENT (internal analysis — use it to decide what to emphasise and which records answer which criterion; never copy it, its headings or its scores into the proposal)\n${input.criteriaAlignment.slice(0, 2_000)}\n` : ""}
 
 ## COMPANY EVIDENCE (especially certifications, ISO, professional bodies)
 ${input.companyProfile.slice(0, 3_500)}
@@ -587,7 +836,6 @@ Section D additions (auto-injected end of Section D):
 - Health and Safety Plan
 - Innovation and Value Engineering Proposals
 - Local Content and Capacity Building
-- Win Themes and Discriminators
 
 Closers (auto-injected before Section E):
 - Tender-Specific Obstacles and Mitigation
@@ -741,7 +989,9 @@ export function buildProposalSectionSpecs(input: AIBidWriterInput, opts?: { deep
     {
       id: "technical-approach",
       title: "Section C: Technical Approach",
-      systemPrompt: TECHNICAL_APPROACH_SYSTEM_PROMPT,
+      systemPrompt: technicalApproachSystemPrompt(
+        buildSectorGuidanceBlock([input.tenderText ?? "", input.tenderTitle ?? "", input.requirements ?? ""].join(" ")),
+      ),
       userPrompt: buildTechnicalApproachPrompt(input),
       maxOutputTokens: budget.c,
     },
@@ -795,8 +1045,11 @@ function buildTechnicalApproachDrillDownPrompt(input: AIBidWriterInput, firstPas
 TITLE: ${input.tenderTitle}
 CLIENT: ${input.clientName}
 
-## TENDER TEXT (use to align methodology vocabulary to THIS sector)
-${input.tenderText.slice(0, 8_000)}
+## TENDER TEXT (the scope-bearing passages, in document order; elisions are marked — use to align methodology vocabulary to THIS sector)
+${selectTenderContext(input.tenderText, {
+    budgetChars: TECHNICAL_APPROACH_TENDER_BUDGET_CHARS,
+    focusTerms: [...TENDER_FOCUS_METHODOLOGY, ...TENDER_FOCUS_EVALUATION],
+  }).text}
 
 ## EVALUATION CRITERIA (your methodology must score against these)
 ${input.evaluationMethodology.slice(0, 4_500)}
@@ -851,7 +1104,61 @@ export function extractSectionCFromMarkdown(markdown: string): string | null {
 // self-score-builder, narrative-throughline-enforcer) downstream will
 // fill the section out with structured tables.
 
-export function buildSectionFallback(spec: ProposalSectionSpec, input: AIBidWriterInput): string {
+/**
+ * Why a model-written section cannot be used as delivered, or null.
+ *
+ * A hosted run kept a cover-and-summary section that stopped mid-sentence
+ * ("... stresses \u201cRequire strong healthcare facility design
+ * experience\u201d, and mandates") and never reached its Executive Summary.
+ * The client-safety check passed it, the missing-section repair then appended
+ * a generic "Executive Summary" after the Declaration, and the package scored
+ * 100. A section that lacks the headings it exists to provide, or whose last
+ * prose line breaks off on a bare word, takes its deterministic text instead
+ * -- for the opening sections, the record-based Cover Letter and Executive
+ * Summary.
+ */
+const REQUIRED_SECTION_HEADINGS: Partial<Record<ProposalSectionId, Array<{ label: string; rx: RegExp }>>> = {
+  "cover-and-summary": [
+    { label: "Cover Letter", rx: /^#\s+Cover\s+Letter\b/im },
+    { label: "Executive Summary", rx: /^#\s+Executive\s+Summary\b/im },
+  ],
+};
+
+export function sectionOutputProblem(id: ProposalSectionId, markdown: string): string | null {
+  const text = String(markdown ?? "").trim();
+  if (!text) return "empty section";
+  for (const heading of REQUIRED_SECTION_HEADINGS[id] ?? []) {
+    if (!heading.rx.test(text)) return `missing its "${heading.label}" heading`;
+  }
+  // A table row the model stopped writing mid-cell: "| Nejat … – Geotech Lead
+  // | Lead Geotechnical" shipped in a delivered EOI (2026-09-30).
+  const cutRow = text.split("\n").find((line) => /^\s*\|/.test(line) && !/\|\s*$/.test(line));
+  if (cutRow) return `a table row is cut off ("${cutRow.trim().slice(0, 60)}")`;
+  // Any paragraph, not only the last: "… at the 30%, 60%, and 100% deliverable
+  // gates by an independent" ended a paragraph mid-section (2026-10-01).
+  const paragraphs = text.split(/\n\s*\n/).map((block) => block.trim()).filter(Boolean);
+  for (const paragraph of paragraphs.slice(0, -1)) {
+    const cut = markdownEndsMidSentence(paragraph);
+    if (cut) return cut;
+  }
+  return markdownEndsMidSentence(text);
+}
+
+/** The cut-off ending of a markdown text's last prose line, or null. */
+export function markdownEndsMidSentence(markdown: string): string | null {
+  const lastProse = String(markdown ?? "").split("\n").map((line) => line.trim()).filter((line) => line && !/^(?:#|\||[-*+]\s|\d+\.\s|>)/.test(line)).pop() ?? "";
+  // A sentence cut off on an ordinary lower-case word. Sign-offs, names,
+  // addresses, e-mail and web addresses do not end this way.
+  if (/\s[a-z]{2,}$/.test(lastProse) && !/[@/]|\.[a-z]{2,}$/.test(lastProse.split(/\s+/).pop() ?? "")) {
+    return `ends mid-sentence ("...${lastProse.slice(-60)}")`;
+  }
+  return null;
+}
+
+export function buildSectionFallback(spec: ProposalSectionSpec, writerInput: AIBidWriterInput): string {
+  // The writer's input carries the model's contract block at the head of
+  // three fields; this writer reads those fields as tender data.
+  const input = withoutAIWriterContractPrompt(writerInput);
   switch (spec.id) {
     case "cover-and-summary":
       return buildCoverAndSummaryFallback(input);
@@ -863,27 +1170,36 @@ export function buildSectionFallback(spec: ProposalSectionSpec, input: AIBidWrit
       const tenderRef = input.tenderTitle ? `**${input.tenderTitle}**` : "this assignment";
       const client = input.clientName || "the Client";
       // Parse top scored/mandatory requirements from the requirements string
+      // Only requirement lines that describe WORK become methodology phases.
+      //
+      // 2026-09-29, Preview, a new tender: Section C.2.1 of the delivered
+      // proposal was titled "FORBIDDEN PHRASES: Never write 'demonstrated
+      // experience' without a project name; 'c" and the Work Plan's first
+      // stage repeated it. generate-elite prepends BENCHMARK_CONTEXT_LINES
+      // (writer directives) to input.requirements; the filter here caught
+      // only the directives containing "BENCHMARK" or "RULE:". The directives
+      // are now excluded exactly, plus any ALL-CAPS "LABEL:" line.
+      //
+      // The same Section C made "Site Visit", "Bid Submission Format",
+      // "Project Team Qualifications" and "Company Profile and
+      // Qualifications" methodology phases and Work Plan stages, cut mid-word.
+      // Those rows say how to submit and what credentials to show; the
+      // proposal answers them elsewhere (Sections A, B, E, the cover letter).
+      // A phase is titled from the requirement's own title, on a word boundary.
       const reqLines = input.requirements
         .split("\n")
-        .map((l) => l.replace(/^[-*•]\s*/, "").replace(/^(MANDATORY|SCORED|INFORMATIONAL):?\s*/i, "").trim())
-        // Exclude ALL BENCHMARK_CONTEXT_LINES injected as prompt meta-directives:
-        // they all start with an ALL-CAPS keyword followed by " RULE:" or " BENCHMARK"
-        .filter((l) => l.length > 15 && !/\bBENCHMARK\b|\bRULE:\s/i.test(l.slice(0, 60)))
+        .map((l) => l.replace(/^[-*•]\s*/, "").replace(/^(MANDATORY|SCORED|INFORMATIONAL|CRITICAL):?\s*/i, "").trim())
+        .filter((l) => l.length > 15)
+        .filter((l) => !WRITER_DIRECTIVE_LINES.has(l) && !/^[A-Z][A-Z0-9 /&()'-]{3,}:\s/.test(l))
+        .filter((l) => !NOT_A_WORK_PHASE.test(l))
+        .map(workPhaseTitle)
+        .filter((l) => l.length > 3)
         .slice(0, 8);
-      // Parse top expert names — expertProofLine format is "Name — Title | ..."
-      // so we match the name at the start, stopping at space-dash or pipe or end.
-      const expertNames = input.experts
-        .split("\n")
-        .map((l) => l.match(/^([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)(?:\s*[—|–\-]|$)/)?.[1]?.trim() ?? "")
-        .filter(Boolean)
-        .slice(0, 4);
-      const leadExpert = expertNames[0] || "the lead expert";
-      const team = expertNames.length > 1 ? expertNames.join(", ") : leadExpert;
       // Sector-specific scope item sets replace the generic fallback when sector detected.
       const SECTOR_SCOPE_ITEMS: Record<string, string[]> = {
         healthcare: ["Clinical Brief Review and Space Programming", "Site Investigation and Clinical Zoning", "Infection Prevention and Control (IPC) Design", "MEP Engineering — Medical Gas, HVAC, Emergency Power", "Structural and Fire Safety Design", "Regulatory Approval and Permit Documentation", "Equipment Planning and Biomedical Coordination", "Tender Documentation and BOQ Preparation", "Construction Supervision and QA", "Commissioning and Handover"],
         water: ["Hydrology and Source Investigation", "Hydraulic Modelling (WaterCAD / EPANET)", "Water Treatment Process Design", "Pipe Network and Storage Design", "Pump Station and Civil Works Design", "ESMP and Environmental Compliance", "Construction Supervision", "Commissioning and O&M Training"],
-        road: ["Topographic Survey and Alignment Study", "Geotechnical Investigation (CBR, Proctor)", "Pavement Design (AASHTO / ERA Standards)", "Drainage and Culvert Design", "Road Safety Audit", "Environmental and Social Management Plan", "BOQ and Cost Estimate", "Construction Supervision and Materials Testing", "As-Built Documentation", "Defects Liability Inspection"],
+        road: ["Topographic Survey and Alignment Study", "Geotechnical Investigation (CBR, Proctor)", "Pavement Design ({{JURISDICTION:ROAD_DESIGN_STANDARD}})", "Drainage and Culvert Design", "Road Safety Audit", "Environmental and Social Management Plan", "BOQ and Cost Estimate", "Construction Supervision and Materials Testing", "As-Built Documentation", "Defects Liability Inspection"],
         environmental: ["Baseline Environmental and Social Survey", "Impact Identification and ESIA Matrices", "Mitigation Hierarchy and ESMP Preparation", "Stakeholder Engagement and Consultation Plan", "Donor Safeguard Alignment (ESF / IFC)", "Monitoring and Evaluation Framework", "Grievance Redress Mechanism Design", "Final ESIA Report and Regulatory Approval Support"],
         ict: ["Requirements Analysis and Business Process Mapping", "System Architecture Design (App / Database / Network)", "Data Security, RBAC and Privacy Framework", "Integration Plan and API Specifications", "User Acceptance Testing (UAT) Protocol", "Training and Change Management Plan", "Go-Live Cutover Strategy", "SLA and Post-Launch Support"],
         financial: ["Regulatory Framework and Licensing Compliance Review", "AML / KYC and Risk Management Framework Design", "Core Banking System Architecture", "Credit Risk Assessment Methodology", "IFRS and Basel Compliance Mapping", "IT Infrastructure and Cybersecurity Design", "Staff Training and Capacity Building", "Implementation Roadmap and Phased Rollout"],
@@ -894,22 +1210,33 @@ export function buildSectionFallback(spec: ProposalSectionSpec, input: AIBidWrit
         mining: ["Geological Survey and Resource Estimation (JORC)", "Geotechnical and Slope Stability Assessment", "Mine Planning and Ore Body Characterisation", "Tailings Management and Environmental Compliance", "Blast Design and Ground Vibration Management", "Water Management and Dewatering Design", "ESIA and Social Management Plan", "Rehabilitation and Mine Closure Planning"],
         building: ["Architectural Brief and Space Programme Review", "Structural Engineering and Foundation Design", "MEP Design — Mechanical, Electrical, Plumbing", "Fire Safety and Life Safety Systems Design", "BIM Coordination and Clash Detection", "BOQ and Cost Planning", "Regulatory Approval and Building Permit Support", "Construction Supervision and QA"],
         oil_gas: ["Process Flow and P&ID Development", "HAZOP and Safety Case Analysis", "Pipeline Integrity and Corrosion Management", "HSE Plan and Emergency Response Framework", "Wellhead and Production Facility Engineering", "Environmental Baseline and ESMP", "Detailed Engineering Drawings and Specifications", "Commissioning and Pre-Startup Safety Review"],
+        telecom_tower: TELECOM_TOWER_SCOPE_ITEMS,
         port: ["Traffic Volume and Vessel Call Analysis", "Port Master Plan and Terminal Layout Design", "Berth, Quay and Fender System Engineering", "Dredging and Coastal Impact Assessment", "Container Handling Equipment Specification", "Maritime Safety and Navigation Study", "Environmental and ESMP Compliance", "Operational Procedures and Port Regulations"],
       };
       // Detect sector from tender text for sector-specific fallback scope items
-      const haystack = [input.tenderText ?? "", input.tenderTitle ?? "", input.requirements ?? ""].join(" ").toLowerCase();
+      const haystack = [input.tenderText ?? "", input.tenderTitle ?? "", input.requirements ?? ""]
+        .join("\n")
+        .split("\n")
+        .filter((line) => !WRITER_DIRECTIVE_LINES.has(line.replace(/^[-*•]\s*/, "").trim()))
+        .join(" ")
+        .toLowerCase();
       const detectedFallbackSector = (() => {
-        if (/health|hospital|clinic|medical|patient|ward|pharmacy|radiology/.test(haystack)) return "healthcare";
+        if (describesTelecomTowerWork(haystack)) return "telecom_tower";
+        // Bounded: bare "ward" matched "arbitral award" and "towards".
+        if (/\b(?:health(?:\s*care)?|hospitals?|clinics?|medical|patients?|wards?|pharmacy|radiology)\b/.test(haystack)) return "healthcare";
         if (/water|borehole|hydraulic|sanitar|epanet|watercad|chlorin/.test(haystack)) return "water";
         if (/\broad\b|highway|pavement|bridge|culvert|cbr|aashto|bitumen/.test(haystack)) return "road";
         if (/esia|esmp|environmental assessment|safeguard|mitigation hierarchy/.test(haystack)) return "environmental";
-        if (/software|ict|digital|api|uat|database|mis|erp|system.*develop/.test(haystack)) return "ict";
-        if (/financ|bank|micro.?financ|aml|kyc|basel|lending/.test(haystack)) return "financial";
+        // Word boundaries: bare "api"/"mis"/"uat" matched inside "capital",
+        // "commission", "evaluation"; bare "financ" matched the "Financial
+        // Proposal" row every tender carries.
+        if (/\b(?:software|ict|digital platform|api|uat|database|mis|erp)\b|system.*develop/.test(haystack)) return "ict";
+        if (/micro.?financ|financial (?:sector|services|inclusion|institution)|\bbank(?:ing)?\b|\baml\b|\bkyc\b|\bbasel\b|\blending\b/.test(haystack)) return "financial";
         if (/telecom|spectrum|base station|5g|4g|lte|backhaul|broadband/.test(haystack)) return "telecoms";
         if (/energy|power|solar|wind|grid|generation|transmission|scada/.test(haystack)) return "energy";
         if (/agri|farm|irrigation|crop|yield|fao|value.?chain|livestock/.test(haystack)) return "agriculture";
         if (/urban|master plan|zoning|land.?use|municipal|gis/.test(haystack)) return "urban";
-        if (/mining|mineral|quarry|jorc|tailings|ore/.test(haystack)) return "mining";
+        if (/\bmining\b|mineral|quarry|jorc|tailings|\bore\b/.test(haystack)) return "\bmining\b";
         if (/building|architect|mep|hvac|bim|boq|facility/.test(haystack)) return "building";
         if (/oil|gas|petroleum|p&id|hazop|pipeline|wellhead/.test(haystack)) return "oil_gas";
         if (/\bport\b|harbor|harbour|maritime|berth|quay/.test(haystack)) return "port";
@@ -929,40 +1256,53 @@ export function buildSectionFallback(spec: ProposalSectionSpec, input: AIBidWrit
         "Documentation and Knowledge Transfer",
         "Post-Completion Advisory Support",
       ];
-      const EFFECTIVE_SCOPE_ITEMS = SECTOR_SCOPE_ITEMS[detectedFallbackSector] ?? GENERIC_SCOPE_ITEMS;
+      const EFFECTIVE_SCOPE_ITEMS = (SECTOR_SCOPE_ITEMS[detectedFallbackSector] ?? GENERIC_SCOPE_ITEMS).map((item) =>
+        resolveJurisdictionTokens(item, input.tenderText ?? ""),
+      );
       // Build methodology sections — scale to tender's actual scope item count, minimum 6
       const maxReqs = Math.max(6, Math.min(reqLines.length, EFFECTIVE_SCOPE_ITEMS.length));
       const normalizedReqs = reqLines.slice(0, maxReqs);
       while (normalizedReqs.length < 6) {
         normalizedReqs.push(EFFECTIVE_SCOPE_ITEMS[normalizedReqs.length]);
       }
+      // No expert is named against an item here. Names used to be dealt out
+      // round-robin, which put a sanitary engineer in charge of "Relevant
+      // Experience" and an electrical engineer on the tender form; a lead is
+      // named only where a title holds the discipline (scope-delivery-plan).
+      const scopeItems = extractScopeItems(input.tenderText ?? "");
       const methodBlocks = normalizedReqs.map((req, i) => {
-        const expert = expertNames[i % Math.max(1, expertNames.length)] || "the assigned expert";
         const isGeneric = i >= reqLines.length;
         const body = isGeneric
-          ? `The ${req.toLowerCase()} phase follows the firm's established staged-delivery methodology. ${expert} will lead this scope item, applying sector-specific technical standards and the firm's quality-gate process. Each stage deliverable is prepared at schematic, detailed, and final levels with internal QA peer review before submission to ${client} for approval.`
-          : `Our approach to this requirement begins with a thorough review of ${client}'s stated scope, constraints, and applicable standards. ${expert} will lead this scope item, applying the firm's proven methodology and drawing on comparable project experience. The deliverable will be prepared at schematic, detailed, and final stages with internal QA review at each gate before submission to ${client} for approval.\n\nResponsible expert: ${expert}. Quality Gate: 30%/60%/100% internal review gates — peer-reviewed at 30%, cross-discipline at 60%, director sign-off at 100%.`;
-        return `### C.2.${i + 1} ${req.slice(0, 80)}\n\n${body}`;
+          ? `The ${req.toLowerCase()} phase follows the firm's staged-delivery methodology. The discipline lead applies the applicable technical standards and the firm's quality-gate process, and each stage deliverable is prepared at schematic, detailed and final levels with peer review by a second engineer before submission to ${client} for approval.`
+          : `Our approach to this requirement begins with a review of ${possessive(client)} stated scope, constraints and applicable standards. The deliverable is prepared at schematic, detailed and final stages with quality review at each gate before submission to ${client} for approval.\n\nQuality gate: peer review at 30%, cross-discipline check at 60% and senior sign-off at 100%.`;
+        return `### C.2.${i + 1} ${req}\n\n${body}`;
       });
       // Work-plan rows derived from normalised requirement scope items (scales to 10 items)
       const PHASE_TIMELINES = ["Week 1–2", "Week 2–4", "Week 4–6", "Week 6–8", "Week 8–12", "Week 12–16", "Week 16–18", "Week 18–20", "Week 20–22", "Week 22–24"];
       const PHASE_GATES = ["PM sign-off", "Senior Engineer review", "QA peer review", "Client interim review", "30% client review", "60%/100% gates", "Director sign-off", "Client acceptance", "Final QA review", "PM close-out"];
       const workPlanRows = normalizedReqs.map((req, i) => {
-        const responsible = i % 2 === 0 ? leadExpert : team;
-        const deliverable = req.slice(0, 60).replace(/\s*\(.*$/, "").trim();
-        return [`${i + 1} — ${req.slice(0, 40).replace(/\s*\(.*$/, "").trim()}`, `${deliverable} Report`, responsible, PHASE_TIMELINES[i] ?? `Week ${i * 2 + 1}–${i * 2 + 2}`, PHASE_GATES[i] ?? "PM sign-off"];
+        const responsible = "Discipline lead";
+        return [`${i + 1} — ${req}`, `${req} Report`, responsible, PHASE_TIMELINES[i] ?? `Week ${i * 2 + 1}–${i * 2 + 2}`, PHASE_GATES[i] ?? "PM sign-off"];
       });
       return [
         "# Section C: Technical Approach",
         "## C.1 Understanding of the Assignment",
-        `${client} requires ${tenderRef}. This assignment requires the proposed team to address the scope items in sequence, applying sector-specific technical standards and delivering each output at the quality level required for client approval. The three key technical challenges identified are: (1) alignment of the detailed scope with ${client}'s stated requirements and applicable standards; (2) ensuring the proposed team's expertise directly addresses the highest-weighted evaluation criteria; and (3) maintaining schedule discipline across a multi-stage delivery. Our approach in Section C.2 addresses each scope item in turn, naming the responsible expert and the quality gate for each deliverable.\n\nThe evaluation criteria identified in this tender require the firm to demonstrate not only technical competence but also the capacity to manage scope, schedule, and quality concurrently. Our methodology is built around a staged approach with explicit client-approval milestones at each phase transition, ensuring that ${client} retains oversight throughout the assignment and that no stage proceeds until the prior deliverable has been accepted.\n\nThe firm's comparable project portfolio demonstrates delivery of assignments of similar scope, sector, and complexity. The strongest project analogues are identified in Section B; each analogous project is cited within the methodology sections below to substantiate the proposed approach with direct precedent, not generic best-practice statements.`,
+        [
+          `${client} has invited proposals for ${tenderRef}.`,
+          scopeItems.length > 0
+            ? `The tender sets out ${scopeItems.length} scope items: ${scopeItems.map((item) => item.title).join("; ")}. Each is answered in the Scope-by-Scope Delivery Plan in this section, in the tender's own order, with its lead, inputs, deliverables, quality check and approval.`
+            : "",
+          `The work is staged, with a client approval at each stage transition, so that ${client} keeps oversight throughout and no stage proceeds until the deliverable before it has been accepted.`,
+        ].filter(Boolean).join(" "),
         "## C.2 Technical Methodology",
-        methodBlocks.length > 0 ? methodBlocks.join("\n\n") : `### C.2.1 Technical Methodology\n\nThe methodology for ${tenderRef} is structured to address each scope item in the tender's stated order. Each stage ties to a deliverable, a responsible named expert, and an internal quality-review gate. The approach applies the firm's established standards for scope review, technical analysis, and staged delivery with client approval milestones at each phase transition.`,
-        "## C.3 Work Plan and Deliverables",
-        `The assignment is structured across six overlapping stages with defined deliverables, responsible experts, and client approval milestones. The critical path runs through the detailed design stage; all prior stages feed into it and each later stage depends on approved outputs from the one before.\n\n| Stage | Deliverable | Responsible Expert | Timeline | Quality Gate |\n|---|---|---|---|---|\n${workPlanRows.map((r) => `| ${r.join(" | ")} |`).join("\n")}`,
+        scopeItems.length > 0
+          ? `The methodology follows the tender's scope of services item by item rather than a generic sequence. Each item is led by the team member whose own title holds the discipline, reviewed by a second senior lead before issue, and released to ${client} for approval before the work that depends on it begins. The item-by-item plan follows below.`
+          : methodBlocks.length > 0 ? methodBlocks.join("\n\n") : `### C.2.1 Technical Methodology\n\nThe methodology for ${tenderRef} is structured to address each scope item in the tender's stated order. Each stage ties to a deliverable and an internal quality-review gate, with client approval milestones at each phase transition.`,
+        scopeItems.length > 0 ? "" : "## C.3 Work Plan and Deliverables",
+        scopeItems.length > 0 ? "" : `The assignment is structured across overlapping stages with defined deliverables and client approval milestones. Each later stage depends on approved outputs from the one before.\n\n| Stage | Deliverable | Responsible | Timeline | Quality Gate |\n|---|---|---|---|---|\n${workPlanRows.map((r) => `| ${r.join(" | ")} |`).join("\n")}`,
         "## C.4 Quality Assurance",
-        `Quality assurance for ${tenderRef} is managed through a three-gate internal review cycle: 30% gate (internal peer review by a senior engineer not on the primary design team), 60% gate (cross-discipline coordination check and client interim review), and 100% gate (director-level sign-off and final compliance verification before issue). No deliverable proceeds to the next stage without written confirmation that the prior gate has been passed.\n\nAll technical documents are version-controlled and issued with a revision history. Comments received from ${client} at each interim review are logged in a comment-response matrix and formally closed before the next stage begins. This approach ensures full traceability between ${client}'s requirements, the technical response, and the final submitted deliverables.\n\nRisk management is integrated into the QA programme: the top three technical risks for this assignment (scope ambiguity, tight schedule, and specialist availability) are tracked on a live risk register updated at each gate and shared with ${client} at every interim submission.`,
-      ].join("\n\n");
+        `Quality assurance for ${tenderRef} is managed through a three-gate quality review cycle: 30% gate (peer review by a senior engineer not on the primary design team), 60% gate (cross-discipline coordination check and client interim review), and 100% gate (director-level sign-off and final compliance verification before issue). No deliverable proceeds to the next stage without written confirmation that the prior gate has been passed.\n\nAll technical documents are version-controlled and issued with a revision history. Comments received from ${client} at each interim review are logged in a comment-response matrix and formally closed before the next stage begins. This approach ensures full traceability between ${possessive(client)} requirements, the technical response, and the final submitted deliverables.\n\nRisk management is integrated into the QA programme: the top three technical risks for this assignment (scope ambiguity, tight schedule, and specialist availability) are tracked on a live risk register updated at each gate and shared with ${client} at every interim submission.`,
+      ].filter(Boolean).join("\n\n");
     }
 
     case "additional-and-declaration":
@@ -994,7 +1334,26 @@ function vaultList(values: string[] | null | undefined, label: string): string {
   return values.filter((v) => v && v.trim().length > 0).join(", ") || `Bid-Team Action: confirm ${label}`;
 }
 
+/** The firm's service line sharing the most words with the tender's title; null when none does. */
+export function serviceLineForTender(serviceLines: readonly string[], tenderTitle: string): string | null {
+  const words = (text: string) => new Set(text.toLowerCase().match(/[a-z]{4,}/g) ?? []);
+  const wanted = words(tenderTitle);
+  let best: string | null = null;
+  let bestScore = 0;
+  for (const line of serviceLines) {
+    const score = [...words(line)].filter((w) => wanted.has(w) || wanted.has(w.replace(/al$/, "")) || wanted.has(`${w}al`)).length;
+    if (score > bestScore) { best = line.trim(); bestScore = score; }
+  }
+  if (!best || bestScore === 0) return null;
+  // "Architectural design" mid-sentence; "MEP design" keeps its acronym.
+  return /^[A-Z][a-z]/.test(best) ? best.charAt(0).toLowerCase() + best.slice(1) : best;
+}
+
 function buildCoverAndSummaryFallback(input: AIBidWriterInput): string {
+  // The record-based letter and summary, when the caller composed them from
+  // the scope plan, references and team (generate-elite.ts). What follows is
+  // the fallback for a caller that could not.
+  if (input.recordBasedOpeners?.trim()) return input.recordBasedOpeners.trim();
   // PR #259 — vault-aware Cover Letter and Executive Summary
   // fallback. Same pattern as PR #257's company-and-experience
   // treatment: pulls real data from input.companyVault (Company
@@ -1033,7 +1392,8 @@ function buildCoverAndSummaryFallback(input: AIBidWriterInput): string {
   // Cover-letter subject line — uses tender reference if present,
   // matching Claude's pattern: "[RFQ# 2026-024 Hope Urban
   // Planning Architectural and Engineering Consultancy PLC]"
-  const subjectLine = `Technical Proposal — ${tenderTitle}`;
+  const documentLabel = input.submissionDocumentLabel?.trim() || "Technical Proposal";
+  const subjectLine = `${documentLabel} — ${tenderTitle}`;
 
   // Cover-letter opening paragraph — names a comparable project
   // when one is available in input.projects. Falls back to a
@@ -1043,17 +1403,19 @@ function buildCoverAndSummaryFallback(input: AIBidWriterInput): string {
   // projects string (which is formatted by expertProofLine /
   // projectProofLine in proposal-intelligence.ts). Look for the
   // first line that contains a currency amount.
-  const projectAnchorMatch = projectsBlock.match(/^([^\n]+?(?:ETB|USD|EUR|GBP)[^\n]+)/m);
-  const openingParagraph = projectAnchorMatch
-    ? `${companyName} submits this Technical Proposal for ${tenderTitle}. The same team that delivered ${projectAnchorMatch[1].slice(0, 200)} is proposed for this engagement, ensuring continuity of methodology and proven delivery.`
-    : `${companyName} submits this Technical Proposal for ${tenderTitle}. Comparable project anchor: see Section B Featured Project Cards for the firm's prior comparable assignments and the same-team continuity proposed for this engagement.`;
+  const anchor = comparableProjectAnchor(projectsBlock);
+  const openingParagraph = anchor
+    // No "the same team that delivered X is proposed": no record proves who
+    // worked on a past project, and the final gate refuses the claim.
+    ? `${companyName} submits this ${documentLabel} for ${tenderTitle}. The firm's comparable experience includes ${anchor.phrase}.`
+    : `${companyName} submits this ${documentLabel} for ${tenderTitle}.${projectsBlock ? " The firm's comparable assignments are presented in Section B." : ""}`;
 
-  // Executive Summary lead — same evidence-anchored opening
-  // pattern Claude uses ("We have already delivered this
-  // assignment...").
-  const execSummaryLead = projectAnchorMatch
-    ? `**${companyName} has already delivered this assignment.** ${projectAnchorMatch[1].slice(0, 200)} demonstrates the firm's capacity for the exact scope this tender requires. The same lead team is proposed for this engagement.`
-    : `${companyName} submits this Technical Proposal for ${tenderTitle}. The firm's portfolio of comparable assignments is detailed in Section B; the proposed team and methodology are aligned to ${clientName}'s evaluation criteria.`;
+  // Executive Summary lead: the record, not a verdict about it.
+  const execSummaryLead = anchor
+    ? `The closest comparable project in ${possessive(companyName)} record is ${anchor.phrase}${anchor.services ? `, where the firm's services included ${anchor.services}` : ""}.`
+    : projectsBlock
+      ? `${companyName} submits this ${documentLabel} for ${tenderTitle}. The firm's comparable assignments are detailed in Section B, and the proposed team and methodology answer ${possessive(clientName)} evaluation criteria.`
+      : `${companyName} submits this ${documentLabel} for ${tenderTitle}. The proposed team and methodology answer ${possessive(clientName)} evaluation criteria.`;
 
   return [
     "# Cover Letter",
@@ -1064,163 +1426,78 @@ function buildCoverAndSummaryFallback(input: AIBidWriterInput): string {
     "",
     openingParagraph,
     "",
-    "The proposed team, comparable previous roles, and team-to-project mapping are detailed in Section A.4 and A.5. Section B presents the featured project portfolio with full client references, contract values, and testimony references.",
+    projectsBlock
+      ? "The proposed team and each expert's comparable roles are set out in Section A, and Section B presents the project references."
+      : "The proposed team and each expert's comparable roles are set out in Section A.",
     "",
-    `We confirm enclosed appendices and the signature block. The proposal is submitted in compliance with all stated requirements; commercial-terms compliance is addressed in the Compliance Matrix.`,
-    v.gmName ? `\nSincerely,\n\n${v.gmName}\n${v.gmTitle ?? "General Manager"}${v.gmLicense ? `\nLicense ${v.gmLicense}` : ""}\n${companyName}` : "",
+    // Not "We confirm enclosed appendices": a one-file package encloses none.
+    "The proposal follows the structure the tender requests, and the Compliance Matrix maps each tender requirement to the section that answers it.",
+    // Signed from the firm's own records: the vault GM, else the one proposed
+    // expert whose title states an executive office (lib/engine/signatory.ts).
+    signOffLines(companyName, resolveSignatory({
+      gmName: v.gmName,
+      gmTitle: v.gmTitle,
+      gmLicense: v.gmLicense,
+      experts: signatoryExpertsFromProofLines(input.experts),
+    })).join("\n"),
     "",
     "# Executive Summary",
     execSummaryLead,
     "",
-    "Our proposal addresses each evaluation criterion stated in the tender's evaluation methodology: Section A demonstrates corporate capacity; Section B presents directly comparable past performance; Section C details the technical approach and methodology; Section D presents value-added capabilities, certifications, and the formal declaration of eligibility.",
-    "",
-    `${companyName} confirms full compliance with all stated requirements, team availability for the engagement window, and adherence to the tender's submission and commercial terms.`,
+    `The proposal answers each evaluation criterion the tender states: Section A presents the firm and the proposed team; ${projectsBlock ? "Section B the project references; " : ""}Section C the technical approach and methodology; Section D supporting capabilities and certifications.`,
   ].filter((s) => s !== "").join("\n\n");
 }
 
-// ── Section A.4/A.5 helpers — build team and mapping tables from evidence ────
-
-function buildA4TeamTable(input: AIBidWriterInput): string {
-  const expertsText = (input.experts ?? "").trim();
-  if (!expertsText) return "Bid-Team Action: populate proposed team table from expert CVs before submission.";
-  // expertProofLine format: "Name — Title | Disciplines: X | Sectors: Y | Certifications: Z | ..."
-  const rows: string[] = [];
-  for (const line of expertsText.split("\n")) {
-    if (!line.trim()) continue;
-    const nameMatch = line.match(/^([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)(?:\s*[—\-|]|$)/);
-    if (!nameMatch) continue;
-    const name = nameMatch[1].trim();
-    const titleMatch = line.match(/—\s*([^|]+?)(?:\s*\||\s*$)/);
-    const title = titleMatch ? titleMatch[1].trim().slice(0, 60) : "";
-    const certMatch = line.match(/Certifications?[\/]?Licen[sc]es?\s*:\s*([^|]+)/i);
-    const certs = certMatch ? certMatch[1].trim().slice(0, 80) : "";
-    const yrsMatch = line.match(/(\d+)\+?\s*years?/i);
-    const yrs = yrsMatch ? `${yrsMatch[1]}+ yrs` : "";
-    rows.push(`| ${name} | ${title} | ${certs} | ${yrs} | TBD |`);
-    if (rows.length >= 8) break;
-  }
-  if (rows.length === 0) return "Bid-Team Action: confirm proposed team table from expert CVs before submission.";
-  return [
-    "| Expert Name | Position / Role | Qualifications & Licence | Experience | Role on This Assignment |",
-    "|---|---|---|---|---|",
-    ...rows,
-  ].join("\n");
+/**
+ * The first comparable project line, as a phrase a reader can take in.
+ *
+ * Project lines are pipe-joined records: "Hospital Project — City
+ * Administration of Abuja | Nigeria | Healthcare | USD 18.9M | Construction
+ * value of works USD 18.9M | 2024-2026 | Services: Feasibility study, ...".
+ * The cover letter printed the first 200 characters of one, cut mid-word
+ * ("... Geotechnical investigation, Archit."). A figure is used only under
+ * its own label, so a construction value is never presented as the firm's
+ * fee.
+ */
+export function comparableProjectAnchor(projectsBlock: string): { phrase: string; services: string | null } | null {
+  const line = projectsBlock.split("\n").map((l) => l.replace(/^[-*•]\s*/, "").trim()).find((l) => /\b(?:ETB|USD|EUR|GBP)\b/.test(l));
+  if (!line) return null;
+  const parts = line.split(" | ").map((part) => part.trim()).filter(Boolean);
+  const name = parts[0];
+  if (!name || name.length < 4) return null;
+  const country = parts[1] && /^[A-Z][A-Za-z .'-]{2,40}$/.test(parts[1]) ? parts[1] : null;
+  const labelledValue = parts.find((part) => /^construction value of works\s+(?:ETB|USD|EUR|GBP)\s/i.test(part));
+  const detail = [country, labelledValue ? labelledValue.charAt(0).toLowerCase() + labelledValue.slice(1) : null].filter(Boolean).join(", ");
+  const servicesPart = parts.find((part) => /^services:/i.test(part));
+  const serviceList = servicesPart
+    ? servicesPart.replace(/^services:\s*/i, "").replace(/…$/, "").split(/,\s*/).map((item) => item.trim()).filter((item) => item.length > 3)
+    : [];
+  // Records are cut to length upstream, not always with an ellipsis, so the
+  // last item may end mid-word ("..., Archit"). It is never the one printed.
+  const complete = serviceList.length > 5 ? serviceList.slice(0, 5) : serviceList.slice(0, -1);
+  // Lower-cased as running text, except an acronym ("MEP design").
+  const services = complete.length > 0
+    ? complete.map((item) => (/^[A-Z]{2,}\b/.test(item) ? item : item.charAt(0).toLowerCase() + item.slice(1))).join(", ")
+    : null;
+  return { phrase: detail ? `${name} (${detail})` : name, services };
 }
 
-function buildA5MappingTable(input: AIBidWriterInput): string {
-  const expertsText = (input.experts ?? "").trim();
-  const projectsText = (input.projects ?? "").trim();
-  if (!expertsText || !projectsText) return "Bid-Team Action: populate team-to-project mapping table before submission.";
-  const expertNames: string[] = [];
-  for (const line of expertsText.split("\n")) {
-    const m = line.match(/^([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)(?:\s*[—\-|]|$)/);
-    if (m) expertNames.push(m[1].trim());
-    if (expertNames.length >= 6) break;
-  }
-  const projectNames: string[] = [];
-  for (const line of projectsText.split("\n")) {
-    if (line.trim().length > 15) {
-      const nameMatch = line.match(/^([A-Z][A-Za-z\s,&.()–\-]{8,80}?)(?:\s*[—|–\-]\s|,\s|\s\()/);
-      if (nameMatch) projectNames.push(nameMatch[1].trim().slice(0, 60));
-    }
-    if (projectNames.length >= 4) break;
-  }
-  if (expertNames.length === 0 || projectNames.length === 0) return "Bid-Team Action: confirm team-to-project mapping before submission.";
-  const rows = expertNames.map((name, i) => {
-    const project = projectNames[i % projectNames.length];
-    return `| ${name} | ${project} | Lead / Senior Role | Comparable scope and sector |`;
-  });
-  return [
-    "| Expert | Comparable Previous Project | Role on That Project | Relevance to This Tender |",
-    "|---|---|---|---|",
-    ...rows,
-  ].join("\n");
-}
-
-// ── Section B helpers — build real project cards from evidence text ──────────
+// ── Section B — the introduction to the record-built reference tables ─────────
+//
+// The team table (A.4), the team-to-project mapping (A.5), the client
+// references and the project cards are built downstream from the expert and
+// project records (benchmark-tables.ts), and only when no upstream section
+// already carries those headings. This writer used to fill them itself by
+// parsing the writer's flattened text: every role was "TBD" (delivered as "to
+// be confirmed by proposal team"), every expert was said to have held a
+// "Lead / Senior Role" on whichever project came next in the list, and a
+// contract value lost its magnitude ("ETB 550" for ETB 550.1M). Its headings
+// also stopped the record-built tables from being added at all.
 
 function buildSectionBPortfolioOverview(input: AIBidWriterInput): string {
   const v = input.companyVault ?? {};
-  const companyName = v.name?.trim() || "the firm";
-  // Count evidence lines in the projects string as a rough portfolio size proxy
-  const projectLines = (input.projects ?? "").split("\n").filter((l) => l.trim().length > 20);
-  const count = projectLines.length > 0 ? `${projectLines.length}+` : "multiple";
-  return `${companyName} brings a portfolio of ${count} comparable project assignments relevant to this tender. Each featured project below demonstrates the firm's direct capacity for the scope items evaluated in this tender. See Sections B.2 and B.3 for the two most comparable assignments; the full portfolio is summarised in the downstream project table.`;
-}
-
-function buildSectionBFeaturedCards(input: AIBidWriterInput): string[] {
-  // Parse the projects evidence string to extract structured card data.
-  // The projects string is formatted by projectProofLine in proposal-intelligence.ts
-  // as multi-line blocks. We extract the first two blocks and format them as
-  // real Markdown tables rather than empty "see downstream" stubs.
-  const projectsText = (input.projects ?? "").trim();
-  if (!projectsText) {
-    return [
-      "## B.2 Featured Project 1",
-      "Bid-Team Action: populate with the most directly comparable project — client, location/scale, duration, contract value, testimony reference, services provided, and why it demonstrates capacity for this tender.",
-      "## B.3 Featured Project 2",
-      "Bid-Team Action: populate with the second most comparable project using the same format.",
-    ];
-  }
-
-  // Parse projectProofLine format: "Name — Client | Country | Sector | Currency Value. Summary."
-  // Each project is on one line. We take the first two non-empty, non-evidence-header lines.
-  const projectLines = projectsText
-    .split("\n")
-    .map((l) => l.trim())
-    .filter((l) => l.length > 20 && !/^(Wider company evidence|Company document|Legal evidence|Financial evidence|Compliance evidence)/i.test(l));
-
-  const parseProofLine = (line: string) => {
-    // Split on " — " to separate name from rest
-    const dashIdx = line.indexOf(" — ");
-    const name = dashIdx > 0 ? line.slice(0, dashIdx).trim() : line.slice(0, 80).trim();
-    const rest = dashIdx > 0 ? line.slice(dashIdx + 3) : "";
-    // rest is "Client | Country | Sector | ETB 5M. Summary text."
-    const pipeparts = rest.split("|").map((p) => p.trim());
-    const client = pipeparts[0] || null;
-    const country = pipeparts[1] || null;
-    const sector = pipeparts[2] || null;
-    // value is in pipeparts[3] which may be "ETB 5.0M. Summary text."
-    const valueSummary = pipeparts[3] || "";
-    const valueDotIdx = valueSummary.search(/\.\s+[A-Z]/);
-    const value = valueDotIdx > 0 ? valueSummary.slice(0, valueDotIdx).trim() : valueSummary.replace(/\..+$/, "").trim() || null;
-    const summary = valueDotIdx > 0 ? valueSummary.slice(valueDotIdx + 2).trim().slice(0, 300) : null;
-    return { name, client, country, sector, value, summary };
-  };
-
-  const makeCard = (line: string, num: number): string => {
-    const { name, client, country, sector, value, summary } = parseProofLine(line);
-    const cleanName = name.replace(/[*_]/g, "").slice(0, 100);
-    const rows: string[] = [
-      "| Field | Detail |",
-      "|---|---|",
-      `| Project name | **${cleanName}** |`,
-      `| Client | ${client ?? "Bid-Team Action: confirm client name"} |`,
-      `| Location/Country | ${country ?? "Bid-Team Action: confirm"} |`,
-      `| Sector | ${sector ?? "Bid-Team Action: confirm"} |`,
-      `| Contract value | ${value ?? "Bid-Team Action: confirm"} |`,
-      "| Duration | Bid-Team Action: confirm engagement timeline |",
-      "| Reference letter | Available on request |",
-    ];
-
-    const whyText = summary
-      ? `**Relevance to this tender:** ${summary} The proposed team delivered this assignment and will apply the same proven methodology.`
-      : `**Why this anchors this tender:** The ${cleanName} engagement demonstrates comparable scope, sector alignment, and delivery capacity. The proposed lead team includes the same professionals who delivered this assignment.`;
-
-    return [`## B.${num} Featured Project ${num - 1}`, rows.join("\n"), whyText].join("\n\n");
-  };
-
-  const card1 = projectLines.length >= 1 ? makeCard(projectLines[0], 2) : [
-    "## B.2 Featured Project 1",
-    "Bid-Team Action: populate with the most directly comparable project — client, location/scale, duration, contract value, testimony reference, services provided, and why it demonstrates capacity for this tender.",
-  ].join("\n\n");
-
-  const card2 = projectLines.length >= 2 ? makeCard(projectLines[1], 3) : [
-    "## B.3 Featured Project 2",
-    "Bid-Team Action: populate with the second most comparable project using the same format.",
-  ].join("\n\n");
-
-  return [card1, card2];
+  const companyName = v.name?.trim() || "The firm";
+  return `${companyName}'s references for this assignment are drawn from its own project records: the client references first, then each project with the client, location, sector, value and services its record states.`;
 }
 
 function buildCompanyAndExperienceFallback(input: AIBidWriterInput): string {
@@ -1247,9 +1524,13 @@ function buildCompanyAndExperienceFallback(input: AIBidWriterInput): string {
   const a1SectorsSentence = v.sectors && v.sectors.length > 0
     ? `Sector experience spans: ${v.sectors.join(", ")}.`
     : "";
-  const a1Profile = v.profileSummary?.trim()
-    ? v.profileSummary.trim()
-    : "";
+  // The profile summary is a document ABOUT the firm, often written as a
+  // drafting digest ("Convenience digest of the January 2026 corporate
+  // profile for use in AI-assisted tender drafting. Use this summary to
+  // populate ..."). It was pasted into A.1 verbatim and ran to seven pages of
+  // a delivered proposal, instructions included. Only its own "Label | Value"
+  // rows are the firm's statements; they join the A.2 table below.
+  const profileFacts = corporateFactsFromProfile(v.profileSummary);
 
   // ── A.2 Corporate Information Table — real values per row ────────────
   // PR S FIX — Build the table as ONE string with single-newline row
@@ -1276,6 +1557,9 @@ function buildCompanyAndExperienceFallback(input: AIBidWriterInput): string {
     `| Founding year | ${vaultField(v.foundingYear, "founding year")} |`,
     `| Staff headcount | ${vaultField(v.headcount, "staff headcount")} |`,
     `| Licence grade | ${vaultField(v.licenseGrade, "licence grade")} |`,
+    ...profileFacts
+      .filter((f) => !/^(?:legal name|tin|vat|general manager|licen[cs]e grade|category|contact|phone|email|website)\b/i.test(f.label))
+      .map((f) => `| ${f.label.replace(/\|/g, "/")} | ${f.value.replace(/\|/g, "/")} |`),
   ].join("\n");
 
   // ── A.3 Core Service Lines — actual list or inferred from sectors ────
@@ -1292,26 +1576,23 @@ function buildCompanyAndExperienceFallback(input: AIBidWriterInput): string {
     "# Section A: Company Profile",
     "## A.1 Company Background",
     a1Sentence,
-    a1Profile,
     a1ServicesSentence,
     a1SectorsSentence,
     "## A.2 Corporate Information Table",
     a2Table,
     "## A.3 Core Service Lines",
     a3Body,
-    "## A.4 Proposed Project Team",
-    buildA4TeamTable(input),
-    "## A.5 Team-to-Project Experience Mapping",
-    buildA5MappingTable(input),
+    // A.4 Proposed Project Team and A.5 Team-to-Project Experience Mapping
+    // are the record-built tables (see buildSectionBPortfolioOverview).
     "",
     "# Section B: Relevant Experience",
     "## B.1 Portfolio Overview",
     buildSectionBPortfolioOverview(input),
-    ...buildSectionBFeaturedCards(input),
-    "## B.4 Additional Projects",
-    "See deterministic project portfolio table built downstream.",
-    "## B.5 Client References",
-    "See deterministic Client References table built downstream.",
+    // The portfolio and client-reference tables are added downstream under
+    // their own headings. Holding "B.4 Additional Projects" / "B.5 Client
+    // References" here with a "See deterministic ... table built downstream"
+    // line shipped that line to the client and left two Client References
+    // sections in the same proposal.
   ].filter((s) => s !== "").join("\n\n");
 }
 
@@ -1320,45 +1601,51 @@ function buildAdditionalAndDeclarationFallback(input: AIBidWriterInput): string 
   const companyName = v.name?.trim() || "the firm";
   const tenderTitle = input.tenderTitle?.trim() || "the captioned tender";
 
-  // ── D.3 Professional Certifications — real compliance lines ──────────
-  const d3Body = v.complianceLines && v.complianceLines.length > 0
-    ? v.complianceLines.map((c) => `- ${c}`).join("\n")
-    : "Bid-Team Action: confirm registration / certificate numbers and dates before submission. The Knowledge Vault should hold the firm's ISO certifications, professional body memberships, and donor compliance records.";
-
-  // ── D.4 Declaration of Eligibility — names a real GM if available ───
-  const d4Body = v.gmName
-    ? `**${companyName}** declares that it meets all eligibility requirements stated in this tender. Signed: ${v.gmName}${v.gmTitle ? `, ${v.gmTitle}` : ", General Manager"}${v.gmLicense ? ` (License ${v.gmLicense})` : ""}.`
-    : `**${companyName}** declares that it meets all eligibility requirements stated in this tender. Bid-Team Action: confirm signature block (GM name, title, licence) before submission.`;
-
-  // ── Declaration — formal 5-line signature block ──────────────────────
-  const sigBlock = v.gmName
-    ? [
-        `Name: ${v.gmName}`,
-        `Title: ${v.gmTitle || "General Manager"}${v.gmLicense ? ` | Licence No.: ${v.gmLicense}` : ""}`,
-        `Company: ${v.legalName ?? companyName}`,
-        "Date: YYYY-MM-DD (bid team to confirm before export)",
-        "Signature: ___________________________",
-      ].join("\n")
-    : [
-        "Name: [General Manager / Principal Full Name]",
-        "Title: [Title + Professional Body + Licence No. where applicable]",
-        `Company: ${v.legalName ?? companyName}`,
-        "Date: YYYY-MM-DD (bid team to confirm before export)",
-        "Signature: ___________________________",
-      ].join("\n");
+  // ── Declaration ──────────────────────────────────────────────────────
+  // No bracketed "[General Manager / Principal Full Name]" and no
+  // "Date: YYYY-MM-DD (bid team to confirm before export)": an instruction to
+  // the bid desk is not a signature block. Without a recorded signatory the
+  // declaration carries the company line and the sign-off pass completes it.
+  // The signatory comes from the same resolver as the cover letter: the
+  // vault GM, else the one proposed expert whose title states an executive
+  // office. On 2026-10-05 the cover letter was signed by the General Manager
+  // and this declaration, reading only the vault field, by nobody — a
+  // declaration with no name and nowhere to sign.
+  const signatory = resolveSignatory({
+    gmName: v.gmName,
+    gmTitle: v.gmTitle,
+    gmLicense: v.gmLicense,
+    experts: signatoryExpertsFromProofLines(input.experts),
+  });
+  const sigBlock = [
+    `For and on behalf of ${v.legalName ?? companyName}:`,
+    ...(signatory ? [`**${signatory.name}**`, `${signatory.title}${signatory.registration ? ` | ${signatory.registration}` : ""}`] : []),
+    "Signature: ____________________   Stamp: ____________________   Date: ____________________",
+  ].join("\n");
   const declarationBody = [
-    `We, ${v.legalName ?? companyName}${v.registrationNumber ? ` (Reg. No. ${v.registrationNumber})` : ""}, hereby declare that this Technical Proposal has been prepared specifically in response to ${tenderTitle} issued by ${input.clientName || "the Client"}.`,
+    `We, ${v.legalName ?? companyName}${v.registrationNumber ? ` (Reg. No. ${v.registrationNumber})` : ""}, hereby declare that this ${input.submissionDocumentLabel?.trim() || "Technical Proposal"} has been prepared specifically in response to ${tenderTitle} issued by ${input.clientName || "the Client"}.`,
     "",
-    "All information, evidence, expert credentials, and project references included in this proposal are accurate and verifiable. No information has been fabricated or inserted as a placeholder.",
+    "The information in this proposal is drawn from the firm's records, which are available for verification on request.",
     "",
     sigBlock,
   ].join("\n");
 
   // ── D.1 Value-Added — real differentiators when available ───────────────
+  // The field carries the writer's rules ("MANDATORY BENCHMARK STRUCTURE:
+  // Cover Letter; Technical Proposal; ...") and company evidence lines ahead
+  // of and after the differentiators. Split on ";" as well, it delivered
+  // "Technical Proposal", "Table of Contents", "Executive Summary" and
+  // "Company Profile" as the firm's differentiators, and cut real ones in
+  // half. One differentiator is one line; rule and evidence lines are not
+  // differentiators.
   const differentiatorLines = (input.differentiators || "")
-    .split(/[;\n]/)
+    .split("\n")
     .map((d) => d.trim())
     .filter((d) => d.length > 10)
+    // A markdown heading is structure, never a differentiator.
+    .filter((d) => !/^#/.test(d))
+    .filter((d) => !/^[A-Z][A-Z0-9 &/()-]{3,}:\s/.test(d))
+    .filter((d) => !/^(?:Wider company evidence|Company document|Legal evidence|Financial evidence|Compliance evidence)\b/i.test(d))
     .slice(0, 5);
   const d1Body = differentiatorLines.length > 0
     ? [
@@ -1368,37 +1655,39 @@ function buildAdditionalAndDeclarationFallback(input: AIBidWriterInput): string 
       ].join("\n")
     : `${companyName} delivers value beyond the minimum tender scope through integrated project management (eliminating coordination delays), in-house multi-discipline capacity (reducing sub-consultant risk), and a structured quality-review programme (30%/60%/100% gates) that reduces the likelihood of client-review cycles and final submission revisions.`;
 
-  // ── D.2 ESG, Health & Safety, Innovation ────────────────────────────────
-  const hasServiceLines = v.serviceLines && v.serviceLines.length > 0;
-  const primaryService = hasServiceLines ? v.serviceLines![0] : "the captioned services";
-  const d2Body = [
-    "### D.2.1 Environmental and Social Governance",
-    `${companyName} complies with Environmental and Social Impact Assessment requirements and integrates ESG principles into ${primaryService} delivery. Environmental considerations (site disturbance minimisation, waste management, water use protocols) and social considerations (community engagement, local employment, gender equity in staffing) are embedded in the project management plan from inception.`,
-    "",
-    "### D.2.2 Health and Safety",
-    `All site activities are governed by the firm's Health and Safety Management Plan, compliant with applicable local regulations and international best practice (FIDIC / IFC Performance Standards where applicable). Site inductions, PPE requirements, incident reporting, and emergency response protocols are mandatory for all personnel.`,
-    "",
-    "### D.2.3 Innovation",
-    `${companyName} applies current-technology methods to ${primaryService}: BIM-enabled design coordination (where applicable), GIS-based spatial analysis, drone survey for topographic capture, and digital project management dashboards for client transparency. These capabilities are available from in-house resources and are deployed at no additional cost where they reduce schedule or improve deliverable quality.`,
-  ].join("\n");
+  // ── D.2 ESG, Health & Safety, Innovation — only what the tender raises ──
+  // These were written into every proposal. A tender that asks for none of
+  // them got an ESG policy, a site H&S plan and an innovation pitch "deployed
+  // at no additional cost" in a technical-only envelope.
+  // The firm's service line this tender asks for, not simply its first one:
+  // an office-design EOI read "integrates environmental and social
+  // considerations into Feasibility studies delivery" (2026-10-05).
+  const tenderService = serviceLineForTender(v.serviceLines ?? [], `${input.tenderTitle ?? ""}`);
+  const tenderText = input.tenderText ?? "";
+  const d2Parts = [
+    tenderAsksFor("sustainability", tenderText)
+      ? `### Environmental and Social Governance\n${companyName} integrates environmental and social considerations into ${tenderService ? `${tenderService} delivery` : "the delivery of this assignment"}: site disturbance, waste and water use on the environmental side, and community engagement on the social side, each planned from inception.`
+      : "",
+    tenderAsksFor("health-safety", tenderText)
+      ? `### Health and Safety\nSite activities follow the firm's health and safety procedures and the applicable local regulations: site inductions, PPE, incident reporting and emergency response apply to all personnel.`
+      : "",
+    tenderAsksFor("innovation", tenderText)
+      ? `### Innovation\n${companyName} applies current methods to ${tenderService ?? "this assignment"} where they shorten the schedule or improve deliverable quality, such as coordinated digital design models${/\b(?:GIS|spatial|mapping|master\s+plan|urban|land[- ]use)\b/i.test(tenderText) ? " and GIS-based spatial analysis" : ""}.`
+      : "",
+  ].filter(Boolean);
+  const d2Body = d2Parts.join("\n\n");
 
   return [
     "# Section D: Additional Information",
     "## D.1 Value to the Client",
     d1Body,
-    "## D.2 In-House Capabilities, ESG and Innovation",
+    d2Body ? "## D.2 Environmental, Safety and Innovation Commitments" : "",
     d2Body,
-    "## D.3 Professional Certifications and Affiliations",
-    d3Body,
-    "## D.4 Declaration of Eligibility",
-    d4Body,
-    "",
-    "# Appendix Register",
-    "- Appendix A: Company Registration Documents and Licences",
-    "- Appendix B: Audited Financial Statements",
-    "- Appendix C: Curricula Vitae of Proposed Experts",
-    "- Appendix D: Project References and Client Letters",
-    "- Appendix E: Project Photos, Drawings and Completion Evidence",
+    // No certifications list here: the record-based builder
+    // (understanding-and-value-added.ts buildCertificationsSection) always
+    // adds D.3 from the firm's current legal and compliance records, and
+    // this copy — raw compliance lines — shipped beside it as a second
+    // "Professional Certifications and Affiliations" section.
     "",
     "# Declaration",
     declarationBody,

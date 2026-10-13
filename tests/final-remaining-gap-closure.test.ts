@@ -146,7 +146,15 @@ describe('final remaining-gap architecture', () => {
     const panel = read('components/requirement-coverage-panel.tsx');
     assert.match(panel, /Release-qualified coverage:/);
     assert.match(panel, /Progress including partial evidence:/);
-    assert.match(panel, /Partial evidence exists/);
+    // The partial state must still be reported distinctly from the
+    // release-qualified one. The wording changed — "Partial evidence exists
+    // ... Strengthen it with eligible source-backed evidence" named neither the
+    // record nor the shortfall, and a vault link only settles at PARTIAL when a
+    // specific tender-stated detail is absent — so this asserts the separation
+    // that is the point of the test, and that the banner sends the owner to the
+    // row that names the missing detail.
+    assert.match(panel, /data\.partiallyCovered > 0/);
+    assert.match(panel, /Each row below names the missing detail/);
     assert.doesNotMatch(panel, /unresolved requirements are genuine gaps or stale evidence/);
   });
 

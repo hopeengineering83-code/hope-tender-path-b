@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CheckIcon, CrossIcon, SparklesIcon } from "./icons";
+import type { LiveProviderDiagnosticsResponse } from "../app/api/ai-providers/diagnostics/route";
 import {
   describeAIAnalyzeWorkflowState,
   type CurrentEnginePresentationState,
@@ -37,16 +38,212 @@ type SourceReadiness = {
 
 export type AIAnalyzeEngineState = CurrentEnginePresentationState;
 
-type ProviderDiag = {
-  provider: string;
-  configured: boolean;
-  ok: boolean;
-  reason: string | null;
-  latencyMs: number | null;
+/**
+ * The row type comes FROM THE ROUTE. It used to be declared here as
+ * `{ provider, configured, ok, reason, latencyMs }` — five fields the
+ * diagnostics endpoint has never returned. Reading them off an `any` gave
+ * `undefined` every time, which is falsy, so every provider rendered
+ * "not configured" underneath a summary saying two of them had completed a
+ * real extraction. Importing the contract makes that a compile error.
+ */
+type ProviderDiag = LiveProviderDiagnosticsResponse["perProvider"][number];
+
+/** What the analysis capability test actually reported for this provider. */
+function analysisOutcome(provider: ProviderDiag) {
+  return provider.results.find((result) => result.capability === "analysis") ?? null;
+}
+
+/**
+ * One line per provider, in the provider's own words.
+ *
+ * `usableForAiAnalyze` is the only thing that means "this provider can run AI
+ * Analyze" — connectivity alone is not it, which is the distinction the
+ * capability test exists to draw.
+ */
+function describeProvider(provider: ProviderDiag): string {
+  const analysis = analysisOutcome(provider);
+  const model = provider.resolvedModel ? ` · ${provider.resolvedModel}` : "";
+  if (provider.usableForAiAnalyze) {
+    const ms = analysis && analysis.durationMs > 0 ? ` (${analysis.durationMs}ms)` : "";
+    return `OK${ms}${model}`;
+  }
+  const detail = analysis?.safeMessage ?? analysis?.category ?? null;
+  const state = DIAGNOSTIC_STATE_LABEL[provider.diagnosticState] ?? provider.diagnosticState;
+  return detail ? `${state} — ${detail}${model}` : `${state}${model}`;
+}
+
+const DIAGNOSTIC_STATE_LABEL: Record<ProviderDiag["diagnosticState"], string> = {
+  KEY_MISSING: "not configured",
+  CONFIGURATION_INVALID: "configuration invalid",
+  MODEL_UNAVAILABLE: "model unavailable on this account",
+  BILLING_BLOCKED: "billing",
+  RATE_LIMITED: "rate limited",
+  CONNECTIVITY_VERIFIED: "answered, but no structured extraction",
+  ANALYSIS_VERIFIED: "analysis verified",
+  GENERATION_VERIFIED: "generation verified",
+  // Nothing was measured. Never rendered as a failure.
+  NOT_TESTED: "not tested",
+  CONFIGURED: "contacted, nothing proven",
 };
 
+/** Retry cadence for a readiness check that failed in transit. */
+const READINESS_RETRY_INTERVAL_MS = 8_000;
 const POLL_INTERVAL_MS = 3_000;
 const TERMINAL: JobStatus[] = ["SUCCEEDED", "PARTIAL_SUCCESS", "FAILED", "CANCELED"];
+
+/**
+ * Category names, in the order they are tested. Shared by the whole-message
+ * scan and the per-provider one so the two can never disagree about what a
+ * given error means.
+ */
+const FAILURE_CATEGORY_RULES: ReadonlyArray<readonly [RegExp, string]> = [
+  [/(?:402|billing|payment required|insufficient (?:balance|credit|quota)|no credits remaining)/i, "BILLING"],
+  [/(?:401|403|invalid api key|unauthori[sz]ed|not available in your subscription tier)/i, "AUTH_OR_CONFIGURATION_INVALID"],
+  [/(?:429|rate.?limit)/i, "RATE_LIMITED"],
+  [/(?:503|overload|temporarily unavailable|high demand)/i, "TEMPORARILY_UNAVAILABLE"],
+  [/(?:timeout|timed out|deadline)/i, "TIMEOUT"],
+  [/(?:output token budget|before producing any content)/i, "OUTPUT_BUDGET_TOO_SMALL"],
+  [/(?:malformed|empty response|unusable structured)/i, "MALFORMED_RESPONSE"],
+  [/(?:413|context (?:window|length)|request too large|prompt exceeds)/i, "REQUEST_TOO_LARGE"],
+  [/in cooldown|cooling down/i, "SKIPPED_COOLING_DOWN"],
+];
+
+/** The canonical chain, lower-cased exactly as the server writes it. */
+const PROVIDER_NAMES = [
+  "gemini", "groq", "mistral", "zai", "cerebras",
+  "openrouter", "openai", "together", "deepseek", "anthropic",
+] as const;
+
+const PROVIDER_LABEL: Record<(typeof PROVIDER_NAMES)[number], string> = {
+  gemini: "Gemini",
+  groq: "Groq",
+  mistral: "Mistral",
+  zai: "Z.ai",
+  cerebras: "Cerebras",
+  openrouter: "OpenRouter",
+  openai: "OpenAI",
+  together: "Together",
+  deepseek: "DeepSeek",
+  anthropic: "Anthropic",
+};
+
+/**
+ * What each category means to the person reading the tender page.
+ *
+ * The enum names are precise and are kept in the code, the tests and the
+ * authenticated diagnostics. They are not, on their own, something an owner can
+ * act on: "AUTH_OR_CONFIGURATION_INVALID" does not say "your plan does not
+ * include the model this provider is configured with, and changing it is free".
+ * The whole point of attributing a failure to a provider is that the owner can
+ * tell what, if anything, is theirs to fix — so say it in words.
+ */
+const CATEGORY_PLAIN_LANGUAGE: Record<string, string> = {
+  BILLING: "no credit on that account",
+  AUTH_OR_CONFIGURATION_INVALID: "key or configured model rejected — check the key and that your plan includes the model",
+  RATE_LIMITED: "rate limited right now",
+  TEMPORARILY_UNAVAILABLE: "provider temporarily unavailable",
+  TIMEOUT: "timed out",
+  OUTPUT_BUDGET_TOO_SMALL: "its plan cannot fit this tender and an answer in one budget",
+  MALFORMED_RESPONSE: "answered with nothing usable",
+  REQUEST_TOO_LARGE: "request larger than the model accepts",
+  SKIPPED_COOLING_DOWN: "skipped while cooling down after an earlier failure",
+};
+
+function describeCategories(categories: readonly string[]): string {
+  return categories.map((c) => CATEGORY_PLAIN_LANGUAGE[c] ?? c.toLowerCase().replace(/_/g, " ")).join("; ");
+}
+
+function categoriesIn(text: string): string[] {
+  return FAILURE_CATEGORY_RULES.filter(([pattern]) => pattern.test(text)).map(([, name]) => name);
+}
+
+/**
+ * Pull the `provider: message` pairs the server already wrote.
+ *
+ * The durable AiJob error is shaped
+ *
+ *   ... Provider errors: gemini: <msg> | groq: <msg> | mistral: <msg> | ...
+ *
+ * and a multi-chunk job repeats that per chunk, so one provider can appear more
+ * than once with different causes. Segments that are not a known provider (the
+ * "chunk 2: ..." separator, for instance) are ignored rather than guessed at.
+ *
+ * Only the CATEGORY of each provider's message is kept. The raw text can carry
+ * provider payloads and belongs in authenticated diagnostics, not here.
+ */
+export function perProviderFailureCategories(message: string): Array<{ provider: string; categories: string[] }> {
+  const byProvider = new Map<string, Set<string>>();
+  for (const rawSegment of String(message).split(/\s\|\s/)) {
+    // The FIRST provider of each chunk follows "Provider errors:" rather than a
+    // pipe, so anchoring at the segment start silently dropped it — Gemini, the
+    // head of the canonical chain, was missing from the report while every
+    // later provider appeared. Trim the preamble before matching.
+    const marker = rawSegment.lastIndexOf("Provider errors:");
+    const segment = marker >= 0
+      ? rawSegment.slice(marker + "Provider errors:".length)
+      : rawSegment;
+    const match = segment.match(/^\s*([a-z.]+)\s*:\s*([\s\S]+)$/i);
+    if (!match) continue;
+    const name = match[1].toLowerCase();
+    if (!(PROVIDER_NAMES as readonly string[]).includes(name)) continue;
+    const found = categoriesIn(match[2]);
+    if (found.length === 0) continue;
+    const existing = byProvider.get(name) ?? new Set<string>();
+    for (const category of found) existing.add(category);
+    byProvider.set(name, existing);
+  }
+  // Canonical order, so the report reads like the chain it describes.
+  return PROVIDER_NAMES
+    .filter((name) => byProvider.has(name))
+    .map((name) => ({ provider: name, categories: [...(byProvider.get(name) ?? [])] }));
+}
+
+/**
+ * Keep provider payloads in authenticated diagnostics, not the workflow UI.
+ *
+ * THE DEFECT THIS FIXES.
+ * ----------------------
+ * This scanned the WHOLE error for category patterns and reported their union:
+ *
+ *   Observed categories: BILLING, AUTH_OR_CONFIGURATION_INVALID, RATE_LIMITED,
+ *   TEMPORARILY_UNAVAILABLE, MALFORMED_RESPONSE.
+ *
+ * Every one of those was true of SOME provider and none of them said which.
+ * The owner was then told to open Provider diagnostics — a separate live test
+ * that spends real round-trips — to learn what the durable job had already
+ * recorded. The pairing was in the message the whole time; the summary threw
+ * it away.
+ *
+ * That matters beyond tidiness: the union cannot separate the one provider the
+ * owner could fix in a minute (a model name their tier does not allow) from the
+ * eight that are externally blocked and need nothing from them at all.
+ */
+export function summarizeAIAnalyzeFailure(message: string | null | undefined): string {
+  const text = String(message ?? "");
+  if (!/provider|429|402|413|rate.?limit|billing|context|timeout|attempt_budget/i.test(text)) {
+    return text || "AI Analyze failed. Correct the source or provider issue, then retry.";
+  }
+
+  const perProvider = perProviderFailureCategories(text);
+  if (perProvider.length > 0) {
+    const named = perProvider
+      .map(({ provider, categories }) => `${PROVIDER_LABEL[provider as (typeof PROVIDER_NAMES)[number]]}: ${describeCategories(categories)}`)
+      .join(" · ");
+    return `AI Analyze could not complete after the configured provider chain. ${named}. Open Provider diagnostics for the full per-provider result, then retry AI Analyze.`;
+  }
+
+  // Fall back to the union only when the message carries no provider pairing —
+  // an older job, or a failure raised before the chain was walked. Saying
+  // "categories seen somewhere in this error" is honest; presenting it as a
+  // per-provider result would not be.
+  //
+  // Do not count regex occurrences as providers. One provider error can name
+  // its status, retry and nested cause several times; an earlier implementation
+  // turned those events into impossible summaries such as "11 provider issues"
+  // for a ten-provider chain.
+  const categories = categoriesIn(text);
+  return `AI Analyze could not complete after the configured provider chain.${categories.length ? ` Seen somewhere in this run, not attributed to a provider: ${describeCategories(categories)}.` : ""} Open Provider diagnostics for unique-provider results, then retry AI Analyze.`;
+}
 
 function sleep(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -73,7 +270,7 @@ export function AIAnalyzePanel({
   const [engineState, setEngineState] = useState<AIAnalyzeEngineState | null>(null);
   const [engineStateLoading, setEngineStateLoading] = useState(true);
   const [engineStateError, setEngineStateError] = useState("");
-  const [diag, setDiag] = useState<{ anyWorking: boolean; summary: string; perProvider: ProviderDiag[] } | null>(null);
+  const [diag, setDiag] = useState<{ aiAnalyzeReady: boolean; summary: string; perProvider: ProviderDiag[] } | null>(null);
   const [diagnosing, setDiagnosing] = useState(false);
 
   const loadReadiness = useCallback(async () => {
@@ -157,11 +354,34 @@ export function AIAnalyzePanel({
     };
   }, [loadEngineState, loadReadiness, tenderId]);
 
+  // Self-limiting by construction: `engineRunning` is derived from an ACTIVE
+  // job, so this interval clears itself when the job ends. It only needed the
+  // hidden-tab guard the other two pollers on this page already use — a
+  // background tab does no work, and the first tick after it is shown again
+  // picks up the result.
   useEffect(() => {
     if (!engineState?.engineRunning || deletedRef.current) return;
-    const timer = window.setInterval(() => void loadEngineState(), POLL_INTERVAL_MS);
+    const timer = window.setInterval(() => {
+      if (!document.hidden) void loadEngineState();
+    }, POLL_INTERVAL_MS);
     return () => window.clearInterval(timer);
   }, [engineState?.engineRunning, loadEngineState]);
+
+  // A failed readiness check must not lock AI Analyze or the Engine state for
+  // the life of the page. Both were loaded once on mount, so one request lost
+  // in transit ("Failed to fetch") left the action disabled until a manual
+  // reload — the same defect that greyed out Run Engine on 2026-09-23. While a
+  // check is failing, ask again; the action still enables only when a check
+  // actually succeeds, and a hidden tab does no work.
+  useEffect(() => {
+    if ((!readinessError && !engineStateError) || deletedRef.current) return;
+    const timer = window.setInterval(() => {
+      if (document.hidden) return;
+      if (readinessError) void loadReadiness();
+      if (engineStateError) void loadEngineState();
+    }, READINESS_RETRY_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [engineStateError, loadEngineState, loadReadiness, readinessError]);
 
   useEffect(() => {
     if (!jobId) return;
@@ -194,7 +414,7 @@ export function AIAnalyzePanel({
                 } else if (job.status === "PARTIAL_SUCCESS") {
                   setError("AI Analyze completed only partially. Run Engine remains blocked until complete grounded analysis succeeds.");
                 } else {
-                  setError(job.errorMessage || "AI Analyze failed. Correct the source or provider issue, then retry.");
+                  setError(summarizeAIAnalyzeFailure(job.errorMessage));
                 }
                 return;
               }
@@ -258,16 +478,18 @@ export function AIAnalyzePanel({
       const response = await fetch("/api/ai-providers/diagnostics?live=1", { cache: "no-store" });
       const body = await response.json().catch(() => null);
       if (!response.ok || !body) {
-        setDiag({ anyWorking: false, summary: "Provider diagnostics could not be completed.", perProvider: [] });
+        setDiag({ aiAnalyzeReady: false, summary: "Provider diagnostics could not be completed.", perProvider: [] });
       } else {
+        // aiAnalyzeReady is the field the route sends. `anyWorking` never
+        // existed, so this banner was red even while announcing success.
         setDiag({
-          anyWorking: Boolean(body.anyWorking),
+          aiAnalyzeReady: Boolean(body.aiAnalyzeReady),
           summary: String(body.summary ?? ""),
           perProvider: Array.isArray(body.perProvider) ? body.perProvider : [],
         });
       }
     } catch {
-      setDiag({ anyWorking: false, summary: "The provider diagnostics endpoint could not be reached.", perProvider: [] });
+      setDiag({ aiAnalyzeReady: false, summary: "The provider diagnostics endpoint could not be reached.", perProvider: [] });
     } finally {
       setDiagnosing(false);
     }
@@ -392,14 +614,31 @@ export function AIAnalyzePanel({
 
       {diag ? (
         <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
-          <p className={`text-xs font-semibold ${diag.anyWorking ? "text-emerald-700" : "text-red-700"}`}>{diag.summary}</p>
+          {/*
+            PROVIDER CAPABILITY IS SUBORDINATE TO WORKFLOW STATE.
+
+            This line used to go emerald-green whenever a provider passed the
+            probe, which put a success-coloured sentence directly beneath the
+            red "AI Analyze did not complete" banner. The owner read the green
+            line, clicked Run, and the run failed -- the probe is a small fixed
+            payload and their tender needs 7,242 input tokens.
+
+            When the last real run failed, a passing probe means "eligible to
+            retry", not "proven". It is shown amber and says so.
+          */}
+          <p className={`text-xs font-semibold ${!diag.aiAnalyzeReady ? "text-red-700" : error ? "text-amber-700" : "text-emerald-700"}`}>{diag.summary}</p>
+          {diag.aiAnalyzeReady && error ? (
+            <p className="mt-1 text-xs text-amber-700">
+              The last real AI Analyze run failed. A passing probe makes a retry worth attempting; it does not prove this tender will complete.
+            </p>
+          ) : null}
           {diag.perProvider.length > 0 ? (
             <ul className="mt-2 space-y-1">
               {diag.perProvider.map((provider) => (
                 <li key={provider.provider} className="flex items-start gap-2 text-xs">
-                  <span className={`mt-0.5 ${provider.ok ? "text-emerald-600" : provider.configured ? "text-red-600" : "text-slate-400"}`}>{provider.ok ? <CheckIcon /> : provider.configured ? <CrossIcon /> : "—"}</span>
-                  <span className="font-medium text-slate-700">{provider.provider}</span>
-                  <span className="text-slate-500">{provider.ok ? `OK${typeof provider.latencyMs === "number" ? ` (${provider.latencyMs}ms)` : ""}` : provider.reason ?? (provider.configured ? "failed" : "not configured")}</span>
+                  <span className={`mt-0.5 ${provider.usableForAiAnalyze ? "text-emerald-600" : provider.diagnosticState === "KEY_MISSING" || provider.diagnosticState === "NOT_TESTED" ? "text-slate-400" : "text-red-600"}`}>{provider.usableForAiAnalyze ? <CheckIcon /> : provider.diagnosticState === "KEY_MISSING" || provider.diagnosticState === "NOT_TESTED" ? "—" : <CrossIcon />}</span>
+                  <span className="font-medium text-slate-700">{provider.displayName || provider.provider}</span>
+                  <span className="text-slate-500">{describeProvider(provider)}</span>
                 </li>
               ))}
             </ul>

@@ -32,6 +32,7 @@
 // cron tick is sufficient.
 
 import { prisma, prismaReady } from "./prisma";
+import { isDurableRetryJobType, MAX_DURABLE_STAGE_ATTEMPTS } from "./engine/stage-retry-policy";
 
 export type JobType =
   | "PROPOSAL_GENERATION"
@@ -210,9 +211,16 @@ export async function getJob(jobId: string): Promise<{
   steps: Array<{ stepIndex: number; stepName: string; status: string; message: string | null; startedAt: Date | null; finishedAt: Date | null }>;
 } | null> {
   await prismaReady;
+  // Only what is returned. The status page polls this every few seconds while
+  // a job runs; the full row also carries the job input and the staged
+  // analysis, which can be hundreds of kilobytes and are never returned here.
   const job = await prisma.aiJob.findUnique({
     where: { id: jobId },
-    include: { steps: { orderBy: { stepIndex: "asc" } } },
+    select: {
+      id: true, status: true, jobType: true, tenderId: true, errorMessage: true, output: true,
+      startedAt: true, finishedAt: true, createdAt: true,
+      steps: { orderBy: { stepIndex: "asc" }, select: { stepIndex: true, stepName: true, status: true, message: true, startedAt: true, finishedAt: true } },
+    },
   });
   if (!job) return null;
   let parsedOutput: Record<string, unknown> | null = null;
@@ -320,9 +328,9 @@ export function isProgressStuckOnlyType(jobType: string): boolean {
  *     legitimate Claude call (which can run several minutes between
  *     steps) from being killed by the recovery sweep.
  */
-export async function findStuckJobs(opts?: { stuckAfterMs?: number; progressStuckAfterMs?: number; limit?: number }): Promise<{
+export async function findStuckJobs(opts?: { stuckAfterMs?: number; progressStuckAfterMs?: number; limit?: number; tenderId?: string }): Promise<{
   count: number;
-  jobs: Array<{ id: string; jobType: JobType; userId: string; tenderId: string | null; startedAt: Date | null; latestStepName: string | null; latestStepAt: Date | null }>;
+  jobs: Array<{ id: string; jobType: JobType; userId: string; tenderId: string | null; startedAt: Date | null; retries: number; latestStepName: string | null; latestStepAt: Date | null }>;
 }> {
   await prismaReady;
   const totalThreshold = new Date(Date.now() - (opts?.stuckAfterMs ?? AI_JOB_STUCK_AFTER_MS));
@@ -338,13 +346,14 @@ export async function findStuckJobs(opts?: { stuckAfterMs?: number; progressStuc
   const candidates = await prisma.aiJob.findMany({
     where: {
       status: "RUNNING",
+      ...(opts?.tenderId ? { tenderId: opts.tenderId } : {}),
       OR: [
         { startedAt: { lt: totalThreshold } },
         { jobType: { in: ["ENGINE_RUN", "PROPOSAL_GENERATION", "AUTO_FINALIZE"] }, startedAt: { lt: progressThreshold } },
       ],
     },
     select: {
-      id: true, jobType: true, userId: true, tenderId: true, startedAt: true,
+      id: true, jobType: true, userId: true, tenderId: true, startedAt: true, retries: true,
       steps: { orderBy: { createdAt: "desc" }, take: 1, select: { stepName: true, createdAt: true } },
     },
     orderBy: { startedAt: "asc" },
@@ -374,6 +383,7 @@ export async function findStuckJobs(opts?: { stuckAfterMs?: number; progressStuc
       userId: j.userId,
       tenderId: j.tenderId,
       startedAt: j.startedAt,
+      retries: j.retries ?? 0,
       latestStepName: j.steps[0]?.stepName ?? null,
       latestStepAt: j.steps[0]?.createdAt ?? null,
     })),
@@ -389,12 +399,39 @@ export async function findStuckJobs(opts?: { stuckAfterMs?: number; progressStuc
  * that finished between `findStuckJobs` and `failStuckJobs` will
  * not be clobbered — the WHERE clause requires status='RUNNING').
  */
-export async function failStuckJobs(opts?: { stuckAfterMs?: number; progressStuckAfterMs?: number; reason?: string; limit?: number }): Promise<{ recovered: number; ids: string[] }> {
+/**
+ * The longest a worker invocation can live: run-next's maxDuration (300 s)
+ * plus a margin. A RUNNING job started before this is certainly not being
+ * worked on by any live invocation, so running it again cannot overlap one.
+ */
+export const WORKER_INVOCATION_HARD_CAP_MS = 330_000;
+
+export async function failStuckJobs(opts?: { stuckAfterMs?: number; progressStuckAfterMs?: number; reason?: string; limit?: number; tenderId?: string }): Promise<{ recovered: number; ids: string[]; rearmed: number; rearmedIds: string[] }> {
   await prismaReady;
-  const { jobs } = await findStuckJobs({ stuckAfterMs: opts?.stuckAfterMs, progressStuckAfterMs: opts?.progressStuckAfterMs, limit: opts?.limit ?? 50 });
-  if (jobs.length === 0) return { recovered: 0, ids: [] };
+  // `tenderId` scopes the sweep to one tender (tests, targeted recovery);
+  // the scheduled sweep omits it and covers every tenant.
+  const { jobs } = await findStuckJobs({ stuckAfterMs: opts?.stuckAfterMs, progressStuckAfterMs: opts?.progressStuckAfterMs, limit: opts?.limit ?? 50, tenderId: opts?.tenderId });
+  if (jobs.length === 0) return { recovered: 0, ids: [], rearmed: 0, rearmedIds: [] };
   const recovered: string[] = [];
+  const rearmedIds: string[] = [];
+  const workerCertainlyDead = Date.now() - WORKER_INVOCATION_HARD_CAP_MS;
   for (const job of jobs) {
+    // A durable stage whose worker was killed (the function cap, a crash)
+    // runs again from its persisted checkpoint, within the same attempt
+    // budget a thrown transient failure gets. Failing it instead left
+    // ENGINE_RUN / PROPOSAL_GENERATION / AUTO_FINALIZE waiting for someone
+    // to click Re-run, so a closed browser stranded the package. It is
+    // re-armed only once no live invocation can still be running it, so two
+    // workers never process the same job; until then it is left alone.
+    if (isDurableRetryJobType(job.jobType) && job.retries < MAX_DURABLE_STAGE_ATTEMPTS) {
+      if (!job.startedAt || job.startedAt.getTime() > workerCertainlyDead) continue;
+      const rearmed = await rearmDurableStageJob(job.id, {
+        errorMessage: `WORKER_STOPPED: the worker stopped during "${job.latestStepName ?? "UNKNOWN"}"; the stage runs again from its last checkpoint (attempt ${job.retries + 2}).`,
+        delayMs: 0,
+      });
+      if (rearmed) rearmedIds.push(job.id);
+      continue;
+    }
     const failedStage = job.latestStepName ?? "UNKNOWN";
     const progressOnly = isProgressStuckOnlyType(job.jobType);
     const defaultMessage = progressOnly
@@ -414,7 +451,7 @@ export async function failStuckJobs(opts?: { stuckAfterMs?: number; progressStuc
     });
     if (updated.count > 0) recovered.push(job.id);
   }
-  return { recovered: recovered.length, ids: recovered };
+  return { recovered: recovered.length, ids: recovered, rearmed: rearmedIds.length, rearmedIds };
 }
 
 /**
@@ -482,7 +519,18 @@ export async function recoverIfStuck(jobId: string, opts?: { stuckAfterMs?: numb
   return updated.count > 0;
 }
 
-export async function listUserJobs(userId: string, opts?: { jobType?: JobType; status?: JobStatus; tenderId?: string; take?: number }): Promise<Array<{ id: string; jobType: JobType; status: JobStatus; tenderId: string | null; createdAt: Date; finishedAt: Date | null }>> {
+/**
+ * A FAILED JOB MUST SAY WHY.
+ *
+ * `errorMessage` was absent from the selection, so every consumer of this list
+ * read a job's reason as null. AUTO_FINALIZE writes the precise blocker there
+ * — "AUTO_FINALIZE_NOT_CONVERGED — <blockers>" — and two consecutive hosted
+ * runs reported the failure as `error=None`, which is indistinguishable from a
+ * job that failed for no recorded reason. The reason was in the database the
+ * whole time; it simply never left it. The rows are already scoped to the
+ * requesting user's own jobs, so this exposes nothing that user may not see.
+ */
+export async function listUserJobs(userId: string, opts?: { jobType?: JobType; status?: JobStatus; tenderId?: string; take?: number }): Promise<Array<{ id: string; jobType: JobType; status: JobStatus; tenderId: string | null; createdAt: Date; finishedAt: Date | null; errorMessage: string | null }>> {
   await prismaReady;
   const rows = await prisma.aiJob.findMany({
     where: {
@@ -493,7 +541,7 @@ export async function listUserJobs(userId: string, opts?: { jobType?: JobType; s
     },
     orderBy: { createdAt: "desc" },
     take: opts?.take ?? 25,
-    select: { id: true, jobType: true, status: true, tenderId: true, createdAt: true, finishedAt: true },
+    select: { id: true, jobType: true, status: true, tenderId: true, createdAt: true, finishedAt: true, errorMessage: true },
   });
   return rows.map((r) => ({ ...r, jobType: r.jobType as JobType, status: r.status as JobStatus }));
 }

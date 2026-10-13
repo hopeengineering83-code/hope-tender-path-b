@@ -185,34 +185,22 @@ describe("final-submission-readiness — mandatory evidence coverage truth", () 
   });
 });
 
-describe("final-submission-readiness — CLIENT_NAME_MISSING blocker (source-level)", () => {
+describe("final-submission-readiness — an unstated client name does not block (owner policy)", () => {
   const source = readFileSync("lib/engine/final-submission-readiness.ts", "utf8");
 
-  it("source contains CLIENT_NAME_MISSING blocker code", () => {
-    assert.match(source, /CLIENT_NAME_MISSING/);
+  // Owner policy ABSENT_TENDER_FACT_IS_NOT_REQUIRED (2026-09-24): a tender
+  // that does not name its client is not blocked; the proposal is addressed
+  // without one. This used to push CLIENT_NAME_MISSING (HIGH). A client name
+  // that IS present but invalid is still blocked by export-readiness's
+  // CLIENT_NAME_REQUIRED.
+  it("source no longer pushes a CLIENT_NAME_MISSING blocker", () => {
+    assert.doesNotMatch(source, /category: "CLIENT_NAME_MISSING"/);
   });
 
-  it("source checks clientName for empty/whitespace condition", () => {
-    assert.match(source, /effectiveClientName/);
-    assert.match(source, /CLIENT_NAME_MISSING/);
-  });
-
-  it("CLIENT_NAME_MISSING uses HIGH severity matching the contamination blocker pattern", () => {
-    // The blocker must use "HIGH" severity (same as METADATA_CONTAMINATED)
-    const blockIndex = source.indexOf("CLIENT_NAME_MISSING");
-    const blockContext = source.slice(blockIndex, blockIndex + 200);
-    assert.ok(blockContext.includes("HIGH"), "CLIENT_NAME_MISSING blocker must use HIGH severity");
-  });
-
-  it("does not push CLIENT_NAME_MISSING when checkFullExportReadiness's own CLIENT_NAME_REQUIRED already covers it", () => {
-    // Confirmed by a real Playwright screenshot: checkFullExportReadiness
-    // (export-readiness.ts) seeds tenderLevelBlockers with CLIENT_NAME_REQUIRED
-    // for the same empty-clientName condition this later check independently
-    // re-flagged as CLIENT_NAME_MISSING — both landed in the same
-    // tenderLevelBlockers array and rendered as two unrelated red warnings for
-    // one real issue. Guarded here at the source so every consumer (not just
-    // the Tender Release State wrapper) gets the deduped list.
-    assert.match(source, /!tenderLevelBlockers\.some\(\(b\) => b\.category === "CLIENT_NAME_REQUIRED"\)/);
+  it("export-readiness still blocks a present-but-invalid client name", () => {
+    const exportSrc = readFileSync("lib/engine/export-readiness.ts", "utf8");
+    assert.match(exportSrc, /"CLIENT_NAME_REQUIRED"/);
+    assert.match(exportSrc, /"CLIENT_NAME_NOT_STATED"/);
   });
 
   it("does not emit the synthetic __tender__ document blocker when NO_ACTIVE_GENERATED_DOCUMENTS already covers it", () => {

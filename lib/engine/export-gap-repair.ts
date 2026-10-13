@@ -25,10 +25,12 @@
 
 import { Document, Packer, Paragraph, TextRun } from "docx";
 import { prisma } from "../prisma";
+import { getStorageAdapter } from "../storage";
 import { applyActiveUploadedLetterheadToTenderDocuments } from "./apply-active-letterhead";
 import { normalizeStatus } from "./document-output-state";
 import { checkFullExportReadiness, documentHygieneIssues, extractDocxVisibleText } from "./export-readiness";
 import { containsPricingLeakage } from "./pricing-hygiene";
+import { segmentSentences } from "./sentence-segmentation";
 import { verifiedIntegrityDataFromBase64 } from "./persisted-byte-integrity";
 import { generatedDocumentHasContent } from "../generated-document-content";
 import { logger } from "../observability";
@@ -63,12 +65,16 @@ function decodeXmlText(value: string): string {
   // literal "&lt;" and got a tag delimiter instead. Every other entity is
   // decoded before the ampersand, so no replacement can produce input for
   // another.
-  return value
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&amp;/g, "&");
+  const entities: Record<string, string> = {
+    lt: "<",
+    gt: ">",
+    quot: '"',
+    apos: "'",
+    amp: "&",
+  };
+  // One callback replacement means decoded output is never fed back through
+  // another decoder. For example, `&amp;lt;` remains the literal `&lt;`.
+  return value.replace(/&(lt|gt|quot|apos|amp);/g, (_match, name: string) => entities[name]);
 }
 
 function encodeXmlText(value: string): string {
@@ -115,12 +121,55 @@ function textHasCanonicalHygieneRisk(text: string, doc: RepairDoc): boolean {
  * also avoiding a destructive whole-paragraph deletion when good technical
  * text shares that paragraph with one unsafe sentence.
  */
+/**
+ * A NUMBER IS NOT A SENTENCE BOUNDARY.
+ *
+ * The splitter here was /[^.!?]+(?:[.!?]+|$)/g, with no guard for a decimal
+ * point, so a money cell was cut in half:
+ *
+ *   "ETB 550.1M"  ->  ["ETB 550.", "1M"]
+ *
+ * The half carrying the amount was classified as pricing risk and dropped, and
+ * the orphan tail was written back. A delivered client proposal
+ * (run 34769880487) consequently stated "Construction Value of Works 1M" on
+ * every project card -- ETB 550.1M, ETB 125.0M and USD 18.9M each reduced to
+ * the text after their decimal point -- while readiness reported zero
+ * blockers, the audit agreed and the ZIP built. A nonsense figure breaks no
+ * rule, so nothing caught it.
+ *
+ * The lookbehind matches the one the canonical detector already uses in
+ * pricing-hygiene's `sentences()`: a period preceded by up to three digits
+ * that are themselves preceded by a boundary is a decimal point, not a full
+ * stop.
+ */
+function splitIntoSentences(text: string): string[] {
+  // Rewriting, not judging: the survivors are re-joined into a delivered
+  // paragraph, so terminators are kept and a newline inside a paragraph is a
+  // line wrap rather than the end of a claim. The token rule is shared with
+  // pricing-hygiene, which is where the three-digit lookbehind that used to
+  // live here came from -- it rescued "ETB 550.1M" but not "ETB
+  // 550,074,678.02", an email, a URL or a date.
+  return segmentSentences(text, { newlinesAreBoundaries: false, keepTerminators: true });
+}
+
+/**
+ * Does this fragment assert anything on its own?
+ *
+ * What is left after removing an unsafe sentence must still be readable as a
+ * claim. "1M", "550." and "0M" are debris: they survive only because the
+ * splitter cut through them, and a client document is worse for carrying them
+ * than for carrying nothing.
+ */
+function assertsNothing(fragment: string): boolean {
+  const bare = fragment.replace(/[\s.,;:()\[\]-]/g, "");
+  return bare.length === 0 || /^[\d]+[KkMmBb]?$/.test(bare);
+}
+
 function safeParagraphText(text: string, doc: RepairDoc): string {
-  const sentences = text.match(/[^.!?]+(?:[.!?]+|$)/g) ?? [text];
+  const sentences = splitIntoSentences(text);
   const kept = sentences
-    .map((sentence) => sentence.replace(/\s+/g, " ").trim())
-    .filter(Boolean)
-    .filter((sentence) => !textHasCanonicalHygieneRisk(sentence, doc));
+    .filter((sentence) => !textHasCanonicalHygieneRisk(sentence, doc))
+    .filter((sentence) => !assertsNothing(sentence));
   const safe = kept.join(" ").trim();
 
   // If the whole paragraph was classified unsafe but sentence splitting failed
@@ -143,6 +192,19 @@ function rewriteParagraphVisibleText(paragraphXml: string, safeText: string): st
   );
 }
 
+/**
+ * Append the machine-repair note to a document's existing summary, preserving
+ * whatever came before it (notably the authorship clause generation writes).
+ * Idempotent: repeated repairs do not append the note twice.
+ */
+function appendRepairNote(existing: string | null | undefined, name: string): string {
+  const note = `Machine export repair completed for ${name}.`;
+  const prior = (existing ?? "").trim();
+  if (prior.length === 0) return note;
+  if (prior.includes(note)) return prior;
+  return `${prior} ${note}`;
+}
+
 export async function cleanDocxHygieneIssues(base64Content: string, doc: RepairDoc): Promise<string | null> {
   try {
     const buffer = Buffer.from(base64Content, "base64");
@@ -156,7 +218,31 @@ export async function cleanDocxHygieneIssues(base64Content: string, doc: RepairD
     // Repair at paragraph granularity so canonical violations split across
     // multiple Word runs are visible as one sentence. Preserve every safe
     // sentence from a mixed paragraph and rewrite only the visible text runs.
-    let cleaned = xml.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g, (paragraphXml) => {
+    // A TABLE CELL IS JUDGED WITH ITS ROW.
+    //
+    // Each cell is its own <w:p>, so judging paragraphs alone strips the label
+    // sitting one cell away -- the very thing that tells a value what it is.
+    // "ETB 550.1M" on its own is a bare amount and reads as a price; beside
+    // "Construction Value of Works" it is a past project's scale, which the
+    // canonical detector already exempts. The first reading is what reached a
+    // delivered proposal and blanked the figure.
+    //
+    // So rows whose FULL text is clean in context are left untouched. A row
+    // that really does carry risk still falls through to per-paragraph
+    // cleaning below, and nothing here relaxes what counts as risk: this only
+    // stops the detector being asked about half a sentence.
+    const safeRowRanges: Array<[number, number]> = [];
+    const rowPattern = /<w:tr(?:\s[^>]*)?>[\s\S]*?<\/w:tr>/g;
+    for (let match = rowPattern.exec(xml); match !== null; match = rowPattern.exec(xml)) {
+      if (!textHasCanonicalHygieneRisk(paragraphVisibleText(match[0]), doc)) {
+        safeRowRanges.push([match.index, match.index + match[0].length]);
+      }
+    }
+    const insideSafeRow = (offset: number): boolean =>
+      safeRowRanges.some(([start, end]) => offset >= start && offset < end);
+
+    let cleaned = xml.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g, (paragraphXml, offset: number) => {
+      if (insideSafeRow(offset)) return paragraphXml;
       const visible = paragraphVisibleText(paragraphXml);
       if (!textHasCanonicalHygieneRisk(visible, doc)) return paragraphXml;
       return rewriteParagraphVisibleText(paragraphXml, safeParagraphText(visible, doc));
@@ -194,6 +280,47 @@ export type RepairDoc = {
   storagePath?: string | null;
 };
 
+/**
+ * The bytes a repair will actually clean.
+ *
+ * A storage-backed row (Vercel Blob in production) has fileContent=null and
+ * its real bytes in external storage, so it MUST be read through the storage
+ * adapter — the same bytes every storage-first reader (final ZIP, download)
+ * serves. The previous selection was `generatedDocumentHasContent(doc) &&
+ * doc.fileContent`, which is falsy for exactly those rows, so the repair
+ * silently fell through to the makeSafeDocx stub: a ~58-word placeholder was
+ * written into fileContent, the integrity record was rebound to the STUB,
+ * and storagePath still pointed at the real generated document. Validation
+ * then blessed the stub (it reads the inline copy) while storage-first
+ * readers served the real bytes, whose hash no longer matched the persisted
+ * digest — a document that could never export, and one the repair's own
+ * machine marker prevented from ever being repaired again. AUTO_FINALIZE
+ * reported the tender failed while the repair was the thing that had
+ * damaged it. Reproduced against the real continuation service with a
+ * storage-backed row: 16,662 real bytes in, an 8,759-byte stub out.
+ *
+ * Returns null only when the row is genuinely empty (no storage, no inline
+ * content), which is the legitimate makeSafeDocx case. A storage read that
+ * throws propagates so the caller can leave the row untouched and let the
+ * one canonical validator record the genuine failure.
+ */
+export async function readRepairSourceContent(
+  doc: Pick<RepairDoc, "fileContent" | "storagePath">,
+  fileName: string,
+): Promise<string | null> {
+  if (doc.storagePath && doc.storagePath.trim().length > 0) {
+    const storage = getStorageAdapter();
+    const buffer = await storage.getFile({
+      storagePath: doc.storagePath,
+      fileContent: doc.fileContent ?? null,
+      fileName,
+    });
+    return buffer.toString("base64");
+  }
+  if (doc.fileContent && doc.fileContent.trim().length > 0) return doc.fileContent;
+  return null;
+}
+
 function clean(value?: string | null): string {
   return (value ?? "")
     .replace(/[\u0000-\u001F\u007F]/g, " ")
@@ -214,6 +341,18 @@ function safeTypeFor(name: string, fallback?: string | null): string {
   if (/expert|cv|personnel|staff/.test(label)) return "EXPERT_CV_PACKAGE";
   if (/project|experience|reference|portfolio/.test(label)) return "PROJECT_REFERENCE_PACKAGE";
   if (/legal|registration|licen[cs]e|tax|certificate/.test(label)) return "LEGAL_EVIDENCE";
+  // Checked before the broader /financial/ evidence match below: a financial
+  // or commercial PROPOSAL (the firm's own priced offer) is company-authored
+  // content, not a third-party original like a bank statement or audited
+  // financial statement — see the identical fix and rationale in
+  // lib/engine/missing-plan-file-generation.ts's documentTypeFor() and
+  // lib/engine/document-type-normalizer.ts's FINANCIAL_PROPOSAL_PATTERNS.
+  // Without this, this THIRD independent classifier (export-gap-repair runs
+  // after generate-missing-plan-files in the pipeline) overwrote the correct
+  // FINANCIAL_PROPOSAL type back to FINANCIAL_EVIDENCE on every repair pass —
+  // even though `fallback` already carried the correct type — because the
+  // bare /financial/ pattern matches "Financial-Proposal" regardless.
+  if (/financial[\s._-]+proposal|commercial[\s._-]+proposal|price[\s._-]+schedule|rate[\s._-]+card|bill[\s._-]+of[\s._-]+quantities?|\bboq\b/.test(label)) return "FINANCIAL_PROPOSAL";
   if (/financial|audited|bank|turnover|capacity/.test(label)) return "FINANCIAL_EVIDENCE";
   if (/submission|deadline|delivery|method|rules/.test(label)) return "SUBMISSION_RULES";
   return fallback || "TENDER_REQUIRED_FILE";
@@ -285,6 +424,8 @@ export type ExportGapRepairResult = {
   manualRequired: number;
   blockedByHygiene: number;
   letterheadAppliedCount: number;
+  /** Why letterhead reached nothing. Null when it was applied. */
+  letterheadSkipReason: string | null;
   finalExportReady: boolean;
   remainingDocumentBlockers: number;
   remainingTenderLevelBlockers: number;
@@ -309,15 +450,15 @@ export async function runExportGapRepair(
   if (!tender) {
     return {
       repaired: 0, skipped: 0, manualRequired: 0, blockedByHygiene: 0,
-      letterheadAppliedCount: 0, finalExportReady: false,
+      letterheadAppliedCount: 0, letterheadSkipReason: null, finalExportReady: false,
       remainingDocumentBlockers: 0, remainingTenderLevelBlockers: 0,
     };
   }
 
   const docs = await prisma.generatedDocument.findMany({
     where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
-    orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
-    select: { id: true, name: true, exactFileName: true, exactOrder: true, documentType: true, format: true, generationStatus: true, validationStatus: true, reviewStatus: true, reviewNotes: true, fileContent: true, storagePath: true },
+    orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+    select: { id: true, name: true, exactFileName: true, exactOrder: true, documentType: true, format: true, generationStatus: true, validationStatus: true, reviewStatus: true, reviewNotes: true, contentSummary: true, fileContent: true, storagePath: true },
   });
 
   const repaired: string[] = [];
@@ -340,7 +481,29 @@ export async function runExportGapRepair(
 
       const title = clean(doc.exactFileName || doc.name || "Generated document");
       const documentType = safeTypeFor(title, doc.documentType);
-      let content = generatedDocumentHasContent(doc) && doc.fileContent ? doc.fileContent : await makeSafeDocx(title, tender.title);
+
+      // Resolve the bytes this repair will actually clean — through the
+      // storage adapter for storage-backed rows, so the repair judges (and
+      // rewrites) the SAME bytes every storage-first reader serves. See
+      // readRepairSourceContent for why the stub fallback is only for rows
+      // that are genuinely empty. The update below clears storagePath so the
+      // repaired inline copy is the one authority — the same single-authority
+      // contract the /auto-finalize route's rebuild already follows.
+      let content: string | null;
+      try {
+        content = await readRepairSourceContent(doc, name);
+      } catch (err) {
+        logger.warn("[export-gap-repair] storage-backed document could not be read; leaving the row for canonical validation to fail honestly", {
+          tenderId,
+          documentId: doc.id,
+          fileName: name,
+          errorClass: err instanceof Error ? err.constructor.name : "UnknownError",
+        });
+        continue;
+      }
+      if (!content) {
+        content = await makeSafeDocx(title, tender.title);
+      }
       const visibleText = await extractDocxVisibleText(content, name);
       let hygieneIssues = documentHygieneIssues(visibleText ?? content, { name: doc.name, exactFileName: doc.exactFileName, documentType: doc.documentType ?? undefined, format: doc.format ?? undefined });
       if (hygieneIssues.length > 0) {
@@ -391,6 +554,14 @@ export async function runExportGapRepair(
           format: "DOCX",
           exactFileName: name,
           fileContent: content,
+          // The repaired bytes now live inline, so they must be the ONE
+          // authority. Leaving storagePath set keeps a second, stale copy
+          // that storage-first readers (final ZIP, download) would serve in
+          // place of the bytes that were just cleaned and integrity-bound —
+          // the exact two-authorities split that made a storage-backed
+          // repair unsalvageable. The /auto-finalize route's rebuild already
+          // clears storagePath for the same reason.
+          storagePath: null,
           ...integrity,
           generationStatus: "GENERATED",
           // Any byte mutation invalidates the old validation result. Returning
@@ -399,7 +570,22 @@ export async function runExportGapRepair(
           // also lets a previously FAILED hygiene document recover on retry.
           validationStatus: "PENDING",
           reviewNotes: "machine:safe-export-repair — DOCX hygiene cleaned (AI traces, placeholders, pricing leakage). Awaiting canonical Document Validator.",
-          contentSummary: `Machine export repair completed for ${name}.`,
+          // A REPAIR MUST NOT ERASE THE RECORD OF WHO WROTE THE DOCUMENT.
+          //
+          // This replaced contentSummary outright. The summary's first clause
+          // is where generation states its authorship, and it is the field the
+          // acceptance inspection reads to answer "did a model write this, or
+          // the deterministic draft?". After any repair ran, every document
+          // reported `mode='Machine export repair completed for ...'` and the
+          // authorship of the proposal became unknowable from the outside --
+          // on a run whose whole purpose was to prove a fresh proposal was
+          // model-backed.
+          //
+          // Final authorship provenance is a preserved property, and a
+          // hygiene repair is not an authorship event. The repair note is
+          // appended so both facts survive, and appending is idempotent so
+          // repeated repairs do not grow the field without bound.
+          contentSummary: appendRepairNote(doc.contentSummary, name),
           updatedAt: new Date(),
         },
       });
@@ -408,11 +594,13 @@ export async function runExportGapRepair(
     }
   });
 
-  const letterheadAppliedCount = await applyActiveUploadedLetterheadToTenderDocuments(tenderId, userId);
+  const letterheadOutcome = await applyActiveUploadedLetterheadToTenderDocuments(tenderId, userId);
+  const letterheadAppliedCount = letterheadOutcome.applied;
+  const letterheadSkipReason = letterheadOutcome.reason;
 
   const repairedDocs = await prisma.generatedDocument.findMany({
     where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
-    orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
+    orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }],
     select: { id: true, name: true, exactFileName: true, exactOrder: true, documentType: true, format: true, generationStatus: true, validationStatus: true, reviewStatus: true, storagePath: true },
   });
   const readiness = await checkFullExportReadiness({ tenderId, docs: repairedDocs as any[], requireFileContent: false });
@@ -427,6 +615,7 @@ export async function runExportGapRepair(
     // generated document content while diagnosing an automatic repair failure.
     blockedByHygieneDetails: blockedByHygiene,
     letterheadAppliedCount,
+    letterheadSkipReason,
     finalExportReady: readiness.ok,
   });
 
@@ -436,8 +625,19 @@ export async function runExportGapRepair(
     manualRequired: manualRequired.length,
     blockedByHygiene: blockedByHygiene.length,
     letterheadAppliedCount,
+    letterheadSkipReason,
     finalExportReady: readiness.ok,
     remainingDocumentBlockers: readiness.failures.length,
     remainingTenderLevelBlockers: readiness.tenderLevelBlockers?.length ?? 0,
   };
 }
+
+export const __testing__ = {
+  safeTypeFor,
+  /**
+   * Exposed so the paragraph rewriter can be tested on the exact text that
+   * once reached a client as "Construction Value of Works 1M". Everything
+   * above it is DOCX plumbing; the defect was here.
+   */
+  safeParagraphText,
+};

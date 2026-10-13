@@ -75,6 +75,38 @@ export function containsMetadataPlaceholder(value: string | null | undefined): b
   return false;
 }
 
+/**
+ * Detect extractor scaffolding accidentally stored as a field value.
+ *
+ * A source quote may genuinely contain labels such as "Client Name:", but the
+ * scalar value itself must not be an entire multi-field extraction worksheet or
+ * an instruction to the extractor. These strings can be perfectly source-
+ * grounded while still being invalid values, so grounding alone must never
+ * promote them to EXTRACTED_AND_GROUNDED.
+ */
+export function containsMetadataScaffolding(value: string | null | undefined): boolean {
+  if (!value || typeof value !== "string") return false;
+  const text = value.replace(/[\u00A0\u200B\u200C\u200D\uFEFF]/g, " ").replace(/\s+/g, " ").trim();
+  if (!text) return false;
+
+  // Explicit extractor/self-instruction prose is never a field value.
+  if (/\b(?:mark\s+as\s+(?:not\s+applicable|not\s+found|not\s+stated)|do\s+not\s+generate\s+(?:a\s+)?financial\s+proposal|use\s+email\s+submission\s+only)\b/i.test(text)) {
+    return true;
+  }
+
+  // Two or more embedded field labels mean a multi-field worksheet was stored
+  // in one scalar. One label alone is tolerated because a legitimate endpoint
+  // can sometimes be presented as "Portal: https://..." in source text.
+  const labelPattern = /\b(?:procuring\s+entity\s*\/\s*client\s+name|legal\s+client\s+name|project\s+name|page\s+limit|financial\s+proposal|bid\s+bond(?:\s*\/\s*bid\s+security)?|submission\s+(?:address|method|email)|client\s+(?:address|contact|website)|pre[-\s]?bid\s+(?:meeting|location)|tender\s+status|portal)\s*:/gi;
+  const labels = text.match(labelPattern) ?? [];
+  if (labels.length >= 2) return true;
+
+  // Observed portal residue appended to an otherwise plausible city/address.
+  if (/\b(?:tender\s+status)\s*$/i.test(text) && text.split(/\s+/).length > 2) return true;
+
+  return false;
+}
+
 // ─── Generic field-label / heading detection ─────────────────────────────────
 
 /**
@@ -224,6 +256,10 @@ export function isValidReferenceNumber(value: string | null | undefined): boolea
   if (containsMetadataPlaceholder(text)) return false;
   // Reject if it's mostly noise (no alphanumeric run of ≥2 chars).
   if (!/[A-Z0-9]{2,}/i.test(text)) return false;
+  // A reference without a digit is a code ("PHARO-RFP", "AA/PROC/ARCH"), never
+  // a lowercase word or a phrase. "Terms of Reference will …" was stored as
+  // reference "will", and a sentence of the ToR passed as one (2026-10-06).
+  if (!/\d/.test(text) && (/\s/.test(text) || /[a-z]/.test(text))) return false;
   return true;
 }
 
@@ -294,7 +330,7 @@ export function isValidClientContact(value: string | null | undefined): boolean 
 // "X Procuring Entity / Client Name: X Legal Client Name: X Project Name: Y"
 // are several extracted fields concatenated with their labels (observed live
 // on the dashboard pipeline) and must be treated as contaminated.
-const EMBEDDED_FIELD_LABEL = /\b(?:client|legal\s+client|project|entity|contact(?:\s+person)?|procuring\s+entity|reference)\s*(?:name)?\s*:/i;
+export const EMBEDDED_FIELD_LABEL = /\b(?:client|legal\s+client|project|entity|contact(?:\s+person)?|procuring\s+entity|reference)\s*(?:name)?\s*:/i;
 
 export function isClientNameContaminated(value: string | null | undefined): boolean {
   const text = (value ?? "").trim();

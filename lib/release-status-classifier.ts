@@ -38,7 +38,17 @@
 //       - MISSING_TENDER_FORM_FIELDS (tender-form completion gate will fire)
 //       - Explicitly classified validation/PDF/package pending states
 //
-//   READY_TO_DOWNLOAD — the final ZIP is ready.
+//   PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED — every App-generated
+//     document is complete and only originals the owner compiles outside the
+//     App remain (OWNER_ATTACHMENTS_REQUIRED, from the strict final-submission
+//     gate). A finished App job: the proposal package downloads, but the final
+//     ZIP is NOT ready, because the App cannot vouch for the assembled
+//     submission.
+//
+//   READY_TO_DOWNLOAD — the final ZIP is ready. Reachable only when the
+//     strict final-submission gate reports SUBMISSION_READY (see
+//     lib/canonical-tender-readiness.ts, which folds that gate into
+//     readyForFinalExport).
 //
 //   STATUS_UNAVAILABLE — readiness could not be resolved. Not a workflow
 //     state at all: it says the app does not currently know. Callers signal
@@ -139,6 +149,15 @@ const CANONICAL_ACTION_REQUIRED_CODES = new Set([
   "ANALYSIS_QUALITY_POOR",
   "MISSING_REQUIREMENTS",
   "QUALITY_GATE_FAILED",
+  // The strict final-submission gate refused a package the readiness checks
+  // above found complete; the workflow decision names the precise action.
+  "FINAL_SUBMISSION_GATE_BLOCKED",
+]);
+
+// Only originals the owner compiles manually remain. Not a failure and not
+// automatic work: the App's part is done.
+const OWNER_ATTACHMENT_CODES = new Set([
+  "OWNER_ATTACHMENTS_REQUIRED",
 ]);
 
 // Automatic work-pending codes — the durable workflow will resolve these.
@@ -171,6 +190,7 @@ export type ReleaseStatus =
   | "GENUINE_SOURCE_BLOCKED"
   | "LEGAL_RELEASE_REQUIRED"
   | "READY_TO_DOWNLOAD"
+  | "PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED"
   | "FAILED_SECURITY_OR_INTEGRITY"
   // The readiness computation could not be resolved at all — it errored, or
   // no readiness input reached this classifier. Absence of data is NOT
@@ -237,6 +257,12 @@ export function classifyReleaseStatus(
     return "GENUINE_SOURCE_BLOCKED";
   }
 
+  // Nothing left but originals the owner compiles: the App's work is
+  // complete, and the final ZIP is still not claimed ready.
+  if (blockerCodes.length > 0 && blockerCodes.every((code) => OWNER_ATTACHMENT_CODES.has(code))) {
+    return "PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED";
+  }
+
   if (blockerCodes.some((code) => CANONICAL_ACTION_REQUIRED_CODES.has(code))) {
     return "STATUS_UNAVAILABLE";
   }
@@ -254,11 +280,12 @@ export function classifyReleaseStatus(
  * Classify a single blocker code into its category.
  * Useful for debugging and UI rendering.
  */
-export type BlockerCategory = "SECURITY" | "SOURCE" | "LEGAL" | "AUTOMATIC" | "CANONICAL_ACTION" | "UNKNOWN";
+export type BlockerCategory = "SECURITY" | "SOURCE" | "LEGAL" | "OWNER_ATTACHMENTS" | "AUTOMATIC" | "CANONICAL_ACTION" | "UNKNOWN";
 export function classifyBlocker(code: string): BlockerCategory {
   if (SECURITY_FAILURE_CODES.has(code)) return "SECURITY";
   if (GENUINE_SOURCE_BLOCKER_CODES.has(code)) return "SOURCE";
   if (LEGAL_RELEASE_CODES.has(code)) return "LEGAL";
+  if (OWNER_ATTACHMENT_CODES.has(code)) return "OWNER_ATTACHMENTS";
   if (AUTOMATIC_WORK_PENDING_CODES.has(code)) return "AUTOMATIC";
   if (CANONICAL_ACTION_REQUIRED_CODES.has(code)) return "CANONICAL_ACTION";
   return "UNKNOWN";

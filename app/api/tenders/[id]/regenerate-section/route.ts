@@ -21,6 +21,7 @@ import { extractTenderLanguageEchoes, formatEchoesForPrompt } from "../../../../
 import { extractTenderFacts, formatFactsForPrompt } from "../../../../../lib/engine/tender-facts-extractor";
 import { buildProposalSectionSpecs, type ProposalSectionId } from "../../../../../lib/engine/proposal-sections";
 import { recordAiUsage } from "../../../../../lib/ai-usage-tracker";
+import { getProviderModel } from "../../../../../lib/ai-provider-registry";
 import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engine/generation-readiness-gate";
 import { resolveReviewedSectionEvidence, sectionEvidenceBlocker } from "../../../../../lib/engine/regenerate-section-evidence";
 import { extractRequestId } from "../../../../../lib/request-id";
@@ -343,6 +344,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             tenderId: id,
             provider,
             useCase: "proposal",
+            model: getProviderModel(provider, "proposal"),
             latencyMs,
             success,
             failureCategory: failureCategory ?? null,

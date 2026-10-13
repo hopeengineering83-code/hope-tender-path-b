@@ -1,3 +1,4 @@
+import { realPdfBytes, realXlsxBytes } from "./helpers/real-artifact-bytes";
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { existsSync, readFileSync } from "node:fs";
@@ -49,8 +50,11 @@ describe("final ZIP manifest authority", () => {
     const result = await assembleFinalSubmissionZip(
       scope.entries,
       [
-        { generatedDocId: "financial", bytes: Buffer.from("financial bytes") },
-        { generatedDocId: "technical", bytes: Buffer.from("technical bytes") },
+        // Real artifacts: assembly verifies that each entry's bytes match its
+        // name and declared format, and an .xlsx holding plain text is
+        // genuinely mislabelled.
+        { generatedDocId: "financial", bytes: await realXlsxBytes() },
+        { generatedDocId: "technical", bytes: realPdfBytes("Technical Proposal") },
       ],
     );
     assert.deepEqual(
@@ -95,8 +99,8 @@ describe("final ZIP manifest authority", () => {
           },
         ] as any,
         [
-          { generatedDocId: "technical", bytes: Buffer.from("technical bytes") },
-          { generatedDocId: "financial", bytes: Buffer.from("financial bytes") },
+          { generatedDocId: "technical", bytes: realPdfBytes("Technical Proposal") },
+          { generatedDocId: "financial", bytes: await realXlsxBytes() },
         ],
       ),
       /duplicate.*order|order.*duplicate/i,

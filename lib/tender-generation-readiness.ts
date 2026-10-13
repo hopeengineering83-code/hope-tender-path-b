@@ -5,6 +5,7 @@ import { assessTenderAnalysisQuality, type AnalysisQualityReport } from "./analy
 import { assessMatchingQuality, type MatchingQualityReport } from "./matching-quality";
 import { isValidClientName, getClientNameStatus } from "./engine/metadata-validators";
 import { assertAnalysisReadyForFinalGeneration, detectAnalysisSourceWithApproval } from "./engine/analysis-source";
+import { resolveTenderAnalysisState } from "./engine/analysis-state-resolver";
 import { assessTenderMetadataCompleteness } from "./engine/tender-metadata-completeness";
 import { canUseVaultRecord, VAULT_REVIEW_CONSUMER_SELECT, type ReviewRecordState } from "./vault-review-provenance";
 // Same base-name rule the finalize-pdf route uses to find a source, so this
@@ -263,6 +264,11 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
     vaultReviewedProjects: companyReadiness.totals.reviewedProjects,
   });
   const resolvedAnalysisSource = await detectAnalysisSourceWithApproval(client, tenderId, tender).catch(() => "UNKNOWN" as const);
+  // The notes marker above survives a later failure, so it cannot answer "is
+  // this analysis release-ready right now?". The state resolver is the one
+  // authority on that. Used for WORDING only — the readiness blockers below
+  // are unchanged, and analysisGate remains the gate.
+  const analysisStateDetail = await resolveTenderAnalysisState(client, tenderId, userId).catch(() => null);
 
   const analysisQuality = assessTenderAnalysisQuality({
     requirements: tender.requirements,
@@ -289,6 +295,7 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
     selectedReviewedExperts: tender.expertMatches.filter((m) => m.isSelected && canUseVaultRecord(m.expert as ReviewRecordState, "GENERATION")).length,
     selectedReviewedProjects: tender.projectMatches.filter((m) => m.isSelected && canUseVaultRecord(m.project as ReviewRecordState, "GENERATION")).length,
     analysisSource: resolvedAnalysisSource,
+    analysisState: analysisStateDetail?.state ?? null,
   });
 
   const blockers: GenerationReadinessItem[] = companyReadiness.blockers.map((message) => ({ code: "COMPANY_INGESTION_NOT_READY", message, nextAction: "OPEN_COMPANY_READINESS" }));

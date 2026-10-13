@@ -29,8 +29,15 @@ describe("H3 — EXPORT_BLOCKED is selectable in canonical-workflow-decision", (
 describe("H2 — runtime-readiness-facts select mirrors the gate", () => {
   it("selects required tender and file fields", () => {
     const src = read("lib/engine/runtime-readiness-facts.ts");
-    for (const token of ["title: true", "description: true", "intakeSummary: true", "originalFileName: true", "classification: true", "createdAt: true"]) {
+    for (const token of ["title: true", "description: true", "intakeSummary: true"]) {
       assert.ok(src.includes(token), `missing ${token}`);
+    }
+    // File columns come from the one shared select every hash site uses
+    // (a narrower select hashed multi-file tenders in a different order).
+    assert.ok(src.includes("...ANALYSIS_HASH_FILE_SELECT"), "file select must be ANALYSIS_HASH_FILE_SELECT");
+    const shared = read("lib/engine/tender-analysis-content.ts");
+    for (const token of ["originalFileName: true", "classification: true", "createdAt: true", "contentSha256: true"]) {
+      assert.ok(shared.includes(token), `ANALYSIS_HASH_FILE_SELECT missing ${token}`);
     }
   });
 });

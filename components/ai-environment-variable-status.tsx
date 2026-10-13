@@ -4,25 +4,58 @@ import type { AIEnvironmentVariableStatus } from "../lib/ai-environment-readines
 /**
  * Grouping for the environment-variable readiness list.
  *
- * The provider entries must stay in `CANONICAL_AI_PROVIDER_ORDER`, which the
- * project guide marks NEVER-change and requires docs, gates, health routes and
- * UI to match. This list is a second place that order is written down, so it is
- * exported purely so a test can hold it against the catalog — see
- * tests/ai-provider-ui-order-drift.test.ts. It is deliberately NOT derived by
- * importing the provider registry: that module resolves API keys from the
- * environment at module scope, and this component renders in the browser.
+ * The provider rows are DERIVED from the catalog, not written out again here.
+ * This file used to carry its own ten-line copy of the provider order, with a
+ * comment explaining that it could not import the registry because that module
+ * resolves API keys from the environment at module scope and this component
+ * renders in the browser. That reasoning was sound about the REGISTRY and wrong
+ * about the ORDER: lib/ai-provider-catalog.cjs is plain CJS that touches
+ * process.env only inside function bodies, so it is safe to import here and is
+ * the same literal the registry itself builds on.
+ *
+ * The consequence of the copy was a test — ai-provider-ui-order-drift — whose
+ * whole job was to notice when the two lists disagreed. Deriving the order
+ * removes the disagreement rather than detecting it.
+ *
+ * Only the human-readable LABELS are declared locally, since the catalog has no
+ * opinion about display text. The Record typing makes a missing label a compile
+ * error rather than a blank row.
  */
+import {
+  CANONICAL_AI_PROVIDER_ORDER,
+  PROVIDER_API_KEY_ENV,
+} from "../lib/ai-provider-catalog.cjs";
+
+type ProviderKey = (typeof CANONICAL_AI_PROVIDER_ORDER)[number];
+
+const PROVIDER_LABELS: Record<ProviderKey, string> = {
+  gemini: "Gemini",
+  groq: "Groq",
+  mistral: "Mistral",
+  zai: "Z.ai",
+  openrouter: "OpenRouter",
+  cerebras: "Cerebras",
+  openai: "OpenAI",
+  together: "Together",
+  deepseek: "DeepSeek",
+  anthropic: "Anthropic",
+};
+
+/** "ZAI_API_KEY" → "ZAI_" — the prefix every one of that provider's vars shares. */
+function envPrefixFor(provider: ProviderKey): string {
+  return PROVIDER_API_KEY_ENV[provider].replace(/API_KEY$/, "");
+}
+
 export const ENVIRONMENT_VARIABLE_GROUPS = [
-  { key: "zai", label: "Z.ai", matches: (variable: AIEnvironmentVariableStatus) => variable.scope === "ai" && variable.name.startsWith("ZAI_") },
-  { key: "cerebras", label: "Cerebras", matches: (variable: AIEnvironmentVariableStatus) => variable.scope === "ai" && variable.name.startsWith("CEREBRAS_") },
-  { key: "mistral", label: "Mistral", matches: (variable: AIEnvironmentVariableStatus) => variable.scope === "ai" && variable.name.startsWith("MISTRAL_") },
-  { key: "groq", label: "Groq", matches: (variable: AIEnvironmentVariableStatus) => variable.scope === "ai" && variable.name.startsWith("GROQ_") },
-  { key: "openrouter", label: "OpenRouter", matches: (variable: AIEnvironmentVariableStatus) => variable.scope === "ai" && variable.name.startsWith("OPENROUTER_") },
-  { key: "gemini", label: "Gemini", matches: (variable: AIEnvironmentVariableStatus) => variable.scope === "ai" && variable.name.startsWith("GEMINI_") },
-  { key: "openai", label: "OpenAI", matches: (variable: AIEnvironmentVariableStatus) => variable.scope === "ai" && variable.name.startsWith("OPENAI_") },
-  { key: "together", label: "Together", matches: (variable: AIEnvironmentVariableStatus) => variable.scope === "ai" && variable.name.startsWith("TOGETHER_") },
-  { key: "deepseek", label: "DeepSeek", matches: (variable: AIEnvironmentVariableStatus) => variable.scope === "ai" && variable.name.startsWith("DEEPSEEK_") },
-  { key: "anthropic", label: "Anthropic", matches: (variable: AIEnvironmentVariableStatus) => variable.scope === "ai" && variable.name.startsWith("ANTHROPIC_") },
+  ...CANONICAL_AI_PROVIDER_ORDER.map((provider) => {
+    const prefix = envPrefixFor(provider);
+    return {
+      key: provider,
+      label: PROVIDER_LABELS[provider],
+      matches: (variable: AIEnvironmentVariableStatus) =>
+        variable.scope === "ai" && variable.name.startsWith(prefix),
+    };
+  }),
   { key: "ai-other", label: "Other AI", matches: (variable: AIEnvironmentVariableStatus) => variable.scope === "ai" },
   { key: "ocr", label: "OCR", matches: (variable: AIEnvironmentVariableStatus) => variable.scope === "ocr" },
   { key: "database", label: "Database", matches: (variable: AIEnvironmentVariableStatus) => variable.scope === "database" },

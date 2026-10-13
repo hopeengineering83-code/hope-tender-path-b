@@ -144,7 +144,7 @@ export function computeBuildPlanHash(input: BuildPlanHashInput): string {
   // Canonical BuildPlan items — any change to item fields invalidates the hash.
   const itemSig = (input.items ?? [])
     .slice()
-    .sort((a, b) => a.exactOrder - b.exactOrder)
+    .sort((a, b) => a.exactOrder - b.exactOrder || (a.canonicalId < b.canonicalId ? -1 : a.canonicalId > b.canonicalId ? 1 : 0))
     .map((item) =>
       [
         `item:${item.canonicalId}`,

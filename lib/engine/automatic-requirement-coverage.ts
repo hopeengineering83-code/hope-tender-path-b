@@ -16,6 +16,15 @@ import {
   type ReviewRecordState,
 } from "../vault-review-provenance";
 import { isValidationPassed } from "./document-output-state";
+import { isPackagingOrFormatRequirement, isSubmissionInstructionRequirement } from "./packaging-requirement-rule";
+import {
+  evaluatePackageConformance,
+  type PackageConformanceFacts,
+  type PackageConformanceVerdict,
+} from "./package-conformance";
+import { generatedDocumentVisibleText } from "./generated-document-text";
+import { assessMandatoryQualifications, decidingAssessment, type QualificationEvidence } from "./mandatory-qualification-check";
+import { eligibilitySubjectOf } from "./eligibility-subject";
 
 /**
  * Persisted automatic requirement-evidence rows carry this prefix in notes.
@@ -27,6 +36,13 @@ export const AUTOMATIC_REQUIREMENT_EVIDENCE_PREFIX =
   "automatic-requirement-evidence:v1:";
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+
+/**
+ * The record types that ARE the submission's own output: a generated document
+ * and a confirmed build-plan item. These are the only records that can prove a
+ * packaging/format rule is satisfied.
+ */
+export const ARTIFACT_EVIDENCE_RECORD_TYPES: readonly string[] = ["GENERATED_DOCUMENT", "BUILD_PLAN_ITEM"];
 const MAX_AUTOMATIC_LINKS_PER_REQUIREMENT = 8;
 const MIN_AUTOMATIC_LINK_SCORE = 70;
 
@@ -42,6 +58,10 @@ export type AutomaticEvidenceKind =
   | "METHODOLOGY_NARRATIVE"
   | "COMPANY_PROFILE"
   | "OUTPUT_ARTIFACT"
+  // Submission FORMAT / PACKAGING rules. Satisfied only by the produced
+  // artifact and the final package — never by a company record, an expert, a
+  // project or a tender source file. See lib/engine/packaging-requirement-rule.ts.
+  | "PACKAGE_FORMAT"
   | "GENERAL";
 
 export type AutomaticEvidenceRecordType =
@@ -52,7 +72,8 @@ export type AutomaticEvidenceRecordType =
   | "COMPLIANCE"
   | "COMPANY_DOCUMENT"
   | "GENERATED_DOCUMENT"
-  | "BUILD_PLAN_ITEM";
+  | "BUILD_PLAN_ITEM"
+  | "PACKAGE_CONFORMANCE";
 
 export type AutomaticEvidenceCandidate = {
   recordType: AutomaticEvidenceRecordType;
@@ -90,6 +111,19 @@ export type AutomaticRequirementEvidenceMetadata = {
   sourceSection?: string | null;
   sourceQuote?: string | null;
   matchedFacets?: string[];
+  /**
+   * The structured constraints the tender states that this record does NOT
+   * carry — "minimumExperience", "certification", "value", ... .
+   *
+   * A vault link only settles at PARTIAL when a facet is genuinely missing:
+   * MIN_AUTOMATIC_LINK_SCORE is 70, and complete facets at 70+ are already
+   * FULL. So PARTIAL is always a real, specific shortfall in the record — and
+   * the panel was reporting it as "strengthen it with eligible source-backed
+   * evidence", which names neither the record's shortfall nor what would fix
+   * it. The engine knows exactly which constraint is unmet; it just was not
+   * saying so.
+   */
+  missingFacets?: string[];
   sourceRevision?: string;
   evidenceRevision?: string;
   linkageScore: number;
@@ -110,6 +144,10 @@ export type AutomaticRequirementCoverageResult = {
   unchanged: number;
   remainingUngrounded: Array<{ id: string; title: string }>;
   remainingWithoutEligibleEvidence: Array<{ id: string; title: string }>;
+  /** Package rules the current package demonstrably BREAKS. Real blockers. */
+  packageRuleViolations: Array<{ id: string; title: string; reason: string }>;
+  /** Package rules not yet decidable because the package does not exist yet. */
+  packageRulesAwaitingPackage: Array<{ id: string; title: string; reason: string }>;
 };
 
 type RequirementInput = {
@@ -161,6 +199,14 @@ type LoadedCoverageContext = {
   activeFiles: GroundingActiveFile[];
   requirements: RequirementInput[];
   candidates: AutomaticEvidenceCandidate[];
+  // Facts about the CURRENT submission package. Package rules — financial
+  // separation, single-file consolidation, file format, file naming — are
+  // verified by observing these, never by text-matching a company record.
+  packageFacts: PackageConformanceFacts;
+  // The figures a mandatory qualification is checked against: a linked
+  // financial record or project is not proof of a stated turnover, value or
+  // count (see mandatory-qualification-check.ts).
+  qualificationEvidence: QualificationEvidence;
 };
 
 function sha256(value: string): string {
@@ -275,7 +321,14 @@ export function inferAutomaticEvidenceKinds(
   if (/\b(audited|financial statement|turnover|revenue|balance sheet|bank reference|financial capacity)\b/.test(text)) {
     kinds.add("FINANCIAL_STATEMENT");
   }
-  if (type === "ELIGIBILITY" || /\b(legal eligibility|registration|incorporation|trade licen[cs]e|business licen[cs]e|grade certificate|good standing)\b/.test(text)) {
+  // An eligibility row is answered by what it names (eligibility-subject.ts):
+  // a team by CVs, a track record by projects, an understanding by the
+  // proposal's own text — a registration only when it asks for one.
+  const eligibilitySubject = type === "ELIGIBILITY" ? eligibilitySubjectOf(text) : null;
+  if (eligibilitySubject === "TEAM") kinds.add("EXPERT_CV");
+  if (eligibilitySubject === "EXPERIENCE") kinds.add("PROJECT_REFERENCE");
+  if (eligibilitySubject === "UNDERSTANDING") kinds.add("METHODOLOGY_NARRATIVE");
+  if (eligibilitySubject === "REGISTRATION" || /\b(legal eligibility|registration|incorporation|trade licen[cs]e|business licen[cs]e|grade certificate|good standing)\b/.test(text)) {
     kinds.add("LEGAL_REGISTRATION");
   }
   if (/\b(tax clearance|tin certificate|vat certificate|tax identification)\b/.test(text)) {
@@ -301,6 +354,37 @@ export function inferAutomaticEvidenceKinds(
     || /\b(required output|output file|technical proposal|financial proposal|proposal pdf|proposal docx|deliverable file)\b/.test(text)
   ) {
     kinds.add("OUTPUT_ARTIFACT");
+  }
+
+  // Submission FORMAT / PACKAGING rules resolve to PACKAGE_FORMAT and to
+  // nothing else. "Submission in a Single PDF Technical File" matched no branch
+  // at all and fell through to the GENERAL fallback — and GENERAL is a wildcard
+  // the selector admits every candidate for, which is how an unrelated
+  // `Expert CVs.pdf.txt` became that requirement's evidence at FULL support. A
+  // packaging rule is proven by the artifact and the package, so it must never
+  // reach GENERAL and must never keep an evidence family that would admit a
+  // source or vault record.
+  if (isPackagingOrFormatRequirement(requirement)) {
+    return ["PACKAGE_FORMAT"];
+  }
+
+  // The same hole, in the half the packaging fix did not cover: how the bid is
+  // DELIVERED. "Submission Method: Email submission only" and "Required Email
+  // Subject: ..." are about the channel, not the shape, so they match no
+  // PACKAGING_PHRASE, fall through to GENERAL, and GENERAL admits everything.
+  // Live on tender 08e250af both were evidenced by `Expert CVS.pdf.txt` —
+  // the same file this module's sibling already named — because every CV
+  // contains an email address.
+  //
+  // These return the artifact families rather than PACKAGE_FORMAT alone. A
+  // delivery instruction IS answerable by the produced artifact's own
+  // validated text, which states where the bid goes and under what subject;
+  // `tests/generated-artifact-content-coverage.test.ts` pins that, and
+  // narrowing these to PACKAGE_FORMAT would break it — as an earlier attempt
+  // of mine did, reverted in 8f2eed4b. The defect is GENERAL admitting vault
+  // records, not artifact evidence being allowed.
+  if (isSubmissionInstructionRequirement(requirement)) {
+    return ["OUTPUT_ARTIFACT", "PACKAGE_FORMAT"];
   }
 
   if (kinds.size === 0) kinds.add("GENERAL");
@@ -332,6 +416,17 @@ function scoreCandidate(
   candidate: AutomaticEvidenceCandidate,
 ): { score: number; reasons: string[] } {
   const reasons: string[] = [];
+
+  // A submission FORMAT / PACKAGING rule is satisfied by the produced artifact
+  // and the final package, so only output artifacts may ever score for one.
+  // Only the artifact candidate builders declare PACKAGE_FORMAT today, which
+  // already makes this true; the guard is here so a future candidate builder
+  // cannot quietly reintroduce "Expert CVs.pdf.txt supports Submission in a
+  // Single PDF Technical File" by adding the kind to a vault or source record.
+  if (requiredKinds.includes("PACKAGE_FORMAT") && !ARTIFACT_EVIDENCE_RECORD_TYPES.includes(candidate.recordType)) {
+    return { score: 0, reasons: [] };
+  }
+
   const sharedKinds = requiredKinds.filter((kind) => candidate.evidenceKinds.includes(kind));
   if (sharedKinds.length === 0 && !requiredKinds.includes("GENERAL")) {
     return { score: 0, reasons: [] };
@@ -347,6 +442,10 @@ function scoreCandidate(
   if (matchingTokens.length > 0) {
     score += Math.min(18, matchingTokens.length * 3);
     reasons.push(`matching terms: ${matchingTokens.slice(0, 6).join(", ")}`);
+  }
+  if (candidate.recordType === "GENERATED_DOCUMENT" && candidate.facets?.visibleTextInspected === true && matchingTokens.length >= 2) {
+    score += 40;
+    reasons.push("verified artifact text directly addresses the requirement");
   }
 
   // Shared capability family — the difference between reading and matching.
@@ -556,6 +655,136 @@ export function serializeAutomaticRequirementEvidence(
   return `${AUTOMATIC_REQUIREMENT_EVIDENCE_PREFIX}${JSON.stringify(metadata)}`;
 }
 
+/**
+ * A compliance note with the engine's own evidence bookkeeping removed.
+ *
+ * ComplianceMatrix.notes may carry a serialized
+ * `automatic-requirement-evidence:v1:{...}` record — an internal evidence key
+ * with a document UUID and content hash. That string is for reconciliation, not
+ * for a reader: it reached the client's proposal through the quality-repair
+ * compliance matrix, where it read as a truncated JSON blob mid-sentence and
+ * tripped the document quality gate for exposing an internal record identifier,
+ * which then blocked the required PDF and the whole export.
+ *
+ * Stripping it belongs here because this module owns the marker; any consumer
+ * that renders a note to a human should read it through this function.
+ */
+export function clientSafeComplianceNote(notes: string | null | undefined): string {
+  if (!notes) return "";
+  const at = notes.indexOf(AUTOMATIC_REQUIREMENT_EVIDENCE_PREFIX);
+  return (at === -1 ? notes : notes.slice(0, at)).replace(/\s*[—-]\s*$/, "").trim();
+}
+
+/**
+ * One compliance row, described the way a client may read it.
+ *
+ * The writer context handed to generation carried a ComplianceMatrix row
+ * verbatim:
+ *
+ *   PARTIAL: Annexes for Supporting Documents | PROPOSAL_RESPONSE from
+ *   Company evidence available for drafting | ref: Key-Experts-1.txt — One
+ *   relevant Company Vault document, 3 selected expert(s)…
+ *
+ * and the writer copied it into Section E of a real client-facing Technical
+ * Proposal. Everything after the requirement name there is the ENGINE talking
+ * to itself: `PROPOSAL_RESPONSE` and `PACKAGE_CONFORMANCE` are internal
+ * evidence-kind enums, `AUTO_BYTE_VERIFIED_VAULT_DOCUMENT` and "Company
+ * evidence available for drafting" describe a drafting state rather than any
+ * evidence, and `Key-Experts-1.txt` / `02_Legal_Registration_Documents_
+ * Summary.docx.txt` are stored Company Vault filenames that must never reach a
+ * client. The row was also cut mid-word by the writer's length budget, so the
+ * proposal shipped "…HOPE URBAN PLANNING ARCHI".
+ *
+ * This is the same failure as the `automatic-requirement-evidence:v1:{…}` leak
+ * documented on clientSafeComplianceNote above — internal bookkeeping reaching
+ * the reader — closed for that one field and left open on the four beside it.
+ * Closing it here, where the module already owns "how a compliance row is
+ * described to a human", keeps one answer instead of four consumers guessing.
+ *
+ * The writer LOSES NOTHING it needs: it still learns the requirement, how
+ * strongly it is covered, and what kind of evidence backs it. A reference that
+ * names real evidence — a certificate, a project, an expert — is kept verbatim,
+ * because that is exactly what an evaluator wants to see; only a stored
+ * filename is dropped, and it is recognised by its extension rather than by a
+ * list of names, so a vault file this codebase has never seen is dropped too.
+ */
+const CLIENT_SAFE_SUPPORT_LEVEL: Record<string, string> = {
+  FULL: "fully evidenced",
+  SUBSTANTIAL: "substantially evidenced",
+  PARTIAL: "partially evidenced",
+  NONE: "not yet evidenced",
+  NOT_COVERED: "not yet evidenced",
+};
+
+const CLIENT_SAFE_EVIDENCE_KIND: Record<string, string> = {
+  PROJECT: "project reference",
+  EXPERT: "expert CV",
+  COMPANY_DOCUMENT: "company document",
+  LEGAL_RECORD: "legal/registration record",
+  PROPOSAL_RESPONSE: "proposal narrative",
+  BUILD_PLAN_ITEM: "planned deliverable",
+  PACKAGE_CONFORMANCE: "package conformance check",
+};
+
+/** A stored file rather than a thing the client can be told about. */
+function looksLikeStoredFileName(value: string): boolean {
+  return /\.(?:txt|docx?|pdf|xlsx?|csv|json|pptx?)\b/i.test(value.trim());
+}
+
+export function clientSafeEvidenceReference(reference: string | null | undefined): string {
+  const raw = (reference ?? "").trim();
+  if (!raw) return "";
+  // A reference may list several items; judge each on its own so one filename
+  // does not discard the project names beside it.
+  const kept = raw
+    .split(/\s*[,;]\s*/)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0 && !looksLikeStoredFileName(part));
+  return kept.join(", ");
+}
+
+export function clientSafeComplianceEvidence(row: {
+  supportLevel?: string | null;
+  evidenceType?: string | null;
+  evidenceSource?: string | null;
+  evidenceReference?: string | null;
+  notes?: string | null;
+}): string {
+  const parts: string[] = [];
+
+  const coverage = CLIENT_SAFE_SUPPORT_LEVEL[String(row.supportLevel ?? "").toUpperCase()];
+  if (coverage) parts.push(coverage);
+
+  const kind = CLIENT_SAFE_EVIDENCE_KIND[String(row.evidenceType ?? "").toUpperCase()];
+  if (kind) parts.push(`from ${kind}`);
+
+  // evidenceSource is a drafting state ("Company evidence available for
+  // drafting") or an internal token ("AUTO_BYTE_VERIFIED_VAULT_DOCUMENT"). It
+  // describes how the engine reached the row, never the evidence, so none of
+  // it is client-facing and none of it is rendered.
+
+  const reference = clientSafeEvidenceReference(row.evidenceReference);
+  if (reference) parts.push(`(${reference})`);
+
+  // `notes` is not rendered at all. clientSafeComplianceNote strips the
+  // serialized evidence record, but what remains is still the engine
+  // describing its own plan and its own record counts — measured across the
+  // real Pharo run, every distinct note read like:
+  //
+  //   "One relevant Company Vault document, 3 selected expert(s), and 3
+  //    selected project reference(s) may support drafting. The response is not
+  //    covered until generated content is automatically source-linked."
+  //   "3 reviewed/selected expert(s) are available from 28 expert record(s)…
+  //    the proposal engine will write a staffing-compliance narrative."
+  //
+  // None of that is a fact about the bid; it is the pipeline talking about
+  // itself, down to how many records the Company Vault holds. A client-facing
+  // line has no use for it, and the writer already knows the coverage, the
+  // evidence kind and the reference from the fields above.
+
+  return parts.join(" ").trim();
+}
+
 export function parseAutomaticRequirementEvidence(
   notes: string | null | undefined,
 ): AutomaticRequirementEvidenceMetadata | null {
@@ -609,6 +838,7 @@ function metadataFor(
     sourceSection: selected.candidate.sourceSection ?? null,
     sourceQuote: selected.candidate.sourceQuote ?? null,
     matchedFacets: evaluateCandidateFacets(requirement, selected.candidate).matched,
+    missingFacets: evaluateCandidateFacets(requirement, selected.candidate).missing,
     sourceRevision: sha256(`${requirement.sourceTenderFileId}:${requirement.sourceExactQuote!.replace(/\s+/g, " ").trim()}`),
     evidenceRevision: selected.candidate.evidenceRevision ?? selected.candidate.sourceContentHash,
     linkageScore: selected.score,
@@ -620,8 +850,61 @@ function metadataFor(
 function automaticEvidenceSource(recordType: AutomaticEvidenceRecordType): string {
   if (recordType === "GENERATED_DOCUMENT") return "AUTO_GENERATED_ARTIFACT";
   if (recordType === "BUILD_PLAN_ITEM") return "AUTO_PLANNED_ARTIFACT";
+  if (recordType === "PACKAGE_CONFORMANCE") return "AUTO_PACKAGE_CONFORMANCE";
   if (recordType === "COMPANY_DOCUMENT") return "AUTO_BYTE_VERIFIED_VAULT_DOCUMENT";
   return "AUTO_SOURCE_VERIFIED_VAULT_RECORD";
+}
+
+/**
+ * Build the evidence row for a package rule the current package demonstrably
+ * obeys. The "evidence" is the observed package state itself: its digest is
+ * the content hash, so the row is stable while the package is unchanged and is
+ * re-derived the moment a document is added, removed or reformatted.
+ *
+ * Support level is FULL because the proposition is decided, not estimated —
+ * there is no stronger proof of "this submission is one PDF" than the
+ * submission being one PDF.
+ */
+function packageConformanceRow(
+  context: LoadedCoverageContext,
+  requirement: RequirementInput,
+  conformance: PackageConformanceVerdict,
+): DesiredComplianceRow {
+  const evidenceKey = `PACKAGE_CONFORMANCE:${conformance.family}:${conformance.factDigest}`;
+  const factsJson = JSON.stringify(conformance.observedFacts);
+  const metadata: AutomaticRequirementEvidenceMetadata = {
+    version: 1,
+    evidenceKey,
+    recordType: "PACKAGE_CONFORMANCE",
+    recordId: `${context.tender.id}:${conformance.family}`,
+    label: `Current submission package (${conformance.family})`,
+    requirementId: requirement.id,
+    requirementSourceFileId: requirement.sourceTenderFileId!,
+    requirementSourceQuoteHash: sha256(requirement.sourceExactQuote!.replace(/\s+/g, " ").trim()),
+    sourceDocumentId: null,
+    sourceContentHash: conformance.factDigest,
+    sourceByteLength: Math.max(1, Buffer.byteLength(factsJson, "utf8")),
+    sourceFileName: "Current submission package",
+    sourceSection: conformance.family,
+    sourceQuote: conformance.reason.slice(0, 320),
+    matchedFacets: conformance.observedFacts.slice(0, 20),
+    missingFacets: [],
+    sourceRevision: sha256(`${requirement.sourceTenderFileId}:${requirement.sourceExactQuote!.replace(/\s+/g, " ").trim()}`),
+    evidenceRevision: conformance.factDigest,
+    linkageScore: 100,
+    linkageReasons: [`package-conformance:${conformance.family}`, conformance.reason],
+    state: "ACTIVE",
+  };
+  return {
+    key: `${requirement.id}:${evidenceKey}`,
+    tenderId: context.tender.id,
+    requirementId: requirement.id,
+    evidenceType: "PACKAGE_CONFORMANCE",
+    evidenceSource: automaticEvidenceSource("PACKAGE_CONFORMANCE"),
+    evidenceReference: "Current submission package",
+    supportLevel: "FULL",
+    notes: serializeAutomaticRequirementEvidence(metadata),
+  };
 }
 
 function desiredRowsForContext(context: LoadedCoverageContext): {
@@ -629,13 +912,18 @@ function desiredRowsForContext(context: LoadedCoverageContext): {
   groundedRequirements: number;
   remainingUngrounded: Array<{ id: string; title: string }>;
   remainingWithoutEligibleEvidence: Array<{ id: string; title: string }>;
+  packageRuleViolations: Array<{ id: string; title: string; reason: string }>;
+  packageRulesAwaitingPackage: Array<{ id: string; title: string; reason: string }>;
 } {
   const rows: DesiredComplianceRow[] = [];
   const remainingUngrounded: Array<{ id: string; title: string }> = [];
   const remainingWithoutEligibleEvidence: Array<{ id: string; title: string }> = [];
+  const packageRuleViolations: Array<{ id: string; title: string; reason: string }> = [];
+  const packageRulesAwaitingPackage: Array<{ id: string; title: string; reason: string }> = [];
   let groundedRequirements = 0;
 
   for (const requirement of context.requirements) {
+    const blocking = ["MANDATORY", "CRITICAL"].includes(String(requirement.priority ?? "").toUpperCase());
     const grounded = isGroundedEvidenceInActiveFiles(
       requirement.sourcePageNumber,
       requirement.sourceExactQuote,
@@ -643,19 +931,57 @@ function desiredRowsForContext(context: LoadedCoverageContext): {
       context.activeFiles,
     );
     if (!grounded) {
-      remainingUngrounded.push({ id: requirement.id, title: requirement.title });
+      if (blocking) remainingUngrounded.push({ id: requirement.id, title: requirement.title });
       continue;
     }
-    groundedRequirements += 1;
+    if (blocking) groundedRequirements += 1;
 
-    const selected = selectAutomaticEvidenceForRequirement(requirement, context.candidates);
-    if (selected.length === 0) {
+    // A package RULE is verified by observing the package, never by scoring a
+    // record's name against the rule's name. Text similarity between "Submission
+    // in a Single PDF Technical File" and any real document is always weak, so
+    // similarity scoring parked these requirements at PARTIAL for ever and asked
+    // the owner to supply evidence that cannot exist. Decide them here instead,
+    // and skip similarity selection entirely for them in every outcome.
+    const conformance = evaluatePackageConformance(requirement, context.packageFacts);
+    if (conformance.applicable) {
+      if (conformance.status === "SATISFIED") {
+        rows.push(packageConformanceRow(context, requirement, conformance));
+      } else if (!blocking) {
+        // A non-mandatory package rule is reported by the canonical readiness
+        // model, never as a coverage blocker.
+      } else if (conformance.status === "VIOLATED") {
+        // Fail-closed: no evidence row is written, so the requirement stays
+        // unmet and release stays blocked — but the blocker names the actual
+        // package defect instead of demanding evidence.
+        packageRuleViolations.push({ id: requirement.id, title: requirement.title, reason: conformance.reason });
+      } else {
+        packageRulesAwaitingPackage.push({ id: requirement.id, title: requirement.title, reason: conformance.reason });
+      }
+      continue;
+    }
+
+    // A record of the right kind does not meet a stated figure. When the
+    // figures on file fall short, no record is linked as evidence for it;
+    // when they cannot yet prove it, a link is at most PARTIAL and names the
+    // stated figure as what the record lacks.
+    const qualification = blocking
+      ? decidingAssessment(assessMandatoryQualifications(requirement, context.qualificationEvidence))
+      : null;
+    if (qualification?.verdict === "FAIL") {
       remainingWithoutEligibleEvidence.push({ id: requirement.id, title: requirement.title });
       continue;
     }
 
+    const selected = selectAutomaticEvidenceForRequirement(requirement, context.candidates);
+    if (selected.length === 0) {
+      if (blocking) remainingWithoutEligibleEvidence.push({ id: requirement.id, title: requirement.title });
+      continue;
+    }
+
+    const unproven = qualification?.verdict === "CONDITIONAL_PASS";
     for (const item of selected) {
       const metadata = metadataFor(requirement, item);
+      if (unproven) metadata.missingFacets = [...new Set([...(metadata.missingFacets ?? []), "statedFigure"])];
       rows.push({
         key: `${requirement.id}:${item.candidate.evidenceKey}`,
         tenderId: context.tender.id,
@@ -663,13 +989,20 @@ function desiredRowsForContext(context: LoadedCoverageContext): {
         evidenceType: item.candidate.recordType,
         evidenceSource: automaticEvidenceSource(item.candidate.recordType),
         evidenceReference: item.candidate.label,
-        supportLevel: item.supportLevel,
+        supportLevel: unproven ? "PARTIAL" : item.supportLevel,
         notes: serializeAutomaticRequirementEvidence(metadata),
       });
     }
   }
 
-  return { rows, groundedRequirements, remainingUngrounded, remainingWithoutEligibleEvidence };
+  return {
+    rows,
+    groundedRequirements,
+    remainingUngrounded,
+    remainingWithoutEligibleEvidence,
+    packageRuleViolations,
+    packageRulesAwaitingPackage,
+  };
 }
 
 function vaultRecordCandidate(
@@ -723,8 +1056,13 @@ async function loadCoverageContext(db: any, tenderId: string, userId: string): P
     select: {
       id: true,
       userId: true,
+      // Every requirement. Loading only mandatory ones left a scored
+      // requirement ("Cover Letter", "Technical Approach and Methodology") on
+      // its engine-time PARTIAL after the validated proposal that answers it
+      // existed, and the proposal's own Section E printed PARTIALLY MET beside
+      // it (2026-09-28, accept run 36456526332). Only mandatory/critical ones
+      // are reported as gaps or block anything (see desiredRowsForContext).
       requirements: {
-        where: { priority: { in: ["MANDATORY", "CRITICAL"] } },
         orderBy: { createdAt: "asc" },
         select: {
           id: true,
@@ -781,7 +1119,7 @@ async function loadCoverageContext(db: any, tenderId: string, userId: string): P
 
   const company = await db.company.findUnique({
     where: { userId },
-    select: { id: true },
+    select: { id: true, name: true, foundingYear: true },
   });
   if (!company) {
     return {
@@ -790,6 +1128,10 @@ async function loadCoverageContext(db: any, tenderId: string, userId: string): P
       activeFiles: tender.files,
       requirements: tender.requirements,
       candidates: [],
+      // Package rules do not depend on the company vault: the submission
+      // package exists whether or not a company profile does.
+      packageFacts: { documents: tender.generatedDocuments ?? [], planConfirmed: false },
+      qualificationEvidence: { financialRecords: [], projects: [] },
     };
   }
 
@@ -851,6 +1193,12 @@ async function loadCoverageContext(db: any, tenderId: string, userId: string): P
   const selectedExpertIds = new Set<string>(tender.expertMatches.map((row: any) => row.expertId));
   const selectedProjectIds = new Set<string>(tender.projectMatches.map((row: any) => row.projectId));
   const candidates: AutomaticEvidenceCandidate[] = [];
+  const generatedVisibleText = new Map<string, string>();
+  await Promise.all(tender.generatedDocuments.map(async (document: any) => {
+    if (!document.fileContent && !document.storagePath) return;
+    const text = await generatedDocumentVisibleText(document).catch(() => "");
+    if (text) generatedVisibleText.set(document.id, text.slice(0, 20_000));
+  }));
 
   for (const expert of experts) {
     const candidate = vaultRecordCandidate(
@@ -979,8 +1327,8 @@ async function loadCoverageContext(db: any, tenderId: string, userId: string): P
       recordType: "GENERATED_DOCUMENT",
       recordId: document.id,
       label: document.exactFileName ?? document.name,
-      searchableText: `${document.name ?? ""} ${document.exactFileName ?? ""} ${document.documentType ?? ""} ${document.format ?? ""}`,
-      evidenceKinds: ["OUTPUT_ARTIFACT", "METHODOLOGY_NARRATIVE", "DECLARATION", "FORM_TEMPLATE"],
+      searchableText: `${document.name ?? ""} ${document.exactFileName ?? ""} ${document.documentType ?? ""} ${document.format ?? ""} ${generatedVisibleText.get(document.id) ?? ""}`,
+      evidenceKinds: ["OUTPUT_ARTIFACT", "PACKAGE_FORMAT", "METHODOLOGY_NARRATIVE", "DECLARATION", "FORM_TEMPLATE"],
       evidenceKey: candidateKey("GENERATED_DOCUMENT", document.id, integrity.hash),
       sourceDocumentId: document.id,
       sourceContentHash: integrity.hash,
@@ -992,26 +1340,30 @@ async function loadCoverageContext(db: any, tenderId: string, userId: string): P
       sourceSection: document.documentType ?? null,
       sourceQuote: null,
       evidenceRevision: integrity.hash,
-      facets: { validationStatus, generationStatus },
+      facets: { validationStatus, generationStatus, visibleTextInspected: generatedVisibleText.has(document.id) },
     });
   }
 
-  if (
+  const planConfirmed = Boolean(
     buildPlan
     && buildPlan.confirmedRevision === buildPlan.revision
     && buildPlan.confirmedContentHash === buildPlan.contentHash
-    && SHA256_PATTERN.test(String(buildPlan.contentHash ?? "").toLowerCase())
-  ) {
+    && SHA256_PATTERN.test(String(buildPlan.contentHash ?? "").toLowerCase()),
+  );
+  const plannedFileNames: string[] = [];
+
+  if (planConfirmed) {
     for (const [index, item] of parseBuildPlanItems(buildPlan.itemsJson).entries()) {
       const exactFileName = String(item.exactFileName ?? item.fileName ?? "").trim();
       if (!exactFileName) continue;
+      plannedFileNames.push(exactFileName);
       const recordId = `${buildPlan.id}:${index}:${exactFileName}`;
       candidates.push({
         recordType: "BUILD_PLAN_ITEM",
         recordId,
         label: exactFileName,
         searchableText: `${exactFileName} ${String(item.documentType ?? "")} ${String(item.format ?? "")}`,
-        evidenceKinds: ["OUTPUT_ARTIFACT", "METHODOLOGY_NARRATIVE", "DECLARATION", "FORM_TEMPLATE"],
+        evidenceKinds: ["OUTPUT_ARTIFACT", "PACKAGE_FORMAT", "METHODOLOGY_NARRATIVE", "DECLARATION", "FORM_TEMPLATE"],
         evidenceKey: candidateKey("BUILD_PLAN_ITEM", recordId, String(buildPlan.contentHash).toLowerCase()),
         sourceDocumentId: buildPlan.id,
         sourceContentHash: String(buildPlan.contentHash).toLowerCase(),
@@ -1037,6 +1389,17 @@ async function loadCoverageContext(db: any, tenderId: string, userId: string): P
     activeFiles: tender.files,
     requirements: tender.requirements,
     candidates,
+    packageFacts: {
+      documents: tender.generatedDocuments ?? [],
+      plannedFileNames,
+      planConfirmed,
+    },
+    qualificationEvidence: {
+      companyName: company.name,
+      foundingYear: company.foundingYear,
+      financialRecords: financialRecords.filter((record: any) => canUseVaultRecord(record as ReviewRecordState, "GENERATION")),
+      projects: projects.map((project: any) => ({ ...project, selected: selectedProjectIds.has(project.id) })),
+    },
   };
 }
 
@@ -1046,7 +1409,20 @@ export async function loadValidAutomaticEvidenceKeys(
   userId: string,
 ): Promise<Set<string>> {
   const context = await loadCoverageContext(db, tenderId, userId);
-  return new Set((context?.candidates ?? []).map((candidate) => candidate.evidenceKey));
+  const keys = new Set((context?.candidates ?? []).map((candidate) => candidate.evidenceKey));
+  // Package-conformance rows are not built from a candidate record — their
+  // evidence IS the observed package. Deriving the valid-key set from
+  // candidates alone would let filterCurrentAutomaticEvidenceRows strip every
+  // conformance row the reconciler had just written, which is the same
+  // "one rule, two disagreeing copies" defect this engine keeps being bitten
+  // by. Take the keys from the SAME function that decides the desired rows.
+  if (context) {
+    for (const row of desiredRowsForContext(context).rows) {
+      const metadata = parseAutomaticRequirementEvidence(row.notes);
+      if (metadata?.recordType === "PACKAGE_CONFORMANCE") keys.add(metadata.evidenceKey);
+    }
+  }
+  return keys;
 }
 
 export function filterCurrentAutomaticEvidenceRows<T extends RequirementInput>(
@@ -1100,6 +1476,8 @@ export async function reconcileAutomaticRequirementCoverage(
       unchanged: 0,
       remainingUngrounded: [],
       remainingWithoutEligibleEvidence: [],
+      packageRuleViolations: [],
+      packageRulesAwaitingPackage: [],
     };
   }
 
@@ -1190,5 +1568,7 @@ export async function reconcileAutomaticRequirementCoverage(
     unchanged,
     remainingUngrounded: desired.remainingUngrounded,
     remainingWithoutEligibleEvidence: desired.remainingWithoutEligibleEvidence,
+    packageRuleViolations: desired.packageRuleViolations,
+    packageRulesAwaitingPackage: desired.packageRulesAwaitingPackage,
   };
 }

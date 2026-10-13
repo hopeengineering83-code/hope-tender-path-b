@@ -27,6 +27,12 @@ export function redactSecrets(text: string): string {
     .replace(/sk-[a-zA-Z0-9_-]{8,}/g, "[KEY_REDACTED]")
     // Google AIza keys (min 30 chars)
     .replace(/AIza[a-zA-Z0-9_-]{20,}/g, "[KEY_REDACTED]")
+    // Google's NEW-format Gemini keys (AQ...). This module's own comment says
+    // every caller must use it "so the redaction patterns cannot diverge" — and
+    // they had: lib/ai-provider-health.ts carried this pattern locally while the
+    // shared redactor did not, so a new-format Gemini key was redacted on one
+    // path and printed verbatim on the other.
+    .replace(/\bAQ[a-zA-Z0-9_-]{30,}\b/g, "[KEY_REDACTED]")
     // Bearer tokens
     .replace(/Bearer\s+[^\s,;]+/gi, "Bearer [REDACTED]")
     // Anthropic ant- keys
@@ -34,12 +40,19 @@ export function redactSecrets(text: string): string {
     // OpenAI org-/proj- keys
     .replace(/org-[a-zA-Z0-9]{20,}/g, "[KEY_REDACTED]")
     .replace(/proj-[a-zA-Z0-9_-]{20,}/g, "[KEY_REDACTED]")
-    // Groq gsk_ keys (underscore prefix — not matched by sk- above)
-    .replace(/gsk_[a-zA-Z0-9]{30,}/g, "[KEY_REDACTED]")
-    // Cerebras csk_ keys (underscore prefix — not matched by sk- above)
-    .replace(/csk_[a-zA-Z0-9]{30,}/g, "[KEY_REDACTED]")
-    // DeepSeek dsk- keys (real DeepSeek format — not sk-deepseek-)
-    .replace(/dsk-[a-zA-Z0-9_-]{30,}/g, "[KEY_REDACTED]")
+    // Groq / Cerebras / DeepSeek keys.
+    //
+    // Threshold is 8, not 30. These were written as {30,} to match the length
+    // of a real key, which quietly made this redactor WEAKER than the private
+    // copies it replaced — those used {8,}, so consolidating onto this one
+    // would have started leaking short or truncated keys that were previously
+    // caught. The prefixes are distinctive enough that over-matching is
+    // harmless: redacting something that merely looks like a key costs nothing,
+    // while missing one leaks a credential.
+    .replace(/gsk_[A-Za-z0-9_-]{8,}/g, "[KEY_REDACTED]")
+    .replace(/csk_[A-Za-z0-9_-]{8,}/g, "[KEY_REDACTED]")
+    // DeepSeek accepts either separator.
+    .replace(/dsk[-_][A-Za-z0-9_-]{8,}/g, "[KEY_REDACTED]")
     // GitHub PATs
     .replace(/ghp_[a-zA-Z0-9]{36,}/g, "[KEY_REDACTED]")
     .replace(/github_pat_[a-zA-Z0-9_]{20,}/g, "[KEY_REDACTED]")
@@ -49,8 +62,11 @@ export function redactSecrets(text: string): string {
     .replace(/vercel_blob_[a-zA-Z0-9_-]{20,}/gi, "[KEY_REDACTED]")
     // Vercel deployment tokens (vcp_*)
     .replace(/vcp_[a-zA-Z0-9_-]{30,}/g, "[KEY_REDACTED]")
-    // api_key= query params
-    .replace(/(api[_-]?key\s*[:=]\s*)[^\s&,;]+/gi, "$1[KEY_REDACTED]")
+    // api_key= / key= query params. The bare `key=` form matters because that is
+    // how Google's generative-language API takes credentials, so any URL of
+    // theirs that reaches a message or a log carries the key in plain sight.
+    .replace(/(\bapi[_-]?key\s*[:=]\s*)[^\s&,;]+/gi, "$1[KEY_REDACTED]")
+    .replace(/([?&]key=)[^\s&,;"]+/gi, "$1[KEY_REDACTED]")
     // Database connection strings
     .replace(/postgres(?:ql)?:\/\/[^\s"]+/gi, "postgresql://[redacted]")
     .replace(/(mongodb(?:\+srv)?|mysql|redis):\/\/[^\s"]+/gi, "$1://[redacted]");

@@ -151,6 +151,33 @@ export function computeAnalysisContentHash(content: string): string {
 }
 
 /**
+ * The TenderFile columns the analysis hash depends on. Every caller that
+ * recomputes the current hash must load at least these: buildTenderAnalysisContent
+ * orders files by createdAt and selectCanonicalTenderFiles de-duplicates by
+ * contentSha256 and ranks by integrity/extraction/coverage. A caller that
+ * omitted createdAt ordered files by id instead, so on a tender with more than
+ * one file the readiness snapshot never matched the promoted analysis and AI
+ * Analyze was "stale" the moment it succeeded (real Preview, 2026-10-06: a ToR
+ * plus a guideline PDF). Single-file tenders could not show it.
+ */
+export const ANALYSIS_HASH_FILE_SELECT = {
+  id: true,
+  fileName: true,
+  originalFileName: true,
+  extractedText: true,
+  classification: true,
+  createdAt: true,
+  deletionStatus: true,
+  contentSha256: true,
+  integrityStatus: true,
+  extractionScore: true,
+  extractionMethod: true,
+  totalPages: true,
+  extractedPages: true,
+  failedPages: true,
+} as const;
+
+/**
  * Recompute the canonical tender-source analysis binding from persisted,
  * tenant-owned state. Company Vault state is deliberately excluded: AI
  * Analyze establishes tender facts from tender sources, while Run Engine owns
@@ -180,22 +207,7 @@ export async function computePersistedTenderAnalysisHash(
       intakeSummary: true,
       files: {
         where: { deletionStatus: "ACTIVE" },
-        select: {
-          id: true,
-          fileName: true,
-          originalFileName: true,
-          extractedText: true,
-          classification: true,
-          createdAt: true,
-          deletionStatus: true,
-          contentSha256: true,
-          integrityStatus: true,
-          extractionScore: true,
-          extractionMethod: true,
-          totalPages: true,
-          extractedPages: true,
-          failedPages: true,
-        },
+        select: ANALYSIS_HASH_FILE_SELECT,
       },
     },
   });

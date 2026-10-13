@@ -180,9 +180,11 @@ describe("P0: the real socket is terminated at the parent deadline", () => {
 
     // No abort site may remain armed directly from a bare static constant.
     assert.ok(
-      !/setTimeout\(\(\) => controller\.abort\(\), (?!resolveEffectiveTimeoutMs)[A-Za-z_]/.test(source),
+      !/setTimeout\(\(\) => controller\.abort\(\), (?!resolveEffectiveTimeoutMs|appliedTimeoutMs\b)[A-Za-z_]/.test(source),
       "no AbortController may be armed from an unclamped static timeout",
     );
+    // appliedTimeoutMs is allowed above only because it is the clamp's result.
+    assert.match(source, /const appliedTimeoutMs = resolve(Effective|ProviderAttempt)TimeoutMs\(/);
     assert.ok(
       !/AbortSignal\.timeout\(\d/.test(source),
       "no AbortSignal.timeout may use a bare numeric literal",

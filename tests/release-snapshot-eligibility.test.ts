@@ -94,8 +94,14 @@ describe("release snapshot durable Vault trust consumption", () => {
   const source = readFileSync("lib/engine/tender-release-snapshot.ts", "utf8");
 
   it("loads complete provenance fields", () => {
-    assert.match(source, /VAULT_REVIEW_CONSUMER_SELECT\.EXPERT/);
-    assert.match(source, /VAULT_REVIEW_CONSUMER_SELECT\.PROJECT/);
+    // The polled snapshot reads the consumer select's fields with the source
+    // text supplied through the stored-text cache (lib/stored-text-cache.ts).
+    assert.match(source, /VAULT_REVIEW_STATUS_SELECT\.EXPERT/);
+    assert.match(source, /VAULT_REVIEW_STATUS_SELECT\.PROJECT/);
+    assert.match(source, /fillVaultSourceText\(/);
+    const provenance = readFileSync("lib/vault-review-provenance.ts", "utf8");
+    assert.match(provenance, /EXPERT: \{ \.\.\.VAULT_REVIEW_CONSUMER_SELECT\.EXPERT, sourceDocument:/);
+    assert.match(provenance, /PROJECT: \{ \.\.\.VAULT_REVIEW_CONSUMER_SELECT\.PROJECT, sourceDocument:/);
     assert.match(source, /isDurablyReviewed/);
     assert.match(source, /isDurablySourceVerified/);
   });

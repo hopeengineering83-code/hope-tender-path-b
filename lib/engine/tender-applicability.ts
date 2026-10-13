@@ -75,11 +75,15 @@ export const APPLICABILITY_LABELS: Record<TenderApplicabilityState, string> = {
 /**
  * Set of fields that are indispensable for final delivery. If any of these
  * are NOT_STATED, the generation/export gate blocks.
+ *
+ * Owner policy (2026-09-24, ABSENT_TENDER_FACT_IS_NOT_REQUIRED in
+ * tender-fact-authority.ts): a detail the tender does not state is not
+ * required. Deadline, submission method and client name used to be listed
+ * here and blocked export whenever a tender simply did not state them. Only
+ * the title remains: a proposal must carry one, and the extractor always has
+ * one (it falls back to the tender file name).
  */
 export const INDISPENSABLE_FINAL_DELIVERY_FIELDS: ReadonlySet<string> = new Set([
-  "deadline",
-  "submissionMethod",
-  "clientName",
   "title",
 ]);
 

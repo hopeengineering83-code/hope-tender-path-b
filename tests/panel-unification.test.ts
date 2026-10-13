@@ -47,7 +47,7 @@ const mockSnapshot = (overrides: Partial<TenderReleaseSnapshot> = {}): TenderRel
     gateBlocker: null,
   },
   requirements: { total: 0, mandatory: 0, groundedMandatory: 0, allMandatoryGrounded: false, blocker: null },
-  evidence: { total: 0, covered: 0, coveragePercent: 0 },
+  evidence: { total: 0, covered: 0, coveragePercent: 0, notMachineDecidable: 0 },
   buildPlan: { documentCount: 0, valid: false, blocker: null, gateValid: false, gateBlocker: null },
   vault: {
     expertRequirementExists: false,

@@ -11,9 +11,17 @@ describe("Hobby-safe generation upgrade", () => {
     assert.ok(block.includes("HOBBY_SAFE_CAPS"), "Z.ai must use HOBBY_SAFE_CAPS");
   });
   it("Cerebras uses HOBBY_SAFE_CAPS (proposal: 8000)", () => {
+    // Read the WHOLE cerebras entry rather than a fixed 800-character window.
+    // The window was long enough only until a comment was added above
+    // outputCaps, at which point the assertion fell outside it and the test
+    // failed while the registry still used HOBBY_SAFE_CAPS — a false alarm
+    // that says nothing about the cap it exists to protect.
     const src = read("lib/ai-provider-registry.ts");
     const idx = src.indexOf("cerebras: {");
-    const block = src.slice(idx, idx + 800);
+    assert.ok(idx > -1, "cerebras entry must exist");
+    const end = src.indexOf("\n  },", idx);
+    assert.ok(end > idx, "cerebras entry must be terminated");
+    const block = src.slice(idx, end);
     assert.ok(block.includes("HOBBY_SAFE_CAPS"), "Cerebras must use HOBBY_SAFE_CAPS");
   });
   it("HOBBY_SAFE_CAPS has proposal: 8000 (NOT 16000 — too slow for 45s)", () => {

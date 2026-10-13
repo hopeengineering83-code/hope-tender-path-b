@@ -75,7 +75,8 @@ describe("Fix 2 — Invalid model does not consume useful attempt budget", () =>
     // WITHOUT consuming an attempt.
     assert.match(
       src,
-      /if \(provider === "zai"\) \{[\s\S]*resolveZaiConfiguration\("proposal"/,
+      // …for the use case the request will actually use, not all three.
+      /if \(provider === "zai"\) \{[\s\S]*?resolveZaiConfiguration\(u, env\)\.valid/,
       "Z.ai configured check must call resolveZaiConfiguration",
     );
   });
@@ -143,18 +144,39 @@ describe("Fix 4 — Oversized provider is skipped before 413", () => {
 
 // ─── 5. Groq-size/TPM preflight prevents known oversized call ─────────────────
 
-describe("Fix 5 — Groq TPM preflight prevents oversized call", () => {
-  it("ai-preflight.ts has a Groq TPM limit check", () => {
+describe("Fix 5 — free-tier TPM preflight prevents oversized call", () => {
+  it("ai-preflight.ts checks the free-tier per-minute token limit", () => {
     const src = read("lib/ai-preflight.ts");
-    assert.match(src, /GROQ_FREE_TPM_LIMIT/);
     assert.match(src, /reason: "TPM_LIMIT"/);
-    assert.match(src, /provider === "groq" && estimatedTokens > GROQ_FREE_TPM_LIMIT/);
+    assert.match(src, /profile\.freeTierTpmLimit !== null && estimatedTokens > profile\.freeTierTpmLimit/);
   });
 
-  it("Groq context limit is the most restrictive (32K)", () => {
-    const src = read("lib/ai-preflight.ts");
-    // Groq free-tier context is 32K — the lowest in the registry.
-    assert.match(src, /groq: 32_000/);
+  it("carries the TPM limit on the MODEL, not on the provider", () => {
+    // Groq's per-minute allowance differs between its 70B and 8B models, so a
+    // single provider-wide number skipped the small model on payloads it could
+    // have served. The limit travels with the resolved model instead.
+    const preflight = read("lib/ai-preflight.ts");
+    assert.doesNotMatch(preflight, /GROQ_FREE_TPM_LIMIT/, "no provider-wide Groq constant may remain");
+
+    const profiles = read("lib/ai-model-profiles.ts");
+    assert.match(profiles, /freeTierTpmLimit/);
+  });
+
+  it("resolves limits from the exact resolved model, not a provider default", async () => {
+    const { resolveModelProfile } = await import("../lib/ai-model-profiles");
+    const small = resolveModelProfile("groq", "llama-3.1-8b-instant");
+    assert.equal(small.source, "family");
+    assert.equal(small.model, "llama-3.1-8b-instant");
+  });
+
+  it("falls back to a small conservative profile for an unrecognised model", async () => {
+    // The safe direction: an unrecognised model that is skipped costs one
+    // provider in the chain, while one that is overestimated costs a failed
+    // request and a consumed attempt.
+    const { resolveModelProfile } = await import("../lib/ai-model-profiles");
+    const unknown = resolveModelProfile("groq", "some-model-nobody-has-heard-of");
+    assert.equal(unknown.source, "conservative");
+    assert.ok(unknown.contextTokens <= 32_000);
   });
 });
 
@@ -173,6 +195,13 @@ describe("Fix 6 — Mistral timeout falls through safely", () => {
     const src = read("lib/ai.ts");
     // The failureDetails array is built per-provider; the loop continues.
     assert.match(src, /failureDetails\.push/);
+  });
+
+  it("gives structured extraction a bounded use-case timeout without changing normal calls", () => {
+    const src = read("lib/ai.ts");
+    const timeoutConfig = read("lib/timeout-config.ts");
+    assert.match(src, /timeoutMs: useCase === "extraction" \? MISTRAL_EXTRACTION_TIMEOUT_MS : undefined/);
+    assert.match(timeoutConfig, /MISTRAL_EXTRACTION_TIMEOUT_MS[^\n]+35_000, 20_000, 60_000/);
   });
 });
 
@@ -202,16 +231,37 @@ describe("Fix 8 — Later capable providers are attempted", () => {
 
   it("the attempt budget guards only apply to eligible providers", () => {
     const src = read("lib/ai.ts");
-    // The budget guard (actualAttempts >= MAX_PROVIDER_ATTEMPTS_PER_REQUEST)
-    // must appear AFTER the unconfigured/cooldown/preflight skips.
+    // The budget guard must appear AFTER the unconfigured/cooldown/preflight
+    // skips, so a skipped provider never consumes budget.
+    //
+    // This used to pin the literal
+    // "if (actualAttempts >= MAX_PROVIDER_ATTEMPTS_PER_REQUEST)". The
+    // comparison now reads `attemptBudget`, because advisory work gets a
+    // smaller fan-out than mandatory work — the ORDERING invariant this test
+    // exists for is unchanged, but the spelling it happened to match is not.
+    // Matching the guard by its shape keeps the invariant pinned without
+    // freezing which constant feeds it.
     const preflightCheck = src.indexOf("preflightProvider(provider,");
-    const budgetGuard = src.indexOf("if (actualAttempts >= MAX_PROVIDER_ATTEMPTS_PER_REQUEST)");
+    const budgetGuard = src.search(/if \(actualAttempts >= \w+\) \{/);
     assert.ok(preflightCheck > -1);
-    assert.ok(budgetGuard > -1);
+    assert.ok(budgetGuard > -1, "the attempt budget guard is gone entirely");
     assert.ok(
       budgetGuard > preflightCheck,
       "budget guard must come AFTER preflight (so skipped providers don't consume budget)",
     );
+  });
+
+  it("optional advisory work may not spend the whole chain", () => {
+    const src = read("lib/ai.ts");
+    // Measured on run 35610060081: the optional multi-perspective matcher
+    // "Contacted 10 of 10 configured provider(s)", tipped groq past its
+    // 8000 TPM limit, and the mandatory section writer found every provider
+    // cooling down 48 seconds later. Advisory work is bounded to a genuine
+    // first chance; mandatory work keeps the chain.
+    assert.match(src, /export const ADVISORY_MAX_PROVIDER_ATTEMPTS = 1;/);
+    assert.match(src, /isAdvisoryContext\(\)\s*\?\s*ADVISORY_MAX_PROVIDER_ATTEMPTS/);
+    // And the mandatory budget is untouched.
+    assert.match(src, /:\s*MAX_PROVIDER_ATTEMPTS_PER_REQUEST;/);
   });
 });
 

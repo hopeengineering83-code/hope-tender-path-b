@@ -251,14 +251,14 @@ async function main() {
   console.log("  Report");
   console.log("=========================================");
   console.log(`\nPassed (${passed.length}):`);
-  for (const p of passed) console.log(p);
+  for (const p of passed) console.log(redact(p));
   if (warnings.length > 0) {
     console.log(`\nWarnings (${warnings.length}):`);
-    for (const w of warnings) console.log(w);
+    for (const w of warnings) console.log(redact(w));
   }
   if (blockers.length > 0) {
     console.log(`\nBlockers (${blockers.length}):`);
-    for (const b of blockers) console.log(b);
+    for (const b of blockers) console.log(redact(b));
     console.log("\n❌ DEPLOY BLOCKED — resolve blockers above before merging/deploying.");
     await prisma.$disconnect();
     process.exit(1);
@@ -270,7 +270,7 @@ async function main() {
 }
 
 main().catch(async (e) => {
-  console.error("Fatal error:", e);
+  console.error("Fatal error:", redact(e instanceof Error ? e.message : e));
   await prisma.$disconnect();
   process.exit(2);
 });

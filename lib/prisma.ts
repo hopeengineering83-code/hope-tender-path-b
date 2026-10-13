@@ -33,9 +33,35 @@ function envFlag(name: string): boolean {
   return ["1", "true", "yes", "on"].includes(raw.trim().toLowerCase());
 }
 
-function isRuntimeSchemaBootstrapEnabled(): boolean {
-  if (process.env.NODE_ENV !== "production") return true;
-  return envFlag("ENABLE_RUNTIME_SCHEMA_BOOTSTRAP");
+/**
+ * True when the database this process would bootstrap is on this machine.
+ *
+ * WHY THIS EXISTS. "Non-production" used to mean "bootstrap anything". The
+ * legacy bootstrap below is ad-hoc CREATE TABLE IF NOT EXISTS DDL with no
+ * migration history, so a non-production process pointed at a REMOTE, freshly
+ * created database builds a schema that `prisma migrate deploy` then refuses
+ * forever with P3005 ("the database schema is not empty"). That is exactly the
+ * state three successive Preview Neon databases were found in -- 54 tables, no
+ * _prisma_migrations, 4 seeded Role rows, User without deletedAt -- and each
+ * time the runtime answered P2022 on login and the only way back was a gated
+ * DROP SCHEMA. The first-run convenience this path exists for (`npm run dev`
+ * against a local Postgres) is kept; a remote database now needs the explicit
+ * ENABLE_RUNTIME_SCHEMA_BOOTSTRAP opt-in, like production already did.
+ */
+export function isLocalDatabaseUrl(url: string | undefined): boolean {
+  if (!url || !url.trim()) return true; // nothing remote to reach
+  try {
+    const host = new URL(url).hostname.replace(/^\[|\]$/g, "").toLowerCase();
+    return host === "" || host === "localhost" || host === "127.0.0.1" || host === "::1" || host.endsWith(".localhost");
+  } catch {
+    return false; // unparseable: do not guess that it is safe to mutate
+  }
+}
+
+export function isRuntimeSchemaBootstrapEnabled(): boolean {
+  if (envFlag("ENABLE_RUNTIME_SCHEMA_BOOTSTRAP")) return true;
+  if (process.env.NODE_ENV === "production") return false;
+  return isLocalDatabaseUrl(process.env.DATABASE_URL);
 }
 
 // ─── column existence helper (PostgreSQL) ────────────────────────────────────
@@ -901,6 +927,33 @@ export async function bootstrap(client: PrismaClient): Promise<void> {
     "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     FOREIGN KEY ("workbookId") REFERENCES "PricingWorkbook"("id") ON DELETE CASCADE
   )`);
+  // The owner's pricing rate card (migration 20261007120000).
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "PricingBenchmark" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "companyId" TEXT NOT NULL,
+    "market" TEXT NOT NULL DEFAULT 'ET',
+    "category" TEXT NOT NULL,
+    "serviceKey" TEXT NOT NULL,
+    "label" TEXT NOT NULL,
+    "seniority" TEXT,
+    "unit" TEXT NOT NULL,
+    "currency" TEXT NOT NULL,
+    "low" DOUBLE PRECISION NOT NULL,
+    "median" DOUBLE PRECISION NOT NULL,
+    "high" DOUBLE PRECISION NOT NULL,
+    "rateBasis" TEXT NOT NULL DEFAULT 'FEE',
+    "effectiveDate" TEXT NOT NULL,
+    "source" TEXT NOT NULL,
+    "sourceUrl" TEXT,
+    "sourceType" TEXT NOT NULL DEFAULT 'OWNER_RATE_CARD',
+    "confidence" TEXT NOT NULL DEFAULT 'HIGH',
+    "notes" TEXT,
+    "lastVerified" TEXT NOT NULL,
+    "createdById" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+    FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE CASCADE ON UPDATE CASCADE
+  )`);
 
   // ─── G9: page-level requirement source coordinates ─────────────────────
   await ensureColumn(client, "TenderRequirement", "sourceTenderFileId", "TEXT");
@@ -1237,6 +1290,7 @@ export async function bootstrap(client: PrismaClient): Promise<void> {
     // G8 — PricingWorkbook / CostLine
     `CREATE INDEX IF NOT EXISTS "PricingWorkbook_tenderId_idx" ON "PricingWorkbook"("tenderId")`,
     `CREATE INDEX IF NOT EXISTS "CostLine_workbookId_idx" ON "CostLine"("workbookId")`,
+    `CREATE INDEX IF NOT EXISTS "PricingBenchmark_companyId_category_idx" ON "PricingBenchmark"("companyId", "category")`,
     // G9 — TenderRequirement source coords
     `CREATE INDEX IF NOT EXISTS "TenderRequirement_tenderId_idx" ON "TenderRequirement"("tenderId")`,
     `CREATE INDEX IF NOT EXISTS "TenderRequirement_sourceTenderFileId_idx" ON "TenderRequirement"("sourceTenderFileId")`,
@@ -1469,7 +1523,7 @@ export async function bootstrap(client: PrismaClient): Promise<void> {
   // environment. Runtime seeding requires explicit BOOTSTRAP_ADMIN_ENABLED
   // plus a strong, non-default BOOTSTRAP_ADMIN_PASSWORD (validated by the
   // policy module) — including development and test. Login-time credential
-  // repair is permanently disabled (resolveBootstrapAdminPolicy).
+  // repair is permanently disabled (resolveLoginRepairBootstrapPolicy).
   const policy = resolveRuntimeBootstrapAdminPolicy();
   if (!policy.allowRepair) {
     if (process.env.NODE_ENV === "production") {

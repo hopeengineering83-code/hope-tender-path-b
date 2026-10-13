@@ -32,7 +32,21 @@ export type TenderReleaseState = {
   extractionGrounded: boolean;
   analysisGrounded: boolean;
   readinessCalculable: boolean;
+  /**
+   * Submission readiness — the strict final-submission gate's score, the same
+   * number /export and /export-readiness report as summary.readinessScore.
+   * It measures the complete submission, originals included.
+   */
   readinessScore: number | null;
+  /** Why the submission-readiness score is capped, when it is. */
+  readinessCapReason: string | null;
+  /**
+   * Bid fit — the score behind `verdict` (eligibility, team, references,
+   * compliance, deadline, commercial). A different question from readiness:
+   * it was shown as "Readiness score" (84) beside an export readiness of 60
+   * for the same tender (Pharo, Preview 2026-10-11).
+   */
+  bidScore: number | null;
   verdict: BidDecisionOutcome | null;
   verdictSummary: string | null;
   blockers: TenderReleaseBlocker[];
@@ -42,6 +56,13 @@ export type TenderReleaseState = {
   generationEligible: boolean;
   exportEligible: boolean;
   finalZipEligible: boolean;
+  /**
+   * SUBMISSION_READY, or PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED when every
+   * App-generated document is complete and only originals the owner compiles
+   * manually remain — a successful App completion, not a failure.
+   */
+  packageStatus: FinalSubmissionReadiness["packageStatus"];
+  ownerAttachmentsOutstanding: number;
   canonicalFields: CanonicalFieldState[] | undefined;
   fixtureData: boolean;
   deploymentEnvironment: string;
@@ -142,9 +163,9 @@ export async function getTenderReleaseState(
   tenderId: string,
   userId: string,
 ): Promise<TenderReleaseState | null> {
-  const [snapshot, rawWorkflowDecision, finalSubmission] = await Promise.all([
-    getTenderReleaseSnapshot(prisma, tenderId, userId),
-    getCanonicalTenderWorkflowDecision(prisma, userId, tenderId),
+  const snapshot = await getTenderReleaseSnapshot(prisma, tenderId, userId);
+  const [rawWorkflowDecision, finalSubmission] = await Promise.all([
+    getCanonicalTenderWorkflowDecision(prisma, userId, tenderId, snapshot),
     getFinalSubmissionReadiness(prisma, { tenderId, userId }),
   ]);
   if (!snapshot || !finalSubmission) return null;
@@ -154,7 +175,9 @@ export async function getTenderReleaseState(
   const analysisGrounded = snapshot.analysis.eligibleForExport;
   const readinessCalculable = extractionGrounded && analysisGrounded;
 
-  let readinessScore: number | null = null;
+  const readinessScore: number | null = readinessCalculable ? finalSubmission.summary.readinessScore : null;
+  const readinessCapReason: string | null = readinessCalculable ? finalSubmission.summary.readinessCapReason ?? null : null;
+  let bidScore: number | null = null;
   let verdict: BidDecisionOutcome | null = null;
   let verdictSummary: string | null = null;
 
@@ -203,7 +226,7 @@ export async function getTenderReleaseState(
           reviewStatus: document.reviewStatus ?? "",
         })),
       });
-      readinessScore = decision.score;
+      bidScore = decision.score;
       verdict = decision.decision;
       verdictSummary = decision.summary;
     }
@@ -235,6 +258,8 @@ export async function getTenderReleaseState(
     analysisGrounded,
     readinessCalculable,
     readinessScore,
+    readinessCapReason,
+    bidScore,
     verdict,
     verdictSummary,
     blockers,
@@ -244,6 +269,8 @@ export async function getTenderReleaseState(
     generationEligible: snapshot.generationEligible,
     exportEligible: snapshot.exportEligible,
     finalZipEligible: snapshot.finalZipEligible,
+    packageStatus: finalSubmission.packageStatus,
+    ownerAttachmentsOutstanding: finalSubmission.ownerAttachments?.outstanding ?? 0,
     canonicalFields: finalSubmission.canonicalFields,
     fixtureData: deploymentEnvironment !== "production",
     deploymentEnvironment,

@@ -8,6 +8,7 @@
  *   still matches the owned source bytes, extraction revision, fields, and spans.
  */
 
+import { ANALYSIS_HASH_FILE_SELECT } from "./tender-analysis-content";
 import type { PrismaClient } from "@prisma/client";
 import { createHash } from "node:crypto";
 import { resolveCanonicalFieldState, type CanonicalFieldStateResult } from "./canonical-field-state";
@@ -16,14 +17,16 @@ import { assessExtractionQuality } from "../extraction-quality";
 import { mapRequirementsToEvidence } from "./final-package-readiness-model";
 import { buildPageLedger, type PageLedger } from "./page-ledger";
 import { classifyTender, type TenderClassification } from "./tender-classification";
-import { buildReleaseSnapshotEligibility } from "./release-snapshot-eligibility";
+import { buildReleaseSnapshotEligibility, describeGateBlockers, describeMetadataExportBlocker } from "./release-snapshot-eligibility";
 import { EXTRACTION_OVERRIDE_MAX_AGE_MS } from "./readiness-overrides";
 import { selectCanonicalTenderFiles } from "../tender/canonical-source-files";
 import {
+  fillVaultSourceText,
   isDurablyReviewed,
   isDurablySourceVerified,
-  VAULT_REVIEW_CONSUMER_SELECT,
+  VAULT_REVIEW_STATUS_SELECT,
 } from "../vault-review-provenance";
+import { fillStoredText } from "../stored-text-cache";
 
 export type SnapshotExtractionFile = {
   fileId: string;
@@ -60,9 +63,17 @@ export type SnapshotRequirementsState = {
 };
 
 export type SnapshotEvidenceState = {
+  /** Mandatory requirements the machine can adjudicate — the coverage population. */
   total: number;
   covered: number;
   coveragePercent: number;
+  /**
+   * Mandatory requirements excluded from `total` because no automatic verdict
+   * about them is possible (page limits, fonts, hard-copy counts, binding,
+   * envelope marking). Reported so the exclusion is visible rather than
+   * implied by a shrinking denominator.
+   */
+  notMachineDecidable: number;
 };
 
 export type SnapshotBuildPlanState = {
@@ -115,12 +126,24 @@ function firstBlocker(values: string[]): string | null {
   return values.length > 0 ? values[0] : null;
 }
 
+type WithText<T> = T & { extractedText: string | null };
+type WithSourceText<R> = R extends { sourceDocument: infer D } ? Omit<R, "sourceDocument"> & { sourceDocument: D extends null ? null : WithText<NonNullable<D>> | null } : R;
+/** The snapshot's tender row once its stored texts are filled in. */
+type WithStoredText<T extends { files: unknown[]; expertMatches: Array<{ expert: unknown }>; projectMatches: Array<{ project: unknown }> }> =
+  Omit<T, "files" | "expertMatches" | "projectMatches"> & {
+    files: Array<WithText<T["files"][number]>>;
+    expertMatches: Array<Omit<T["expertMatches"][number], "expert"> & { expert: WithSourceText<T["expertMatches"][number]["expert"]> }>;
+    projectMatches: Array<Omit<T["projectMatches"][number], "project"> & { project: WithSourceText<T["projectMatches"][number]["project"]> }>;
+  };
+
 export async function getTenderReleaseSnapshot(
   prisma: PrismaClient,
   tenderId: string,
   userId: string,
 ): Promise<TenderReleaseSnapshot | null> {
-  const tender = await prisma.tender.findFirst({
+  // Polled every few seconds: stored texts come through the stored-text cache
+  // (see lib/stored-text-cache.ts), never in this query.
+  const loaded = await prisma.tender.findFirst({
     where: { id: tenderId, userId },
     select: {
       id: true,
@@ -179,13 +202,12 @@ export async function getTenderReleaseSnapshot(
       preBidMeetingLocation: true,
       evaluationMethodology: true,
       files: {
+        // The analysis-hash columns (ANALYSIS_HASH_FILE_SELECT) plus the page
+        // ledger. Without createdAt the current hash ordered files by id and
+        // never matched a multi-file tender's promoted analysis.
         select: {
-          id: true,
-          originalFileName: true,
-          extractedText: true,
-          extractionScore: true,
-          deletionStatus: true,
-          totalPages: true,
+          ...ANALYSIS_HASH_FILE_SELECT,
+          extractedText: false,
           pageStatusJson: true,
         },
       },
@@ -203,11 +225,19 @@ export async function getTenderReleaseSnapshot(
         },
       },
       requirements: {
+        // Plans are built from requirements; every reader takes them in one order.
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
         select: {
           id: true,
           title: true,
           priority: true,
           requirementType: true,
+          description: true,
+          // classifyPackageRule reads restrictions too. Omitting it here while
+          // the readiness model selected every column made the two surfaces
+          // classify the SAME requirement differently — see the comment in
+          // final-package-readiness-model's RequirementLike.
+          restrictions: true,
           sourceTenderFileId: true,
           sourcePageNumber: true,
           sourceExactQuote: true,
@@ -216,19 +246,36 @@ export async function getTenderReleaseSnapshot(
       },
       generatedDocuments: {
         where: { generationStatus: { not: "SUPERSEDED" } },
-        select: { id: true, generationStatus: true },
+        // documentType/format/validation/review are needed to decide submission
+        // RULES (financial separation, single-file consolidation, file format)
+        // by observing the package. Bytes are deliberately NOT selected.
+        select: {
+          id: true,
+          name: true,
+          exactFileName: true,
+          documentType: true,
+          format: true,
+          generationStatus: true,
+          validationStatus: true,
+          reviewStatus: true,
+        },
       },
       expertMatches: {
         where: { isSelected: true },
-        include: { expert: { select: VAULT_REVIEW_CONSUMER_SELECT.EXPERT } },
+        include: { expert: { select: VAULT_REVIEW_STATUS_SELECT.EXPERT } },
       },
       projectMatches: {
         where: { isSelected: true },
-        include: { project: { select: VAULT_REVIEW_CONSUMER_SELECT.PROJECT } },
+        include: { project: { select: VAULT_REVIEW_STATUS_SELECT.PROJECT } },
       },
     },
   });
-  if (!tender) return null;
+  if (!loaded) return null;
+  await Promise.all([
+    fillStoredText(prisma, "TenderFile", loaded.files as Array<{ id: string; extractedText?: string | null }>),
+    fillVaultSourceText(prisma, [...loaded.expertMatches.map((m) => m.expert), ...loaded.projectMatches.map((m) => m.project)]),
+  ]);
+  const tender = loaded as unknown as WithStoredText<NonNullable<typeof loaded>>;
 
   // All release gates must evaluate the same authoritative representation set
   // used by source-readiness, AI Analyze and Engine. Pending/weak duplicate
@@ -434,8 +481,31 @@ export async function getTenderReleaseSnapshot(
   });
 
   let metadataGateValid = !metadataResult.hasExportBlocker;
+  // NAME THE FACTS, DO NOT COUNT THEM.
+  //
+  // This said "One or more final Tender Facts are missing, invalid, or lack
+  // sufficient audit authority." -- a sentence that tells the owner a number
+  // it will not give and a field it will not name. Read from the exact-head
+  // Preview (tender d2b85e2a), it was the ENTIRE reason the ZIP was locked:
+  //
+  //   [BLOCKER] AUTHORITY_OR_QUALITY_BLOCKERS: Authority or document quality
+  //     blockers remain: One or more final Tender Facts are missing, invalid,
+  //     or lack sufficient audit authority.
+  //
+  // beside 0 document blockers, 0 tender-level blockers, 0 quality failures,
+  // 1/1 generated, 1/1 export-ready and a validator reporting "All canonical
+  // package and document validation checks passed."
+  //
+  // The resolver already knows exactly which fields and why: every
+  // CanonicalFieldState carries `label`, `exportEligible` and a written
+  // `blockerReason` ("Field \"Deadline\" has a value but is not yet
+  // source-grounded (missing page, quote, or active file)..."). The
+  // aggregate boolean was read and the per-field reasons were discarded.
   let metadataGateBlocker: string | null = metadataResult.hasExportBlocker
-    ? "One or more final Tender Facts are missing, invalid, or lack sufficient audit authority."
+    ? describeMetadataExportBlocker(
+        metadataResult.fields,
+        "One or more final Tender Facts are missing, invalid, or lack sufficient audit authority.",
+      )
     : null;
   if (metadataGateValid) {
     try {
@@ -456,8 +526,10 @@ export async function getTenderReleaseSnapshot(
       );
       if (!validation.ok) {
         metadataGateValid = false;
-        metadataGateBlocker =
-          validation.blockers[0] ?? "Final Tender Facts are not source-grounded or audit-authorized.";
+        metadataGateBlocker = describeGateBlockers(
+          validation.blockers,
+          "Final Tender Facts are not source-grounded or audit-authorized.",
+        );
       }
     } catch {
       metadataGateValid = false;
@@ -479,6 +551,10 @@ export async function getTenderReleaseSnapshot(
       extractedText: file.extractedText,
       totalPages: file.totalPages,
     })),
+    // Same package facts, same verdict: the release snapshot cannot report a
+    // submission rule as missing evidence while the coverage panel reports it
+    // as enforced by the package.
+    { documents: tender.generatedDocuments },
   );
   // The mandatory POPULATION and every mandatory COUNT must come from the same
   // predicate. `status.mandatory` is `isMandatoryRequirement` (MANDATORY OR
@@ -510,13 +586,27 @@ export async function getTenderReleaseSnapshot(
     blocker: requirementsBlocker,
   };
 
-  const covered = mandatoryStatuses.filter(
+  // Coverage is a statement about what automatic matching established, so its
+  // population is the mandatory requirements automatic matching can decide.
+  // A rule that is NOT_MACHINE_DECIDABLE by construction — page limits,
+  // fonts, hard-copy counts, binding, envelope marking — belongs to neither
+  // side of that ratio: counting it as covered would claim a verdict nobody
+  // reached, and counting it in the denominator made the tender permanently
+  // unwinnable (5cb8d694; reproduced live on tender 50940b8b at 2/3). It is
+  // excluded here and reported separately, and the readiness model surfaces
+  // it as a human-judgement review item.
+  //
+  // `requirements.mandatory` above is untouched and still the true total.
+  const machineDecidableMandatory = mandatoryStatuses.filter((status) => status.machineDecidable);
+  const machineDecidableCount = machineDecidableMandatory.length;
+  const covered = machineDecidableMandatory.filter(
     (status) => status.displayStatus === "FULLY_MET",
   ).length;
   const evidence: SnapshotEvidenceState = {
-    total: mandatoryCount,
+    total: machineDecidableCount,
     covered,
-    coveragePercent: mandatoryCount === 0 ? 0 : Math.round((covered / mandatoryCount) * 100),
+    coveragePercent: machineDecidableCount === 0 ? 0 : Math.round((covered / machineDecidableCount) * 100),
+    notMachineDecidable: mandatoryCount - machineDecidableCount,
   };
 
   const buildPlanCount = tender.generatedDocuments.length;
@@ -563,7 +653,7 @@ export async function getTenderReleaseSnapshot(
             confirmed.items,
           );
           if (!itemValidation.ok) {
-            buildPlanGateBlocker = itemValidation.blockers[0] ?? "Build Plan items are invalid.";
+            buildPlanGateBlocker = describeGateBlockers(itemValidation.blockers, "Build Plan items are invalid.");
           } else {
             buildPlanGateValid = true;
             buildPlanGateBlocker = null;

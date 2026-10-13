@@ -235,7 +235,7 @@ describe("10. Partial AI Analyze safety", () => {
   });
 
   it("generate-missing-plan-files route blocks PARTIAL_EXTRACTION_AI_ANALYZED", () => {
-    const src = read("app/api/tenders/[id]/generate-missing-plan-files/route.ts");
+    const src = read("app/api/tenders/[id]/generate-missing-plan-files/route.ts") + read("lib/engine/missing-plan-file-generation.ts");
     assert.ok(src.includes("PARTIAL_EXTRACTION_AI_ANALYZED"), "must check PARTIAL_EXTRACTION_AI_ANALYZED");
   });
 });
@@ -425,7 +425,7 @@ describe("19. PARTIAL_EXTRACTION_AI_ANALYZED blocked on all generation/export ro
   });
 
   it("generate-missing-plan-files route blocks PARTIAL_EXTRACTION_AI_ANALYZED", () => {
-    const src = read("app/api/tenders/[id]/generate-missing-plan-files/route.ts");
+    const src = read("app/api/tenders/[id]/generate-missing-plan-files/route.ts") + read("lib/engine/missing-plan-file-generation.ts");
     assert.ok(src.includes("PARTIAL_EXTRACTION_AI_ANALYZED"), "generate-missing-plan-files must check PARTIAL_EXTRACTION_AI_ANALYZED");
   });
 

@@ -1,4 +1,6 @@
-import { nonClientEntityLabelPattern, canonicalizeCountry, containsMetadataPlaceholder } from "./metadata-validators";
+import { findStatedDeadline, isSubmissionEmailContext } from "./submission-source-clauses";
+import { nonClientEntityLabelPattern, canonicalizeCountry, containsMetadataPlaceholder, isValidReferenceNumber } from "./metadata-validators";
+import { isOfferValidity } from "./validity-subject";
 
 // Deterministic, source-grounded extractors for tender-metadata scalar fields.
 export type ExtractedField<T> = {
@@ -87,13 +89,23 @@ export function cutAtNextFieldLabel(val: string): string {
     "recipient", "grantee", "consultant", "beneficiary", "employer",
     "name of procuring entity", "procuring entity",
     "owner", "representative", "officer", "title", "subject", "channel",
+    "legal client", "issuing entity", "tender type", "tender title", "tender status",
   ];
   // Convert intra-label spaces to \s+ so "Funded By" / "Implementing Partner"
   // match across arbitrary whitespace; escape hyphens for the character-class-free
   // alternation. Ordering is irrelevant to the cut position because every
   // alternative begins at the same leading-whitespace boundary.
   const alt = labels.map((l) => l.replace(/\s+/g, "\\s+").replace(/-/g, "\\-")).join("|");
-  const rx = new RegExp(`\\s+(?:${alt})\\s*[:\\-]`, "i");
+  // A label may be compound: "Procuring Entity / Client Name:", "Legal Client
+  // Name:", "Project Name:". Requiring the colon straight after the base word
+  // missed every one of them, so on text flattened without line breaks the
+  // value ran on through the next label — on 2026-09-23 the client name was
+  // read as "Pharo Ventures Procuring Entity / Client Name: Pharo Ventures
+  // Legal Client Name: ...", flagged as contaminated, and cleared, leaving the
+  // tender with no client at all. The optional "/ Other Label" and trailing
+  // name/details/number word are part of the label, never of the value.
+  const suffix = String.raw`(?:\s*\/\s*[a-z]+(?:\s+[a-z]+){0,2})?(?:\s+(?:name|names|details|no\.?|number|id))?`;
+  const rx = new RegExp(`\\s+(?:${alt})${suffix}\\s*[:\\-]`, "i");
   const m = rx.exec(val);
   return m ? val.slice(0, m.index).trim() : val.trim();
 }
@@ -119,6 +131,12 @@ export function extractReference(input: ExtractorInput): ExtractedFieldOrMissing
       if (!m) continue;
       const value = m[1].trim();
       if (LABEL_REJECT.test(value)) continue; // reject pure-label captures
+      // "Tender Reference: Not provided" captured "Not"; "RFP Reference: None"
+      // captured "None". The export gate refuses these as placeholders
+      // ("Critical metadata field reference has a placeholder value (\"Not\")"),
+      // so a tender that states it has no reference was left with a stored
+      // reference that blocked the Build Plan. The gate's own validator decides.
+      if (!isValidReferenceNumber(value)) continue;
       cands.push({ found: true, value, sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: p.confidence });
       break;
     }
@@ -138,13 +156,20 @@ export function extractDeadline(input: ExtractorInput): ExtractedFieldOrMissing<
   for (const file of input.files ?? []) {
     const text = (file?.extractedText ?? "").toString();
     if (text.length < SOURCE_MIN) continue;
+    let matched = false;
     for (const p of DEADLINE_PATTERNS) {
       const m = p.rx.exec(text);
       if (!m) continue;
       const d = new Date(m[1]);
       if (isNaN(d.getTime())) continue;
       cands.push({ found: true, value: d, sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: p.confidence });
+      matched = true;
       break;
+    }
+    if (!matched) {
+      // "not later than the 23rd of September 2026", wrapped across lines.
+      const stated = findStatedDeadline(text);
+      if (stated) cands.push({ found: true, value: stated.date, sourceQuote: trimQuote(stated.quote), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, stated.index, file?.totalPages), confidence: "MEDIUM" });
     }
   }
   return pickBest(cands);
@@ -158,8 +183,13 @@ export function extractSubmissionEmails(input: ExtractorInput): ExtractedFieldOr
     const anchorIdx = text.toLowerCase().search(/submit|submission|closing|deadline|receipt|bids/);
     if (anchorIdx === -1) continue;
     const windowText = text.slice(anchorIdx, anchorIdx + 2000);
-    const emails = windowText.match(EMAIL_PATTERN);
-    if (!emails) continue;
+    // Only addresses in a sentence about submitting; a privacy or complaints
+    // contact inside the window is not a submission endpoint.
+    const emails = (windowText.match(EMAIL_PATTERN) ?? []).filter((email) => {
+      const at = text.indexOf(email, anchorIdx);
+      return at >= 0 && isSubmissionEmailContext(text, at, email.length);
+    });
+    if (emails.length === 0) continue;
     cands.push({ found: true, value: Array.from(new Set(emails.map(e => e.toLowerCase()))), sourceQuote: trimQuote(windowText.slice(0, QUOTE_MAX)), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, anchorIdx, file?.totalPages), confidence: "HIGH" });
   }
   return pickBest(cands);
@@ -211,12 +241,15 @@ export function extractValidityDays(input: ExtractorInput): ExtractedFieldOrMiss
   const cands: ExtractedField<number>[] = [];
   for (const file of input.files ?? []) {
     const text = (file?.extractedText ?? "").toString();
-    const m = /(?:validity|valid)\s*(?:period|for)?\s*[:\-]?\s*(\d{2,3})\s*days/i.exec(text);
+    // The offer's validity only: a bid security's, guarantee's or bond's
+    // validity is skipped and the search goes on (validity-subject.ts).
+    const offer = (re: RegExp) => [...text.matchAll(re)].find((m) => isOfferValidity(text, m.index!, m[0].length));
+    const m = offer(/(?:validity|valid)\s*(?:period|for)?\s*[:\-]?\s*(\d{2,3})\s*days/gi);
     if (m) {
-        cands.push({ found: true, value: parseInt(m[1], 10), sourceQuote: captureAround(text, m.index, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index, file?.totalPages), confidence: "HIGH" });
+        cands.push({ found: true, value: parseInt(m[1], 10), sourceQuote: captureAround(text, m.index!, m[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m.index!, file?.totalPages), confidence: "HIGH" });
     } else {
-        const m2 = /(?:validity|valid)\s*(?:period|for)?\s*[:\-]?\s*(\d{1})\s*months/i.exec(text);
-        if (m2) cands.push({ found: true, value: parseInt(m2[1], 10) * 30, sourceQuote: captureAround(text, m2.index, m2[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m2.index, file?.totalPages), confidence: "HIGH" });
+        const m2 = offer(/(?:validity|valid)\s*(?:period|for)?\s*[:\-]?\s*(\d{1})\s*months/gi);
+        if (m2) cands.push({ found: true, value: parseInt(m2[1], 10) * 30, sourceQuote: captureAround(text, m2.index!, m2[0].length), sourceFile: file?.fileName ?? null, sourcePage: getSourcePage(text, m2.index!, file?.totalPages), confidence: "HIGH" });
     }
   }
   return pickBest(cands);

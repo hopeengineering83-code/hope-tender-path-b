@@ -1,4 +1,8 @@
 import { toSafeAiFailureCategory } from "../engine/analysis/safe-diagnostics";
+import { groundRequirementInActiveFiles } from "../engine/repair-source-grounding";
+import { provenPageOfQuote } from "../engine/page-provenance";
+import { sourceGroundedExactFileName } from "../engine/source-grounded-file-name";
+import { decideManualRearm, isAnyProviderEligible, isProviderConfigFailureCategory, reclassifyHistoricalTenderFailure } from "../ai-analyze/retry-service";
 import { logger } from "../observability";
 import { computeAdvisoryLockKey } from "../engine/advisory-lock-key";
 import { prisma } from "../prisma";
@@ -6,8 +10,10 @@ import type { Prisma } from "@prisma/client";
 import { buildTenderAnalysisContent, computeAnalysisContentHash, computePersistedTenderAnalysisHash } from "../engine/tender-analysis-content";
 import {
   analyzeOneChunkWithRetry,
+  analysisChunkPreflight,
   chunkTenderContent as aiChunkTenderContent,
   mergeAnalysisResults,
+  NoAiProviderReadyError,
   type AIAnalysisResult,
   type AIRequirement
 } from "../ai";
@@ -20,6 +26,7 @@ import {
   canPromoteToCanonical,
   findSupersedingJobId,
   promoteAnalysisToCanonical,
+  stageFallbackDraft,
   stagePartialResult,
   ANALYSIS_SUPERSEDED_STATUS,
   STALE_JOB_SUPERSEDED_SENTINEL
@@ -28,6 +35,24 @@ import { restoreHealthFromDb, persistAllHealthToDb } from "../ai-provider-health
 import { syncPersistedTenderFactsToLedger } from "../engine/tender-facts-ledger-service";
 import { normalizeForContainment } from "../engine/evidence-grounding";
 import { normalizeRequirementTypeOrDefault } from "../engine/requirement-type-vocabulary";
+import { analyzeTender } from "../engine/analysis";
+import { redactSecrets } from "../sanitize-error";
+
+function durableProviderFailureMessage(error: unknown, category: string): string {
+  if (!(error instanceof NoAiProviderReadyError)) return `AI provider error: ${category}`;
+
+  // Keep the canonical iterator's safe trace with the durable chunk. This is
+  // operator evidence, not raw provider output: no prompts, keys, or response
+  // bodies are persisted. Previously the worker collapsed the whole trace to
+  // PROVIDER_EXHAUSTED, making a skipped provider impossible to distinguish
+  // from an unconfigured, cooling, or preflight-ineligible provider.
+  return redactSecrets(JSON.stringify({
+    code: error.code,
+    errorKind: error.errorKind,
+    providerAttempts: error.providerAttempts,
+    failureDetails: error.failureDetails,
+  }));
+}
 
 export type AnalysisJobCreateInput = {
   tenderId: string;
@@ -49,6 +74,11 @@ export type AnalysisJobCreateInput = {
 };
 
 const AI_ANALYZE_JOB_TYPE = "AI_ANALYZE" as const;
+
+export function canReprovePromotionGrounding(errorMessage: string | null | undefined): boolean {
+  return /^Promotion blocked: \d+ mandatory requirements lack valid source grounding \(file\/page\/quote\)\.$/i
+    .test(errorMessage ?? "");
+}
 
 /**
  * Stable signed 64-bit advisory-lock key for one logical AI Analyze job.
@@ -103,6 +133,37 @@ export type CanonicalAnalysisSnapshot = {
   /** Deterministic ordered list of file IDs as joined string (for snapshot integrity check). */
   snapshotVersion: 1;
 };
+
+/**
+ * Manual resume is allowed to reuse completed chunks only when the old frozen
+ * snapshot proves every identity carried by the freshly rebuilt snapshot.
+ * Legacy snapshots with absent/null byte hashes are intentionally uncertain:
+ * they are superseded and their chunks are discarded rather than trusted.
+ */
+export function canSafelyReuseAnalysisSnapshot(
+  persistedInput: string | null,
+  current: CanonicalAnalysisSnapshot,
+): boolean {
+  try {
+    const parsed = JSON.parse(persistedInput ?? "{}");
+    const old = parsed?.snapshot as CanonicalAnalysisSnapshot | undefined;
+    if (!old || old.snapshotVersion !== 1 || !old.fileSourceByteHashes) return false;
+    if (old.analysisInputHash !== current.analysisInputHash || old.totalChunks !== current.totalChunks) return false;
+    if (JSON.stringify(old.canonicalFileIds) !== JSON.stringify(current.canonicalFileIds)) return false;
+    for (const fileId of current.canonicalFileIds) {
+      const oldByteHash = old.fileSourceByteHashes[fileId];
+      const currentByteHash = current.fileSourceByteHashes?.[fileId];
+      if (!oldByteHash || !currentByteHash || oldByteHash !== currentByteHash) return false;
+      if (old.fileContentHashes[fileId] !== current.fileContentHashes[fileId]) return false;
+    }
+    for (let index = 0; index < current.totalChunks; index++) {
+      if (!old.chunkHashes[index] || old.chunkHashes[index] !== current.chunkHashes[index]) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Verify a job's persisted canonical snapshot against the current tender
@@ -335,6 +396,7 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
     });
 
     if (existing) {
+      let reuseExisting = true;
       // If the job is QUEUED or RUNNING, return it as-is — another caller
       // already has an active job for this content hash. This is the
       // idempotent path: double-click or two-tab scenarios return the
@@ -343,57 +405,161 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
         return existing;
       }
 
-      // PARTIAL_SUCCESS or FAILED — check nonRetryable before re-arming.
-      // A non-retryable FAILED job must NOT be re-armed here; the user
-      // must be told to re-run with fresh content or contact support.
-      if (existing.status === "FAILED" && existing.retryState?.nonRetryable === true) {
-        throw new Error(`AI_ANALYZE_NON_RETRYABLE:${existing.retryState.failureCategory ?? "UNKNOWN"}`);
+      // PARTIAL_SUCCESS or FAILED — decide whether this MANUAL retry may re-arm.
+      //
+      // This used to read `retryState.nonRetryable` and refuse outright. That
+      // flag records what was true when the run stopped, and it was set for
+      // provider faults as well as source faults — so a run that died because an
+      // API key was wrong marked the tender permanently un-analysable, and
+      // fixing the key changed nothing. The tender stayed dead forever because
+      // of a problem that had already been repaired.
+      //
+      // decideManualRearm() asks whether the reason is still true NOW. Source
+      // and caller faults (byte drift, hash drift, ownership, corrupted
+      // extraction, provenance) remain terminal; provider and configuration
+      // faults re-arm once a provider is available again. Integrity is
+      // re-verified either way, because the SUCCEEDED chunks this resume reuses
+      // are evidence about one specific document.
+      if (existing.status === "FAILED" || existing.status === "PARTIAL_SUCCESS") {
+        const sourceIntegrityIntact = canSafelyReuseAnalysisSnapshot(existing.input, snapshot);
+        // This authenticated request has already loaded this exact tender with
+        // `where: { id: tenderId, userId }`. Therefore an OLD
+        // TENDER_NOT_FOUND describes stale history, not current ownership. It
+        // must not veto a request whose ownership has just been reproved. A
+        // genuine current missing/foreign tender fails before this transaction.
+        const recordedCategory = existing.retryState?.failureCategory ?? null;
+        const historicalOwnershipRevalidated = recordedCategory === "TENDER_NOT_FOUND";
+        // A historical promotion failure is evidence about the old binding
+        // algorithm, not immutable source corruption. The current finalizer
+        // can now re-prove a verbatim quote against active source bytes. Allow
+        // an explicit manual retry to reach that stricter proof step while
+        // retaining the exact snapshot/hash checks above. If the quote is
+        // absent or ambiguous, finalization still fails closed again.
+        const promotionGroundingMayBeReproved = canReprovePromotionGrounding(existing.errorMessage);
+        const effectiveCategory = reclassifyHistoricalTenderFailure({
+          recordedCategory,
+          errorMessage: existing.errorMessage ?? undefined,
+          currentOwnershipProven: true,
+          jobStatus: existing.status,
+        });
+        const decision = decideManualRearm({
+          // SOURCE_GROUNDING_INVALID is normally terminal. This exact legacy
+          // promotion message is different: the source did not change and the
+          // repaired finalizer can now prove the stored quote. Pass no stale
+          // terminal category so the explicit manual retry reaches that proof.
+          failureCategory: promotionGroundingMayBeReproved ? null : effectiveCategory,
+          nonRetryable: promotionGroundingMayBeReproved ? false : (existing.retryState?.nonRetryable ?? false),
+          // The advisory lock above is held on (actor, tender, jobType, current
+          // content hash), and `existing` was matched on analysisInputHash ===
+          // contentHash. Ownership and the aggregate input hash are necessary
+          // but not sufficient: the strict snapshot comparison above separately
+          // proves file IDs, source bytes, extracted text and chunk boundaries.
+          sourceIntegrityIntact,
+          // Re-proving an already-SUCCEEDED chunk spends no provider request;
+          // requiring live provider capacity here would keep a repaired
+          // promotion permanently blocked during an unrelated outage.
+          providerAvailable: promotionGroundingMayBeReproved ? true : isAnyProviderEligible(),
+        });
+        if (historicalOwnershipRevalidated) {
+          await tx.aiAnalyzeRetryState.updateMany({
+            where: { jobId: existing.id },
+            data: {
+              failureCategory: effectiveCategory,
+              nonRetryable: false,
+              retryReason: effectiveCategory === "MODEL_UNAVAILABLE"
+                ? "Historical provider model failure reclassified after current ownership verification"
+                : "Historical TENDER_NOT_FOUND cleared after current ownership verification",
+              lastCheckedAt: new Date(),
+            },
+          });
+        }
+        // An uncertain snapshot must never reuse old chunks. Supersede the old
+        // run, delete its revision-keyed checkpoints, then fall through to the
+        // fresh-job creation path below. Ownership was already established by
+        // the tender query and transaction predicate.
+        if (!sourceIntegrityIntact) {
+          await tx.aiJob.update({
+            where: { id: existing.id },
+            data: {
+              status: ANALYSIS_SUPERSEDED_STATUS,
+              finishedAt: new Date(),
+              errorMessage: "SOURCE_SNAPSHOT_UNCERTAIN_FRESH_ANALYSIS_REQUIRED",
+            },
+          });
+          // The uniqueness key predates job binding, so legacy chunks may have
+          // a null/different jobId while still sharing this source revision.
+          // Delete by the complete revision identity to guarantee the fresh
+          // job cannot inherit any checkpoint through the later upsert.
+          await tx.aiAnalyzeChunk.deleteMany({
+            where: { tenderId, userId, contentHash },
+          });
+          reuseExisting = false;
+        } else if (!decision.allowed) {
+          throw new Error(
+            `AI_ANALYZE_NON_RETRYABLE:${decision.category ?? decision.reason}:${decision.message}`,
+          );
+        }
       }
 
-      // Re-ARM for resume. claimJobForCaller (/api/ai-jobs/run-next) only claims
-      // QUEUED rows, so a PARTIAL_SUCCESS/FAILED job would otherwise be
-      // un-runnable and "Run/Resume AI Analyze" would do nothing. We reset it to
-      // QUEUED and clear the terminal stamps; the completed AiAnalyzeChunk rows
-      // (SUCCEEDED) and AiJob.output are preserved, so the next run continues
-      // from the last successful chunk instead of restarting. A RUNNING/QUEUED
-      // job is left untouched (this branch never resets the actively-claimed job
-      // that executeAnalysis re-resolves mid-run).
-      //
-      // FIX 1+2: persist the manual authority AND the canonical snapshot in the
-      // SAME transaction that re-arms the job. The previous design left a race
-      // window between createAnalysisJob() and a separate updateMany that
-      // patched manualRequested into input.
-      const existingInput = (() => {
-        try {
-          const parsed = JSON.parse(existing.input ?? "{}");
-          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-            return parsed as Record<string, unknown>;
+      if (reuseExisting) {
+        // Re-ARM for resume. claimJobForCaller (/api/ai-jobs/run-next) only claims
+        // QUEUED rows, so a PARTIAL_SUCCESS/FAILED job would otherwise be
+        // un-runnable. The completed chunks are preserved only after the strict
+        // snapshot comparison above proves that reuse is safe.
+        const existingInput = (() => {
+          try {
+            const parsed = JSON.parse(existing.input ?? "{}");
+            if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+              return parsed as Record<string, unknown>;
+            }
+          } catch {
+            // fallthrough
           }
-        } catch {
-          // fallthrough
+          return {} as Record<string, unknown>;
+        })();
+        // Clear the stale provider-class block in the same transaction.
+        const effectiveFailureCategory = reclassifyHistoricalTenderFailure({
+          recordedCategory: existing.retryState?.failureCategory ?? null,
+          errorMessage: existing.errorMessage ?? undefined,
+          currentOwnershipProven: true,
+          jobStatus: existing.status,
+        });
+        if (existing.retryState?.failureCategory === "TENDER_NOT_FOUND" || isProviderConfigFailureCategory(effectiveFailureCategory)) {
+          await tx.aiAnalyzeRetryState.updateMany({
+            where: { jobId: existing.id },
+            data: {
+              nonRetryable: false,
+              retryCount: 0,
+              nextRetryAt: null,
+              retryReason: "Manual retry after provider configuration change — re-armed",
+              lastProviderAvailable: true,
+              lastCheckedAt: new Date(),
+              failureCategory: effectiveFailureCategory,
+            },
+          });
         }
-        return {} as Record<string, unknown>;
-      })();
-      return await tx.aiJob.update({
-        where: { id: existing.id },
-        data: {
-          status: "QUEUED",
-          startedAt: null,
-          finishedAt: null,
-          errorMessage: null,
-          input: JSON.stringify({
-            ...existingInput,
-            tenderId,
-            contentHash,
-            source: "manual-ai-analyze",
-            manualRequested: true,
-            autoContinue: false,
-            actorUserId: manualAuthority.actorUserId,
-            authorizedAt: manualAuthority.authorizedAt,
-            snapshot,
-          }),
-        },
-      });
+
+        return await tx.aiJob.update({
+          where: { id: existing.id },
+          data: {
+            status: "QUEUED",
+            startedAt: null,
+            finishedAt: null,
+            errorMessage: null,
+            input: JSON.stringify({
+              ...existingInput,
+              tenderId,
+              contentHash,
+              source: "manual-ai-analyze",
+              manualRequested: true,
+              autoContinue: false,
+              actorUserId: manualAuthority.actorUserId,
+              authorizedAt: manualAuthority.authorizedAt,
+              snapshot,
+            }),
+          },
+        });
+      }
     }
 
     // Step 3: No existing job found — create a new one. The advisory lock
@@ -747,9 +913,34 @@ export async function runNextChunk(jobId: string, userId: string) {
       }
 
       let providerUsed: string | undefined;
+      const providerSkipReasons: Record<string, string> = {};
+      const currentGroq = analysisChunkPreflight("groq", chunkText, chunk.chunkIndex, allChunks.length);
+      if (currentGroq.profile.freeTierTpmLimit) {
+        const windowStartedAt = Date.now() - 60_000;
+        const recentGroqChunks = await prisma.aiAnalyzeChunk.findMany({
+          where: {
+            jobId,
+            status: "SUCCEEDED",
+            provider: "groq",
+            chunkIndex: { not: chunk.chunkIndex },
+            finishedAt: { gte: new Date(windowStartedAt) },
+          },
+          select: { chunkIndex: true },
+        });
+        const priorReservedTokens = recentGroqChunks.reduce((sum: number, prior: any) => {
+          const priorText = allChunks[prior.chunkIndex];
+          if (!priorText) return sum;
+          const budget = analysisChunkPreflight("groq", priorText, prior.chunkIndex, allChunks.length);
+          return sum + budget.estimatedTokens + Math.max(512, budget.maxOutputTokens);
+        }, 0);
+        const currentReservedTokens = currentGroq.estimatedTokens + Math.max(512, currentGroq.maxOutputTokens);
+        if (priorReservedTokens + currentReservedTokens > currentGroq.profile.freeTierTpmLimit) {
+          providerSkipReasons.groq = `same-job TPM window reserved ${priorReservedTokens} tokens; this chunk requires ${currentReservedTokens} more against limit ${currentGroq.profile.freeTierTpmLimit}`;
+        }
+      }
       const res = await analyzeOneChunkWithRetry(chunkText, chunk.chunkIndex, allChunks.length, (p: any) => {
           providerUsed = p;
-      });
+      }, undefined, undefined, providerSkipReasons);
 
       await prisma.aiAnalyzeChunk.update({
           where: { id: chunk.id },
@@ -769,7 +960,7 @@ export async function runNextChunk(jobId: string, userId: string) {
       });
   } catch (err) {
       const category = toSafeAiFailureCategory(err);
-      const safeError = `AI provider error: ${category}`;
+      const safeError = durableProviderFailureMessage(err, category);
 
       await prisma.aiAnalyzeChunk.update({
           where: { id: chunk.id },
@@ -846,7 +1037,7 @@ function groundingConfidence(
     return Math.max(modelConfidence, 0.5);
 }
 
-function mapToDraft(
+export function mapToDraft(
     req: AIRequirement,
     validTenderFileIds?: Set<string>,
     fileTextById?: Map<string, string>,
@@ -870,10 +1061,15 @@ function mapToDraft(
         // string straight through let "EXPERIENCE" reach the column, which
         // silently sized the engine's project-selection limit to zero.
         requirementType: normalizeRequirementTypeOrDefault(req.requirementType),
-        priority: req.priority,
+        // One spelling. The promotion gate reads /mandatory|critical/i while the
+        // compliance engine compares === "MANDATORY", so a model's "Mandatory"
+        // was grounded as mandatory and then raised no gap when unmet.
+        priority: String(req.priority ?? "").trim().toUpperCase() || "INFORMATIONAL",
         requiredQuantity: req.requiredQuantity,
         pageLimit: req.pageLimit,
-        exactFileName: req.exactFileName,
+        // Only a file name the tender states; the model has returned stored
+        // Company Vault names here (source-grounded-file-name.ts).
+        exactFileName: sourceGroundedExactFileName(req.exactFileName, fileTextById?.values() ?? []),
         restrictions: req.restrictions,
         sectionReference: req.sectionReference,
         sourceTenderFileId,
@@ -882,6 +1078,47 @@ function mapToDraft(
         sourceExactQuote: req.sourceQuote,
         sourceConfidence: groundingConfidence(req, sourceTenderFileId, fileTextById),
         sourceExtractionMethod: req.sourceExtractionMethod
+    };
+}
+
+type GroundingFile = { id: string; extractedText: string | null; totalPages: number | null };
+
+/**
+ * Bind model-returned requirement evidence to the active source bytes.
+ *
+ * The model is asked to echo the opaque FILE_ID header, but that echo is not
+ * evidence: the quote is. A real PATH tender analysis returned seven
+ * mandatory requirements with verbatim quotes and omitted the opaque token;
+ * the provider completed structured extraction, then promotion discarded the
+ * entire result. Resolve the file and page from exact normalized quote
+ * containment instead. Ambiguous or absent quotes remain ungrounded and keep
+ * failing closed.
+ */
+export function bindRequirementEvidenceToActiveFile(
+    req: AIRequirement,
+    activeFiles: readonly GroundingFile[],
+): AIRequirement {
+    const quote = typeof req.sourceQuote === "string" ? req.sourceQuote.trim() : "";
+    if (!quote) return req;
+
+    const statedId = typeof req.sourceTenderFileId === "string" && req.sourceTenderFileId.trim()
+        ? req.sourceTenderFileId.trim()
+        : typeof req.sourceFileToken === "string" && req.sourceFileToken.trim()
+            ? req.sourceFileToken.trim()
+            : null;
+    const candidates = statedId
+        ? activeFiles.filter((file) => file.id === statedId)
+        : activeFiles.filter((file) => normalizeForContainment(file.extractedText ?? "").includes(normalizeForContainment(quote)));
+    if (candidates.length !== 1) return req;
+
+    const [file] = candidates;
+    const page = locateQuoteProvenPage(file.extractedText ?? "", quote, file.totalPages);
+    if (page === null) return req;
+    return {
+        ...req,
+        sourceTenderFileId: file.id,
+        sourceFileToken: file.id,
+        sourcePage: page,
     };
 }
 
@@ -916,24 +1153,56 @@ export async function finalizeJob(jobId: string, userId: string) {
     if (succeeded.length === 0) {
         const isProviderExhaustion = failed.length > 0 && failed.every((c: any) => c.failureCategory === "PROVIDER_EXHAUSTED");
 
+        if (isProviderExhaustion) {
+            // Provider #11 is the deterministic, source-grounded draft. The
+            // durable worker previously stopped after provider exhaustion and
+            // only changed a Tender status string; unlike the synchronous
+            // route, it never staged the fallback payload. The resolver then
+            // quite correctly reported FAILED because there was no fallback to
+            // review. Build the draft from the same current tenant-owned source
+            // files and stage it on this exact authorized job/hash.
+            const fallbackTender = await prisma.tender.findFirst({
+                where: { id: job.tenderId!, userId },
+                include: {
+                    files: {
+                        where: { deletionStatus: "ACTIVE" },
+                        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+                    },
+                },
+            });
+            if (!fallbackTender) throw new Error("Fallback source tender not found");
+
+            const fallback = analyzeTender(fallbackTender as never);
+            await prisma.$transaction(async (tx) => {
+                await stageFallbackDraft(jobId, {
+                    requirements: fallback.requirements,
+                    summary: fallback.summary,
+                    contentHash: job.analysisInputHash || "",
+                    isPartial: false,
+                    completedChunks: 0,
+                    totalChunks: allChunks.length,
+                }, tx);
+                await tx.aiJob.update({
+                    where: { id: jobId },
+                    data: {
+                        status: "FAILED",
+                        finishedAt: new Date(),
+                        errorMessage: "AI providers exhausted; deterministic fallback staged for human review",
+                    },
+                });
+                await tx.tender.update({
+                    where: { id: job.tenderId! },
+                    data: { analysisExtractionStatus: "REGEX_FALLBACK_UNAPPROVED" },
+                });
+            });
+            return { status: "FAILED", code: "HUMAN_APPROVAL_REQUIRED_FALLBACK" };
+        }
+
         await prisma.aiJob.update({
             where: { id: jobId },
-            data: {
-                status: "FAILED",
-                finishedAt: new Date(),
-                errorMessage: isProviderExhaustion ? "AI providers exhausted" : "All chunks failed"
-            }
+            data: { status: "FAILED", finishedAt: new Date(), errorMessage: "All chunks failed" },
         });
-
-        if (isProviderExhaustion) {
-            await prisma.tender.update({
-                where: { id: job.tenderId! },
-                data: {
-                    analysisExtractionStatus: "REGEX_FALLBACK_UNAPPROVED"
-                }
-            });
-        }
-        return { status: "FAILED", code: isProviderExhaustion ? "AI_PROVIDERS_EXHAUSTED" : "AI_CHUNKS_FAILED" };
+        return { status: "FAILED", code: "AI_CHUNKS_FAILED" };
     }
 
     const parts = succeeded
@@ -948,9 +1217,65 @@ export async function finalizeJob(jobId: string, userId: string) {
     // "valid" — including guessed/foreign/unsupported tokens.
     const activeFilesForGrounding = await prisma.tenderFile.findMany({
         where: { tenderId: job.tenderId!, deletionStatus: "ACTIVE" },
-        select: { id: true },
+        select: { id: true, extractedText: true, totalPages: true },
     });
     const activeFileIdSet = new Set(activeFilesForGrounding.map((f: any) => f.id));
+
+    // Opaque file-token echo is a convenience, never the source authority.
+    // Prove each quote against the tenant-owned active files and derive its
+    // page before enforcing mandatory grounding. This rescues valid provider
+    // output without accepting a guessed token or page.
+    merged.requirements = merged.requirements.map((req) =>
+        bindRequirementEvidenceToActiveFile(req, activeFilesForGrounding),
+    );
+
+    const lacksGrounding = (r: any): boolean => {
+        const fileId = typeof r.sourceTenderFileId === "string" ? r.sourceTenderFileId.trim() : "";
+        const fileToken = typeof r.sourceFileToken === "string" ? r.sourceFileToken.trim() : "";
+        const hasId = (fileId.length > 0 && activeFileIdSet.has(fileId)) || (fileToken.length > 0 && activeFileIdSet.has(fileToken));
+        const hasPage = typeof r.sourcePage === "number" && r.sourcePage > 0;
+        const hasQuote = typeof r.sourceQuote === "string" && r.sourceQuote.trim().length > 0;
+        return !hasId || !hasPage || !hasQuote;
+    };
+    // A mandatory requirement the model stated without a usable citation (a
+    // paraphrased quote, a missing page) is searched for in the tender text
+    // with the same matcher Run Engine's grounding repair uses, BEFORE the gate
+    // refuses the whole analysis. Only a passage verbatim in an active file is
+    // accepted. 2026-09-29, Preview: a new tender's analysis succeeded and was
+    // then refused for 6 uncited mandatory requirements, so Run Engine — whose
+    // repair would have grounded them — could never start.
+    //
+    // Every requirement's quote is evidence, whatever its priority: the Build
+    // Plan cites optional rows too and verifies each cited quote. A quote that
+    // is not contained in the file it is bound to (a list re-punctuated as
+    // "A; B; C", 2026-10-06) is searched for the same way; it is replaced only
+    // by a passage verbatim in an active file, and kept as it was otherwise.
+    const quoteNotInBoundFile = (r: any): boolean => {
+        // The model names the file through sourceFileToken; the binder above
+        // copies it to sourceTenderFileId only when it can place the quote.
+        const fileId = typeof r.sourceTenderFileId === "string" && r.sourceTenderFileId.trim()
+            ? r.sourceTenderFileId.trim()
+            : typeof r.sourceFileToken === "string" ? r.sourceFileToken.trim() : "";
+        const quote = typeof r.sourceQuote === "string" ? r.sourceQuote.trim() : "";
+        if (!fileId || !quote) return false;
+        const file = activeFilesForGrounding.find((f: any) => f.id === fileId);
+        if (!file?.extractedText) return false;
+        return !normalizeForContainment(file.extractedText).includes(normalizeForContainment(quote));
+    };
+    merged.requirements = merged.requirements.map((req: any) => {
+        const mandatory = /mandatory|critical/i.test(req.priority ?? "");
+        if (!(mandatory && lacksGrounding(req)) && !quoteNotInBoundFile(req)) return req;
+        const repair = groundRequirementInActiveFiles(req, activeFilesForGrounding);
+        if (!repair) return req;
+        return {
+            ...req,
+            sourceTenderFileId: repair.fileId,
+            sourcePage: repair.page,
+            sourceQuote: repair.quote.slice(0, 500),
+            sourceSectionHeading: req.sourceSectionHeading || repair.heading || undefined,
+            sourceExtractionMethod: "automatic_repair",
+        };
+    });
 
     const mandatoryReqs = merged.requirements.filter((r: any) => /mandatory|critical/i.test(r.priority ?? ""));
     const invalidMandatory = mandatoryReqs.filter((r: any) => {
@@ -1043,7 +1368,7 @@ export async function finalizeJob(jobId: string, userId: string) {
                 contactDetailsSourceJson: true,
                 files: {
                     where: { deletionStatus: "ACTIVE" },
-                    select: { id: true, extractedText: true, deletionStatus: true, totalPages: true },
+                    select: { id: true, fileName: true, originalFileName: true, extractedText: true, deletionStatus: true, totalPages: true },
                 },
             },
         });
@@ -1114,6 +1439,7 @@ export async function finalizeJob(jobId: string, userId: string) {
             notes: existingTender?.notes,
             ...sourceFileIds,
             existingContactDetailsSourceJson: existingTender?.contactDetailsSourceJson ?? null,
+            sourceFiles: existingTender?.files ?? [],
         });
 
         tenderUpdate = {
@@ -1236,11 +1562,20 @@ export async function finalizeJob(jobId: string, userId: string) {
             const existingFileIdStillActive = refEntry?.fileId
               ? attrFiles.some((f: any) => f.id === refEntry.fileId && (f.deletionStatus ?? "ACTIVE") === "ACTIVE")
               : false;
-            if (refEntry && refEntry.quote && refEntry.quote.trim().length >= 6 && (!refEntry.fileId || !existingFileIdStillActive)) {
-                const refFileId = attributeMetadataSourceFileId(refEntry.quote, attrFiles);
-                if (refFileId && refFileId !== refEntry.fileId) {
+            const pageIsValid = typeof refEntry?.page === "number" && Number.isInteger(refEntry.page) && refEntry.page >= 1;
+            if (refEntry && refEntry.quote && refEntry.quote.trim().length >= 6 && (!refEntry.fileId || !existingFileIdStillActive || !pageIsValid)) {
+                const refFileId = existingFileIdStillActive ? refEntry.fileId! : attributeMetadataSourceFileId(refEntry.quote, attrFiles);
+                // The page is derived from where the quote sits in the file
+                // whenever the model's page is missing or invalid; the Build
+                // Plan refuses a stated reference without one.
+                const refFile = attrFiles.find((f: any) => f.id === refFileId);
+                const provenPage = !pageIsValid && refFile
+                    ? provenPageOfQuote(refFile.extractedText, refEntry.quote, refFile.totalPages)
+                    : null;
+                const page = pageIsValid ? refEntry.page! : provenPage;
+                if (refFileId && (refFileId !== refEntry.fileId || page !== (refEntry.page ?? null))) {
                     contactDetails["procurementReferenceNumber"] = {
-                        page: refEntry.page ?? null,
+                        page: page ?? null,
                         quote: refEntry.quote,
                         fileId: refFileId,
                     };

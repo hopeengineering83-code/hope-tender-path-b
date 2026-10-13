@@ -112,45 +112,49 @@ describe("DB-001: prisma/demo-seed.ts has a production guard", () => {
 
 // ─── AI-001: redactMessage covers all 8 provider key prefixes ────────────────
 
-describe("AI-001: redactMessage covers all 8 provider key prefixes", () => {
-  const source = readFileSync("lib/ai-provider-health.ts", "utf8");
+describe("AI-001: redactMessage covers every provider key prefix", () => {
+  // These asserted that specific regex LITERALS appeared in
+  // lib/ai-provider-health.ts. That pinned one implementation of redaction
+  // rather than redaction itself — and it was pinning the copy that had
+  // DIVERGED from the shared redactor, which is how the AQ-format Gemini
+  // pattern came to exist in one file and not the other. The behaviour is
+  // asserted instead, through the function that actually runs.
+  const SECRETS: ReadonlyArray<readonly [string, string]> = [
+    ["Anthropic", "sk-ant-" + "api03realkey1234567890abcdefghijkl"],
+    ["OpenRouter", "sk-or-" + "v1abcdefghijklmnopqrstuvwxyz0123456"],
+    ["OpenAI / Together / legacy", "sk-" + "proj1234567890abcdefghijklmnopqrst"],
+    ["Groq", "gsk_" + "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0"],
+    ["DeepSeek", "dsk-" + "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0"],
+    ["Cerebras", "csk_" + "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0"],
+    ["Gemini legacy", "AIza" + "SyD1234567890abcdefghijklmnopqrstu"],
+    ["Gemini new-format", "AQ" + "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8"],
+  ];
 
-  it("redacts Anthropic keys (sk-ant-...)", () => {
-    assert.match(source, /sk-ant-\[A-Za-z0-9-_\=\]\{8,\}/);
+  for (const [label, secret] of SECRETS) {
+    it(`redacts ${label} keys`, async () => {
+      const { resetProviderHealth, recordProviderFailure, getProviderHealth } =
+        await import("../lib/ai-provider-health");
+      resetProviderHealth();
+      recordProviderFailure("groq", new Error(`provider rejected request: ${secret}`));
+      const stored = getProviderHealth("groq").lastFailureMessage ?? "";
+      assert.ok(!stored.includes(secret), `${label} key must not be stored in provider health`);
+      resetProviderHealth();
+    });
+  }
+
+  it("redacts Authorization: Bearer <token>", async () => {
+    const { resetProviderHealth, recordProviderFailure, getProviderHealth } =
+      await import("../lib/ai-provider-health");
+    resetProviderHealth();
+    recordProviderFailure("groq", new Error("sent Authorization: Bearer abc123def456ghi789jkl"));
+    const stored = getProviderHealth("groq").lastFailureMessage ?? "";
+    assert.ok(!stored.includes("abc123def456ghi789jkl"));
+    resetProviderHealth();
   });
 
-  it("redacts OpenRouter keys (sk-or-...)", () => {
-    assert.match(source, /sk-or-\[A-Za-z0-9-_\=\]\{8,\}/);
-  });
-
-  it("redacts OpenAI / Together / legacy keys (sk-...)", () => {
-    assert.match(source, /sk-\[A-Za-z0-9-_\]\{8,\}/);
-  });
-
-  it("redacts Groq keys (gsk_...)", () => {
-    assert.match(source, /gsk_\[A-Za-z0-9-_\]\{8,\}/);
-  });
-
-  it("redacts DeepSeek keys (dsk-... or dsk_...)", () => {
-    assert.match(source, /dsk\[-_\]\[A-Za-z0-9-_\]\{8,\}/);
-  });
-
-  it("redacts Google Gemini legacy keys (AIza...)", () => {
-    assert.match(source, /AIza\[A-Za-z0-9_-\]\{20,\}/);
-  });
-
-  it("redacts Google Gemini new-format keys (AQ...)", () => {
-    assert.match(source, /\\bAQ\[A-Za-z0-9_-\]\{30,\}\\b/);
-  });
-
-  it("redacts Authorization: Bearer <token>", () => {
-    assert.match(source, /Bearer\\s\+\[A-Za-z0-9\._-\]\+/i);
-  });
-
-  it("redacts authorization: <value> header", () => {
-    // The regex in source is: /authorization:\s*[A-Za-z0-9._\-+/=]+/gi
-    // Match the key parts: "authorization:" + optional whitespace + char class
-    assert.match(source, /authorization:\\s\*\[A-Za-z0-9\._/);
+  it("delegates to the shared redactor instead of keeping a private list", () => {
+    const source = readFileSync("lib/ai-provider-health.ts", "utf8");
+    assert.match(source, /redactSecrets\(/);
   });
 });
 
@@ -340,5 +344,77 @@ describe("DOC-007: .env.example documents security-critical env vars", () => {
 
   it("documents DEMO_SEED_ALLOWED (the demo-seed escape hatch)", () => {
     assert.match(source, /#\s*DEMO_SEED_ALLOWED=/);
+  });
+});
+
+// ── The shared redactor must not diverge from its local twins ────────────────
+describe("redactSecrets covers every provider key format in use", () => {
+  it("redacts Google's new-format Gemini keys (AQ...)", async () => {
+    // lib/sanitize-error.ts says every caller must use it "so the redaction
+    // patterns cannot diverge". They had: lib/ai-provider-health.ts carried the
+    // AQ pattern locally while the shared redactor did not, so a new-format
+    // Gemini key was redacted on one path and printed verbatim on the other.
+    const { redactSecrets } = await import("../lib/sanitize-error");
+    const key = "AQ" + "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8";
+    const out = redactSecrets(`Request failed with key ${key} attached`);
+    assert.ok(!out.includes(key), "AQ-format Gemini key must be redacted");
+    assert.match(out, /\[KEY_REDACTED\]/);
+  });
+
+  it("redacts a bare key= query parameter, not only api_key=", async () => {
+    // Google's generative-language API authenticates with `?key=`, so any URL
+    // of theirs that reaches a message carries the credential in plain sight.
+    const { redactSecrets } = await import("../lib/sanitize-error");
+    const out = redactSecrets("GET https://generativelanguage.googleapis.com/v1beta/models?key=SUPERSECRETVALUE&pageSize=200 failed");
+    assert.ok(!out.includes("SUPERSECRETVALUE"));
+    assert.match(out, /key=\[KEY_REDACTED\]/);
+  });
+
+  it("still redacts legacy AIza keys and does not mangle ordinary text", async () => {
+    const { redactSecrets } = await import("../lib/sanitize-error");
+    const legacy = "AIza" + "SyD1234567890abcdefghijklmnopqrstu";
+    assert.ok(!redactSecrets(legacy).includes(legacy));
+    assert.equal(redactSecrets("the monkey= sat on the wall"), "the monkey= sat on the wall");
+  });
+});
+
+describe("the capability test never puts a credential in a URL", () => {
+  it("authenticates Gemini's model listing with a header, not ?key=", () => {
+    const source = readFileSync("lib/ai-provider-capability-test.ts", "utf8");
+    assert.match(source, /"x-goog-api-key": key/);
+    assert.doesNotMatch(source, /\?key=\$\{/, "a credential in a URL ends up in every log and error string that URL touches");
+  });
+});
+
+// ─── Consolidating redactors must never LOSE coverage ────────────────────────
+describe("the shared redactor is at least as strong as every copy it replaced", () => {
+  // Delegating several private redactors onto one shared implementation is only
+  // safe if the shared one is a superset. It was not: the private copies matched
+  // gsk_/csk_/dsk- after 8 characters, while the shared one required 30 — so the
+  // consolidation would have started leaking short or truncated keys that were
+  // previously caught. Broader formats, narrower thresholds. This pins the
+  // thresholds so the next consolidation cannot repeat it.
+  const SHORT_KEYS = [
+    "gsk_abcdef123456",
+    "csk_abcdef123456",
+    "dsk-abcdef123456",
+    "dsk_abcdef123456",
+    "sk-abcdef123456",
+    "sk-ant-abcdef123456",
+    "sk-or-v1-abcdef123456",
+  ];
+
+  for (const key of SHORT_KEYS) {
+    it(`redacts the short form ${key.split(/[-_]/)[0]}… (${key.length} chars)`, async () => {
+      const { redactSecrets } = await import("../lib/sanitize-error");
+      const out = redactSecrets(`provider said: ${key}`);
+      assert.ok(!out.includes(key), `${key} must be redacted, got: ${out}`);
+    });
+  }
+
+  it("still leaves ordinary prose alone", async () => {
+    const { redactSecrets } = await import("../lib/sanitize-error");
+    const prose = "the task was risky but the deadline held";
+    assert.equal(redactSecrets(prose), prose);
   });
 });

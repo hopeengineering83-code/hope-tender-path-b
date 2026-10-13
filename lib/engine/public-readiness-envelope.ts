@@ -105,14 +105,30 @@ export function buildPublicReadinessEnvelope(input: {
       ? "BLOCKED"
       : "READY";
   const ok = status === "READY";
-  const primary = blockers[0] ?? warnings[0] ?? null;
+
+  // ── The primary pair describes the primary BLOCKER ──────────────────
+  // Falling back to warnings[0] made a READY payload name a blocker that
+  // does not exist: a package with no blockers and a live ZIP published
+  // primaryBlockerReason: "Evaluation criteria were not extracted ...",
+  // taken from an advisory the same payload already lists under warnings
+  // and explicitly marks as non-blocking. The nested block in
+  // /api/tenders/[id]/export-readiness answers null for that same package,
+  // so one route published two answers to one question.
+  //
+  // On READY there is no blocker, so both fields are null. The advisory is
+  // not lost — it stays in `warnings` with its own nextAction, which is
+  // where a caller that wants to show advisories should read it. Blocked
+  // and PARTIAL payloads are unchanged: they keep the first blocker, or the
+  // first warning when the block came from `ok: false` without an itemised
+  // blocker.
+  const primary = blockers[0] ?? (ok ? null : warnings[0]) ?? null;
   return {
     ok,
     status,
     blockers,
     warnings,
-    primaryBlockerReason: primary?.message ?? input.primaryBlockerReason ?? null,
-    primaryFixAction: primary?.nextAction ?? input.primaryFixAction ?? null,
+    primaryBlockerReason: ok ? null : primary?.message ?? input.primaryBlockerReason ?? null,
+    primaryFixAction: ok ? null : primary?.nextAction ?? input.primaryFixAction ?? null,
     requiredDocumentsTotal,
     generatedDocumentsTotal,
     exportReadyDocumentsTotal,
@@ -133,6 +149,9 @@ export function assertPublicReadinessAgreement(payloads: PublicReadinessEnvelope
     }
     if (payload.ok && payload.blockers.length > 0) {
       contradictions.push("ok payload contains blockers");
+    }
+    if (payload.ok && payload.primaryBlockerReason) {
+      contradictions.push("ready payload names a primary blocker");
     }
   }
   const anyBlocked = payloads.some((payload) => !payload.ok || payload.status !== "READY");

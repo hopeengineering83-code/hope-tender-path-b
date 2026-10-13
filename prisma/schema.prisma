@@ -103,6 +103,7 @@ model Company {
   complianceRecords CompanyComplianceRecord[]
   planBStaging      PlanBStaging[]
   settings          AppSettings?
+  pricingBenchmarks PricingBenchmark[]
   createdAt         DateTime                  @default(now())
   updatedAt         DateTime                  @updatedAt
 }
@@ -1158,6 +1159,16 @@ model ProviderHealthSnapshot {
   lastSafeErrorMessage      String?         // already redacted by recordProviderFailure
   consecutiveFailures       Int       @default(0)
   cooldownUntil             DateTime?
+  // The resolved MODEL IDENTIFIERS in force when this failure state was
+  // recorded — never a key, never a prompt. A failure is evidence about a
+  // (provider, model) pair: "this model is not in your subscription tier" says
+  // nothing about a different model on the same key. Without this, a cooldown
+  // earned by a model the operator has since replaced goes on suppressing a
+  // provider that would now succeed, for as long as the backoff lasts (up to
+  // 160 minutes), so the operator's own fix appears not to work.
+  // Nullable: rows written before this column existed simply carry no
+  // fingerprint and behave exactly as they did.
+  failureConfigFingerprint  String?
   updatedAt                 DateTime  @updatedAt
 }
 
@@ -1187,6 +1198,37 @@ model PricingWorkbook {
   lines           CostLine[]
 
   @@index([tenderId])
+}
+
+// The owner's rate card: sourced, dated rates the pricing estimator reads for
+// every tender (lib/engine/pricing-benchmarks.ts). Entered once, not per tender.
+model PricingBenchmark {
+  id            String   @id @default(uuid())
+  companyId     String
+  company       Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  market        String   @default("ET")
+  category      String
+  serviceKey    String
+  label         String
+  seniority     String?
+  unit          String
+  currency      String
+  low           Float
+  median        Float
+  high          Float
+  rateBasis     String   @default("FEE")
+  effectiveDate String
+  source        String
+  sourceUrl     String?
+  sourceType    String   @default("OWNER_RATE_CARD")
+  confidence    String   @default("HIGH")
+  notes         String?
+  lastVerified  String
+  createdById   String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([companyId, category])
 }
 
 model CostLine {

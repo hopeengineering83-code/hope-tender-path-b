@@ -60,6 +60,7 @@ function money(value: number, currency: string): string {
 export function PricingWorkbookPanel({ tenderId, canMutate = false }: { tenderId: string; canMutate?: boolean }) {
   const router = useRouter();
   const [workbook, setWorkbook] = useState<PricingWorkbook | null>(null);
+  const [pricingRequired, setPricingRequired] = useState(true);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState<DraftLine>(EMPTY_LINE);
@@ -73,6 +74,7 @@ export function PricingWorkbookPanel({ tenderId, canMutate = false }: { tenderId
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error ?? `Failed to load pricing workbook (${res.status})`);
       setWorkbook(data.workbook);
+      setPricingRequired(data.pricingScope?.required !== false);
     } catch (err) {
       setError("Failed to load pricing workbook.");
     } finally {
@@ -153,6 +155,10 @@ export function PricingWorkbookPanel({ tenderId, canMutate = false }: { tenderId
     }
   }
 
+  // No workbook for a tender that does not ask for prices; the Pricing
+  // Intelligence panel already says why.
+  if (!pricingRequired) return null;
+
   return (
     <div className="rounded-2xl border bg-white p-5 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -192,8 +198,8 @@ export function PricingWorkbookPanel({ tenderId, canMutate = false }: { tenderId
             <div><p className="text-slate-500">Subtotal</p><p className="font-bold text-slate-900">{money(workbook.totals.subtotal, workbook.currency)}</p></div>
             <div><p className="text-slate-500">Contingency</p><p className="font-bold text-slate-900">{money(workbook.totals.contingency, workbook.currency)}</p></div>
             <div><p className="text-slate-500">VAT</p><p className="font-bold text-slate-900">{money(workbook.totals.vat, workbook.currency)}</p></div>
-            <div><p className="text-slate-500">Withholding</p><p className="font-bold text-slate-900">{money(workbook.totals.withholding, workbook.currency)}</p></div>
-            <div><p className="text-slate-500">Grand total</p><p className="font-bold text-emerald-700">{money(workbook.totals.grandTotal, workbook.currency)}</p></div>
+            <div><p className="text-slate-500">Withholding (deducted by client at payment)</p><p className="font-bold text-slate-900">{money(workbook.totals.withholding, workbook.currency)}</p></div>
+            <div><p className="text-slate-500">Total offer price</p><p className="font-bold text-emerald-700">{money(workbook.totals.grandTotal, workbook.currency)}</p></div>
           </div>
 
           <div className="rounded-xl border border-slate-100 p-3">

@@ -108,6 +108,19 @@ function safeTypeFor(name: string, fallback?: string | null): string {
   if (/expert|cv|personnel|staff/.test(label)) return "EXPERT_CV_PACKAGE";
   if (/project|experience|reference|portfolio/.test(label)) return "PROJECT_REFERENCE_PACKAGE";
   if (/legal|registration|licen[cs]e|tax|certificate/.test(label)) return "LEGAL_EVIDENCE";
+  // Checked before the broader /financial/ evidence match below: a financial
+  // or commercial PROPOSAL (the firm's own priced offer) is company-authored
+  // content, not a third-party original like a bank statement or audited
+  // financial statement. This route duplicates lib/engine/export-gap-repair.ts's
+  // safeTypeFor (a pre-existing drift between the HTTP route and the
+  // auto-finalize background worker's copy of the same repair logic) and had
+  // the identical bug: driving the real pipeline end-to-end showed this exact
+  // route resetting an already-correct FINANCIAL_PROPOSAL type back to
+  // FINANCIAL_EVIDENCE on every repair call, which is why fixing the lib copy
+  // alone did not resolve the live 60/100 export block. See the same fix and
+  // rationale there, and in missing-plan-file-generation.ts's documentTypeFor()
+  // and document-type-normalizer.ts's FINANCIAL_PROPOSAL_PATTERNS.
+  if (/financial[\s._-]+proposal|commercial[\s._-]+proposal|price[\s._-]+schedule|rate[\s._-]+card|bill[\s._-]+of[\s._-]+quantities?|\bboq\b/.test(label)) return "FINANCIAL_PROPOSAL";
   if (/financial|audited|bank|turnover|capacity/.test(label)) return "FINANCIAL_EVIDENCE";
   if (/submission|deadline|delivery|method|rules/.test(label)) return "SUBMISSION_RULES";
   return fallback || "TENDER_REQUIRED_FILE";
@@ -173,7 +186,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
 
   const docs = await prisma.generatedDocument.findMany({
     where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
-    orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
+    orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }],
     select: { id: true, name: true, exactFileName: true, exactOrder: true, documentType: true, format: true, generationStatus: true, validationStatus: true, reviewStatus: true, reviewNotes: true, fileContent: true, storagePath: true },
   });
 
@@ -266,12 +279,14 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     }
   });
 
-  const letterheadAppliedCount = await applyActiveUploadedLetterheadToTenderDocuments(tenderId, actor.id);
+  const letterheadOutcome = await applyActiveUploadedLetterheadToTenderDocuments(tenderId, actor.id);
+  const letterheadAppliedCount = letterheadOutcome.applied;
+  const letterheadSkipReason = letterheadOutcome.reason;
 
   // Metadata-only re-fetch after repair — fileContent is not needed for readiness checks.
   const repairedDocs = await prisma.generatedDocument.findMany({
     where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
-    orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
+    orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }],
     select: { id: true, name: true, exactFileName: true, exactOrder: true, documentType: true, format: true, generationStatus: true, validationStatus: true, reviewStatus: true, storagePath: true },
   });
   const readiness = await checkFullExportReadiness({ tenderId, docs: repairedDocs as any[], requireFileContent: false });
@@ -282,7 +297,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     entityType: "Tender",
     entityId: tenderId,
     description: `${actor.email} safely repaired ${repaired.length} export package document(s) for "${tender.title}"; ${manualRequired.length} original/manual row(s) skipped.`,
-    metadata: { tenderId, repairedCount: repaired.length, skippedCount: skipped.length, manualRequiredCount: manualRequired.length, blockedByHygieneCount: blockedByHygiene.length, letterheadAppliedCount, finalExportReady: readiness.ok, remainingDocumentBlockers: readiness.failures.length, remainingTenderLevelBlockers: readiness.tenderLevelBlockers?.length ?? 0 },
+    metadata: { tenderId, repairedCount: repaired.length, skippedCount: skipped.length, manualRequiredCount: manualRequired.length, blockedByHygieneCount: blockedByHygiene.length, letterheadAppliedCount, letterheadSkipReason, finalExportReady: readiness.ok, remainingDocumentBlockers: readiness.failures.length, remainingTenderLevelBlockers: readiness.tenderLevelBlockers?.length ?? 0 },
   });
 
   // Gap 4: re-query the canonical final-export authority after the mutation.
@@ -295,6 +310,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     blockedByHygiene: blockedByHygiene.length,
     plannedCreated: 0,
     letterheadAppliedCount,
+    letterheadSkipReason,
     finalExportReady: readiness.ok,
     remaining: {
       documentBlockers: readiness.failures.length,

@@ -10,7 +10,21 @@ import { safeApiError } from "../../../../../lib/engine/safe-api-error";
 import { getCanonicalTenderWorkflowDecision } from "../../../../../lib/engine/canonical-workflow-decision";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 10;
+// This route runs three aggregate readiness models concurrently
+// (getFinalSubmissionReadiness, getFinalPackageReadinessModel,
+// getCanonicalTenderWorkflowDecision) and then a further evidence-stats query
+// over every mandatory requirement's compliance rows. That is the workload of
+// the 60s tier (engine, download, generate), not of the 10s tier it was filed
+// under alongside genuinely small readers.
+//
+// Observed on the exact-head Preview against a real tender (163 evidence
+// records, 7 requirements, Neon pooled connection): the request was killed at
+// its 10s cap and Vercel answered the owner with a raw
+// FUNCTION_INVOCATION_TIMEOUT page — no JSON, no blocker list, nothing the
+// Export Readiness panel can render. A readiness reader that cannot answer is
+// worse than a slow one, because the owner cannot tell "not ready" from
+// "route died".
+export const maxDuration = 60;
 
 function jsonError(message: string, status = 500, extra: Record<string, unknown> = {}) {
   const code = typeof extra.code === "string" ? extra.code : "EXPORT_READINESS_ERROR";
@@ -137,22 +151,41 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       severity: warning.severity,
     }));
 
+    // Count confirmed package deliveries, not retained editable source rows.
+    // A PDF-only plan legitimately keeps its DOCX source in the workspace, but
+    // that source is not a second attachment and must not create a 2/1 count
+    // contradiction in an otherwise ready package.
+    const deliveryReadyDocumentsTotal = finalPackage.documents.exportReady.filter(
+      (document) => document.exportCandidate,
+    ).length;
+
     const envelope = buildPublicReadinessEnvelope({
       ok: reconciledOk,
       blockers: publicBlockers,
       warnings: publicWarnings,
-      primaryBlockerReason: canonicalBlocker.length > 0 ? canonicalDecision.nextRequiredActionReason : readiness.summary.primaryBlockerReason,
-      primaryFixAction: canonicalBlocker.length > 0 ? canonicalDecision.nextRequiredActionLabel : readiness.summary.primaryFixAction,
-      requiredDocumentsTotal: readiness.summary.requiredDocumentsTotal,
+      // A complete proposal awaiting only the owner's originals says so,
+      // rather than reading as a generation failure.
+      primaryBlockerReason: readiness.packageStatus === "PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED"
+        ? readiness.message
+        : canonicalBlocker.length > 0 ? canonicalDecision.nextRequiredActionReason : readiness.summary.primaryBlockerReason,
+      primaryFixAction: readiness.packageStatus === "PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED"
+        ? readiness.summary.primaryFixAction
+        : canonicalBlocker.length > 0 ? canonicalDecision.nextRequiredActionLabel : readiness.summary.primaryFixAction,
+      requiredDocumentsTotal: Math.max(finalPackage.documents.required.length, finalPackage.documents.planned.length),
       generatedDocumentsTotal: finalPackage.documents.generated.length,
-      exportReadyDocumentsTotal: readiness.summary.exportReadyDocumentsTotal,
+      exportReadyDocumentsTotal: deliveryReadyDocumentsTotal,
     });
 
     return NextResponse.json({
       ...envelope,
       success: true,
+      packageStatus: readiness.packageStatus,
+      proposalComplete: readiness.proposalComplete,
+      ownerAttachmentsOutstanding: readiness.ownerAttachments?.outstanding ?? 0,
       exportReadiness: {
         ok: reconciledOk,
+        packageStatus: readiness.packageStatus,
+        proposalComplete: readiness.proposalComplete,
         tender: readiness.tender,
         summary: {
           activeDocuments: finalPackage.export.exportCandidateCount,
@@ -222,7 +255,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
           return null;
         })(),
         requiredDocumentsTotal: Math.max(finalPackage.documents.required.length, finalPackage.documents.planned.length),
-        exportReadyDocumentsTotal: finalPackage.documents.exportReady.length,
+        exportReadyDocumentsTotal: deliveryReadyDocumentsTotal,
         plannedRequiredDocuments: finalPackage.documents.planned.length,
       },
     });

@@ -18,12 +18,36 @@ const NON_RETRYABLE = /(?:NOT_FOUND_OR_FORBIDDEN|INVALID_PACKAGE|AUTHORITY|INTEG
 const RETRYABLE = /(?:TIMEOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|RATE.?LIMIT|TOO.?MANY.?REQUESTS|SERVICE.?UNAVAILABLE|TEMPORAR|STORAGE.*FAILED|PROVIDER|GENERATION_IN_PROGRESS)/i;
 const BACKOFF_MS = [30_000, 60_000, 180_000, 600_000] as const;
 
+/**
+ * The attempt budget every durable stage shares.
+ *
+ * classifyStageRetry already stops at `retryCount >= BACKOFF_MS.length`; this
+ * exports the same number so a re-arm performed outside that function — the
+ * proposal continuation re-arming a failed generation for a repeated Run
+ * Engine — is bounded by the SAME budget rather than a second one that can
+ * drift away from it.
+ */
+export const MAX_DURABLE_STAGE_ATTEMPTS = BACKOFF_MS.length;
+
 export function classifyStageRetry(errorCodeOrMessage: string, retryCount: number): RetryDecision {
   const value = errorCodeOrMessage.slice(0, 500);
   if (SUPERSEDED.test(value)) return { retryable: false, blockerCode: "ENGINE_SOURCE_SUPERSEDED", delayMs: null };
   if (NON_RETRYABLE.test(value)) return { retryable: false, blockerCode: "NON_RETRYABLE_AUTHORITY_OR_INTEGRITY_BLOCKER", delayMs: null };
   if (!RETRYABLE.test(value) || retryCount >= BACKOFF_MS.length) return { retryable: false, blockerCode: "RETRY_BUDGET_EXHAUSTED_OR_UNKNOWN_FAILURE", delayMs: null };
   return { retryable: true, blockerCode: "TRANSIENT_STAGE_FAILURE", delayMs: BACKOFF_MS[retryCount] };
+}
+
+/**
+ * What the worker reports as `retryable` for a failed job: whether the failure
+ * will be retried, which is the classifier's decision. It used to report the
+ * inverse of whether re-arming succeeded, so a terminal authority or integrity
+ * failure read as retryable (the drain workflow only warned) and a queued
+ * retry read as terminal. A job type the policy does not classify keeps its
+ * previous answer: the next tick may retry it.
+ */
+export function reportedRetryable(decision: RetryDecision | null, retryScheduled: boolean): boolean {
+  if (retryScheduled) return true;
+  return decision ? decision.retryable : true;
 }
 
 /** True when a stage failure is an expected supersede, not an incident. */

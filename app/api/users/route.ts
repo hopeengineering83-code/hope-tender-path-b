@@ -16,7 +16,11 @@ export async function GET() {
   }
 
   await prismaReady;
+  // Active users only. DELETE /api/users/[id] deactivates (soft-deletes); a
+  // deactivated account listed here reappeared as active, with Edit/Delete
+  // controls that could only fail.
   const users = await prisma.user.findMany({
+    where: { deletedAt: null },
     select: { id: true, name: true, email: true, role: true, createdAt: true, updatedAt: true },
     orderBy: { createdAt: "asc" },
   });
@@ -59,7 +63,9 @@ export async function POST(req: Request) {
 
   const existing = await prisma.user.findUnique({ where: { email } });
   if (existing) {
-    return NextResponse.json({ error: "Email already in use" }, { status: 409 });
+    // A deactivated account keeps its email (its records are preserved), so
+    // say why the address is taken rather than pointing at a user not listed.
+    return NextResponse.json({ error: existing.deletedAt ? "Email belongs to a deactivated account" : "Email already in use" }, { status: 409 });
   }
 
   const pwCheck = validatePassword(password);

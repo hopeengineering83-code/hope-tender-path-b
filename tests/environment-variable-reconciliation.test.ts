@@ -51,24 +51,24 @@ describe("Environment Variable Reconciliation", () => {
   describe("Canonical Provider Order Preservation", () => {
     it("preserves exact provider order: ZAI → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic", () => {
       const order = [
+        "gemini",
+        "groq",
+        "mistral",
         "zai",
         "cerebras",
-        "mistral",
-        "groq",
         "openrouter",
-        "gemini",
         "openai",
         "together",
         "deepseek",
         "anthropic",
       ];
       const envKeyNames = [
-        "ZAI_API_KEY",
-        "CEREBRAS_API_KEY",
-        "MISTRAL_API_KEY",
-        "GROQ_API_KEY",
-        "OPENROUTER_API_KEY",
         "GEMINI_API_KEY",
+        "GROQ_API_KEY",
+        "MISTRAL_API_KEY",
+        "ZAI_API_KEY",
+        "OPENROUTER_API_KEY",
+        "CEREBRAS_API_KEY",
         "OPENAI_API_KEY",
         "TOGETHER_API_KEY",
         "DEEPSEEK_API_KEY",
@@ -118,7 +118,7 @@ describe("Environment Variable Reconciliation", () => {
       assert.ok(resultWith.ok);
 
       const resultWithout = evaluateEnv(envWithoutKey);
-      assert.ok(resultWithout.warnings.some((w) => w.includes("ZAI")));
+      assert.ok(resultWithout.warnings.some((w) => w.includes("normally configured AI provider")));
     });
 
     it("ANTHROPIC_TIER correctly gates ANTHROPIC_MAX_OUTPUT_TOKENS and timeout defaults", () => {
@@ -155,7 +155,7 @@ describe("Environment Variable Reconciliation", () => {
         MISTRAL_API_KEY: "mistral-key",
         MISTRAL_PROPOSAL_MODEL: "mistral-small-latest",
         GROQ_API_KEY: "gsk-test",
-        GROQ_PROPOSAL_MODEL: "llama-3.3-70b-versatile",
+        GROQ_PROPOSAL_MODEL: "llama-3.1-8b-instant",
         TOGETHER_API_KEY: "together-key",
         TOGETHER_PROPOSAL_MODEL: "NousResearch/Nous-Hermes-2-Mixtral-8x7B-DPO",
       };

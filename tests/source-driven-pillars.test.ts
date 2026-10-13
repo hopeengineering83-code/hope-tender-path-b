@@ -85,11 +85,9 @@ describe("Source-driven pillars — load-bearing tests", () => {
       }
     });
 
-    it("INDISPENSABLE_FINAL_DELIVERY_FIELDS includes deadline, submissionMethod, clientName, title", () => {
-      const src = read("lib/engine/tender-applicability.ts");
-      for (const field of ["deadline", "submissionMethod", "clientName", "title"]) {
-        assert.ok(src.includes(`"${field}"`), `must include ${field} as indispensable`);
-      }
+    it("INDISPENSABLE_FINAL_DELIVERY_FIELDS holds only the title (owner policy: an unstated fact is not required)", async () => {
+      const { INDISPENSABLE_FINAL_DELIVERY_FIELDS } = await import("../lib/engine/tender-applicability");
+      assert.deepEqual([...INDISPENSABLE_FINAL_DELIVERY_FIELDS], ["title"]);
     });
 
     it("canonical-field-state uses INDISPENSABLE_FINAL_DELIVERY_FIELDS (not isCritical) for export blocking", () => {

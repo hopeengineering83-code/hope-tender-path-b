@@ -290,9 +290,9 @@ describe("integration — portal-method tender consistency", () => {
 // ─── 5. Cross-layer consistency: source-driven ↔ operation gate ────────────
 
 describe("integration — source-driven ↔ operation gate consistency", () => {
-  it("when source-driven says deadline required, FINAL gate enforces it", () => {
+  it("a deadline the tender does not state is neither required nor blocking (ABSENT_TENDER_FACT_IS_NOT_REQUIRED)", () => {
     const detail = deriveSourceDrivenTenderDetail(makeTender({ deadline: null }));
-    assert.equal(detail.requiresDeadline, true);
+    assert.equal(detail.requiresDeadline, false);
     const r = resolveTenderOperationGate({
       tender: {
         id: "t1",
@@ -312,8 +312,7 @@ describe("integration — source-driven ↔ operation gate consistency", () => {
       buildPlan: { ok: true, items: [] },
       operation: "FINAL_SUBMISSION_READY",
     });
-    assert.equal(r.ok, false);
-    assert.ok(r.blockers.some((b) => b.includes("deadline")));
+    assert.ok(!r.blockers.some((b) => b.includes("deadline")));
   });
 
   it("when source-driven says email endpoint required, FINAL gate enforces it", () => {

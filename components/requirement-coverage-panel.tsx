@@ -6,7 +6,18 @@ import { humanizeEnumValue } from "../lib/ui/human-labels";
 
 type SupportLevel = "FULL" | "SUBSTANTIAL" | "PARTIAL" | "NONE" | "NOT_APPLICABLE";
 type CoverageStatus = "FULLY_MET" | "PARTIALLY_MET" | "NOT_MET" | "NEEDS_TRACE";
-type AutomationState = "FULLY_VERIFIED" | "PARTIALLY_VERIFIED" | "AUTO_RESOLVING" | "TRUE_EVIDENCE_GAP" | "STALE_OR_INVALIDATED";
+type AutomationState =
+  | "FULLY_VERIFIED"
+  | "PARTIALLY_VERIFIED"
+  | "AUTO_RESOLVING"
+  | "TRUE_EVIDENCE_GAP"
+  | "STALE_OR_INVALIDATED"
+  // Package RULES — financial separation, single-file consolidation, file
+  // format, file naming. These are obeyed or broken by the submission the app
+  // produces. They are never evidence gaps and must never be shown as a
+  // request for the owner to supply or strengthen evidence.
+  | "ENFORCED_BY_PACKAGE"
+  | "PACKAGE_RULE_VIOLATION";
 type CoverageFilter = "ALL" | "UNRESOLVED" | "PARTIAL" | "COVERED";
 
 type EvidenceLink = {
@@ -23,6 +34,8 @@ type EvidenceLink = {
   sourceContentHash: string | null;
   sourceByteLength: number | null;
   matchedFacets: string[];
+  /** Tender-stated constraints the linked record does not carry. */
+  missingFacets: string[];
 };
 
 type RequirementCoverageRow = {
@@ -56,6 +69,8 @@ type CoverageData = {
   missingSourceRef: number;
   automaticallyLinked: number;
   trueEvidenceGaps: number;
+  packageRuleViolations: number;
+  packageEnforcedRules: number;
   sourceProcessing: number;
   staleOrInvalidated: number;
   coverageRatio: number;
@@ -87,6 +102,8 @@ const AUTOMATION_STATE_CONFIG: Record<AutomationState, { label: string; color: s
   PARTIALLY_VERIFIED: { label: "Partially verified", color: "border-amber-300 bg-amber-100 text-amber-800", dot: "bg-amber-500" },
   AUTO_RESOLVING: { label: "Auto-resolving", color: "border-orange-300 bg-orange-100 text-orange-800", dot: "bg-orange-500" },
   TRUE_EVIDENCE_GAP: { label: "Genuine gap", color: "border-red-300 bg-red-100 text-red-800", dot: "bg-red-500" },
+  ENFORCED_BY_PACKAGE: { label: "Enforced by the package", color: "border-sky-300 bg-sky-100 text-sky-800", dot: "bg-sky-500" },
+  PACKAGE_RULE_VIOLATION: { label: "Package rule broken", color: "border-red-300 bg-red-100 text-red-800", dot: "bg-red-500" },
   STALE_OR_INVALIDATED: { label: "Stale or invalidated", color: "border-slate-300 bg-slate-100 text-slate-800", dot: "bg-slate-500" },
 };
 
@@ -209,10 +226,18 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
   const progressPct = Math.round(data.weightedProgressRatio * 100);
   // One definition of "unresolved", shared by the stat tile, the filter chip
   // and the filter predicate, so the three can never disagree.
-  const unresolvedCount = data.trueEvidenceGaps + data.staleOrInvalidated;
+  // A broken package rule is genuinely unresolved and blocks release, so it is
+  // counted here. An ENFORCED_BY_PACKAGE row is not: nothing is being asked of
+  // the owner, and counting it as a gap is exactly what this panel used to do
+  // wrong.
+  const unresolvedCount = data.trueEvidenceGaps + data.staleOrInvalidated + (data.packageRuleViolations ?? 0);
 
   const filteredRows = data.rows.filter((row) => {
-    if (filter === "UNRESOLVED") return row.automationState === "TRUE_EVIDENCE_GAP" || row.automationState === "STALE_OR_INVALIDATED";
+    if (filter === "UNRESOLVED") {
+      return row.automationState === "TRUE_EVIDENCE_GAP"
+        || row.automationState === "STALE_OR_INVALIDATED"
+        || row.automationState === "PACKAGE_RULE_VIOLATION";
+    }
     if (filter === "PARTIAL") return row.automationState === "PARTIALLY_VERIFIED";
     if (filter === "COVERED") return row.automationState === "FULLY_VERIFIED";
     return true;
@@ -250,13 +275,19 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
       </div>
 
       <div className="border-b border-blue-100 bg-blue-50 px-5 py-2 text-xs text-blue-800">
-        {data.trueEvidenceGaps === 0 && data.sourceProcessing === 0 && data.partiallyCovered === 0
+        {data.trueEvidenceGaps === 0 && data.sourceProcessing === 0 && data.partiallyCovered === 0 && (data.packageRuleViolations ?? 0) === 0
           ? "Verified and ready. Only persisted, current, source-grounded links count toward release; no confirmation click is required."
           : coveragePct > 0
             ? data.sourceProcessing > 0
               ? "Partially verified. Durable automatic resolution is running; release stays fail-closed until every required provenance check passes."
               : data.partiallyCovered > 0 && data.trueEvidenceGaps === 0 && data.staleOrInvalidated === 0
-                ? `Partial evidence exists for ${data.partiallyCovered} requirement(s), but it is not release-qualified. Strengthen it with eligible source-backed evidence; release remains blocked.`
+                // "Strengthen it with eligible source-backed evidence" named
+                // neither the record nor the shortfall. A vault link only
+                // settles at PARTIAL when a constraint the tender states is
+                // absent from the record, and each row's next action now names
+                // exactly which one, so the banner points at the rows instead
+                // of repeating an instruction nobody can act on.
+                ? `${data.partiallyCovered} requirement(s) are linked to a Company Vault record that does not carry every detail this tender asks for. Each row below names the missing detail; release stays blocked until it is present.`
                 : "Partially verified. Genuine evidence gaps or stale evidence remain; release stays fail-closed until they are resolved."
             : data.sourceProcessing > 0
               ? "Durable automatic resolution is running."
@@ -271,12 +302,22 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
       )}
 
 
-      <div className="grid grid-cols-2 gap-px border-b border-gray-100 bg-gray-100 text-center text-xs sm:grid-cols-4">
+      {/*
+        One tile per automationState, with the two unresolved states sharing a
+        tile that is named after both. Every row on screen is counted in exactly
+        one tile: FULLY_VERIFIED, PARTIALLY_VERIFIED, AUTO_RESOLVING,
+        ENFORCED_BY_PACKAGE, and the TRUE_EVIDENCE_GAP + STALE_OR_INVALIDATED +
+        PACKAGE_RULE_VIOLATION union. Adding a row state without a tile is how
+        the tiles previously summed to fewer than the rows on screen.
+      */}
+      <div className="grid grid-cols-2 gap-px border-b border-gray-100 bg-gray-100 text-center text-xs sm:grid-cols-5">
         {[
           { label: "Release-qualified", value: data.fullyCovered, color: "text-green-700" },
           { label: "Partial", value: data.partiallyCovered, color: "text-amber-800" },
           { label: "Automatic verification", value: data.sourceProcessing, color: "text-orange-700" },
-          // Counts BOTH unresolved states, matching the filter chip below.
+          // Submission rules the package answers by itself. Never an owner ask.
+          { label: "Enforced by the package", value: data.packageEnforcedRules ?? 0, color: "text-sky-700" },
+          // Counts ALL unresolved states, matching the filter chip below.
           // Naming this tile "Genuine gaps" while the chip counted genuine gaps
           // plus stale evidence meant the same words carried two numbers, and
           // the four tiles summed to fewer than the rows on screen.
@@ -288,6 +329,21 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
           </div>
         ))}
       </div>
+
+      {(data.packageEnforcedRules ?? 0) > 0 && (
+        <div className="border-b border-sky-100 bg-sky-50 px-5 py-2 text-xs text-sky-800">
+          {data.packageEnforcedRules} mandatory requirement(s) are submission RULES — financial separation, single-file
+          consolidation, file format or file naming. They are verified by observing the package the app produces, not by
+          any document you supply, so they are never counted as evidence gaps and never ask you for an upload.
+        </div>
+      )}
+
+      {(data.packageRuleViolations ?? 0) > 0 && (
+        <div role="status" aria-live="polite" className="border-b border-red-100 bg-red-50 px-5 py-2 text-xs text-red-800">
+          {data.packageRuleViolations} submission rule(s) are broken by the current package. Release stays blocked. These
+          are packaging defects to correct in the package itself — no evidence upload can resolve them.
+        </div>
+      )}
 
       {data.sourceProcessing > 0 && (
         <div role="status" aria-live="polite" className="flex items-start gap-1 border-b border-orange-100 bg-orange-50 px-5 py-2 text-xs text-orange-800">
@@ -390,12 +446,33 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
                     </div>
 
                     <div>
-                      <p className="mb-1 text-xs font-medium uppercase tracking-wide text-gray-600">Persisted evidence links ({row.evidenceLinks.length})</p>
+                      <p className="mb-1 text-xs font-medium uppercase tracking-wide text-gray-600">
+                        {row.automationState === "ENFORCED_BY_PACKAGE" || row.automationState === "PACKAGE_RULE_VIOLATION"
+                          ? `Package observation (${row.evidenceLinks.length} persisted link${row.evidenceLinks.length === 1 ? "" : "s"})`
+                          : `Persisted evidence links (${row.evidenceLinks.length})`}
+                      </p>
                       {row.evidenceLinks.length === 0 ? (
-                        <p className={`text-xs ${row.automationState === "TRUE_EVIDENCE_GAP" ? "text-red-700" : "text-orange-800"}`}>
-                          {row.automationState === "TRUE_EVIDENCE_GAP"
-                            ? "Automatic verification incomplete. Current company-owned bytes do not yet provide eligible evidence for this requirement."
-                            : "Automatic evidence selection is waiting for source grounding or dependent generated bytes."}
+                        <p className={`text-xs ${
+                          row.automationState === "TRUE_EVIDENCE_GAP" || row.automationState === "PACKAGE_RULE_VIOLATION"
+                            ? "text-red-700"
+                            : row.automationState === "ENFORCED_BY_PACKAGE"
+                              ? "text-sky-800"
+                              : "text-orange-800"
+                        }`}>
+                          {/*
+                            A package rule is answered by the submission, not by a
+                            record. Telling the owner that "company-owned bytes do not
+                            provide eligible evidence" for "Financial Proposal Omission"
+                            asks for something that cannot exist. State what the package
+                            shows instead — nextAction carries the observed verdict.
+                          */}
+                          {row.automationState === "PACKAGE_RULE_VIOLATION"
+                            ? "This is a rule the submission must obey, and the current package breaks it. No evidence upload can fix it — the package must change."
+                            : row.automationState === "ENFORCED_BY_PACKAGE"
+                              ? "This is a rule the submission must obey, not a document to supply. It is verified by observing the produced package, so no evidence upload is expected."
+                              : row.automationState === "TRUE_EVIDENCE_GAP"
+                                ? "Automatic verification incomplete. Current company-owned bytes do not yet provide eligible evidence for this requirement."
+                                : "Automatic evidence selection is waiting for source grounding or dependent generated bytes."}
                         </p>
                       ) : (
                         <ul className="space-y-1.5">

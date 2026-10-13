@@ -295,7 +295,8 @@ describe("GeneratedDocument creators — ACTIVE-only lookups + graceful P2002 (s
   });
 
   it("generate-missing-plan-files: ACTIVE-only fallback lookup + P2002 convergence instead of a 500", () => {
-    const src = readFileSync("app/api/tenders/[id]/generate-missing-plan-files/route.ts", "utf8");
+    const src = readFileSync("app/api/tenders/[id]/generate-missing-plan-files/route.ts", "utf8")
+      + readFileSync("lib/engine/missing-plan-file-generation.ts", "utf8");
     const activeFilters = src.match(/generationStatus: \{ not: "SUPERSEDED" \}/g) ?? [];
     assert.ok(activeFilters.length >= 3, "all lookups (primary, fallback, P2002 winner) must exclude SUPERSEDED rows");
     assert.ok(src.includes('(createErr as { code?: string })?.code === "P2002"'), "create race must be caught");

@@ -29,7 +29,7 @@ const currentnessSrc = readFileSync("lib/engine/tender-currentness.ts", "utf8");
 const aiEnvSrc = readFileSync("lib/ai-environment-readiness.ts", "utf8");
 const systemSrc = readFileSync("lib/system-readiness.ts", "utf8");
 
-const EXPECTED_ORDER = ["zai", "cerebras", "mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
+const EXPECTED_ORDER = ["gemini", "groq", "mistral", "zai", "cerebras", "openrouter", "openai", "together", "deepseek", "anthropic"];
 
 describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
   describe("dashboard critical-blockers count uses canonical currentness", () => {
@@ -131,8 +131,11 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
       assert.match(systemSrc, /CANONICAL_AI_PROVIDER_ORDER/);
     });
 
-    it("lib/system-readiness.ts uses REQUIRED_PROVIDER_ORDER from the canonical names", () => {
-      assert.match(systemSrc, /REQUIRED_PROVIDER_ORDER.*CANONICAL_AI_PROVIDER_DISPLAY_NAMES/);
+    it("lib/system-readiness.ts derives REQUIRED_PROVIDER_ORDER from the ACTIVE chain", () => {
+      // Previously derived from CANONICAL_AI_PROVIDER_DISPLAY_NAMES, i.e. all
+      // ten. Under zero-paid that told an operator to configure five providers
+      // the app is forbidden to contact.
+      assert.match(systemSrc, /REQUIRED_PROVIDER_ORDER\s*=\s*getAutomaticProviderOrder\(\)/);
     });
 
     it("the registry catalog defines Anthropic as the last provider", () => {
@@ -369,12 +372,12 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
     it("ready is false when no AI provider is configured", () => {
       const saved: Record<string, string | undefined> = {};
       const apiKeys = [
-        "ZAI_API_KEY",
-        "CEREBRAS_API_KEY",
-        "MISTRAL_API_KEY",
-        "GROQ_API_KEY",
-        "OPENROUTER_API_KEY",
         "GEMINI_API_KEY",
+        "GROQ_API_KEY",
+        "MISTRAL_API_KEY",
+        "ZAI_API_KEY",
+        "OPENROUTER_API_KEY",
+        "CEREBRAS_API_KEY",
         "OPENAI_API_KEY",
         "TOGETHER_API_KEY",
         "DEEPSEEK_API_KEY",
@@ -428,12 +431,12 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
     it("reports CRITICAL ai_providers check when no provider configured", async () => {
       const saved: Record<string, string | undefined> = {};
       const apiKeys = [
-        "ZAI_API_KEY",
-        "CEREBRAS_API_KEY",
-        "MISTRAL_API_KEY",
-        "GROQ_API_KEY",
-        "OPENROUTER_API_KEY",
         "GEMINI_API_KEY",
+        "GROQ_API_KEY",
+        "MISTRAL_API_KEY",
+        "ZAI_API_KEY",
+        "OPENROUTER_API_KEY",
+        "CEREBRAS_API_KEY",
         "OPENAI_API_KEY",
         "TOGETHER_API_KEY",
         "DEEPSEEK_API_KEY",
@@ -469,8 +472,16 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
       }
     });
 
-    it("REQUIRED_PROVIDER_ORDER matches CANONICAL order exactly", () => {
-      assert.ok(/REQUIRED_PROVIDER_ORDER\s*=\s*CANONICAL_AI_PROVIDER_DISPLAY_NAMES/.test(systemSrc));
+    it("REQUIRED_PROVIDER_ORDER matches the ACTIVE automatic chain exactly", () => {
+      assert.ok(/REQUIRED_PROVIDER_ORDER\s*=\s*getAutomaticProviderOrder\(\)/.test(systemSrc));
+    });
+
+    it("the AI readiness check requires a runtime-verified provider, not just a key", () => {
+      // It used to pass the moment any provider had a key, so production
+      // readiness reported green on an environment where every provider
+      // rejected every request — green exactly when it needed to be informative.
+      assert.match(systemSrc, /aiHealth\.state === "healthy" \? "OK"/);
+      assert.match(systemSrc, /aiHealth\.state === "degraded" \? "WARNING"/);
     });
   });
 

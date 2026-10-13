@@ -73,9 +73,13 @@ describe("canonical evidence coverage (lib/engine/requirement-evidence-profile)"
 // readinessScore is derived exclusively from the gated evaluateBidDecision()
 // result and never reads the tender.readinessScore column.
 describe("canonical Tender Release State never reads the stale tender.readinessScore column", () => {
-  it("readinessScore is derived from the gated bid-decision result, not a scalar column", () => {
+  it("readinessScore is the strict final-submission gate's computed score, not a scalar column", () => {
+    // It was the bid-decision score, shown as "Readiness score 84/100" beside
+    // an export readiness of 60 for the same tender (Pharo, 2026-10-11). The
+    // bid score is now its own field; readinessScore is the one /export reports.
     const source = readFileSync("lib/engine/tender-release-state.ts", "utf8");
-    assert.match(source, /readinessScore = decision\.score/);
+    assert.match(source, /readinessScore: number \| null = readinessCalculable \? finalSubmission\.summary\.readinessScore : null/);
+    assert.match(source, /bidScore = decision\.score/);
     assert.doesNotMatch(source, /tender\.readinessScore/);
   });
 });

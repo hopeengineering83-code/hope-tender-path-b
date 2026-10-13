@@ -18,6 +18,7 @@ import {
   validatePdfBytes,
 } from "../lib/engine/workflow/pdf-finalizer";
 import { assembleFinalSubmissionZip } from "../lib/engine/final-zip-assembly";
+import { generatedDocumentVisibleText } from "../lib/engine/generated-document-text";
 
 async function makeDocxBase64(bodyText: string): Promise<string> {
   const JSZip = (await import("jszip")).default;
@@ -106,6 +107,13 @@ describe("pdf-finalizer — fail-closed required-PDF finalization", () => {
         assert.equal(result.bytes.subarray(0, 4).toString("latin1"), "%PDF", "bytes must start with %PDF");
         assert.ok(result.extractedCharCount > 100, "must report real extracted text length");
         assert.equal(result.sourceDocumentId, "doc-1");
+        const visibleText = await generatedDocumentVisibleText({
+          fileContent: result.bytes.toString("base64"),
+          exactFileName: result.fileName,
+          contentMimeType: "application/pdf",
+        });
+        assert.match(visibleText ?? "", /water and sanitation infrastructure/i,
+          "the finalized PDF itself must be reopened and expose its visible text");
       }
     });
   });

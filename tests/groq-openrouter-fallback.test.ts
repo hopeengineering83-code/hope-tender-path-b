@@ -31,11 +31,11 @@ function clearEnv() {
 describe("Groq provider config", () => {
   beforeEach(() => { clearEnv(); resetProviderHealth(); });
 
-  it("detects configuration and model overrides", () => {
+  it("fails closed without an explicitly configured proven-free model", () => {
     assert.equal(isGroqConfigured(), false);
     process.env.GROQ_API_KEY = "gsk-test-1234567890";
-    assert.equal(isGroqConfigured(), true);
-    assert.equal(getGroqModel(), "llama-3.3-70b-versatile");
+    assert.equal(isGroqConfigured(), false);
+    assert.equal(getGroqModel(), "");
     process.env.GROQ_PROPOSAL_MODEL = "llama-3.1-8b-instant";
     assert.equal(getGroqModel(), "llama-3.1-8b-instant");
   });
@@ -44,23 +44,22 @@ describe("Groq provider config", () => {
 describe("OpenRouter provider config", () => {
   beforeEach(() => { clearEnv(); resetProviderHealth(); });
 
-  it("requires an explicit :free model and rejects openrouter/auto + non-free", () => {
-    // With a key but no model, OpenRouter is NOT configured (would risk paid use).
+  it("requires a configured model and preserves its exact identifier", () => {
     process.env.OPENROUTER_API_KEY = "sk-or-test-1234567890";
     assert.equal(isOpenRouterConfigured(), false);
     assert.equal(getOpenRouterModel(), null);
 
-    // openrouter/auto is rejected.
+    // Configured identifiers are used exactly, without policy rewriting.
     process.env.OPENROUTER_PROPOSAL_MODEL = "openrouter/auto";
-    assert.equal(isOpenRouterConfigured(), false);
-    assert.equal(getOpenRouterModel(), null);
+    assert.equal(isOpenRouterConfigured(), true);
+    assert.equal(getOpenRouterModel(), "openrouter/auto");
 
-    // A non-:free model is rejected.
+    // A model does not need a custom suffix.
     process.env.OPENROUTER_PROPOSAL_MODEL = "openai/gpt-4o-mini";
-    assert.equal(isOpenRouterConfigured(), false);
-    assert.equal(getOpenRouterModel(), null);
+    assert.equal(isOpenRouterConfigured(), true);
+    assert.equal(getOpenRouterModel(), "openai/gpt-4o-mini");
 
-    // An explicit :free model is accepted.
+    // A :free identifier is also preserved when explicitly configured.
     process.env.OPENROUTER_PROPOSAL_MODEL = "meta-llama/llama-3.3-70b-instruct:free";
     assert.equal(isOpenRouterConfigured(), true);
     assert.equal(getOpenRouterModel(), "meta-llama/llama-3.3-70b-instruct:free");

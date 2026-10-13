@@ -27,6 +27,9 @@
 // Acceptance: any change to readiness logic must go through this helper.
 // Consumers must NEVER inline blockers/advisory checks that conflict.
 
+import { isAwaitingOwnerPricing, isFinancialProposalFile, OWNER_PRICING_ACTION } from "./owner-pricing-stop";
+import { resolvePackageRole } from "./artifact-quality-schema";
+import { DEFAULT_REQUIRED_SECTIONS_BY_TYPE as PACKAGE_SECTION_TABLE } from "./export-readiness";
 import type { PrismaClient } from "@prisma/client";
 import {
   checkFullExportReadiness,
@@ -48,15 +51,16 @@ import {
 } from "./submission-plan";
 import { getCurrentConfirmedBuildPlan, type BuildPlanItem } from "./build-plan";
 import { detectSubmissionPackageMode } from "./submission-package-mode";
-import { assessGeneratedDocumentQuality } from "./document-quality-gate";
+import { assessCurrentDocumentQualityBatch, countQualityFailed } from "./current-document-quality";
+import { logger } from "../observability";
 import { assessTenderMetadataCompleteness } from "./tender-metadata-completeness";
 import { resolveCanonicalFieldState } from "./canonical-field-state";
 import { getTenderFactLedgerSnapshot } from "./tender-facts-ledger-service";
-import { detectAnalysisSourceWithApproval, type AnalysisSource } from "./analysis-source";
+import { resolveCanonicalAnalysisSource, type AnalysisSource } from "./analysis-source";
 import { computeReadinessScore } from "./readiness-scoring";
 import { isStrongSupportLevel, normalizeSupportLevel } from "./requirement-evidence-profile";
 import { isExtractionAcceptableForExport } from "./extraction-quality-gate";
-import { extractDocxVisibleText } from "./export-readiness";
+import { hasSourceEvaluationCriteria } from "./evaluation-criteria-presence";
 
 export type FinalReadinessSeverity = "HIGH" | "MEDIUM" | "LOW";
 
@@ -149,8 +153,52 @@ export type FinalReadinessSummary = {
   primaryFixAction: string | null;
 };
 
+/**
+ * Where the package stands. A generated proposal can be complete while the
+ * submission is not: the originals the tender asks for (licences, signed
+ * declarations, tender-issued forms …) are the owner's to attach, and the app
+ * must not claim SUBMISSION_READY until they are actually in the package.
+ */
+export type FinalPackageStatus = "SUBMISSION_READY" | "PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED" | "IN_PROGRESS";
+
+export const PROPOSAL_COMPLETE_LABEL = "PROPOSAL COMPLETE — MANUAL ORIGINAL ATTACHMENTS REQUIRED";
+
+/**
+ * The package status, from the export gate's verdict. The one place it is
+ * derived: the export-readiness route, the download and the AUTO_FINALIZE job
+ * all report this, so no surface can call SUBMISSION READY what another calls
+ * proposal-complete or in progress.
+ */
+export function finalPackageStatus(verdict: { ok: boolean; proposalComplete?: boolean | null }): FinalPackageStatus {
+  return verdict.ok ? "SUBMISSION_READY" : verdict.proposalComplete ? "PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED" : "IN_PROGRESS";
+}
+
+/**
+ * The download?… queries that deliver what a package verdict allows: the final
+ * ZIP for SUBMISSION_READY, the proposal package (scope=proposal) when only
+ * owner originals remain, nothing while in progress. One per non-empty
+ * envelope when the tender requires separate sealed envelopes, because the
+ * download route refuses a mixed archive for such a tender.
+ */
+export function packageDownloadQueries(verdict: {
+  packageStatus: FinalPackageStatus;
+  summary: { strictTwoEnvelope: boolean; envelopeBreakdown: Record<SubmissionEnvelope, number> };
+}): string[] {
+  if (verdict.packageStatus === "IN_PROGRESS") return [];
+  const scope = verdict.packageStatus === "SUBMISSION_READY" ? "" : "&scope=proposal";
+  if (!verdict.summary.strictTwoEnvelope) return [`?type=zip${scope}`];
+  return (["TECHNICAL", "FINANCIAL", "ADMIN"] as const)
+    .filter((envelope) => (verdict.summary.envelopeBreakdown?.[envelope] ?? 0) > 0)
+    .map((envelope) => `?type=zip${scope}&envelope=${envelope.toLowerCase()}`);
+}
+
 export type FinalSubmissionReadiness = {
   ok: boolean;
+  /** Every document the app produces is export-ready; only owner attachments remain (or nothing remains). */
+  proposalComplete: boolean;
+  packageStatus: FinalPackageStatus;
+  /** What the owner attaches, and where. */
+  ownerAttachments: import("./owner-attachment-checklist").OwnerAttachmentChecklist | null;
   tender: { id: string; title: string; status: string; stage: string; readinessScore: number };
   documentBlockers: FinalReadinessDocumentBlocker[];
   tenderLevelBlockers: FinalReadinessTenderBlocker[];
@@ -360,6 +408,38 @@ export function parseAdvisoryGapTitle(title: string): string | null {
   return title.slice(ADVISORY_GAP_PREFIX.length);
 }
 
+/**
+ * Give the quality scorer the bytes it is about to judge.
+ *
+ * A document row selected without `fileContent` has no visible text to
+ * extract, and a scorer handed no text returns QUALITY_FAILED — a verdict
+ * about content quality reached without consulting any content. Rows that
+ * already carry their bytes, or that live in external storage (the scorer
+ * reads those through the storage adapter), are returned untouched.
+ *
+ * Scoped to the final export candidates, which is a handful of rows, so the
+ * reason the projection omits blobs everywhere else still holds.
+ */
+async function loadVisibleTextInputsForQuality<T extends { id: string; fileContent?: string | null; storagePath?: string | null }>(
+  client: PrismaClient,
+  candidates: T[],
+): Promise<T[]> {
+  const needsBytes = candidates.filter(
+    (doc) => !doc.fileContent && !(doc.storagePath && doc.storagePath.trim().length > 0),
+  );
+  if (needsBytes.length === 0) return candidates;
+
+  const loaded = await client.generatedDocument.findMany({
+    where: { id: { in: needsBytes.map((doc) => doc.id) } },
+    select: { id: true, fileContent: true },
+  }).catch(() => [] as Array<{ id: string; fileContent: string | null }>);
+  const byId = new Map(loaded.map((row) => [row.id, row.fileContent]));
+
+  return candidates.map((doc) =>
+    byId.has(doc.id) ? ({ ...doc, fileContent: byId.get(doc.id) ?? null } as T) : doc,
+  );
+}
+
 async function loadAdvisoryResolutions(client: PrismaClient, tenderId: string): Promise<Map<string, { resolved: boolean; note: string | null }>> {
   const rows = await client.complianceGap.findMany({
     where: { tenderId, severity: "ADVISORY", title: { startsWith: ADVISORY_GAP_PREFIX } },
@@ -521,7 +601,7 @@ export async function getFinalSubmissionReadiness(
       },
       generatedDocuments: {
         where: { generationStatus: { not: "SUPERSEDED" } },
-        orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
+        orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }],
         select: {
           id: true,
           name: true,
@@ -557,6 +637,11 @@ export async function getFinalSubmissionReadiness(
       // emit the ANALYSIS_FROM_PARTIAL_EXTRACTION blocker when AI analysis ran on
       // partial extraction. Without this field the blocker silently never fires.
       analysisExtractionStatus: true,
+      // Selected evidence, so the quality gate can tell "cites nothing" apart
+      // from "was told nothing to look for". Same population validate.ts uses
+      // (isSelected: true) so the two gates cannot disagree about one document.
+      expertMatches: { where: { isSelected: true }, select: { expert: { select: { fullName: true } } } },
+      projectMatches: { where: { isSelected: true }, select: { project: { select: { name: true } } } },
       // Extraction metrics — needed by isExtractionAcceptableForExport in the
       // export readiness gate so the panel shows the blocker before export.
       files: {
@@ -665,7 +750,21 @@ export async function getFinalSubmissionReadiness(
   // is no trusted scope at all, so the no-plan blockers below fire.
   const hasExplicitPlanScope = confirmedPlan.ok;
   const missingPlan = findMissingGeneratedDocuments(plan, finalCandidates);
-  const extraPlan = findExtraGeneratedDocuments(plan, finalCandidates);
+  // Internal section drafts are not outside-plan client documents. See
+  // lib/engine/artifact-quality-schema.ts: an artifact named after one of its
+  // own submission's sections is assembly material the app produced, so it is
+  // excluded from the package rather than blocking it. Anything unplanned that
+  // is NOT a recognizable component still blocks.
+  const extraPlan = findExtraGeneratedDocuments(plan, finalCandidates).filter((doc) => {
+    const role = resolvePackageRole({
+      documentName: (doc as { name?: string | null }).name ?? null,
+      fileName: (doc as { exactFileName?: string | null }).exactFileName ?? null,
+      documentType: (doc as { documentType?: string | null }).documentType ?? null,
+      requiredSectionsByType: PACKAGE_SECTION_TABLE,
+      plannedDeliveryNames: planItems.map((f) => f.exactFileName),
+    }).role;
+    return role !== "INTERNAL_COMPONENT";
+  });
   const planNames = new Set(planItems.map((f) => f.exactFileName.toLowerCase().trim()));
   const actualNames = finalCandidates.map((d) => (d.exactFileName ?? d.name ?? "").toLowerCase().trim()).filter(Boolean);
   const nameMismatch = requiredPlanCount > 0 && actualNames.some((n) => !planNames.has(n));
@@ -707,35 +806,73 @@ export async function getFinalSubmissionReadiness(
   // otherwise the scorer would run against base64 gibberish and never
   // match placeholder/AI-trace patterns, silently skipping the quality gate
   // for all generated DOCX files.
-  const qualityReports: Array<{ doc: any; report: ReturnType<typeof assessGeneratedDocumentQuality> }> = [];
-  for (const doc of finalCandidates) {
-    let visible: string | null = null;
-    if (typeof doc.fileContent === "string" && doc.fileContent.length < 2_000_000) {
-      const fileName = doc.exactFileName ?? doc.name ?? "";
-      if (fileName.toLowerCase().endsWith(".docx")) {
-        // Extract visible text from base64 DOCX for accurate quality scoring.
-        visible = await extractDocxVisibleText(doc.fileContent, fileName);
-      }
-      // For non-DOCX files (PDF, etc.), visible stays null — the quality
-      // scorer will skip visible-text checks but the file-signature check
-      // and output-state machine still enforce format correctness.
-      if (!visible && !fileName.toLowerCase().endsWith(".docx")) {
-        // Plain-text content (legacy or markdown) — use as-is.
-        visible = doc.fileContent;
-      }
-    }
-    qualityReports.push({
-      doc,
-      report: assessGeneratedDocumentQuality({
-        doc,
-        visibleText: visible,
-        rawFileContent: doc.fileContent,
-        hasStoragePath: Boolean(doc.storagePath && doc.storagePath.length > 0),
-        requirements: tender.requirements,
-      }),
+  // Scored through lib/engine/current-document-quality.ts so the Document
+  // Validator panel and this gate cannot score the same document differently.
+  //
+  // The bytes must be loaded for exactly these candidates before scoring.
+  //
+  // `fileContent` is selected only when the caller asked for it, and every
+  // readiness-style caller passes requireFileContent=false to avoid pulling
+  // large blobs. The scorer then received rows with no content, extracted no
+  // visible text, and returned QUALITY_FAILED — for having read nothing. So
+  // the export gate reported "3 generated document(s) failed the quality gate"
+  // about documents the Document Validator panel, which loads the bytes,
+  // scores 100/100 PASSED.
+  //
+  // The two surfaces already share the scorer precisely so they cannot
+  // disagree; they were sharing the function and not the input. The
+  // disagreement only appears at the end of the pipeline, once documents are
+  // validated and therefore become final candidates, which is exactly when it
+  // blocks the ZIP — and it blocks with a verdict about content quality that no
+  // content was consulted for.
+  //
+  // This loads only the final candidates, not every generated document, so the
+  // blob-size reason the projection exists for still holds everywhere else.
+  const qualityInputs = await loadVisibleTextInputsForQuality(client, finalCandidates as any[]);
+  const qualityReports = await assessCurrentDocumentQualityBatch(qualityInputs as any[], tender.requirements, {
+    selectedExpertNames: tender.expertMatches.map((match) => match.expert.fullName),
+    selectedProjectNames: tender.projectMatches.map((match) => match.project.name),
+  });
+  const qualityFailed = countQualityFailed(qualityReports);
+
+  // Name what failed, and why.
+  //
+  // This blocker used to reach the operator — and the logs — as nothing but
+  // "N generated document(s) failed the quality gate". A real run stopped at
+  // AUTO_FINALIZE_NOT_CONVERGED with "0 document blocker(s) and 1
+  // tender-level blocker(s): GENERATED_DOCUMENT_QUALITY_FAILED", and that
+  // sentence is the entire evidence trail: not which document, not its score,
+  // not what was wrong with it. Reconstructing it took reading the bytes by
+  // hand, and the actual cause turned out to be environmental — a PDF whose
+  // text could not be extracted on the deployment scores 10/100 for having
+  // read nothing, which is indistinguishable, from the blocker text alone,
+  // from a genuinely poor document.
+  //
+  // Deliberately metadata only: id, filename, score, status, issue CODES and
+  // whether any visible text was recovered. No document content, no source
+  // text, no credentials — the codes say what is wrong without quoting what
+  // the document says.
+  if (qualityFailed > 0) {
+    logger.warn("[final-readiness] documents failed the quality gate", {
+      tenderId: tender.id,
+      failedCount: qualityFailed,
+      documents: qualityReports
+        .filter(({ report }) => report.recommendedStatus === "QUALITY_FAILED")
+        .map(({ doc, report }) => ({
+          documentId: (doc as { id?: string | null }).id ?? null,
+          fileName: (doc as { exactFileName?: string | null }).exactFileName
+            ?? (doc as { name?: string | null }).name
+            ?? null,
+          format: (doc as { format?: string | null }).format ?? null,
+          score: report.score,
+          recommendedStatus: report.recommendedStatus,
+          wordCount: report.wordCount,
+          // The tell for the environmental case above: bytes present, no text.
+          visibleTextRecovered: report.wordCount > 0,
+          issueCodes: report.issues.map((issue) => issue.code),
+        })),
     });
   }
-  const qualityFailed = qualityReports.filter(({ report }) => report.recommendedStatus === "QUALITY_FAILED").length;
 
   // ── Metadata completeness gate (Part 5) ──────────────────────────────────
   const metadata = assessTenderMetadataCompleteness({
@@ -779,7 +916,12 @@ export async function getFinalSubmissionReadiness(
   });
 
   // ── Analysis-source detection (Part 4) ───────────────────────────────────
-  const analysisSource: AnalysisSource = await detectAnalysisSourceWithApproval(client, opts.tenderId, tender);
+  // Resolver-first: the notes-only detector cannot see an AI analysis that is
+  // proven by AiJob rows but whose notes line predates the canonical wording,
+  // and reports UNKNOWN for it. resolveCanonicalAnalysisSource applies the same
+  // authority (only AI_SUCCEEDED maps to "AI") and falls back to the notes
+  // detector, which fails closed.
+  const analysisSource: AnalysisSource = await resolveCanonicalAnalysisSource(client, opts.tenderId, tender);
 
   // ── Source-reference coverage (used by the readiness score). ────────────
   const sourceReferenceCoverage = tender.requirements.length === 0
@@ -795,6 +937,55 @@ export async function getFinalSubmissionReadiness(
       title: `Required Tender Details are incomplete (${metadata.missingCritical.length} critical field(s) missing${metadata.placeholderCount > 0 ? `, ${metadata.placeholderCount} "Bid-Team to confirm" placeholder(s)` : ""}).`,
       recommendedAction: "Fill the missing critical Tender Details — client/procuring entity, deadline, submission method — before final proposal generation.",
     });
+  }
+  // The originals the tender requires that the app does not produce. They do
+  // not stop the proposal; they stop a claim of SUBMISSION_READY until they
+  // are actually in the package.
+  const { loadOwnerAttachmentChecklist } = await import("./owner-attachment-checklist");
+  const ownerAttachments = await loadOwnerAttachmentChecklist(opts.tenderId, opts.userId, client).catch(() => null);
+  if (ownerAttachments?.mode === "SEPARATE_ATTACHMENTS") {
+    const outstanding = ownerAttachments.items.filter((item) => item.status === "OWNER_TO_ATTACH" && item.kind !== "Tender-issued form");
+    if (outstanding.length > 0) {
+      tenderLevelBlockers.push({
+        category: "OWNER_ATTACHMENTS_REQUIRED",
+        severity: "HIGH",
+        title: `${outstanding.length} original/supporting document(s) the tender requires are compiled manually by the owner: ${outstanding.map((item) => item.kind).join("; ")}.`,
+        recommendedAction: "Attach these original/supporting documents manually when assembling the final submission, in the checklist's order. The App-generated proposal is complete and can be downloaded now.",
+      });
+    }
+  }
+  // A single combined PDF the tender says must contain its annexes must carry
+  // the verified Vault originals (annex-bundle.ts). Missing originals are the
+  // owner's to supply; a file that does not bind the planned set is not final.
+  {
+    const { loadAnnexBundlePlan } = await import("./annex-bundle-loader");
+    const { annexBundleIdentity, readAnnexBundleMarker } = await import("./annex-bundle");
+    const annex = await loadAnnexBundlePlan(opts.tenderId, opts.userId, client).catch(() => null);
+    if (annex?.plan.applies) {
+      const combined = annex.plan.combinedFileName!;
+      if (annex.plan.missing.length > 0) {
+        tenderLevelBlockers.push({
+          category: "COMBINED_FILE_ANNEX_MISSING",
+          severity: "HIGH",
+          title: `"${combined}" must contain the tender's annexes. Not available as verified PDF originals: ${annex.plan.missing.map((m) => `${m.kind} (${m.reason})`).join("; ")}.`,
+          recommendedAction: "Insert each original into the combined file in the checklist's order when assembling the final submission. The App-generated proposal is complete and can be downloaded now. Optional: if you choose to store a verified PDF of an original in the Company Vault (signed where the tender requires), the App can bind it in automatically.",
+        });
+      } else {
+        const row = generatedDocuments.find((doc) => String((doc as { exactFileName?: string | null }).exactFileName ?? "").toLowerCase() === combined.toLowerCase()
+          && typeof (doc as { fileContent?: string | null }).fileContent === "string" && ((doc as { fileContent?: string | null }).fileContent ?? "").length > 0);
+        if (row && annex.plan.parts.length > 0) {
+          const marker = await readAnnexBundleMarker(Buffer.from((row as { fileContent: string }).fileContent, "base64"));
+          if ((marker?.bound ?? []).join(",") !== annexBundleIdentity(annex.plan).join(",")) {
+            tenderLevelBlockers.push({
+              category: "COMBINED_FILE_ANNEXES_NOT_BOUND",
+              severity: "HIGH",
+              title: `"${combined}" does not yet contain every verified annex original the tender requires.`,
+              recommendedAction: "The combined file is rebuilt automatically with the current verified originals; if this persists, re-run Run Engine.",
+            });
+          }
+        }
+      }
+    }
   }
   // Unresolved CRITICAL compliance gaps hard-block final export at the
   // actual download route regardless of category — mirror that here so
@@ -940,14 +1131,10 @@ export async function getFinalSubmissionReadiness(
   // client-name condition under two category codes (verified by a real
   // screenshot showing both blockers rendered together for one issue).
   const effectiveClientName = (tender.clientName ?? "").trim() || (tender.procuringEntityName ?? "").trim();
-  if (!effectiveClientName && !tenderLevelBlockers.some((b) => b.category === "CLIENT_NAME_REQUIRED")) {
-    tenderLevelBlockers.push({
-      category: "CLIENT_NAME_MISSING",
-      severity: "HIGH",
-      title: "Client/procuring entity name is missing or blank.",
-      recommendedAction: "Enter the official procuring entity name in Tender Detail before final export.",
-    });
-  }
+  // Owner policy ABSENT_TENDER_FACT_IS_NOT_REQUIRED: an absent client name is
+  // not a blocker (export-readiness records it as the advisory
+  // CLIENT_NAME_NOT_STATED); a present-but-invalid one still blocks there.
+  void effectiveClientName;
   // Contamination gate — any entity identity field (clientName, legalClientName,
   // donorAgency, implementingAgency) polluted with portal nav text or status
   // banners must block export until corrected.
@@ -1004,7 +1191,10 @@ export async function getFinalSubmissionReadiness(
       category: "SUBMISSION_PLAN_DOCUMENTS_MISSING",
       severity: "HIGH",
       title: `${missingPlan.length} submission plan document(s) have not been generated: ${missingPlan.map((d) => d.exactFileName).join(", ")}.`,
-      recommendedAction: "Generate the missing documents from the Generate Documents panel before attempting final export.",
+      recommendedAction: generatedDocuments.some((row) => isAwaitingOwnerPricing(row))
+        && missingPlan.every((d) => isFinancialProposalFile(String(d.exactFileName ?? ""), String((d as { documentType?: string | null }).documentType ?? "")))
+        ? OWNER_PRICING_ACTION
+        : "Generate the missing documents from the Generate Documents panel before attempting final export.",
     });
   }
   // Hard block when there are generated documents outside the confirmed
@@ -1118,10 +1308,7 @@ export async function getFinalSubmissionReadiness(
   // Per Pillar 6: merged with EVALUATION_CRITERIA_MISSING into one non-blocking
   // advisory. This is no longer a hard blocker — some tenders genuinely have
   // no scoring section. Only surface as advisory, not as a tenderLevelBlocker.
-  const hasEvalCriteria = Boolean(
-    (tender.evaluationMethodology ?? "").trim().length > 20 ||
-    tender.evaluationCriteriaSourceJson,
-  );
+  const hasEvalCriteria = hasSourceEvaluationCriteria(tender);
   if (!hasEvalCriteria) {
     // Advisory only — do NOT push to tenderLevelBlockers
     advisoryWarnings.push({
@@ -1323,10 +1510,30 @@ export async function getFinalSubmissionReadiness(
   // No separate currency authority call needed here.
 
   const ok = readiness.ok && documentBlockers.length === 0 && tenderLevelBlockers.length === 0;
-  const message = buildMessage({ ok, documentBlockers, tenderLevelBlockers, advisoryWarnings });
+  const proposalComplete = ok || isProposalCompleteExceptOwnerAttachments({
+    documentBlockers,
+    tenderLevelBlockers,
+    exportReadyCount: finalCandidates.filter((d) => isExportReady(d)).length,
+    formsAwaitingOriginal: (ownerAttachments?.items ?? []).filter((item) => item.kind === "Tender-issued form").map((item) => item.document),
+    plannedFileNames: generatedDocuments
+      .filter((d) => (d.generationStatus ?? "").toUpperCase() === "PLANNED")
+      .map((d) => String((d as { exactFileName?: string | null }).exactFileName ?? (d as { name?: string | null }).name ?? "")),
+    missingPlanFileNames: missingPlan.map((d) => String(d.exactFileName ?? "")),
+  });
+  const packageStatus: FinalPackageStatus = finalPackageStatus({ ok, proposalComplete });
+  const message = packageStatus === "PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED"
+    ? `${PROPOSAL_COMPLETE_LABEL}. Every document the App generates for this tender is complete and can be downloaded now; ${ownerAttachments?.outstanding ?? 0} original/supporting document(s) are compiled manually by the owner — see the Manual Original Attachment Checklist. The App cannot confirm the externally assembled submission.`
+    : buildMessage({ ok, documentBlockers, tenderLevelBlockers, advisoryWarnings });
+  if (packageStatus === "PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED") {
+    summary.primaryBlockerReason = PROPOSAL_COMPLETE_LABEL;
+    summary.primaryFixAction = "Download the App-generated proposal and attach the listed originals manually when assembling the final submission.";
+  }
 
   return {
     ok,
+    proposalComplete,
+    packageStatus,
+    ownerAttachments,
     tender: {
       id: tender.id,
       title: tender.title,
@@ -1343,6 +1550,34 @@ export async function getFinalSubmissionReadiness(
     message,
     canonicalFields: canonicalExportState.fields,
   };
+}
+
+/** Blocker categories resolved only by the owner attaching an original. */
+const OWNER_ATTACHMENT_CATEGORIES = new Set(["OWNER_ATTACHMENTS_REQUIRED", "COMBINED_FILE_ANNEX_MISSING"]);
+const PLAN_SHORTFALL_CATEGORIES = new Set(["UNGENERATED_PLANNED_DOCUMENTS", "SUBMISSION_PLAN_DOCUMENTS_MISSING"]);
+
+/**
+ * True when every document the app produces is export-ready and every
+ * remaining blocker is an original the owner attaches: a tender-issued form
+ * awaiting its signed original, or an annex the tender requires. A pricing
+ * approval, a failed validation, a grounding gap or anything else keeps the
+ * proposal incomplete.
+ */
+export function isProposalCompleteExceptOwnerAttachments(input: {
+  documentBlockers: Array<{ name: string; fileName: string }>;
+  tenderLevelBlockers: Array<{ category: string }>;
+  exportReadyCount: number;
+  formsAwaitingOriginal: string[];
+  plannedFileNames: string[];
+  missingPlanFileNames: string[];
+}): boolean {
+  if (input.exportReadyCount === 0) return false;
+  if (input.documentBlockers.length === 0 && input.tenderLevelBlockers.length === 0) return false;
+  const forms = new Set(input.formsAwaitingOriginal.map((n) => n.trim().toLowerCase()).filter(Boolean));
+  const isForm = (name: string) => forms.has(name.trim().toLowerCase());
+  const shortfallIsForms = input.plannedFileNames.every(isForm) && input.missingPlanFileNames.every(isForm);
+  return input.documentBlockers.every((b) => isForm(b.fileName) || isForm(b.name))
+    && input.tenderLevelBlockers.every((b) => OWNER_ATTACHMENT_CATEGORIES.has(b.category) || (PLAN_SHORTFALL_CATEGORIES.has(b.category) && shortfallIsForms && forms.size > 0));
 }
 
 // ── pure exports for tests ─────────────────────────────────────────────────

@@ -1,12 +1,14 @@
+import { secretMatches } from "../../../../lib/secret-compare";
 import { NextResponse } from "next/server";
 import { logger } from "../../../../lib/observability";
 import { requireRole, unauthorizedResponse } from "../../../../lib/auth";
 import { completeJob, failJob, rearmDurableStageJob } from "../../../../lib/ai-jobs";
-import { classifyStageRetry, isDurableRetryJobType, isSupersededStageFailure } from "../../../../lib/engine/stage-retry-policy";
+import { classifyStageRetry, isDurableRetryJobType, isSupersededStageFailure, reportedRetryable } from "../../../../lib/engine/stage-retry-policy";
 import { continueSuccessfulAnalysis } from "../../../../lib/ai-jobs/engine-continuation-service";
 import { continueSuccessfulEngineToProposal } from "../../../../lib/ai-jobs/proposal-continuation-service";
+import { ensureAutoFinalizeContinuationJob } from "../../../../lib/ai-jobs/auto-finalize-continuation-job";
 import { claimJobForCaller } from "../../../../lib/job-claim-policy";
-import { scheduleRequestScopedWorkerWake } from "../../../../lib/ai-jobs/request-scoped-worker-wake";
+import { scheduleRequestScopedWorkerWake, scheduleRetryWorkerWake } from "../../../../lib/ai-jobs/request-scoped-worker-wake";
 import { getHandler, isTerminalHandlerResult } from "../../../../lib/ai-job-handlers";
 import { parseJobTypeFilter, SUPPORTED_JOB_TYPES } from "../../../../lib/job-type-policy";
 import { prisma, prismaReady } from "../../../../lib/prisma";
@@ -24,6 +26,15 @@ import { publicJobFailureMessage } from "../../../../lib/prisma-schema-compatibi
 // persistence reserve below it and continue to pass an absolute deadline into
 // every claimed handler.
 export const maxDuration = 300;
+
+/** Working time a retried stage needs after its back-off for the wait to be worth it. */
+const RETRY_MIN_WORK_AFTER_WAIT_MS = 60_000;
+const RETRY_WAIT_MARGIN_MS = 500;
+
+/** True when an in-invocation wait for a re-armed job still leaves a working window. */
+function shouldWaitOutRetry(retryWaitMs: number, remainingMs: number): boolean {
+  return retryWaitMs > 0 && remainingMs - retryWaitMs - RETRY_WAIT_MARGIN_MS >= RETRY_MIN_WORK_AFTER_WAIT_MS;
+}
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
@@ -33,11 +44,11 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   const workerSecret = req.headers.get("x-worker-secret");
   const aiJobsSecret = process.env.AI_JOBS_WORKER_SECRET;
-  const isWorkerSecret = Boolean(aiJobsSecret && aiJobsSecret.length >= 16 && workerSecret === aiJobsSecret);
+  const isWorkerSecret = Boolean(aiJobsSecret && aiJobsSecret.length >= 16 && secretMatches(workerSecret, aiJobsSecret));
 
   const authHeader = req.headers.get("authorization") ?? "";
   const cronSecret = process.env.CRON_SECRET;
-  const isVercelCron = Boolean(cronSecret && cronSecret.length >= 16 && authHeader === `Bearer ${cronSecret}`);
+  const isVercelCron = Boolean(cronSecret && cronSecret.length >= 16 && secretMatches(authHeader, `Bearer ${cronSecret}`));
   const isAutomatedCaller = isWorkerSecret || isVercelCron;
 
   let userId: string | null = null;
@@ -111,6 +122,9 @@ export async function POST(req: Request) {
       if (recovery.recovered > 0) {
         logger.error(`[run-next] Stuck-job recovery failed ${recovery.recovered} job(s): ${recovery.ids.join(", ")}`);
       }
+      if (recovery.rearmed > 0) {
+        logger.warn(`[run-next] Stuck-job recovery re-armed ${recovery.rearmed} durable stage(s): ${recovery.rearmedIds.join(", ")}`);
+      }
     } catch (err) {
       logger.error(`[run-next] Stuck-job recovery sweep failed: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -138,6 +152,14 @@ export async function POST(req: Request) {
   const PERSISTENCE_RESERVE_MS = 5_000;
   const absoluteDeadline = startTime + maxRunMs;
 
+  // The stage this invocation is currently draining. It starts as the caller's
+  // filter and may advance to a continuation this worker itself enqueued — see
+  // the hand-off note at the end of the claim loop.
+  let activeJobType = parsedJobType.value;
+  // A durable job this invocation could not wait for (its back-off outlasts
+  // the budget left). Handed to a fresh worker after the loop.
+  let pendingRetry: { jobType: string; tenderId: string | null } | null = null;
+
   while (Date.now() - startTime < maxRunMs) {
     // DIRECTIVE 5: Don't start a new job when insufficient budget remains.
     const remainingMs = absoluteDeadline - Date.now();
@@ -146,13 +168,48 @@ export async function POST(req: Request) {
       break;
     }
 
+    // Set when this iteration re-arms the job it ran for a short retry; read
+    // at the end of the iteration to decide whether to wait it out here.
+    let retryWaitMs: number | null = null;
+
     const claimed = await claimJobForCaller({
-      jobType: parsedJobType.value,
+      jobType: activeJobType,
       tenderId,
       userId: userId ?? undefined,
       global: isAutomatedCaller,
     });
-    if (!claimed) break;
+    if (!claimed) {
+      // Nothing is due now. A job re-armed for a short back-off is not
+      // claimable until its nextAttemptAt; wait for it here when it fits,
+      // otherwise wait what this invocation can and hand it on. Without this a
+      // retry scheduled near the end of an invocation waited for the external
+      // drain, hours away with the browser closed.
+      const waiting = await prisma.aiJob.findFirst({
+        where: {
+          status: "QUEUED",
+          nextAttemptAt: { gt: new Date() },
+          ...(activeJobType ? { jobType: activeJobType } : {}),
+          ...(tenderId ? { tenderId } : {}),
+          ...(userId && !isAutomatedCaller ? { userId } : {}),
+        },
+        orderBy: { nextAttemptAt: "asc" },
+        select: { jobType: true, tenderId: true, nextAttemptAt: true },
+      }).catch(() => null);
+      if (waiting?.nextAttemptAt) {
+        const waitMs = waiting.nextAttemptAt.getTime() - Date.now();
+        const remaining = absoluteDeadline - Date.now();
+        if (shouldWaitOutRetry(waitMs, remaining)) {
+          await new Promise((resolve) => setTimeout(resolve, Math.max(0, waitMs) + RETRY_WAIT_MARGIN_MS));
+          continue;
+        }
+        pendingRetry = { jobType: waiting.jobType, tenderId: waiting.tenderId };
+        // Spend this invocation's spare time waiting, so the next one starts
+        // closer to the job's turn instead of chaining immediately.
+        const idle = Math.min(Math.max(0, waitMs), remaining - MINIMUM_REMAINING_BUDGET_MS);
+        if (idle > 0) await new Promise((resolve) => setTimeout(resolve, idle));
+      }
+      break;
+    }
 
     const handler = getHandler(claimed.jobType);
     if (!handler) {
@@ -180,7 +237,9 @@ export async function POST(req: Request) {
         jobId: claimed.id,
         userId: claimed.userId,
         tenderId: claimed.tenderId,
-        input: { ...claimed.input, retryCount: claimed.retries, deadlineMs: handlerBudgetMs, absoluteDeadline },
+        // platformDeadlineAt is when the platform ends this invocation
+        // (maxDuration), later than the claim loop's own absoluteDeadline.
+        input: { ...claimed.input, retryCount: claimed.retries, deadlineMs: handlerBudgetMs, absoluteDeadline, platformDeadlineAt: startTime + maxDuration * 1000 },
       });
       if (isTerminalHandlerResult(result)) {
         if (
@@ -305,6 +364,7 @@ export async function POST(req: Request) {
             // attempt 1 → 2s, 2 → 4s, 3 → 8s, 4 → 16s, 5 → 32s, 6 → 60s, 7 → 60s, 8 → 60s.
             const backoffSeconds = Math.min(60, Math.pow(2, currentRetries));
             const nextAttemptAt = new Date(Date.now() + backoffSeconds * 1000);
+            retryWaitMs = backoffSeconds * 1000;
             await prisma.aiJob.update({
               where: { id: claimed.id },
               data: {
@@ -358,9 +418,57 @@ export async function POST(req: Request) {
               nextJobType = "PROPOSAL_GENERATION";
               continuationReused = continuation.reused;
               analysisRevision = continuation.analysisRevision;
-            } else {
+            } else if (continuation.state === "ALREADY_SUCCEEDED") {
+              // Generation already succeeded for this exact analysis revision,
+              // so the stage that still has to run is the one after it.
+              //
+              // This is the owner's real history: the first run generated the
+              // proposal and then stalled at AUTO_FINALIZE, and the rerun
+              // resolved the deterministic proposal runId back to that
+              // SUCCEEDED row. The continuation used to answer "queued", the
+              // worker went looking for a claimable PROPOSAL_GENERATION job,
+              // found none — a SUCCEEDED row is not claimable — and the whole
+              // pipeline stopped with nothing logged as wrong.
+              //
+              // Re-running generation to manufacture something claimable would
+              // write a duplicate proposal version, duplicate CVs and
+              // duplicate documents for work already correctly done.
+              analysisRevision = continuation.analysisRevision;
+              continuationReused = true;
+              const finalize = await ensureAutoFinalizeContinuationJob({
+                tenderId: claimed.tenderId!,
+                userId: claimed.userId,
+                analysisRevision: continuation.analysisRevision,
+                parentJobId: continuation.jobId,
+              });
+              if (finalize.claimable) {
+                nextJobId = finalize.jobId;
+                nextJobType = "AUTO_FINALIZE";
+                continuationReason = "PROPOSAL_ALREADY_SUCCEEDED_ADVANCED_TO_AUTO_FINALIZE";
+              } else if (finalize.state === "ALREADY_SUCCEEDED") {
+                // Finalization already passed its own readiness gate for this
+                // revision. The package exists; rebuilding it would duplicate
+                // a reconciled ZIP.
+                continuationReason = "PIPELINE_ALREADY_COMPLETE";
+              } else {
+                continuationReason = `AUTO_FINALIZE_${finalize.state}`;
+              }
+              logger.info("[run-next] Proposal already generated for this revision; advancing downstream", {
+                jobId: claimed.id,
+                proposalJobId: continuation.jobId,
+                autoFinalizeJobId: finalize.jobId,
+                autoFinalizeState: finalize.state,
+              });
+            } else if (continuation.state === "BLOCKED") {
               continuationReason = continuation.reason;
               generationBlockerCode = continuation.blockerCode;
+            } else {
+              // ALREADY_RUNNING or NOT_CLAIMABLE: a real row exists that this
+              // invocation must not claim, re-arm or duplicate. Recorded as the
+              // reason rather than as a generation blocker — nothing about the
+              // tender is wrong.
+              continuationReason = continuation.reason;
+              analysisRevision = continuation.analysisRevision;
             }
           } catch (error) {
             continuationReason = "PROPOSAL_CONTINUATION_ERROR";
@@ -378,25 +486,47 @@ export async function POST(req: Request) {
         // the durable-stage retry policy on transient failure, and is
         // idempotent. No failure falls back to "manual retry" when it can be
         // safely automated.
+        //
+        // "Idempotent" was true of the handler and false of the enqueue. This
+        // was a bare create, so every proposal success minted another
+        // AUTO_FINALIZE row for the same tender and revision — two finalize
+        // jobs, each able to reconcile and package independently. The stage it
+        // follows had a deterministic runId guarding exactly that; this one now
+        // does too, enforced by the unique index rather than by a check two
+        // concurrent workers could both pass.
         if (claimed.jobType === "PROPOSAL_GENERATION") {
           try {
-            const { enqueueJob } = await import("../../../../lib/ai-jobs");
-            const analysisRevision = typeof claimed.input?.analysisRevision === "string"
+            const revision = typeof claimed.input?.analysisRevision === "string"
               ? claimed.input.analysisRevision
               : null;
-            const autoFinalizeJob = await enqueueJob({
-              userId: claimed.userId,
-              tenderId: claimed.tenderId ?? null,
-              jobType: "AUTO_FINALIZE",
-              input: {
+            if (!claimed.tenderId || !revision) {
+              // Without a tender and a revision there is no identity to be
+              // idempotent about, and a finalize job that cannot be located
+              // again is the duplicate this guards against.
+              continuationReason = "AUTO_FINALIZE_IDENTITY_MISSING";
+              logger.error("[run-next] Cannot enqueue AUTO_FINALIZE without a tender and analysis revision", {
+                jobId: claimed.id,
+                hasTender: Boolean(claimed.tenderId),
+                hasRevision: Boolean(revision),
+              });
+            } else {
+              const finalize = await ensureAutoFinalizeContinuationJob({
                 tenderId: claimed.tenderId,
-                analysisRevision,
-                source: "post-proposal-generation",
-              },
-            });
-            nextJobId = autoFinalizeJob.id;
-            nextJobType = "AUTO_FINALIZE";
-            continuationReused = false;
+                userId: claimed.userId,
+                analysisRevision: revision,
+                parentJobId: claimed.id,
+              });
+              analysisRevision = revision;
+              continuationReused = finalize.reused;
+              if (finalize.claimable) {
+                nextJobId = finalize.jobId;
+                nextJobType = "AUTO_FINALIZE";
+              } else if (finalize.state === "ALREADY_SUCCEEDED") {
+                continuationReason = "PIPELINE_ALREADY_COMPLETE";
+              } else {
+                continuationReason = `AUTO_FINALIZE_${finalize.state}`;
+              }
+            }
           } catch (error) {
             continuationReason = "AUTO_FINALIZE_ENQUEUE_ERROR";
             logger.error("[run-next] Failed to enqueue AUTO_FINALIZE after proposal generation", {
@@ -447,14 +577,16 @@ export async function POST(req: Request) {
       // AiAnalyzeRetryState).
       let retryScheduled = false;
       let stageBlockerCode: string | undefined;
+      let decision: ReturnType<typeof classifyStageRetry> | null = null;
       if (isDurableRetryJobType(claimed.jobType)) {
-        const decision = classifyStageRetry(message, claimed.retries);
+        decision = classifyStageRetry(message, claimed.retries);
         stageBlockerCode = decision.blockerCode;
         if (decision.retryable && decision.delayMs !== null) {
           retryScheduled = await rearmDurableStageJob(claimed.id, {
             errorMessage: publicFailure,
             delayMs: decision.delayMs,
           });
+          if (retryScheduled) retryWaitMs = decision.delayMs;
         }
       }
 
@@ -471,15 +603,81 @@ export async function POST(req: Request) {
         jobType: claimed.jobType,
         status: retryScheduled ? "QUEUED" : "FAILED",
         terminalStatus: retryScheduled ? undefined : "FAILED",
-        resultCode: retryScheduled ? "STAGE_RETRY_SCHEDULED" : "JOB_EXECUTION_FAILED",
+        // A superseded stage is named as such: it is not retried and needs no
+        // one (the drain workflow reads this code as a non-failure).
+        resultCode: retryScheduled ? "STAGE_RETRY_SCHEDULED" : stageBlockerCode === "ENGINE_SOURCE_SUPERSEDED" ? "ENGINE_SOURCE_SUPERSEDED" : "JOB_EXECUTION_FAILED",
         correlationId,
-        retryable: !retryScheduled,
+        retryable: reportedRetryable(decision, retryScheduled),
         retryScheduled,
         generationBlockerCode: stageBlockerCode,
       });
     }
 
-    if (["ENGINE_RUN", "PROPOSAL_GENERATION", "EVALUATOR_SIM", "EXTRACT_TEXT", "AI_ANALYZE", "VAULT_INGEST", "AUTO_FINALIZE"].includes(claimed.jobType)) break;
+    if (["ENGINE_RUN", "PROPOSAL_GENERATION", "EVALUATOR_SIM", "EXTRACT_TEXT", "AI_ANALYZE", "VAULT_INGEST", "AUTO_FINALIZE"].includes(claimed.jobType)) {
+      // Carry a continuation forward inside THIS invocation while the budget
+      // allows it, rather than depending on the HTTP hand-off below.
+      //
+      // That hand-off is a self-call: this worker POSTs its own deployment's
+      // /api/ai-jobs/dispatch, which POSTs its own /api/ai-jobs/run-next. Every
+      // stage therefore adds two hops to a single request chain, and the
+      // platform refuses a chain that keeps re-entering the same deployment —
+      // Vercel answers 508 INFINITE_LOOP_DETECTED. Observed end to end on the
+      // exact head: Run Engine → ENGINE_RUN → PROPOSAL_GENERATION all
+      // succeeded, then the AUTO_FINALIZE nudge came back 508, the job stayed
+      // QUEUED, and nothing was left to claim it. Generation had finished 46
+      // seconds into a 300-second budget, so the invocation that gave up still
+      // had roughly four minutes it never used.
+      //
+      // Nothing else would have run that job. No cron drains the durable queue
+      // on this plan, no UI control nudges the worker, and the tender page
+      // polls read-only endpoints. Since the owner contract requires every
+      // stage after Run Engine to continue with no click and no browser open,
+      // a hand-off whose success depends on a chain depth the platform may
+      // refuse is not a continuation at all.
+      //
+      // Authority is unchanged. Only a job this worker already enqueued can be
+      // claimed; the two manual gates are not continuation types and cannot be
+      // reached from here; the transactional claim remains the
+      // duplicate-execution guard; and the loop's existing budget floor still
+      // decides whether there is room, so no stage starts without time to
+      // finish or checkpoint.
+      const justProcessed = processedJobs[processedJobs.length - 1];
+      const continuation = justProcessed?.jobId === claimed.id ? justProcessed.nextJobType : undefined;
+      const roomForContinuation = absoluteDeadline - Date.now() >= MINIMUM_REMAINING_BUDGET_MS;
+      if ((continuation === "PROPOSAL_GENERATION" || continuation === "AUTO_FINALIZE") && roomForContinuation) {
+        logger.info("[run-next] Continuing to the stage this invocation enqueued", {
+          fromJobType: claimed.jobType,
+          continuation,
+          remainingMs: absoluteDeadline - Date.now(),
+        });
+        activeJobType = continuation;
+        continue;
+      }
+      // Wait out a short retry here rather than leave it to "the next worker
+      // invocation". With no browser open, the next invocation is the
+      // scheduled drain, which GitHub ran every 3-7 hours in practice
+      // (2026-10-05), so a 30-second provider back-off became an afternoon.
+      // Only the job this iteration just re-armed, only when the wait still
+      // leaves a working window, and the transactional claim still decides
+      // who runs it.
+      if (retryWaitMs !== null && shouldWaitOutRetry(retryWaitMs, absoluteDeadline - Date.now())) {
+        logger.info("[run-next] Waiting out a short retry back-off in this invocation", {
+          jobType: claimed.jobType,
+          retryWaitMs,
+          remainingMs: absoluteDeadline - Date.now(),
+        });
+        await new Promise((resolve) => setTimeout(resolve, retryWaitMs! + RETRY_WAIT_MARGIN_MS));
+        activeJobType = claimed.jobType as typeof activeJobType;
+        continue;
+      }
+      if (retryWaitMs !== null) pendingRetry = { jobType: claimed.jobType, tenderId: claimed.tenderId ?? null };
+      break;
+    }
+  }
+
+  if (pendingRetry) {
+    const woke = scheduleRetryWorkerWake(req, pendingRetry.jobType, pendingRetry.tenderId);
+    logger.info("[run-next] Handing a re-armed job to a fresh worker", { jobType: pendingRetry.jobType, tenderId: pendingRetry.tenderId ?? undefined, woke });
   }
 
   if (processedJobs.length === 0) {
@@ -507,27 +705,37 @@ export async function POST(req: Request) {
     return priority > worstPriority ? job : worstSoFar;
   });
 
-  // Hand the pipeline on to itself.
+  // Hand the pipeline on to itself when this invocation could not.
   //
-  // The claim loop above is pinned to one jobType for its whole run — the wake
-  // that started it set `jobType=ENGINE_RUN`, so a PROPOSAL_GENERATION job this
-  // invocation just enqueued can never be claimed by this invocation. Nothing
-  // else was waking it either: the request-scoped wakes cover EXTRACT_TEXT,
-  // VAULT_INGEST and ENGINE_RUN only, and the drain cron fires from the default
-  // branch, so on a Preview deployment there is no driver at all.
+  // The claim loop used to be pinned to one jobType for its whole run — the
+  // wake that started it set `jobType=ENGINE_RUN`, so a PROPOSAL_GENERATION job
+  // this invocation just enqueued could never be claimed by this invocation.
+  // Nothing else was waking it either: the request-scoped wakes cover
+  // EXTRACT_TEXT, VAULT_INGEST and ENGINE_RUN only, and the drain cron fires
+  // from the default branch, so on a Preview deployment there was no driver at
+  // all.
   //
   // The visible result was a workflow that reported "Processing automatically —
   // the workflow is running" while sitting on "No documents have been generated
   // yet" indefinitely, because Run Engine genuinely succeeded and the stage
   // after it was never claimed by anyone.
   //
+  // The loop now advances to that stage itself while budget remains, so this
+  // wake is the remaining case: the invocation ran out of time and a real
+  // hand-off to a fresh one is needed. A stage this invocation already ran is
+  // excluded — nudging it would find nothing to claim, and when the platform
+  // refuses the self-call the rejection is logged as though a finished stage
+  // were still queued, which is exactly the false alarm that made a genuinely
+  // stuck pipeline hard to see.
+  //
   // This carries the owner's original authority forward rather than creating
   // any: only a continuation the worker already enqueued can be claimed, and
   // the chain terminates on its own when a stage produces no successor.
+  const stagesRunHere = new Set(processedJobs.map((job) => job.jobType));
   const continuationJobType = processedJobs
     .map((job) => job.nextJobType)
     .find((type): type is "PROPOSAL_GENERATION" | "AUTO_FINALIZE" =>
-      type === "PROPOSAL_GENERATION" || type === "AUTO_FINALIZE");
+      (type === "PROPOSAL_GENERATION" || type === "AUTO_FINALIZE") && !stagesRunHere.has(type));
   if (continuationJobType) {
     scheduleRequestScopedWorkerWake(req, continuationJobType);
   }

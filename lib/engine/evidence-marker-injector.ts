@@ -36,6 +36,8 @@
  */
 
 import type { ProjectRecord } from "./benchmark-tables";
+import { isClaimBearingDestination, evidenceSupportsProposition, type EvidenceLike } from "./claim-bearing-destination";
+import { EvidenceRepetitionWindow } from "./evidence-repetition-control";
 
 // Same evidence-marker patterns as proposal-quality-scorer.ts —
 // kept in sync because we test paragraphs against the SAME criteria
@@ -105,14 +107,23 @@ function buildAnchorSentence(project: ProjectRecord, templateIndex = 0): string 
   const detailParts: string[] = [];
   if (project.contractValue) {
     const currency = project.currency || "ETB";
-    detailParts.push(`${currency} ${Math.round(project.contractValue).toLocaleString("en-US")}`);
+    detailParts.push(`construction value of works ${currency} ${Math.round(project.contractValue).toLocaleString("en-US")}`);
   }
   if (project.clientName) detailParts.push(project.clientName);
   if (project.country) detailParts.push(project.country);
   const endDate = project.endDate ? new Date(project.endDate) : null;
   const year = endDate && !Number.isNaN(endDate.getFullYear()) ? endDate.getFullYear() : null;
   if (year) detailParts.push(`completed ${year}`);
-  const detail = detailParts.length > 0 ? ` (${detailParts.join(", ")})` : "";
+  // Vault fields carry their own punctuation. A country recorded as
+  // "Gimba City, South Wollo Zone, Amhara Region," joined raw and wrapped in
+  // parentheses shipped "(… Amhara Region,)" to the client — a dangling
+  // separator in the final PDF. Each part is trimmed of surrounding
+  // whitespace and edge separators before joining, and empties are dropped so
+  // a field that is nothing but punctuation cannot open an empty bracket.
+  const cleanedParts = detailParts
+    .map((part) => String(part).trim().replace(/^[\s,;:/|-]+/, "").replace(/[\s,;:/|-]+$/, ""))
+    .filter((part) => part.length > 0);
+  const detail = cleanedParts.length > 0 ? ` (${cleanedParts.join(", ")})` : "";
 
   // Template pool — 8 distinct shapes. Selected via modulo so a
   // round-robin through the candidate library cycles through all
@@ -124,12 +135,14 @@ function buildAnchorSentence(project: ProjectRecord, templateIndex = 0): string 
   const templates = [
     `Consistent with the firm's delivery on ${name}${detail}.`,
     `The same approach was applied on ${name}${detail}, yielding the methodology referenced here.`,
-    `This methodology has been validated on ${name}${detail}.`,
-    `${name}${detail} demonstrates the firm's prior delivery of this exact scope element.`,
+    `Relevant lessons recorded for ${name}${detail} inform this methodology.`,
+    // No template claims the same team, the exact scope, or an on-time
+    // finish: no record proves any of the three.
+    `${name}${detail} is the firm's reference for this scope element.`,
     `Comparable scope was completed on ${name}${detail}.`,
     `The proposed approach mirrors the methodology proven on ${name}${detail}.`,
-    `Prior delivery: ${name}${detail} — same scope, same lead team.`,
-    `This element was demonstrated on ${name}${detail}, completing on schedule.`,
+    `Prior delivery: ${name}${detail}.`,
+    `This element was part of the services delivered on ${name}${detail}.`,
   ];
   return templates[Math.abs(templateIndex) % templates.length];
 }
@@ -222,6 +235,13 @@ export function injectEvidenceMarkers(
   let injected = 0;
   let cursorIdx = 0;
 
+  // A reviewed record introduced a moment ago must not be re-introduced as
+  // fresh proof: a delivered proposal cited one project four times in ten
+  // lines through four different templates. The window is seeded from the text
+  // already written so earlier generators' citations count too.
+  const repetition = new EvidenceRepetitionWindow();
+  repetition.seedFromMarkdown(markdown, candidates.map((c) => c.name));
+
   let charsScanned = 0;
   for (let i = 0; i < blocks.length && injected < INJECTION_CAP; i += 1) {
     const block = blocks[i];
@@ -232,13 +252,31 @@ export function injectEvidenceMarkers(
     const trimmed = block.trim();
     if (shouldSkipParagraph(trimmed)) continue;
     if (paragraphHasEvidence(trimmed)) continue;
+    // The structural skip list above understands shape, not meaning: an address
+    // block is over eighty characters, has no bullet, no pipe and no evidence
+    // marker, so a delivered proposal appended a hospital citation to the
+    // firm's postal address. Meaning is judged here instead.
+    if (!isClaimBearingDestination(trimmed).eligible) continue;
 
     // Skip if this paragraph falls inside Cover Letter / Exec
     // Summary / Why Us / Letter of Transmittal protected zones.
     const startLine = paragraphStartLine(blockChars);
     if (protectedLineRanges.some((r) => startLine >= r.start && startLine < r.end)) continue;
 
-    const project = candidates[cursorIdx % candidates.length];
+    // Condition B: the anchor must bear on what this paragraph claims. Rotate
+    // through the candidates looking for one that genuinely does; if none
+    // relates to this paragraph, leave it un-cited rather than pad it to lift
+    // an evidence-density score.
+    let project: ProjectRecord | null = null;
+    for (let probe = 0; probe < candidates.length; probe += 1) {
+      const candidate = candidates[(cursorIdx + probe) % candidates.length];
+      if (!evidenceSupportsProposition(trimmed, candidate as EvidenceLike)) continue;
+      if (!repetition.canIntroduce(candidate.name, blockChars)) continue;
+      project = candidate;
+      cursorIdx += probe;
+      break;
+    }
+    if (!project) continue;
     // PR #256 — pass the cursor as templateIndex so consecutive
     // injections rotate through different sentence shapes. Avoids
     // the 10x-repetition problem where every anchor read identically.
@@ -250,6 +288,7 @@ export function injectEvidenceMarkers(
     // Append anchor as a continuation sentence so it reads naturally
     // — same paragraph, separated by a single space.
     blocks[i] = `${block.trimEnd()} ${anchor}`;
+    repetition.record(project.name, blockChars);
     injected += 1;
     cursorIdx += 1;
   }

@@ -3,7 +3,9 @@ import {
   CANONICAL_AI_PROVIDER_CHAIN_DISPLAY,
   getProviderRegistry,
   getProviderModel,
+  getAutomaticProviderOrder,
   isProviderConfigured,
+  providerAutomaticEligibility,
   providerDisplayName,
 } from "./ai-provider-registry";
 // Effective timeout values from the centralized timeout module. These are
@@ -81,20 +83,22 @@ function status(
  * order so code review and source-contract diagnostics can verify the public
  * readiness surface without introducing a second runtime provider list:
  *
+ * status("GEMINI_API_KEY", ...)
+ * status("GROQ_API_KEY", ...)
+ * status("MISTRAL_API_KEY", ...)
  * status("ZAI_API_KEY", ...)
  * status("CEREBRAS_API_KEY", ...)
- * status("MISTRAL_API_KEY", ...)
- * status("GROQ_API_KEY", ...)
  * status("OPENROUTER_API_KEY", ...)
- * status("GEMINI_API_KEY", ...)
  * status("OPENAI_API_KEY", ...)
  * status("TOGETHER_API_KEY", ...)
  * status("DEEPSEEK_API_KEY", ...)
  * status("ANTHROPIC_API_KEY", ...)
  *
- * Z.ai general API model default: glm-4.7-flash. The effective runtime value is
- * still resolved by the central provider registry; this note is diagnostic,
- * not an independent model configuration.
+ * All ten providers participate in the canonical automatic chain when normally
+ * configured. Effective model identifiers are never silently replaced.
+ *
+ * Effective model values are resolved by the central provider registry; the
+ * notes emitted below are diagnostic, not an independent model configuration.
  */
 function providerVariableStatuses(): AIEnvironmentVariableStatus[] {
   const registry = getProviderRegistry();
@@ -106,7 +110,7 @@ function providerVariableStatuses(): AIEnvironmentVariableStatus[] {
       entry.env.apiKey,
       "ai",
       "critical",
-      `Rank ${entry.rank} ${entry.emergencyOnly ? "emergency-only " : ""}provider in the canonical chain. Configure at least one provider key.`,
+      `Rank ${entry.rank} automatic provider. Configure its key and effective model as required by that provider.`,
       { presentOverride: providerConfigured },
     ));
 
@@ -127,7 +131,7 @@ function providerVariableStatuses(): AIEnvironmentVariableStatus[] {
         "ai",
         severity,
         provider === "openrouter" && override.name === entry.env.proposalModel
-          ? "OpenRouter proposal model override. It must be an explicit ':free' model; paid and automatic routing values are rejected."
+          ? "OpenRouter proposal model override. The exact configured model is used without silent substitution."
           : hasDefault
           ? `${entry.displayName} ${override.label} override (effective default: ${override.fallback}).`
           : `${entry.displayName} ${override.label} override; no registry default is configured.`,
@@ -150,7 +154,7 @@ export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
       : "INACTIVE";
   const variables: AIEnvironmentVariableStatus[] = [
     ...providerVariableStatuses(),
-    status("GEMINI_FALLBACK_MODELS", "ai", "optional", "Fallback Gemini model chain (effective default: gemini-2.5-flash,gemini-2.0-flash).", { defaultWhenUnset: true, active: geminiConfigured }),
+    status("GEMINI_FALLBACK_MODELS", "ai", "optional", "Additional Gemini models to try if the primary is unavailable. Unset by default so the app never falls back to a model nobody chose.", { defaultWhenUnset: true, active: geminiConfigured }),
     status("ANTHROPIC_TIER", "ai", "recommended", "Used to select Claude output-token defaults; Tier 2 supports larger proposal outputs than Tier 1.", { active: anthropicConfigured }),
     status("ANTHROPIC_MAX_OUTPUT_TOKENS", "ai", "recommended", "Controls Claude proposal output budget. Use a realistic value for your Vercel timeout and Anthropic tier.", { active: anthropicConfigured }),
     status("PDF_OCR_ENABLED", "ocr", "optional", "Vision OCR defaults on when Anthropic is configured; set false to opt out.", { stateOverride: ocrFlagState }),
@@ -177,12 +181,13 @@ export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
   const blockers: string[] = [];
   const warnings: string[] = [];
 
-  const anyProviderConfigured = CANONICAL_AI_PROVIDER_ORDER.some((provider) => isProviderConfigured(provider));
-  if (!anyProviderConfigured) {
-    const keyNames = CANONICAL_AI_PROVIDER_ORDER
-      .map((provider) => getProviderRegistry()[provider].env.apiKey)
-      .join(", ");
-    blockers.push(`No AI provider is configured. Set at least one of: ${keyNames}.`);
+  const eligibleProviders = getAutomaticProviderOrder().filter(
+    (provider) => providerAutomaticEligibility(provider).eligible,
+  );
+  if (eligibleProviders.length < 1) {
+    blockers.push(
+      "No AI provider is normally configured with an effective runtime model.",
+    );
   }
   if (!present("DATABASE_URL")) blockers.push("DATABASE_URL is missing.");
   if (!present("SESSION_SECRET")) blockers.push("SESSION_SECRET is missing.");

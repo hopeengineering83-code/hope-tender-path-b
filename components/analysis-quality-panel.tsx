@@ -117,6 +117,11 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
       : tender.submissionEmails,
     analysisExtractionStatus: tender.analysisExtractionStatus,
     analysisSource: rawSource,
+    // The canonical state, not the notes marker: a stale "Analysis source: AI"
+    // line survives a later failure, so it cannot answer whether this analysis
+    // is release-ready right now.
+    analysisState: snapshot?.analysis.state ?? null,
+    analysisMatchesCurrentSource: snapshot?.analysis.contentHashMatch ?? null,
   });
 
   const canonicalExtractionReady = sourceReadiness.analysisReady;

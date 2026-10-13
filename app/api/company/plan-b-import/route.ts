@@ -10,6 +10,7 @@ import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "../../../../lib/rate-l
 import { completenessStats, deriveExpectedCounts, hasUsableText } from "./helpers";
 import { sanitizeError } from "../../../../lib/sanitize-error";
 import { safeParse } from "../../../../lib/safe-json";
+import { resolveProjectCountry } from "../../../../lib/engine/country-reference";
 import {
   expertReviewFields,
   projectReviewFields,
@@ -780,6 +781,10 @@ export async function POST(req: Request) {
     let projectsCreated = 0;
     let projectsUpdated = 0;
     let projectsSkipped = 0;
+    // Country-field hygiene, reported so a bulk import states plainly how many
+    // country values it repaired and how many it deliberately refused to guess.
+    let countryCorrected = 0;
+    let countryUnresolved = 0;
     const legal = { created: 0, updated: 0, skipped: 0 };
     const financial = { created: 0, updated: 0, skipped: 0 };
     const compliance = { created: 0, updated: 0, skipped: 0 };
@@ -995,7 +1000,13 @@ export async function POST(req: Request) {
     }
 
     const existingExperts = await tx.expert.findMany({ where: { companyId: company.id }, select: { id: true, fullName: true } });
-    const existingProjects = await tx.project.findMany({ where: { companyId: company.id }, select: { id: true, name: true } });
+    // The derived-fact merge below fills ONLY empty columns, so it has to see
+    // what the stored row already holds — otherwise a value a person corrected
+    // by hand would be silently replaced by a re-derived one.
+    const existingProjects = await tx.project.findMany({
+      where: { companyId: company.id },
+      select: { id: true, name: true, clientName: true, country: true, sector: true, contractValue: true, currency: true, startDate: true, endDate: true },
+    });
     const expertMap = new Map(existingExperts.map((e) => [key(e.fullName), e]));
     const projectMap = new Map(existingProjects.map((p) => [key(p.name), p]));
 
@@ -1075,15 +1086,98 @@ export async function POST(req: Request) {
       const summary = [exactRawText, project.contractValueSummary ? `Value / fee summary: ${clean(project.contractValueSummary)}` : null, project.duration ? `Duration: ${clean(project.duration)}` : null, source].filter(Boolean).join("\n\n");
       const serviceAreas = Array.isArray(project.serviceAreas) && project.serviceAreas.length > 0 ? project.serviceAreas : project.sectors;
       const clientName = clean(project.clientName) || null;
-      const country = clean(project.country) || null;
+      const payloadCountry = clean(project.country) || null;
+
+      // COUNTRY FIELD HYGIENE (owner-authorised, conservative).
+      //
+      // `Project.country` is a country column, and this path wrote whatever
+      // the payload put in that slot. On the owner's own portfolio that left
+      // 0 of 114 records holding a plain country: full postal addresses,
+      // city/region composites, client names, area figures and placeholder
+      // words. portfolio-card-repair renders this column as the project
+      // LOCATION, which is how "Abuja, Federal Capital Territory, Nigeria"
+      // reached the opening capability paragraph of an Ethiopian bid, and
+      // proposal-intelligence scores tender/project country agreement by
+      // substring, so a composite never matched and quietly forfeited points
+      // it had earned.
+      //
+      // The resolver may use ONLY this record's own evidence - the stored
+      // value itself, then the record's own source text - and refuses to
+      // decide when that evidence names no country or more than one. It never
+      // consults the current tender, the company's nationality, a sibling
+      // project or a default region, and it never replaces a value that is
+      // already a country. It runs before the trust decision below so the
+      // value that gets source-verified is the value that gets stored.
+      const countryResolution = resolveProjectCountry({
+        storedCountry: payloadCountry,
+        sourceText: exactRawText || summary,
+      });
+      const country = countryResolution.shouldWrite ? countryResolution.country : payloadCountry;
+      if (countryResolution.shouldWrite) {
+        countryCorrected += 1;
+      } else if (
+        countryResolution.outcome === "UNRESOLVED_AMBIGUOUS" ||
+        countryResolution.outcome === "UNRESOLVED_NO_EVIDENCE"
+      ) {
+        if (payloadCountry) {
+          countryUnresolved += 1;
+          warnings.push(`Project ${name}: country left unresolved - ${countryResolution.reason}`);
+        }
+      }
       const sector = clean(project.sector || project.sectors?.[0]) || null;
       const serviceAreasJson = arr(serviceAreas);
       const linkedSourceDoc = resolveLinkedSourceDoc(recordTrustCtx, project.sourceDocument, project.sourceSha256);
+      const existing = projectMap.get(key(name));
+      // DERIVED PORTFOLIO FACTS — derived BEFORE the trust decision, on purpose.
+      //
+      // These used to be merged in after `decidePlanBTrust` had already built
+      // the provenance, which quietly broke the record it was enriching. Durable
+      // source verification is a claim about a SET of fields, and
+      // provenanceMatchesCurrentRecord refuses a record that has GROWN since it
+      // was verified — a field the provenance never assessed is a claim nothing
+      // checked. `normalizedEvidenceFields` drops empty values, so a record
+      // imported with contractValue and currency null was verified on
+      // name/clientName/sector alone; filling those columns afterwards made the
+      // record grow and it stopped being durably verified. Verified on the live
+      // Preview vault: 114 SOURCE_VERIFIED projects, and readiness reporting
+      // "No verified, source-backed projects are available" over all of them.
+      //
+      // Deriving first means the trust decision assesses exactly the fields that
+      // get written. A derived number that is not provable in the source text
+      // lands in the provenance's `unverifiedFields` through the partial path,
+      // which is the honest record of it — not an unassessed field smuggled into
+      // a verified row.
+      let derivedFacts: Record<string, unknown> = {};
+      if (summary && summary.trim().length > 50) {
+        try {
+          const { extractProjectFacts, mergeProjectFacts } = await import("../../../../lib/engine/project-fact-extractor");
+          derivedFacts = mergeProjectFacts(
+            { ...(existing ?? {}), clientName, country, sector },
+            extractProjectFacts(summary, name),
+          );
+        } catch (factErr) {
+          // Enrichment is additive. A failure here must never cost the import
+          // the record itself.
+          warnings.push(`Project ${name}: portfolio facts could not be derived from the reference text (${factErr instanceof Error ? factErr.message : String(factErr)}).`);
+        }
+      }
+
       const projectDecision = decidePlanBTrust({
         requested: importTrust,
         recordType: "PROJECT",
         sourceDocument: linkedSourceDoc,
-        fields: projectReviewFields({ name, clientName, country, sector, serviceAreas: serviceAreasJson }),
+        // The enriched values, not the payload's: whatever gets written has to
+        // be what gets assessed, or the provenance covers a record that no
+        // longer exists.
+        fields: projectReviewFields({
+          name,
+          clientName,
+          country,
+          sector,
+          serviceAreas: serviceAreasJson,
+          contractValue: (derivedFacts.contractValue as number | undefined) ?? null,
+          currency: (derivedFacts.currency as string | undefined) ?? null,
+        }),
         fallbackNotes: notes,
       });
       const effectiveTrust: TrustLevel = projectDecision.trustLevel;
@@ -1109,13 +1203,14 @@ export async function POST(req: Request) {
         reviewedAt: null,
         reviewNotes: effectiveReviewNotes,
       };
-      const existing = projectMap.get(key(name));
+      // One payload for the write, assessed as one field set above.
+      const dataWithFacts = { ...data, ...derivedFacts };
       if (existing) {
-        await tx.project.update({ where: { id: existing.id }, data });
+        await tx.project.update({ where: { id: existing.id }, data: dataWithFacts });
         projectsUpdated += 1;
       } else {
-        const created = await tx.project.create({ data: { companyId: company.id, ...data } });
-        projectMap.set(key(name), { id: created.id, name: created.name });
+        const created = await tx.project.create({ data: { companyId: company.id, ...dataWithFacts } });
+        projectMap.set(key(name), { id: created.id, name: created.name, clientName: null, country: null, sector: null, contractValue: null, currency: null, startDate: null, endDate: null });
         projectsCreated += 1;
       }
     }
@@ -1169,7 +1264,7 @@ export async function POST(req: Request) {
       companyProfileUpdated,
       documents: { received: sourceDocuments.length, created: documentsCreated, updated: documentsUpdated, skipped: documentsSkipped },
       experts: { received: experts.length, created: expertsCreated, updated: expertsUpdated, skipped: expertsSkipped },
-      projects: { received: projects.length, created: projectsCreated, updated: projectsUpdated, skipped: projectsSkipped },
+      projects: { received: projects.length, created: projectsCreated, updated: projectsUpdated, skipped: projectsSkipped, countryCorrected, countryUnresolved },
       expectedCounts,
       missingCounts: {
         experts: expertCompleteness?.missing ?? null,

@@ -410,9 +410,27 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 
   if (fieldState === "NOT_APPLICABLE") {
-    if (isAlwaysOrConditionallyCritical(field)) {
+    // Owner policy ABSENT_TENDER_FACT_IS_NOT_REQUIRED (tender-fact-authority):
+    // a fact the tender does not state is not required, so it can always be
+    // marked "not stated". A tender with no stated deadline was refused here
+    // as "critical … cannot be marked Not Applicable" (2026-10-06). Two cases
+    // are still refused: the endpoint a STATED method depends on (an email
+    // method with no email, a hand-delivery method with no address), and a
+    // field that already holds a value, which is corrected with Edit rather
+    // than dismissed.
+    const stored = tenderData?.[field as keyof typeof tenderData];
+    const holdsValue = stored instanceof Date
+      || (typeof stored === "string" && !isPlaceholderOrGeneric(stored));
+    if (isCondCritical) {
       return err(
-        `Field "${field}" is critical for this tender and cannot be marked Not Applicable. Provide a value or confirm it.`,
+        `The tender's submission method needs "${field}" to deliver the bid, so it cannot be marked not stated. Provide the value.`,
+        400,
+        "NOT_APPLICABLE_REJECTED",
+      );
+    }
+    if (holdsValue && isAlwaysOrConditionallyCritical(field)) {
+      return err(
+        `Field "${field}" holds a value for this tender. Correct it with Edit instead of marking it not stated.`,
         400,
         "NOT_APPLICABLE_REJECTED",
       );

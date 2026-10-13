@@ -1,7 +1,7 @@
 import { logger } from "../../../../lib/observability";
 import { randomUUID } from "crypto";
 import bcrypt from "bcryptjs";
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { generateResetToken } from "../../../../lib/reset-token";
 import { rateLimitPersistent, PASSWORD_RESET_RATE_LIMIT } from "../../../../lib/rate-limit";
@@ -34,6 +34,25 @@ function baseUrl(): string {
   return "http://localhost:3000";
 }
 
+/**
+ * Run work after the response is sent. The SMTP round trip (0.3–1.5 s) ran
+ * only on the registered-account path, so the response time told an attacker
+ * which addresses have accounts; now both paths answer at the same point.
+ * Outside a request scope (tests, scripts) the work still runs, unawaited.
+ */
+function afterResponse(task: () => Promise<void>): void {
+  const guarded = () => task().catch((error: unknown) => {
+    logger.error("[forgot-password] delivery task failed", {
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+    });
+  });
+  try {
+    after(guarded);
+  } catch {
+    void guarded();
+  }
+}
+
 export async function POST(req: Request) {
   const body = await req.json().catch(() => ({})) as { email?: string };
   const email = String(body.email ?? "").trim().toLowerCase();
@@ -59,9 +78,11 @@ export async function POST(req: Request) {
     await prismaReady;
     const user = await prisma.user.findUnique({
       where: { email },
-      select: { id: true, email: true },
+      select: { id: true, email: true, deletedAt: true },
     });
-    if (!user) {
+    // A deactivated account gets no reset link: it is answered exactly as an
+    // unknown address is, so the response does not reveal the account state.
+    if (!user || user.deletedAt) {
       // TIMING-SAFE ACCOUNT ENUMERATION GUARD: For existing users, the code
       // below does a DB transaction + sendEmail(), which takes ~300-800ms.
       // For non-existent users, returning immediately (~5ms) allows an
@@ -76,10 +97,29 @@ export async function POST(req: Request) {
       return NextResponse.json(GENERIC_RESPONSE, { status: 202 });
     }
 
+    // The same comparison on the active-account path: SMTP is deferred until
+    // after the response, so without it an active account answered faster
+    // than an unknown or deactivated one.
+    try {
+      await bcrypt.compare(
+        "dummy-password-for-timing-equalization",
+        "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy",
+      );
+    } catch { /* rate limit is the primary defense */ }
+
     const { token, tokenHash, expiresAt } = generateResetToken();
     const tokenId = randomUUID();
 
+    // The account is re-read under its row lock — the lock deactivation takes
+    // first — so a deactivation that lands after the lookup above either
+    // finishes first (no token, no mail) or waits and then deletes the token.
+    const issue = { stillActive: false };
     await prisma.$transaction(async (tx) => {
+      const live = await tx.$queryRaw<Array<{ deletedAt: Date | null }>>`
+        SELECT "deletedAt" FROM "User" WHERE "id" = ${user.id} FOR UPDATE
+      `;
+      if (!live[0] || live[0].deletedAt) return;
+      issue.stillActive = true;
       await tx.$executeRaw`
         DELETE FROM "PasswordResetToken"
         WHERE "userId" = ${user.id} AND "consumedAt" IS NULL
@@ -90,30 +130,43 @@ export async function POST(req: Request) {
         VALUES (${tokenId}, ${user.id}, ${tokenHash}, ${expiresAt}, NOW())
       `;
     });
+    if (!issue.stillActive) return NextResponse.json(GENERIC_RESPONSE, { status: 202 });
 
     const resetUrl = `${baseUrl()}/reset-password?token=${encodeURIComponent(token)}`;
-    const delivery = await sendEmail({
-      to: user.email,
-      subject: "Reset your Hope Tender password",
-      html: `<p>A password reset was requested for your account.</p><p><a href="${resetUrl}">Reset password</a></p><p>This link expires in 20 minutes and can be used once.</p><p>If you did not request this, ignore this email.</p>`,
-    });
+    afterResponse(async () => {
+      // Re-checked at delivery: a deactivation that committed after the token
+      // was issued has deleted it, and its owner is sent nothing.
+      const live = await prisma.passwordResetToken.findFirst({
+        where: { id: tokenId, consumedAt: null, user: { deletedAt: null } },
+        select: { id: true },
+      });
+      if (!live) return;
+      const delivery = await sendEmail({
+        to: user.email,
+        subject: "Reset your Hope Tender password",
+        html: `<p>A password reset was requested for your account.</p><p><a href="${resetUrl}">Reset password</a></p><p>This link expires in 20 minutes and can be used once.</p><p>If you did not request this, ignore this email.</p>`,
+        text: `A password reset was requested for your account.\n\nReset password: ${resetUrl}\n\nThis link expires in 20 minutes and can be used once. If you did not request this, ignore this email.`,
+      });
 
-    if (!delivery.delivered) {
-      await prisma.$executeRaw`
-        DELETE FROM "PasswordResetToken"
-        WHERE "id" = ${tokenId}
-      `;
-    }
+      // An undelivered token is removed: no usable reset link exists that its
+      // owner never received.
+      if (!delivery.delivered) {
+        await prisma.$executeRaw`
+          DELETE FROM "PasswordResetToken"
+          WHERE "id" = ${tokenId}
+        `;
+      }
 
-    await logAction({
-      userId: user.id,
-      action: "UPDATE",
-      entityType: "UserSecurity",
-      entityId: user.id,
-      description: delivery.delivered
-        ? "Password reset instructions requested and delivered"
-        : "Password reset instructions requested but delivery was unavailable",
-      metadata: { delivered: delivery.delivered, reason: delivery.reason ?? null },
+      await logAction({
+        userId: user.id,
+        action: "UPDATE",
+        entityType: "UserSecurity",
+        entityId: user.id,
+        description: delivery.delivered
+          ? "Password reset instructions requested and delivered"
+          : "Password reset instructions requested but delivery was unavailable",
+        metadata: { delivered: delivery.delivered, reason: delivery.reason ?? null },
+      });
     });
 
     return NextResponse.json(GENERIC_RESPONSE, { status: 202 });

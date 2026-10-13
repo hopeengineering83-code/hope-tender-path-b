@@ -1,4 +1,5 @@
 import { prisma } from "../prisma";
+import { MANDATORY_EVIDENCE_PRIORITIES } from "./mandatory-evidence-requirement";
 import { canUseVaultRecord, VAULT_REVIEW_CONSUMER_SELECT } from "../vault-review-provenance";
 
 export type PostconditionCounts = {
@@ -23,8 +24,16 @@ export async function checkEnginePostconditions(tenderId: string): Promise<Postc
          totalExperts, totalProjects, selectedExpertRows, selectedProjectRows] = await Promise.all([
     prisma.tenderRequirement.count({ where: { tenderId } }),
     prisma.complianceMatrix.count({ where: { tenderId } }),
-    prisma.tenderRequirement.count({ where: { tenderId, requirementType: { in: ["EXPERT", "PERSONNEL", "CV", "EXPERT_EXPERIENCE"] } } }),
-    prisma.tenderRequirement.count({ where: { tenderId, requirementType: { in: ["PROJECT_EXPERIENCE", "RELEVANT_EXPERIENCE"] } } }),
+    // Only a MANDATORY/CRITICAL evidence requirement makes an empty selection a
+    // blocker. 2026-09-30, Preview, a telecom-tower EOI: "Previous
+    // Telecommunications Tower Experience" was SCORED, every one of the firm's
+    // 114 building projects was correctly hard-excluded (no domain overlap),
+    // and this postcondition marked the Engine run ENGINE_COMPLETED_WITH_
+    // BLOCKERS, so no proposal was ever generated. A scored criterion the firm
+    // cannot evidence costs points; it is not a reason to withhold the bid.
+    // The gap stays visible in the compliance matrix, and nothing is claimed.
+    prisma.tenderRequirement.count({ where: { tenderId, priority: { in: [...MANDATORY_EVIDENCE_PRIORITIES] }, requirementType: { in: ["EXPERT", "PERSONNEL", "CV", "EXPERT_EXPERIENCE"] } } }),
+    prisma.tenderRequirement.count({ where: { tenderId, priority: { in: [...MANDATORY_EVIDENCE_PRIORITIES] }, requirementType: { in: ["PROJECT_EXPERIENCE", "RELEVANT_EXPERIENCE"] } } }),
     prisma.tenderExpertMatch.count({ where: { tenderId } }),
     prisma.tenderProjectMatch.count({ where: { tenderId } }),
     prisma.tenderExpertMatch.findMany({

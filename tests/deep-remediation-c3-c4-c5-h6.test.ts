@@ -97,11 +97,25 @@ describe("C-3: AI trust boundary covers bypass paths", () => {
       /const fencedProposalPrompt = proposalTrustBoundary\.protectedPrompt/,
       "the fenced prompt must be assigned to a variable",
     );
-    // At least one provider call must use the fenced prompt.
+    // The provider dispatch must receive the fenced prompt.
+    //
+    // This used to assert `generateWithZai(fencedProposalPrompt)` — one named
+    // helper out of ten. The chain is now a loop over the canonical order
+    // dispatching through callProvider, so naming a helper both broke on the
+    // refactor and only ever covered a tenth of the surface. Asserting the
+    // dispatch covers every provider at once.
     assert.match(
       source,
-      /generateWithZai\(fencedProposalPrompt\)/,
-      "provider calls must use the fenced prompt",
+      /callProvider\(provider, fencedProposalPrompt/,
+      "the provider dispatch must use the fenced prompt",
+    );
+    // …and the raw prompt must never reach it. The one legitimate exception is
+    // generateWithClaudeTools, which applies its own boundary internally and
+    // would nest two untrusted fences if handed the fenced copy.
+    assert.doesNotMatch(
+      source,
+      /callProvider\(provider, prompt[,)]/,
+      "the unfenced prompt must never reach the provider dispatch",
     );
   });
 });

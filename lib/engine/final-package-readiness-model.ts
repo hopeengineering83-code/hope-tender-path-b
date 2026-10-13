@@ -1,3 +1,4 @@
+import { OWNER_PRICING_ACTION } from "./owner-pricing-stop";
 import {
   deriveDocumentOutputState,
   exportBlockReason,
@@ -18,7 +19,13 @@ import {
   isGroundedEvidenceInActiveFiles,
   type GroundingActiveFile,
 } from "./evidence-grounding";
+import { resolveCurrentDocumentVerdicts, selectCurrentDocuments } from "./current-document-quality";
 import { canUseVaultRecord, canUseVaultRecordField, partialVerificationSummary, VAULT_REVIEW_CONSUMER_SELECT, type ReviewRecordState } from "../vault-review-provenance";
+import {
+  evaluatePackageConformance,
+  type PackageConformanceFacts,
+  type PackageConformanceVerdict,
+} from "./package-conformance";
 
 export type FinalPackageBlocker = {
   area: "requirements" | "evidence" | "documents" | "export";
@@ -45,6 +52,35 @@ export type RequirementEvidenceStatus = {
   hasReviewedProject: boolean;
   displayStatus: "FULLY_MET" | "PARTIALLY_MET" | "NOT_MET" | "NEEDS_TRACE";
   blockerReason: string | null;
+  /**
+   * Set when the requirement is a submission RULE the package obeys or breaks
+   * — financial separation, single-file consolidation, file format, file
+   * naming — rather than a document the owner supplies. Null for every
+   * ordinary evidence requirement.
+   */
+  packageRule: { family: string; status: string; reason: string } | null;
+  /**
+   * False only for a package rule the stored bytes cannot decide at all —
+   * page limits, fonts, hard-copy counts, binding, envelope marking. Such a
+   * rule is real and must still be honoured, but no automatic verdict about
+   * it is possible, so it cannot be counted for or against machine coverage.
+   * True for every ordinary requirement and for every package rule the
+   * package facts can actually adjudicate.
+   */
+  machineDecidable: boolean;
+};
+
+/**
+ * A requirement that only a person can decide. Non-blocking by construction —
+ * it is surfaced so the owner sees it, never silently passed.
+ */
+export type HumanJudgementReviewItem = {
+  requirementId: string;
+  title: string;
+  mandatory: boolean;
+  family: string;
+  reason: string;
+  nextAction: string;
 };
 
 export type PlannedPackageDocument = {
@@ -127,7 +163,15 @@ export type FinalPackageReadinessModel = {
     weakEvidence: number;
     missingEvidence: number;
     coverageRatio: number;
+    /**
+     * Mandatory requirements the machine can actually adjudicate. This is the
+     * denominator every coverage gate must use; `mandatory` above stays the
+     * true total, so the two together say how many were set aside and why.
+     */
+    machineDecidableMandatory: number;
     blockers: FinalPackageBlocker[];
+    /** Rules only a person can decide. Never blocking, always reported. */
+    humanJudgementReviewItems: HumanJudgementReviewItem[];
   };
   evidence: {
     rows: number;
@@ -180,6 +224,12 @@ export type FinalPackageReadinessModel = {
 type RequirementLike = {
   id: string;
   title: string;
+  // description and restrictions matter to package-rule classification: a
+  // tender that states "two separate sealed envelopes" in the description and
+  // nothing in the title must classify the same here as it does in the
+  // coverage reconciler, or the two surfaces disagree about the same row.
+  description?: string | null;
+  restrictions?: string | null;
   priority?: string | null;
   requirementType?: string | null;
   sourceTenderFileId?: string | null;
@@ -352,7 +402,7 @@ function partialVerificationWarnings(
 }
 
 function documentOutputBlockReason(document: DocumentLike): string | null {
-  return exportBlockReason(deriveDocumentOutputState(document));
+  return exportBlockReason(deriveDocumentOutputState(document), document);
 }
 
 function chooseBestGeneratedDocument(documents: GeneratedDocLike[]): GeneratedDocLike | null {
@@ -369,6 +419,15 @@ function chooseBestGeneratedDocument(documents: GeneratedDocLike[]): GeneratedDo
   });
   scored.sort((left, right) => right.score - left.score || right.index - left.index);
   return scored[0]?.document ?? null;
+}
+
+function chooseBestGeneratedDocumentForFormat(
+  documents: GeneratedDocLike[],
+  format: string,
+): GeneratedDocLike | null {
+  return chooseBestGeneratedDocument(
+    documents.filter((document) => expectedFormat(document.format ?? document.exactFileName) === format),
+  ) ?? chooseBestGeneratedDocument(documents);
 }
 
 function generatedDocumentExclusionReason(
@@ -395,7 +454,7 @@ function generatedDocumentExclusionReason(
   if (!isValidationPassed(document.validationStatus)) return "not validated";
   if (!isReviewReadyForExport(document.reviewStatus)) return "not approved";
   if (byteSize(document) === 0) return "zero-byte or missing file bytes";
-  return exportBlockReason(state) ?? "not export-ready";
+  return exportBlockReason(state, document) ?? "not export-ready";
 }
 
 function plannedStatusFor(
@@ -449,6 +508,10 @@ export function mapRequirementsToEvidence(
   expertMatches: MatchLike[] = [],
   projectMatches: MatchLike[] = [],
   activeFiles: ReadonlyArray<GroundingActiveFile> = [],
+  // Optional: when the caller knows the current package, submission RULES are
+  // reported as rules rather than as missing evidence. Omitting it preserves
+  // the previous wording exactly.
+  packageFacts?: PackageConformanceFacts,
 ): RequirementEvidenceStatus[] {
   const hasReviewedExpert = selectedReviewedExperts(expertMatches) > 0;
   const hasReviewedProject = selectedReviewedProjects(projectMatches) > 0;
@@ -461,20 +524,96 @@ export function mapRequirementsToEvidence(
     const hasTrustedTrace = hasSourceTrace
       && evidenceRank(strongestEvidenceLevel) >= evidenceRank("PARTIAL");
     const hasStrongEvidence = evidenceRank(strongestEvidenceLevel) >= evidenceRank("SUBSTANTIAL");
-    const displayStatus = !hasTrustedTrace && evidenceRank(strongestEvidenceLevel) >= evidenceRank("PARTIAL")
+    const evidenceDisplayStatus = !hasTrustedTrace && evidenceRank(strongestEvidenceLevel) >= evidenceRank("PARTIAL")
       ? "NEEDS_TRACE"
       : hasTrustedTrace && hasStrongEvidence
         ? "FULLY_MET"
         : hasTrustedTrace && strongestEvidenceLevel === "PARTIAL"
           ? "PARTIALLY_MET"
           : "NOT_MET";
+    const conformance: PackageConformanceVerdict | null = packageFacts
+      ? evaluatePackageConformance(
+          {
+            title: requirement.title,
+            description: requirement.description ?? null,
+            restrictions: requirement.restrictions ?? null,
+            requirementType: requirement.requirementType ?? null,
+            // The tender's own words. A format clause routinely names its
+            // deliverable only in the quote — this tender's reads "Required
+            // Documents: Technical Proposal.pdf" while the description says
+            // just "in PDF format" — so dropping it here left
+            // formatRuleScope() with no file name to scope to and the rule
+            // was applied to the whole envelope.
+            sourceExactQuote: requirement.sourceExactQuote ?? null,
+          },
+          packageFacts,
+        )
+      : null;
+    const isPackageRule = Boolean(conformance?.applicable);
+
+    // A package rule is decided by the PACKAGE, not by the vault.
+    //
+    // blockerReason already knew this — it refuses to tell the owner that
+    // "no evidence is traced to this requirement" for a rule no document can
+    // evidence. displayStatus did not, and displayStatus is what the release
+    // snapshot counts: `covered = mandatoryStatuses.filter(s => s.displayStatus
+    // === "FULLY_MET")` (tender-release-snapshot.ts). So a submission rule the
+    // package objectively OBEYS still counted as an uncovered mandatory
+    // requirement, and the owner was told to "Add trusted traced evidence for
+    // mandatory requirement: Email Submission Only" — a document that cannot
+    // exist, for a rule that was already satisfied.
+    //
+    // Reproduced live on tender 08e250af: MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE
+    // at 3/6 with "Technical Proposal Document" PARTIALLY_MET while its own
+    // packageRule reason read "It is satisfied by the produced package and
+    // needs no owner-supplied evidence."
+    //
+    // FAIL-CLOSED IS UNCHANGED for everything the machine can decide. A
+    // package rule counts as met ONLY on an objective SATISFIED verdict from
+    // the package facts; VIOLATED is NOT_MET; PENDING_PACKAGE (no package
+    // yet) stays short of FULLY_MET and keeps blocking. Capability and
+    // qualification requirements are untouched: they have no packageRule and
+    // still require source-backed evidence.
+    //
+    // NOT_MACHINE_DECIDABLE is the one case that cannot be handled by a
+    // status at all, and sweeping it in with PENDING_PACKAGE here was a
+    // regression I introduced in 5cb8d694. Page limits, fonts, hard-copy
+    // counts, binding and envelope marking are not "not yet decided" — they
+    // are undecidable from stored bytes, permanently. Such a rule could
+    // therefore never reach FULLY_MET, so a tender carrying one was
+    // unwinnable by construction: export refused forever, with a nextAction
+    // that read "No owner action" and no owner-supplied evidence able to
+    // change it. Reproduced live on tender 50940b8b ("Technical Proposal
+    // Email Submission", 2/3 mandatory coverage), where it also blocked
+    // GET /download?type=pdf and made the delivered document impossible to
+    // inspect by any route.
+    //
+    // It keeps its honest PARTIALLY_MET status — nothing is reported as
+    // verified that was not verified — and is instead excluded from the
+    // machine-coverage population and surfaced as a human-judgement review
+    // item. See machineDecidable below, buildRequirementBlockers, and the
+    // coverage denominator in tender-release-snapshot.
+    const displayStatus = conformance?.applicable
+      ? conformance.status === "SATISFIED"
+        ? "FULLY_MET"
+        : conformance.status === "VIOLATED"
+          ? "NOT_MET"
+          : "PARTIALLY_MET"
+      : evidenceDisplayStatus;
+
     const blockerReason = displayStatus === "FULLY_MET"
       ? null
-      : links.length === 0
-        ? "No selected or linked evidence is traced to this requirement."
-        : !hasTrustedTrace
-          ? "Requirement lacks active source-file, page, and exact-quote containment, so linked evidence is not trusted."
-          : "Linked evidence is only PARTIAL; FULL or SUBSTANTIAL support is required.";
+      // A submission rule is never short of evidence — it is obeyed, broken, or
+      // not yet observable. Telling the owner that "no evidence is traced to
+      // this requirement" for "Financial Proposal Omission" asks for a document
+      // that must never exist.
+      : isPackageRule
+        ? conformance!.reason
+        : links.length === 0
+          ? "No selected or linked evidence is traced to this requirement."
+          : !hasTrustedTrace
+            ? "Requirement lacks active source-file, page, and exact-quote containment, so linked evidence is not trusted."
+            : "Linked evidence is only PARTIAL; FULL or SUBSTANTIAL support is required.";
 
     return {
       requirementId: requirement.id,
@@ -488,6 +627,10 @@ export function mapRequirementsToEvidence(
       hasReviewedProject,
       displayStatus,
       blockerReason,
+      packageRule: conformance?.applicable
+        ? { family: String(conformance.family), status: conformance.status, reason: conformance.reason }
+        : null,
+      machineDecidable: !(conformance?.applicable && conformance.status === "NOT_MACHINE_DECIDABLE"),
     };
   });
 }
@@ -507,7 +650,10 @@ function derivePlannedPackageDocumentsFromFiles(
 
   return files.map((file) => {
     const key = submissionPlanFileKey(file.exactFileName);
-    const document = chooseBestGeneratedDocument(documentsByKey.get(key) ?? []);
+    const document = chooseBestGeneratedDocumentForFormat(
+      documentsByKey.get(key) ?? [],
+      expectedFormat(file.format),
+    );
     const derived = plannedStatusFor(document, file);
     return {
       key,
@@ -610,8 +756,12 @@ export function mapGeneratedDocumentsToSubmissionPlan(
   return generated.map((document) => {
     const key = keyForDocument(document);
     const plannedDocumentKey = plannedByKey.has(key) ? key : null;
+    const plannedDocument = plannedDocumentKey ? plannedByKey.get(plannedDocumentKey) : null;
     const outputState = deriveDocumentOutputState(document);
-    const exportCandidate = Boolean(plannedDocumentKey) && isFinalExportCandidateDocument(document);
+    const documentFormat = activeStatus(document.format) || expectedFormat(document.exactFileName);
+    const exportCandidate = Boolean(plannedDocumentKey)
+      && documentFormat === plannedDocument?.expectedFormat
+      && isFinalExportCandidateDocument(document);
     const exportReady = exportCandidate && outputState === "READY_FOR_EXPORT" && byteSize(document) > 0;
     const exclusionReason = generatedDocumentExclusionReason(document, plannedDocumentKey);
     return {
@@ -620,7 +770,7 @@ export function mapGeneratedDocumentsToSubmissionPlan(
       name: document.name ?? document.exactFileName ?? document.id,
       finalFileName: document.exactFileName ?? document.name ?? `${document.id}.docx`,
       documentType: document.documentType ?? "",
-      format: activeStatus(document.format) || expectedFormat(document.exactFileName),
+      format: documentFormat,
       generationStatus: document.generationStatus ?? "",
       validationStatus: document.validationStatus ?? "",
       reviewStatus: document.reviewStatus ?? "",
@@ -678,10 +828,14 @@ export function buildFinalZipManifestFromModel(
     .filter((document) => document.status !== "not_applicable")
     .map((plannedDocument) => {
       const document = generated.find(
-        (candidate) => candidate.plannedDocumentKey === plannedDocument.key && candidate.exportReady,
+        (candidate) => candidate.plannedDocumentKey === plannedDocument.key
+          && candidate.format === plannedDocument.expectedFormat
+          && candidate.exportReady,
       )
         ?? generated.find(
-          (candidate) => candidate.plannedDocumentKey === plannedDocument.key && candidate.exportCandidate,
+          (candidate) => candidate.plannedDocumentKey === plannedDocument.key
+            && candidate.format === plannedDocument.expectedFormat
+            && candidate.exportCandidate,
         )
         ?? generated.find((candidate) => candidate.plannedDocumentKey === plannedDocument.key)
         ?? null;
@@ -757,7 +911,9 @@ function buildDocumentBlockers(
       documentName: document.displayName,
       generatedDocumentId: document.generatedDocumentId,
       reason: document.blockerReason ?? "Required document is not ready.",
-      nextAction: document.status === "missing"
+      nextAction: (document.blockerReason ?? "").startsWith("Owner pricing required")
+        ? OWNER_PRICING_ACTION
+        : document.status === "missing"
         ? "Generate the planned document or upload the required original."
         : document.expectedFormat === "PDF"
           ? "Upload an approved final PDF mapped to this planned document."
@@ -765,19 +921,66 @@ function buildDocumentBlockers(
     }));
 }
 
+/**
+ * Rules only a person can decide. They never enter the blocker list — a
+ * blocker names something the owner can act on to reach release, and there is
+ * no such action here — but they are always reported, so "excluded from the
+ * coverage denominator" can never mean "quietly dropped".
+ */
+function buildHumanJudgementReviewItems(
+  statuses: RequirementEvidenceStatus[],
+): HumanJudgementReviewItem[] {
+  return statuses
+    .filter((status) => !status.machineDecidable && status.packageRule)
+    .map((status) => ({
+      requirementId: status.requirementId,
+      title: status.title,
+      mandatory: status.mandatory,
+      family: status.packageRule!.family,
+      reason: status.packageRule!.reason,
+      nextAction: `Check by eye before submitting: ${status.title}. The stored package bytes cannot decide this rule, so no automatic verdict exists either way.`,
+    }));
+}
+
 function buildRequirementBlockers(
   statuses: RequirementEvidenceStatus[],
 ): FinalPackageBlocker[] {
   return statuses
-    .filter((status) => status.mandatory && status.displayStatus !== "FULLY_MET")
-    .map((status) => ({
-      area: "requirements" as const,
-      code: "MANDATORY_REQUIREMENT_EVIDENCE_NOT_TRUSTED",
-      title: status.title,
-      requirementId: status.requirementId,
-      reason: status.blockerReason ?? "Mandatory requirement lacks trusted traced evidence.",
-      nextAction: `Add trusted traced evidence for mandatory requirement: ${status.title}`,
-    }));
+    // A rule the machine cannot decide is excluded here, not passed. It keeps
+    // its PARTIALLY_MET status and is reported by
+    // buildHumanJudgementReviewItems. Blocking on it made the package
+    // unwinnable: the blocker's own nextAction said "No owner action", so
+    // there was nothing anyone could do to clear it. Everything the machine
+    // CAN decide still blocks exactly as before, VIOLATED and
+    // PENDING_PACKAGE included.
+    .filter((status) => status.mandatory && status.machineDecidable && status.displayStatus !== "FULLY_MET")
+    .map((status) => {
+      // A submission rule still blocks release when it is broken or not yet
+      // observable — fail-closed is unchanged — but the next action is to
+      // correct the PACKAGE, never to upload evidence that cannot exist.
+      if (status.packageRule) {
+        return {
+          area: "requirements" as const,
+          code: status.packageRule.status === "VIOLATED"
+            ? "SUBMISSION_RULE_BROKEN_BY_PACKAGE"
+            : "SUBMISSION_RULE_AWAITING_PACKAGE",
+          title: status.title,
+          requirementId: status.requirementId,
+          reason: status.packageRule.reason,
+          nextAction: status.packageRule.status === "VIOLATED"
+            ? `Correct the package so it obeys the submission rule: ${status.title}`
+            : `No owner action: ${status.title} is verified automatically once the package is produced.`,
+        };
+      }
+      return {
+        area: "requirements" as const,
+        code: "MANDATORY_REQUIREMENT_EVIDENCE_NOT_TRUSTED",
+        title: status.title,
+        requirementId: status.requirementId,
+        reason: status.blockerReason ?? "Mandatory requirement lacks trusted traced evidence.",
+        nextAction: `Add trusted traced evidence for mandatory requirement: ${status.title}`,
+      };
+    });
 }
 
 function deriveSummaryStatus(args: {
@@ -828,12 +1031,24 @@ export async function getFinalPackageReadinessModel(
         submissionMethod: true,
         category: true,
         analysisExtractionStatus: true,
-        requirements: { include: { complianceMatrixRows: true } },
+        requirements: { orderBy: [{ createdAt: "asc" }, { id: "asc" }], include: { complianceMatrixRows: true } },
         files: {
           where: { deletionStatus: "ACTIVE" },
           select: { id: true, extractedText: true, totalPages: true },
         },
-        generatedDocuments: { orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }] },
+        // SUPERSEDED rows are historical revisions, not documents this package
+        // has. Including them made documents.generated — and every count
+        // derived from its length — report a three-document package as six,
+        // and let a superseded revision win the manifest's last-resort
+        // per-key lookup when no live row matched. Every other surface
+        // (readiness-score, lifecycle, authority-review, the Export Hub) has
+        // always excluded them, which is why the published counts disagreed.
+        // The superseded rows remain queryable; they are simply not part of
+        // the current package.
+        generatedDocuments: {
+          where: { generationStatus: { not: "SUPERSEDED" } },
+          orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+        },
         expertMatches: { include: { expert: { select: VAULT_REVIEW_CONSUMER_SELECT.EXPERT } } },
         projectMatches: { include: { project: { select: VAULT_REVIEW_CONSUMER_SELECT.PROJECT } } },
       },
@@ -863,15 +1078,83 @@ export async function getFinalPackageReadinessModel(
     tender.expertMatches,
     tender.projectMatches,
     tender.files,
+    {
+      documents: tender.generatedDocuments,
+      plannedFileNames: buildPlanAuthority.items.map((item) => item.exactFileName),
+      planConfirmed: buildPlanAuthority.confirmed,
+    },
   );
+  // Ask the same authority the Document Validator asks, before deciding what
+  // this package contains.
+  //
+  // Every field this model reads from a document row is metadata — statuses,
+  // format, byte identity — and none of it can tell whether the document the
+  // client receives actually says anything. Reproduced on one snapshot, one
+  // document, one revision: the validator scored a real generated
+  // Technical Proposal.pdf "BLOCKED (14/100) QUALITY_FAILED" while this model
+  // reported it READY_FOR_EXPORT, In ZIP, with no blocker — the contradiction
+  // the owner photographed. It was not stale cross-revision state; the two
+  // surfaces were answering the same question from different authorities.
+  //
+  // The verdict costs one read of each document's bytes, which
+  // lib/engine/generated-document-text.ts now remembers by content digest, so
+  // the readiness route that already computes it elsewhere in the same request
+  // pays for it once.
+  const qualityVerdicts = await resolveCurrentDocumentVerdicts(
+    selectCurrentDocuments(tender.generatedDocuments as never) as never,
+    tender.requirements as never,
+    {
+      selectedExpertNames: tender.expertMatches.map((match: { expert: { fullName: string } }) => match.expert.fullName),
+      selectedProjectNames: tender.projectMatches.map((match: { project: { name: string } }) => match.project.name),
+    },
+  );
+  // Only a verdict reached by actually reading the document counts here.
+  // A storage-backed row keeps its bytes outside the database, so this model —
+  // which loads rows, not object storage — sees no text for it, and a scorer
+  // handed no text returns QUALITY_FAILED for having read nothing. Marking that
+  // as a content verdict would block a package for a document nobody inspected.
+  // wordCount > 0 is the evidence that the assessment had something to judge.
+  //
+  // Nothing is suppressed by this: when content genuinely cannot be read,
+  // final-submission-readiness still raises GENERATED_DOCUMENT_QUALITY_FAILED
+  // from its own byte-loading path and the export gate still blocks.
+  const qualityBlockedIds = new Set(
+    qualityVerdicts
+      .filter((verdict) => verdict.score === "BLOCKED" && verdict.report.wordCount > 0)
+      .map((verdict) => (verdict.doc as { id?: string }).id)
+      .filter((id): id is string => typeof id === "string"),
+  );
+  // The verdict's own reasons, keyed by document id. `qualityBlocked` records
+  // THAT a check refused; without these the blocker cannot say WHICH, and the
+  // fixed sentence it used instead named the narrative rubric even when the
+  // narrative rubric had passed.
+  const qualityBlockReasonsById = new Map<string, string[]>(
+    qualityVerdicts
+      .filter((verdict) => verdict.score === "BLOCKED" && verdict.report.wordCount > 0)
+      .map((verdict): [string, string[]] => [
+        (verdict.doc as { id?: string }).id ?? "",
+        (verdict.reasons ?? [])
+          .filter((reason: { severity?: string }) => reason.severity === "HIGH")
+          .map((reason: { code?: string; message?: string }) =>
+            reason.code ? `[${reason.code}] ${reason.message ?? ""}`.trim() : (reason.message ?? ""))
+          .filter((message: string) => message.length > 0),
+      ])
+      .filter(([id]: [string, string[]]) => id.length > 0),
+  );
+  const generatedDocumentsWithQuality = tender.generatedDocuments.map((document: { id: string }) => ({
+    ...document,
+    qualityBlocked: qualityBlockedIds.has(document.id),
+    qualityBlockReasons: qualityBlockReasonsById.get(document.id) ?? null,
+  }));
+
   const planned = buildPlanAuthority.confirmed
     ? derivePlannedPackageDocumentsFromFiles(
         buildPlanAuthority.items,
-        tender.generatedDocuments,
+        generatedDocumentsWithQuality,
       )
-    : deriveRequiredPackageDocuments(tender, tender.generatedDocuments);
+    : deriveRequiredPackageDocuments(tender, generatedDocumentsWithQuality);
   const generated = mapGeneratedDocumentsToSubmissionPlan(
-    tender.generatedDocuments,
+    generatedDocumentsWithQuality,
     planned,
   );
   const missingRequired = detectMissingRequiredDocuments(planned);
@@ -879,6 +1162,7 @@ export async function getFinalPackageReadinessModel(
   const pdfRequirements = detectPdfExportRequirements(planned, generated);
   const documentBlockers = buildDocumentBlockers(planned);
   const requirementBlockers = buildRequirementBlockers(requirementEvidenceStatuses);
+  const humanJudgementReviewItems = buildHumanJudgementReviewItems(requirementEvidenceStatuses);
   const documentManifest = buildFinalZipManifestFromModel(tenderId, planned, generated);
   const manifest: FinalZipManifest = {
     ...documentManifest,
@@ -972,7 +1256,11 @@ export async function getFinalPackageReadinessModel(
         ? requirementEvidenceStatuses.filter((item) => item.displayStatus === "FULLY_MET").length
           / requirementEvidenceStatuses.length
         : 0,
+      machineDecidableMandatory: requirementEvidenceStatuses.filter(
+        (item) => item.mandatory && item.machineDecidable,
+      ).length,
       blockers: requirementBlockers,
+      humanJudgementReviewItems,
     },
     evidence: {
       rows: tender.requirements.reduce(

@@ -40,6 +40,11 @@ const SAFE_DESCRIPTIONS: Record<string, string> = {
   TENDER_ENGINE_RUN_STARTED: "Tender processing started.",
   TENDER_ENGINE_RUN_COMPLETED: "Tender processing completed.",
   TENDER_ENGINE_RUN_FAILED: "Tender processing failed.",
+  // A run the server declined before it started. Distinct from _FAILED,
+  // which means a run began and then broke. Without this entry the event
+  // presents as the generic "AUDIT_EVENT" and the owner cannot tell that
+  // their click was refused at all.
+  TENDER_ENGINE_RUN_REFUSED: "Tender processing was refused before it started.",
   TENDER_ENGINE_DOCUMENTS_SUPERSEDED: "Earlier generated documents were superseded.",
   AI_ANALYZE: "AI analysis queued.",
   AI_PROPOSAL: "AI proposal generation requested.",

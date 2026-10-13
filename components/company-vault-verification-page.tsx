@@ -58,8 +58,16 @@ export default function CompanyVaultVerificationPage() {
   useEffect(() => { void load(); }, [load]);
 
   // Auto-refresh every 30 seconds — no manual Refresh button needed.
+  //
+  // Nothing here ever becomes false, so this poll runs for the life of the tab.
+  // That is acceptable at this cadence for a page the operator is watching, but
+  // not in a background tab: the guard matches every other poller in the app, so
+  // a hidden tab does no work and the first tick after it is shown again
+  // refreshes.
   useEffect(() => {
-    const interval = setInterval(() => { void load(); }, 30_000);
+    const interval = setInterval(() => {
+      if (!document.hidden) void load();
+    }, 30_000);
     return () => clearInterval(interval);
   }, [load]);
 

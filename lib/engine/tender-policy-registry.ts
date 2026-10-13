@@ -96,14 +96,17 @@ export const ALWAYS_CRITICAL_FIELDS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Fields that may NEVER be dismissed with Not Applicable / Ignored. The
- * submission deadline governs scheduling and final-approval rules; a tender
- * without a deadline cannot be safely packaged, so "N/A" is never a valid
- * resolution for it.
+ * Fields that may NEVER be dismissed with Not Applicable / Ignored.
+ *
+ * The deadline used to be listed: "a tender without a deadline cannot be
+ * safely packaged". Owner policy ABSENT_TENDER_FACT_IS_NOT_REQUIRED
+ * (tender-fact-authority) supersedes that: a deadline the tender does not
+ * state is not required, and the owner was refused when marking one not
+ * stated (2026-10-06). A STATED value of a critical field is still never
+ * dismissed (the override route refuses it), and neither is the endpoint a
+ * stated method depends on.
  */
-export const NEVER_NOT_APPLICABLE: ReadonlySet<string> = new Set([
-  "deadline",
-]);
+export const NEVER_NOT_APPLICABLE: ReadonlySet<string> = new Set<string>([]);
 
 /**
  * Non-critical fields — surfaced as warnings, never block generation/export.

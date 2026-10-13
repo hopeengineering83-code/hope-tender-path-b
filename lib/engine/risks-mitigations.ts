@@ -12,17 +12,25 @@
  * contain a "Risk Register" or "Risks and Mitigations" heading.
  */
 
+import { isTelecomTowerSector, TELECOM_TOWER_RISKS } from "./telecom-tower-sector";
+import { resolveJurisdictionTokens } from "./jurisdiction-instruments";
+import { possessive } from "./possessive";
+import { isHealthcareSector, threeStageReview, type ReviewDiscipline } from "./assignment-subject";
+
 type SectorRisk = { risk: string; impact: "High" | "Medium" | "Low"; likelihood: "High" | "Medium" | "Low"; mitigation: string };
 
 function escCell(text: string): string {
   return text.replace(/\r?\n+/g, " ").replace(/\|/g, "/").replace(/\s{2,}/g, " ").trim();
 }
 
-function risksForSector(primarySector: string): SectorRisk[] {
+function risksForSector(primarySector: string, discipline: ReviewDiscipline = "GENERAL"): SectorRisk[] {
   const sector = primarySector.toLowerCase();
-  if (/health|hospital|medical|clinic/.test(sector)) return [
-    { risk: "Health Authority licensing delay due to documentation gaps", impact: "High", likelihood: "Medium", mitigation: "Documentation prepared to international donor standards (World Bank ESF / equivalent) which exceed Health Authority requirements. Pre-submission internal review against the licensing checklist." },
-    { risk: "Late-stage discovery of clinical workflow conflicts (clean/dirty separation, IPC zoning)", impact: "High", likelihood: "Medium", mitigation: "IPC, patient/staff/supply flow, and medical waste pathways are mapped at schematic stage with three-stage internal review. Conflicts surface before detailed design." },
+  if (isTelecomTowerSector(primarySector)) return TELECOM_TOWER_RISKS;
+  if (isHealthcareSector(sector)) return [
+    // No donor framework ("World Bank ESF") for a tender that names none, and
+    // no "internal review" wording: a later pass cut both mitigations at it.
+    { risk: "Licensing approval delay due to documentation gaps", impact: "High", likelihood: "Medium", mitigation: "Each approval package is checked against the licensing authority's checklist before submission, and every authority comment is logged and closed." },
+    { risk: "Late-stage discovery of clinical workflow conflicts (clean/dirty separation, IPC zoning)", impact: "High", likelihood: "Medium", mitigation: "IPC, patient/staff/supply flow, and medical waste pathways are mapped at schematic stage and checked at each of the three review stages, so conflicts surface before detailed design." },
     { risk: "Imaging room shielding rework after equipment specification changes", impact: "High", likelihood: "Low", mitigation: "Biomedical specialist coordination from schematic stage; lead shielding specified per equipment vendor data; Phase-3.2 sign-off gate before structural finalisation." },
     { risk: "Medical-grade power and UPS sizing errors discovered during commissioning", impact: "High", likelihood: "Low", mitigation: "MEP Lead produces a documented load schedule with UPS, generator, and emergency-power discrimination calculations. Independent peer check at Stage 2." },
     { risk: "Operational handover gaps (O&M, equipment commissioning records)", impact: "Medium", likelihood: "Medium", mitigation: "Close-out package includes as-built drawings, O&M manuals, equipment commissioning records, and warranty register. No close-out without Project Principal sign-off." },
@@ -166,7 +174,7 @@ function risksForSector(primarySector: string): SectorRisk[] {
     { risk: "Utility load calculations underestimating peak demand", impact: "Medium", likelihood: "Medium", mitigation: "Utility demand schedule prepared at concept stage with 20% contingency; verified against equipment vendor data at 60% design; load management plan included in O&M manual." },
   ];
   if (/high.?rise|tall.*build|tower.*build|multi.?stor.*build|\bG\+\d{2,}\b/.test(sector)) return [
-    { risk: "Structural design non-compliance with seismic code rejected by authority", impact: "High", likelihood: "Medium", mitigation: "Structural calculations prepared to EBCS-8/EN 1998 using ETABS/SAP2000; submitted to authority in prescribed format; independent peer review by registered structural engineer before submission." },
+    { risk: "Structural design non-compliance with seismic code rejected by authority", impact: "High", likelihood: "Medium", mitigation: "Structural calculations prepared to {{JURISDICTION:SEISMIC_CODE_FAMILY}} using ETABS/SAP2000; submitted to authority in prescribed format; independent peer review by registered structural engineer before submission." },
     { risk: "BIM coordination clashes discovered late causing re-design cost", impact: "High", likelihood: "Medium", mitigation: "LOD 300 BIM coordination model with weekly clash-detection report; MEP routing confirmed against structural layout before shop drawings are issued." },
     { risk: "Curtain-wall water infiltration failure during first rainy season", impact: "High", likelihood: "Low", mitigation: "Curtain-wall performance specification includes air-water-structural test protocol (ASTM E330/E331/E283); mock-up panel tested before bulk fabrication; architect's site review at every level." },
     { risk: "Transfer structure capacity error causing structural failure risk", impact: "High", likelihood: "Low", mitigation: "Transfer beam/slab analysis peer-reviewed by independent structural engineer before construction commences; hold-point inspection at formwork, rebar, and concrete pour stages." },
@@ -193,22 +201,54 @@ function risksForSector(primarySector: string): SectorRisk[] {
     { risk: "Bearing capacity lower than anticipated — foundations more expensive than estimated", impact: "High", likelihood: "Medium", mitigation: "Preliminary bearing capacity estimate provided with results of each borehole as drilling progresses; client notified immediately if results indicate a change in foundation type; options-analysis section in report." },
     { risk: "Report peer review identifies errors — resubmission required", impact: "Medium", likelihood: "Low", mitigation: "Internal technical review by senior geotechnical engineer before report issue; independent peer review checklist applied to bearing capacity and settlement calculations; one-pass revision cycle built into programme." },
   ];
+  if (/structural assessment|retrofit/.test(sector)) return [
+    { risk: "Concealed elements cannot be inspected or tested", impact: "High", likelihood: "Medium", mitigation: "The testing plan names the elements to be opened up or cored, agreed with the client before the survey; any element left untested is stated as an assumption in the report." },
+    { risk: "No reliable as-built drawings", impact: "High", likelihood: "Medium", mitigation: "A measured survey of the structural frame is made before analysis, and reinforcement is located by scanning and confirmed at test locations." },
+    { risk: "Test results vary widely across the building", impact: "Medium", likelihood: "Medium", mitigation: "Test locations are spread by floor and element type, and non-destructive results are calibrated against cores where coring is permitted." },
+    { risk: "Unsafe condition found during the survey", impact: "High", likelihood: "Low", mitigation: "Any condition that affects present safety is reported to the client in writing the same day, ahead of the full report." },
+    { risk: "Retrofit options not affordable or not buildable while in use", impact: "Medium", likelihood: "Medium", mitigation: "Retrofit options are prioritised by risk and set out with their disruption to occupants, so the client can phase them." },
+  ];
+  if (/renovation|adaptation/.test(sector)) return [
+    { risk: "Hidden conditions in the existing building found after the design is fixed", impact: "High", likelihood: "Medium", mitigation: "A condition survey of structure and services comes before design; anything found during the works is recorded and resolved with the client before work continues." },
+    { risk: "Existing structure cannot carry the new use", impact: "High", likelihood: "Low", mitigation: "The structure is assessed against the loads of the new use before the brief is fixed." },
+    { risk: "Works disrupt parts of the building that stay in use", impact: "Medium", likelihood: "Medium", mitigation: "Phasing is agreed with the client before tender, and access, noise and dust controls are written into the specification." },
+    { risk: "Works depart from the approved design", impact: "High", likelihood: "Medium", mitigation: "Inspection hold points before work is covered, with non-conformances closed before the next stage." },
+    { risk: "Incomplete as-built record at handover", impact: "Medium", likelihood: "Medium", mitigation: "Changes are recorded on the drawings as the works proceed and the as-built set is a condition of close-out." },
+  ];
+  // Building design with no supervision of works (see buildingSectorLabel).
+  if (/\bbuilding design\b|architectur/.test(sector)) return [
+    { risk: "Brief changes after concept approval causing redesign", impact: "High", likelihood: "Medium", mitigation: "The brief and accommodation schedule are frozen by client sign-off at concept stage; later changes are logged and agreed before design proceeds." },
+    { risk: "Clashes between architectural, structural and MEP drawings reaching site", impact: "High", likelihood: "Medium", mitigation: "Interdisciplinary coordination check at each design stage, with every clash recorded in the coordination log and closed before issue." },
+    { risk: "Permit approval delayed by an incomplete submission", impact: "High", likelihood: "Medium", mitigation: "The submission set is checked against the approving authority's requirements before lodging, and every authority comment is logged and closed." },
+    { risk: "Foundation design based on assumed ground conditions", impact: "High", likelihood: "Low", mitigation: "Foundation design assumptions are stated in the design basis and confirmed against site-specific ground information before detailed design." },
+    { risk: "Drawings, specifications and quantities out of step at issue", impact: "Medium", likelihood: "Medium", mitigation: "Quantity schedules are taken off the issued drawings and cross-checked against the specifications before the package is issued." },
+  ];
   return [
     { risk: "Scope misalignment with client expectations", impact: "High", likelihood: "Medium", mitigation: "Documented scope confirmation at inception; named sign-off authority; change-control protocol agreed at contract signature." },
     { risk: "Resource availability shortfall during peak phases", impact: "High", likelihood: "Medium", mitigation: "Permanent-staff team confirmed in this proposal; backup specialists on standby; phased delivery to balance load." },
-    { risk: "Quality non-conformance at deliverable stage", impact: "High", likelihood: "Low", mitigation: "Three-stage internal review (schematic, developed, pre-issue) with named reviewer sign-off catches issues before issue." },
+    { risk: "Quality non-conformance at deliverable stage", impact: "High", likelihood: "Low", mitigation: `${threeStageReview(discipline).name} (${threeStageReview(discipline).stages}) with named reviewer sign-off catches issues before issue.` },
     { risk: "Late-stage regulatory or approval blockers", impact: "High", likelihood: "Medium", mitigation: "Regulatory submissions prepared as a core project deliverable, not a separate later activity. Pre-check at Stage 2." },
     { risk: "Stakeholder communication breakdowns", impact: "Medium", likelihood: "Medium", mitigation: "Bi-weekly written progress reports; named single point of contact; documented escalation path." },
   ];
 }
 
-export function buildRisksMitigationsTable(opts: { primarySector: string; clientName: string }): string {
-  const risks = risksForSector(opts.primarySector);
+export function buildRisksMitigationsTable(opts: {
+  primarySector: string;
+  clientName: string;
+  /**
+   * The tender's own text. One mitigation names a seismic code; it is named
+   * only when this text names it, and described by function otherwise.
+   */
+  sourceText?: string;
+  /** What kind of work the deliverables are (assignment-subject.ts). */
+  reviewDiscipline?: ReviewDiscipline;
+}): string {
+  const risks = risksForSector(opts.primarySector, opts.reviewDiscipline).map((r) => ({ ...r, mitigation: resolveJurisdictionTokens(r.mitigation, opts.sourceText) }));
   const rows = risks.map((r) => `| ${escCell(r.risk)} | ${r.impact} | ${r.likelihood} | ${escCell(r.mitigation)} |`);
 
   return [
     "## C.5 Risk Register and Mitigation Strategy",
-    `Top delivery risks identified for this assignment, with named mitigations grounded in ${opts.clientName === "the client" ? "the firm's" : `${opts.clientName}'s engagement and the firm's`} institutional controls. Risk and likelihood are scored on a three-point scale (High / Medium / Low).`,
+    `Top delivery risks identified for this assignment, with named mitigations grounded in ${opts.clientName === "the client" ? "the firm's" : `${possessive(opts.clientName)} engagement and the firm's`} institutional controls. Risk and likelihood are scored on a three-point scale (High / Medium / Low).`,
     "",
     "| Risk | Impact | Likelihood | Mitigation |",
     "|---|---|---|---|",

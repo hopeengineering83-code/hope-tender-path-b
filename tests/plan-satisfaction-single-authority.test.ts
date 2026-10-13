@@ -151,7 +151,13 @@ describe("a non-exportable row never satisfies a required plan file", () => {
 describe("both call sites filter, and the shared helper is left alone", () => {
   it("canonical readiness filters before asking what is missing", () => {
     const source = readFileSync("lib/canonical-tender-readiness.ts", "utf8");
-    assert.match(source, /findMissingGeneratedDocuments\(plan, filterFinalExportCandidateDocuments\(/);
+    // The filter is now hoisted into one `currentDocuments` binding that every
+    // count in the file reads, instead of being applied inline for `missing`
+    // alone — three sibling counts were still reading the raw query result.
+    // Assert the property: the set handed to findMissingGeneratedDocuments is
+    // the canonically-filtered one.
+    assert.match(source, /const currentDocuments = filterFinalExportCandidateDocuments\(/);
+    assert.match(source, /findMissingGeneratedDocuments\(plan, currentDocuments/);
   });
 
   it("the workflow decision uses the shared rule instead of its own compare", () => {

@@ -54,7 +54,15 @@ type Props = {
 };
 
 const ELIGIBLE_EVIDENCE_TRUST_LEVELS = new Set(["SOURCE_VERIFIED", "REVIEWED"]);
+/** Cadence while something is genuinely in flight and the answer changes fast. */
 const POLL_INTERVAL_MS = 3_000;
+/**
+ * Cadence when nothing is in flight. Matches the page-level sentinel in
+ * requirement-truth-banner.tsx so the same page does not poll the same endpoint
+ * on two different clocks. Every poll is a database read; at 8s an idle open
+ * tab was most of the database's monthly transfer allowance.
+ */
+const IDLE_POLL_INTERVAL_MS = 30_000;
 
 /**
  * How long a QUEUED Engine job may wait before the wait itself is the story.
@@ -226,17 +234,79 @@ export function MatchingSelectedEvidencePanel({
     };
   }, [loadDownstreamWorkflow, loadReadiness, tenderId]);
 
+  // `engineRunning` is transient — it is true only while a job is actually in
+  // flight — so polling on it stops by itself when the job ends. The hidden-tab
+  // guard matches the page-level sentinel in requirement-truth-banner.tsx: a
+  // background tab does no work, and the first tick after it is shown again
+  // picks the result up.
   useEffect(() => {
     if (!readiness?.engineRunning || deletedRef.current) return;
-    const timer = window.setInterval(() => void loadReadiness(), POLL_INTERVAL_MS);
+    const timer = window.setInterval(() => {
+      if (!document.hidden) void loadReadiness();
+    }, POLL_INTERVAL_MS);
     return () => window.clearInterval(timer);
   }, [loadReadiness, readiness?.engineRunning]);
 
+  // An AI Analyze still in flight must not lock Run Engine for the life of the
+  // page either. Readiness was read once on mount; a page opened while the
+  // owner's AI Analyze was running (2026-09-27, "AI Analyze is not in a
+  // release-ready state (current: RUNNING)") kept that answer after the job
+  // succeeded a minute later, and Run Engine stayed grey until a full reload.
+  // While the analysis is QUEUED or RUNNING, ask again on the fast cadence;
+  // it stops by itself once the analysis settles.
+  const analysisInFlight = Boolean(readiness && !readiness.analysisCurrent
+    && /\(current: (?:QUEUED|RUNNING)\)/.test(readiness.analysisBlocker ?? ""));
+  useEffect(() => {
+    if (!analysisInFlight || deletedRef.current) return;
+    const timer = window.setInterval(() => {
+      if (!document.hidden) void loadReadiness();
+    }, POLL_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [loadReadiness, analysisInFlight]);
+
+  // A failed readiness check must not lock Run Engine for the life of the page.
+  //
+  // The check ran once on mount and again only while an Engine job was in
+  // flight. When that single request failed in transit — the browser's own
+  // "Failed to fetch", while the server logged the same route answering 200 —
+  // readiness stayed null, the button stayed disabled, and nothing ever asked
+  // again. On 2026-09-23 the owner pressed a greyed-out Run Engine under
+  // "Engine readiness could not be verified. Run Engine remains disabled.
+  // Failed to fetch", and no Engine run was ever requested.
+  //
+  // While the last check failed, ask again on the idle cadence. It stays
+  // fail-closed: the button enables only when a check actually succeeds, and a
+  // hidden tab does no work.
+  useEffect(() => {
+    if (!readinessError || deletedRef.current) return;
+    const timer = window.setInterval(() => {
+      if (!document.hidden) void loadReadiness();
+    }, IDLE_POLL_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [loadReadiness, readinessError]);
+
+  // `engineComplete` is NOT transient. The route computes it as
+  // `latestJob.status === "SUCCEEDED" && !engineRunning`, so once the Engine has
+  // succeeded it stays true for the life of the tender. Polling on that condition
+  // alone therefore never stopped: any tender whose Engine had ever succeeded
+  // re-hit the canonical workflow endpoint every 3s for as long as the tab was
+  // open, in the foreground or the background, whether or not anything was
+  // happening. A single idle tab was observed making 156 requests to that
+  // endpoint in 18 minutes — against a DB-backed canonical snapshot on a pooled
+  // connection that has already shown reachability failures under load.
+  //
+  // The condition stays as it was, because liveness must not regress: a
+  // downstream job can be started elsewhere and still has to be discovered here.
+  // What changes is the cost of waiting — fast only while something is actually
+  // in flight, idle cadence otherwise, and nothing at all in a hidden tab.
   useEffect(() => {
     if (!readiness?.engineComplete || deletedRef.current) return;
-    const timer = window.setInterval(() => void loadDownstreamWorkflow(), POLL_INTERVAL_MS);
+    const intervalMs = downstream?.activeJob ? POLL_INTERVAL_MS : IDLE_POLL_INTERVAL_MS;
+    const timer = window.setInterval(() => {
+      if (!document.hidden) void loadDownstreamWorkflow();
+    }, intervalMs);
     return () => window.clearInterval(timer);
-  }, [loadDownstreamWorkflow, readiness?.engineComplete]);
+  }, [loadDownstreamWorkflow, readiness?.engineComplete, downstream?.activeJob]);
 
   const analysisCurrent = readiness?.analysisCurrent === true;
   const engineRunning = readiness?.engineRunning === true;

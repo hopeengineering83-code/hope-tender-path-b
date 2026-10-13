@@ -36,6 +36,7 @@
 // Final export may block only for real final-package defects after effective
 // facts are checked.
 
+import { ANALYSIS_HASH_FILE_SELECT } from "./tender-analysis-content";
 import type { PrismaClient } from "@prisma/client";
 import { logger } from "../observability";
 import { getEffectiveTenderFacts, type EffectiveTenderFactsResult } from "./effective-tender-facts";
@@ -165,7 +166,7 @@ export async function getRuntimeReadinessFacts(
       status: true,
       files: {
         where: { deletionStatus: "ACTIVE" },
-        select: { id: true, originalFileName: true, classification: true, createdAt: true, extractedText: true, contentHash: true, deletionStatus: true },
+        select: { ...ANALYSIS_HASH_FILE_SELECT, contentHash: true },
       },
     },
   });
@@ -226,7 +227,10 @@ function buildMetadataFacts(effective: EffectiveTenderFactsResult | null): Runti
       projectTitle: missingFact("projectTitle"),
       referenceNumber: missingFact("referenceNumber"),
       country: missingFact("country"),
-      financialProposalRequired: makeFact("financialProposalRequired", true, false, "none", "missing", "missing", false),
+      // Was hard-coded `true` — the one field in this branch that asserted an
+      // answer while every other reported "no effective facts available". With
+      // no facts there is nothing to establish a financial obligation from.
+      financialProposalRequired: missingFact("financialProposalRequired"),
     };
   }
 
@@ -434,7 +438,7 @@ async function buildBuildPlanState(
     const { buildSubmissionPlan } = await import("./submission-plan");
     const tender = await (prisma as any).tender.findFirst({
       where: { id: tenderId },
-      select: { id: true, title: true, exactFileNaming: true, exactFileOrder: true, pageLimit: true, requirements: { select: { id: true, title: true, description: true, requirementType: true, priority: true } } },
+      select: { id: true, title: true, exactFileNaming: true, exactFileOrder: true, pageLimit: true, requirements: { orderBy: [{ createdAt: "asc" }, { id: "asc" }], select: { id: true, title: true, description: true, requirementType: true, priority: true } } },
     });
     if (tender) {
       const plan = buildSubmissionPlan(tender as any);

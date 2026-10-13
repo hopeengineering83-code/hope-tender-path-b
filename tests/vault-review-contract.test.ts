@@ -89,8 +89,12 @@ describe("Company Vault automatic verification contract", () => {
     assert.match(provenance, /integrityStatus: true/);
     assert.match(provenance, /record\.sourceDocument\.companyId !== record\.companyId/);
     assert.match(provenance, /currentValueHashes\.get\(item\.field\) === item\.valueHash/);
-    assert.match(api, /VAULT_REVIEW_CONSUMER_SELECT\.EXPERT/);
-    assert.match(api, /VAULT_REVIEW_CONSUMER_SELECT\.PROJECT/);
+    // The polled verification page reads the same fields with source texts
+    // supplied once through the stored-text cache.
+    assert.match(api, /VAULT_REVIEW_STATUS_SELECT\.EXPERT/);
+    assert.match(api, /VAULT_REVIEW_STATUS_SELECT\.PROJECT/);
+    assert.match(api, /fillVaultSourceText\(/);
+    assert.match(provenance, /EXPERT: \{ \.\.\.VAULT_REVIEW_CONSUMER_SELECT\.EXPERT, sourceDocument:/);
   });
 
   it("verifies uploaded bytes before Company Vault persistence, then wakes ingestion", () => {

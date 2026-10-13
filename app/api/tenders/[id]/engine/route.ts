@@ -12,6 +12,7 @@ import { enqueueEngineJobForCurrentSources } from "../../../../../lib/engine/enq
 import { selectCanonicalTenderFiles } from "../../../../../lib/tender/canonical-source-files";
 import { getTenderReleaseSnapshot } from "../../../../../lib/engine/tender-release-snapshot";
 import { scheduleRequestScopedEngineWorkerWake } from "../../../../../lib/ai-jobs/request-scoped-engine-worker-wake";
+import { logAction } from "../../../../../lib/audit";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -32,6 +33,54 @@ function requestDiagnosticId() {
   return `eng_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+
+/**
+ * Refuse a manual Run Engine, leaving a durable record that it happened.
+ *
+ * Reproduced defect: the owner ran Run Engine on tender 08e250af and reported
+ * it done. The database disagreed — zero AiJob rows created anywhere on the
+ * account after 2026-09-10T19:14, zero current documents, and the tender row
+ * untouched since the previous day. enqueueEngineJob reuses a job only in
+ * QUEUED/RUNNING/PARTIAL_SUCCESS, so a SUCCEEDED run does not suppress a new
+ * one and any click reaching the enqueue would have written a row. The request
+ * was therefore refused somewhere above — and EVERY refusal path here returned
+ * JSON and nothing else: no AiJob, no audit row, nothing a later inspection
+ * could read. Diagnosing one instance consumed an entire session and still
+ * could not name the cause.
+ *
+ * This changes no decision and weakens no gate: the same requests are refused
+ * for the same reasons with the same status and body. It only makes the
+ * refusal visible afterwards, which is the difference between "nothing
+ * happened" and "the server declined, here is the code and the moment".
+ */
+async function refuseEngineRun(args: {
+  userId: string;
+  tenderId: string;
+  diagnosticId: string;
+  status: number;
+  body: Record<string, unknown>;
+}): Promise<NextResponse> {
+  const code = String(args.body.code ?? "ENGINE_RUN_REFUSED");
+  // logAction swallows its own failures, so audit trouble cannot turn a clean
+  // refusal into a 500.
+  await logAction({
+    userId: args.userId,
+    action: "TENDER_ENGINE_RUN_REFUSED",
+    entityType: "Tender",
+    entityId: args.tenderId,
+    description: `Run Engine refused before enqueue: ${code}`,
+    metadata: {
+      code,
+      httpStatus: args.status,
+      nextAction: args.body.nextAction ?? null,
+      error: args.body.error ?? null,
+      diagnosticId: args.diagnosticId,
+    },
+    requestId: args.diagnosticId,
+  });
+  return NextResponse.json({ ...args.body, diagnosticId: args.diagnosticId }, { status: args.status });
+}
+
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const diagnosticId = requestDiagnosticId();
   let actor;
@@ -44,31 +93,40 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
   const userId = actor.id;
 
+  // Resolved before any refusal so that EVERY terminated request can name the
+  // tender it was about. These two refusals used to sit above the point where
+  // the id was read, which is why they were the paths that left nothing behind.
+  const { id } = await params;
+
   const requestUrl = new URL(req.url);
   const rejectedPolicyParameters = CLIENT_POLICY_PARAMETERS.filter((parameter) => requestUrl.searchParams.has(parameter));
   if (rejectedPolicyParameters.length > 0) {
-    return NextResponse.json({
+    return refuseEngineRun({ userId, tenderId: id, diagnosticId, status: 400, body: {
       error: "Engine execution policy is controlled by the server.",
       code: "CLIENT_POLICY_OVERRIDE_REJECTED",
       rejectedParameters: rejectedPolicyParameters,
-      diagnosticId,
-    }, { status: 400 });
+    } });
   }
 
   const rate = await rateLimitPersistent(`engine:${userId}`, AI_RATE_LIMIT);
   if (!rate.allowed) {
     const retryAfter = Math.ceil((rate.resetAt - Date.now()) / 1000);
-    return NextResponse.json({
+    const refusal = await refuseEngineRun({ userId, tenderId: id, diagnosticId, status: 429, body: {
       error: "Rate limit exceeded — too many engine requests. Please wait before retrying.",
       code: "RATE_LIMITED",
       retryAfter,
-      diagnosticId,
-    }, { status: 429, headers: { "Retry-After": String(retryAfter) } });
+    } });
+    refusal.headers.set("Retry-After", String(retryAfter));
+    return refusal;
   }
+
+  // Set the moment a durable job exists. It decides what the terminal catch
+  // below is allowed to claim: before the enqueue, a throw means no run was
+  // ever created; after it, the run exists and only the response was lost.
+  let enqueuedJobId: string | null = null;
 
   try {
     await prismaReady;
-    const { id } = await params;
     const tender = await prisma.tender.findFirst({
       where: { id, userId },
       select: {
@@ -83,6 +141,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         legalClientName: true,
         donorAgency: true,
         implementingAgency: true,
+        // The address-like fields sanitize-stored-metadata cleans. Without
+        // them in the select the cleanup below could never see them.
+        submissionAddress: true,
+        clientAddress: true,
+        clientCity: true,
+        preBidMeetingLocation: true,
+        preBidChannel: true,
+        submissionEmailSubject: true,
+        clientRepresentative: true,
         files: {
           select: {
             id: true,
@@ -104,22 +171,57 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       },
     });
     if (!tender) {
-      return NextResponse.json({ error: "Tender not found", code: "TENDER_NOT_FOUND", diagnosticId }, { status: 404 });
+      return refuseEngineRun({ userId, tenderId: id, diagnosticId, status: 404,
+        body: { error: "Tender not found", code: "TENDER_NOT_FOUND" } });
     }
 
     const canonicalFiles = selectCanonicalTenderFiles(tender.files);
     if (canonicalFiles.length === 0) {
-      return NextResponse.json({
+      return refuseEngineRun({ userId, tenderId: id, diagnosticId, status: 422, body: {
         error: "Engine run blocked: no canonical tender source is available.",
         code: "NO_TENDER_FILES",
         nextAction: "UPLOAD_TENDER_DOCUMENT",
-        diagnosticId,
-      }, { status: 422 });
+      } });
     }
 
     const invalidFields = listInvalidStoredFields(tender);
     if (invalidFields.length > 0) {
       await prisma.tender.update({ where: { id: tender.id }, data: computeStoredMetadataPatch(tender) });
+    }
+
+    // Refill EMPTY fields from the canonical source text with the current
+    // extractor. Auto-fill ran only once, when each file was first extracted,
+    // so a field cleared above as contaminated — or never extracted because an
+    // older extractor ran a value into the next label — stayed empty for the
+    // life of the tender. On 2026-09-23 the client name was cleared that way
+    // and Run Engine then stopped on "Critical tender details field clientName
+    // has no value" although the source states "Procuring Entity / Client
+    // Name: Pharo Ventures". autoFillTenderMetadata fills only empty or
+    // placeholder fields and never overwrites a value; everything it writes is
+    // read from the tender source. Non-fatal: a failure leaves the fields as
+    // they were, and the gates below judge what is stored.
+    try {
+      const current = await prisma.tender.findFirst({ where: { id: tender.id, userId } });
+      if (current) {
+        const { autoFillTenderMetadata } = await import("../../../../../lib/engine/auto-fill-tender-metadata");
+        await autoFillTenderMetadata(
+          {
+            ...(current as any),
+            files: canonicalFiles.map((file) => ({
+              extractedText: file.extractedText,
+              originalFileName: file.originalFileName,
+              fileName: file.originalFileName || file.fileName,
+              totalPages: file.totalPages,
+            })),
+          },
+          prisma,
+          // The analysis-input fields are hashed into the current analysis;
+          // filling one here would mark the owner's AI Analyze stale.
+          { preserveAnalysisInputs: true },
+        );
+      }
+    } catch {
+      // Fail closed: the metadata gates block on anything still missing.
     }
 
     const effectiveExtractionFiles = canonicalFiles.map((file) => {
@@ -148,7 +250,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       const corruptedFiles = effectiveExtractionFiles
         .filter((file) => file.quality.corrupted)
         .map((file) => file.originalFileName || file.fileName || file.id);
-      return NextResponse.json({
+      return refuseEngineRun({ userId, tenderId: id, diagnosticId, status: 422, body: {
         error: integrityBlockers.length > 0
           ? "Engine run blocked: canonical source byte integrity is not verified."
           : "Engine run blocked: canonical tender extraction is not reliable enough for matching or AI work.",
@@ -161,38 +263,34 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         blockers,
         corruptedFiles,
         duplicateSourceRepresentationsExcluded: Math.max(0, tender.files.length - canonicalFiles.length),
-        diagnosticId,
-      }, { status: 422 });
+      } });
     }
 
     const releaseSnapshot = await getTenderReleaseSnapshot(prisma, id, userId);
     if (!releaseSnapshot?.analysis.eligibleForExport) {
-      return NextResponse.json({
+      return refuseEngineRun({ userId, tenderId: id, diagnosticId, status: 422, body: {
         error: "Run Engine requires a successful manual AI Analyze result for the current canonical source revision.",
         code: "CURRENT_ANALYSIS_REQUIRED",
         nextAction: "RUN_AI_ANALYZE",
         hint: releaseSnapshot?.analysis.blocker ?? "Run AI Analyze, wait for durable success, then run Engine.",
         contentHashMatch: releaseSnapshot?.analysis.contentHashMatch ?? false,
-        diagnosticId,
-      }, { status: 422 });
+      } });
     }
 
     const engineAnalysisStatus = tender.analysisExtractionStatus;
     if (engineAnalysisStatus === "OCR_REQUIRED") {
-      return NextResponse.json({
+      return refuseEngineRun({ userId, tenderId: id, diagnosticId, status: 422, body: {
         error: "Engine run blocked: AI Analyze was skipped due to corrupted extraction. Re-upload or run OCR first.",
         code: "ANALYSIS_FROM_CORRUPTED_EXTRACTION",
         nextAction: "RUN_OCR_OR_UPLOAD_CLEARER_SCAN",
-        diagnosticId,
-      }, { status: 422 });
+      } });
     }
     if (engineAnalysisStatus === "EXTRACTION_WEAK_REVIEW_REQUIRED" || engineAnalysisStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION") {
-      return NextResponse.json({
+      return refuseEngineRun({ userId, tenderId: id, diagnosticId, status: 422, body: {
         error: "Engine run blocked: analysis was produced from weak extraction. Re-extract and re-run AI Analyze.",
         code: "ANALYSIS_FROM_WEAK_EXTRACTION",
         nextAction: "RERUN_AI_ANALYZE",
-        diagnosticId,
-      }, { status: 422 });
+      } });
     }
 
     let vaultPreflight: Awaited<ReturnType<typeof prepareCompanyVaultForEngine>>;
@@ -204,20 +302,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         tenderId: id,
         errorName: error instanceof Error ? error.constructor.name : typeof error,
       });
-      return NextResponse.json({
+      return refuseEngineRun({ userId, tenderId: id, diagnosticId, status: 503, body: {
         error: "Run Engine could not refresh the Company Vault automatically.",
         code: "COMPANY_VAULT_AUTO_PROMOTION_FAILED",
         nextAction: "RETRY_AFTER_DATABASE_CHECK",
-        diagnosticId,
-      }, { status: 503 });
+      } });
     }
     if (!vaultPreflight) {
-      return NextResponse.json({
+      return refuseEngineRun({ userId, tenderId: id, diagnosticId, status: 422, body: {
         error: "Engine run blocked: create the Company Vault profile first.",
         code: "COMPANY_VAULT_REQUIRED",
         nextAction: "OPEN_COMPANY_VAULT",
-        diagnosticId,
-      }, { status: 422 });
+      } });
     }
 
     const enqueue = await enqueueEngineJobForCurrentSources(prisma, {
@@ -232,14 +328,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       manualRequested: true,
     });
     if (!enqueue) {
-      return NextResponse.json({
+      return refuseEngineRun({ userId, tenderId: id, diagnosticId, status: 503, body: {
         error: "Engine source revision could not be established.",
         code: "ENGINE_SOURCE_REVISION_UNAVAILABLE",
         nextAction: "RETRY_AFTER_DATABASE_CHECK",
-        diagnosticId,
-      }, { status: 503 });
+      } });
     }
     const { revision, idempotencyKey, job: enqueueResult } = enqueue;
+    enqueuedJobId = enqueueResult.id;
 
     logger.info("[engine route] durable Engine job accepted", {
       diagnosticId,
@@ -283,6 +379,31 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const errorName = error instanceof Error ? error.constructor.name : typeof error;
     logger.error("Engine enqueue failed:", { diagnosticId, errorName });
     const mapped = actionableEngineError(error);
+
+    // A throw here was the last way a Run Engine click could end with no trace
+    // at all: no AiJob, no audit row, and a log line that lives only in the
+    // platform's retention window. The owner is left with an error toast and
+    // nobody can later say what happened. Record it durably like every other
+    // terminated request, and say plainly whether a run exists.
+    await logAction({
+      userId,
+      action: "TENDER_ENGINE_RUN_REFUSED",
+      entityType: "Tender",
+      entityId: id,
+      description: enqueuedJobId
+        ? "Run Engine threw after the job was enqueued; the run exists."
+        : `Run Engine threw before enqueue: ${errorName}`,
+      metadata: {
+        code: String((mapped.body as Record<string, unknown>).code ?? "ENGINE_RUN_THREW"),
+        httpStatus: mapped.status,
+        errorName,
+        enqueuedJobId,
+        error: (mapped.body as Record<string, unknown>).error ?? null,
+        diagnosticId,
+      },
+      requestId: diagnosticId,
+    });
+
     return NextResponse.json({ ...mapped.body, diagnosticId }, { status: mapped.status });
   }
 }

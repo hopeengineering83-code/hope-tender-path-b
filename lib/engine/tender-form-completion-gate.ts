@@ -471,13 +471,13 @@ export async function populateCompanyFieldsSafely(
   const skipped: Array<{ key: string; reason: string }> = [];
 
   // Build a list of (regex, attribute) pairs to match against field names.
-  const companyAttrs: Array<{ attr: keyof PopulateCompanyFieldsInput["company"]; patterns: RegExp[] }> = [
-    { attr: "name", patterns: [/\bbidder[''`]?s?\s+name\b/i, /\btenderer[''`]?s?\s+name\b/i, /\bapplicant[''`'?s]?\s+name\b/i, /\bcompany\s+name\b/i] },
-    { attr: "registrationNumber", patterns: [/\bregistration\s+(?:number|no|#)\b/i, /\breg\.?\s*(?:no|number)\b/i] },
-    { attr: "address", patterns: [/\baddress\b/i, /\bregistered\s+address\b/i] },
-    { attr: "country", patterns: [/\bcountry\b/i, /\bnationality\b/i] },
-    { attr: "vatNumber", patterns: [/\bvat\s+(?:number|no|#)\b/i, /\bvat\s+reg/i] },
-    { attr: "tinNumber", patterns: [/\btin\s+(?:number|no|#)\b/i, /\btax\s+identification\b/i] },
+  const companyAttrs: Array<{ attr: keyof PopulateCompanyFieldsInput["company"]; patterns: RegExp[]; insertPattern: RegExp }> = [
+    { attr: "name", patterns: [/\bbidder[''`]?s?\s+name\b/i, /\btenderer[''`]?s?\s+name\b/i, /\bapplicant[''`'?s]?\s+name\b/i, /\bcompany\s+name\b/i], insertPattern: /\[\s*(?:INSERT|ENTER|FILL|PROVIDE)\s+[^\]]*name[^\]]*\]/i },
+    { attr: "registrationNumber", patterns: [/\bregistration\s+(?:number|no|#)\b/i, /\breg\.?\s*(?:no|number)\b/i], insertPattern: /\[\s*(?:INSERT|ENTER|FILL|PROVIDE)\s+[^\]]*registrationNumber[^\]]*\]/i },
+    { attr: "address", patterns: [/\baddress\b/i, /\bregistered\s+address\b/i], insertPattern: /\[\s*(?:INSERT|ENTER|FILL|PROVIDE)\s+[^\]]*address[^\]]*\]/i },
+    { attr: "country", patterns: [/\bcountry\b/i, /\bnationality\b/i], insertPattern: /\[\s*(?:INSERT|ENTER|FILL|PROVIDE)\s+[^\]]*country[^\]]*\]/i },
+    { attr: "vatNumber", patterns: [/\bvat\s+(?:number|no|#)\b/i, /\bvat\s+reg/i], insertPattern: /\[\s*(?:INSERT|ENTER|FILL|PROVIDE)\s+[^\]]*vatNumber[^\]]*\]/i },
+    { attr: "tinNumber", patterns: [/\btin\s+(?:number|no|#)\b/i, /\btax\s+identification\b/i], insertPattern: /\[\s*(?:INSERT|ENTER|FILL|PROVIDE)\s+[^\]]*tinNumber[^\]]*\]/i },
   ];
 
   // For PDF: we'd walk the AcroForm and set /V. For DOCX: we'd replace the
@@ -513,10 +513,9 @@ export async function populateCompanyFieldsSafely(
   }
 
   // Also handle generic [INSERT ...] placeholders that match a company attr.
-  for (const { attr, patterns } of companyAttrs) {
+  for (const { attr, insertPattern } of companyAttrs) {
     const value = input.company[attr];
     if (!value || value.trim() === "") continue;
-    const insertPattern = new RegExp(`\\[\\s*(?:INSERT|ENTER|FILL|PROVIDE)\\s+[^\\]]*${attr}[^\\]]*\\]`, "i");
     if (insertPattern.test(text)) {
       text = text.replace(insertPattern, value);
       populated.push({ key: `insert:${attr}`, label: `Insert marker for ${attr}`, value });

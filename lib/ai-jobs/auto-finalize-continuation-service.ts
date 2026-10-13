@@ -29,12 +29,69 @@ import { repairSourceGrounding } from "../engine/repair-source-grounding";
 import { prisma } from "../prisma";
 import { logger } from "../observability";
 import { recordStep } from "../ai-jobs";
+import { isGenerated } from "../engine/document-output-state";
+
+/**
+ * Canonical validation outcome.
+ *
+ * `rejected` names the documents the validator actually refused and why.
+ *
+ * The counts alone produced a blocker the owner could not act on — "1
+ * auto-finalized PDF(s) failed canonical validation" identifies neither the
+ * document nor the defect — and the same opacity made an intermittent CI
+ * failure in tests/owner-workflow-complete-postgres.test.ts impossible to
+ * diagnose from the failure message. A blocker that cannot be acted on is not
+ * a blocker, it is a dead end.
+ */
+export type CanonicalValidationOutcome = {
+  validated: number;
+  failed: number;
+  pending: number;
+  rejected: Array<{ documentId: string; fileName: string; reasons: string[] }>;
+};
 
 export type AutoFinalizeResult = {
   ok: boolean;
   sourceRepair: { checked: number; repaired: number; remaining: number };
-  exportRepair: { repaired: number; skipped: number; manualRequired: number };
-  validation: { validated: number; failed: number; pending: number };
+  /**
+   * The export-repair stage's own verdict, carried in full.
+   *
+   * This type used to declare only the three counters, while the value assigned
+   * to it also carried `finalExportReady` and the remaining blocker counts —
+   * the canonical answer to "can this tender export", computed by the very run
+   * that was about to report convergence. Because the field was not declared,
+   * the convergence evaluator could not see it, and so never asked. A run could
+   * therefore report ok:true with finalExportReady:false beside it.
+   */
+  exportRepair: {
+    repaired: number;
+    skipped: number;
+    manualRequired: number;
+    finalExportReady?: boolean;
+    remainingDocumentBlockers?: number;
+    remainingTenderLevelBlockers?: number;
+  };
+  /**
+   * The canonical export gate's verdict AFTER every stage of this run.
+   * `evaluated` is false only when the check itself could not be run, in which
+   * case convergence does not invent an answer either way.
+   */
+  finalReadiness: {
+    evaluated: boolean;
+    ok: boolean;
+    /**
+     * The proposal the app produces is complete and only originals the owner
+     * attaches remain. The run has done everything it can; it ends in that
+     * state rather than as a failure.
+     */
+    proposalComplete?: boolean;
+    ownerAttachmentsOutstanding?: number;
+    documentBlockers: number;
+    tenderLevelBlockers: number;
+    /** Blocker categories, so the failure names what is wrong rather than counting it. */
+    categories: string[];
+  };
+  validation: CanonicalValidationOutcome;
   pdfFinalization: { finalized: number; skipped: number; failed: number };
   /**
    * Second validation pass over the PDFs the finalization stage just created.
@@ -43,13 +100,41 @@ export type AutoFinalizeResult = {
    * stayed unvalidated forever — and an unvalidated document is exactly what
    * the export gate refuses.
    */
-  pdfValidation: { validated: number; failed: number; pending: number };
+  pdfValidation: CanonicalValidationOutcome;
+  /**
+   * Requirement coverage refreshed against the artifacts that now exist.
+   *
+   * Coverage is first computed during Run Engine, when the deliverables are
+   * still promises: a requirement answered by the proposal's own document has
+   * only a PARTIAL build-plan row, because `artifactBytesVerified` is false
+   * until the bytes exist. Nothing recomputed it afterwards on this path, so
+   * the export gate judged engine-time evidence and refused a package whose
+   * documents were generated, validated and byte-verified.
+   *
+   * `refreshed: false` means the sync could not run; stored coverage is then
+   * judged as-is, which fails closed.
+   */
+  coverageReconciliation: { refreshed: boolean; requirementsChecked: number };
   /**
    * Does the package actually contain every required file? The stages above
    * can each succeed while the plan is still short a document, so the run is
    * not converged until the manifest reconciles against the confirmed plan.
    */
   packageReconciliation: { requiredTotal: number; missing: number };
+  /**
+   * Planned files the package did not yet contain, produced automatically.
+   *
+   * The workflow UI tells the owner that missing planned documents are handled
+   * automatically after Run Engine. They were not: every stage here repaired,
+   * validated and finalised documents that ALREADY EXISTED, then reconciliation
+   * reported the shortfall as a terminal blocker while the only thing that
+   * could create those files was a button the owner had to find and press.
+   *
+   * `blocked` carries the fail-closed reason when generation could not run at
+   * all (degraded analysis, no source-verified plan, an operation-gate blocker)
+   * — those are real blockers and are surfaced, not swallowed.
+   */
+  missingFileGeneration: { generated: number; planned: number; skipped: number; blocked: string | null };
   /**
    * Tender-issued forms recovered from the user's own uploads. `stillMissing`
    * is not a blocker on its own — the export gate already refuses a document
@@ -80,15 +165,47 @@ export type AutoFinalizeResult = {
  * NON_RETRYABLE — these are states a retry cannot change, so the job must fail
  * terminally with the reason persisted rather than burn its retry budget.
  */
+/**
+ * Render "…: Technical-Proposal.pdf (Placeholder or unresolved drafting
+ * instruction is present)" when the outcome names its rejections, and nothing
+ * when it does not.
+ *
+ * This is a summariser: it must degrade rather than throw when handed an
+ * outcome without the field. Reading `.rejected.length` directly crashed on
+ * every partial fixture, which is exactly the shape a caller building a
+ * summary is entitled to pass.
+ */
+function namedRejections(outcome: Partial<CanonicalValidationOutcome> | undefined): string {
+  const rejected = outcome?.rejected ?? [];
+  if (rejected.length === 0) return "";
+  return `: ${rejected.map((row) => `${row.fileName} (${row.reasons.join("; ")})`).join(", ")}`;
+}
+
 export function evaluateAutoFinalizeConvergence(
   result: Omit<AutoFinalizeResult, "ok" | "blockers">,
 ): string[] {
   const blockers: string[] = [];
+  // Only originals the owner attaches remain: the final gate (the same one the
+  // download reads) says every document the app produces is ready. What is
+  // left is reported by the Owner Attachment Checklist, not as a failure. A
+  // grounding gap or a PDF the app could not finalize is still the app's.
+  if (result.finalReadiness?.evaluated && result.finalReadiness.proposalComplete && !result.finalReadiness.ok) {
+    if (result.sourceRepair.remaining > 0) {
+      blockers.push(`source grounding incomplete: ${result.sourceRepair.remaining} requirement(s) still have no current source trace`);
+    }
+    if (result.pdfFinalization.failed > 0) {
+      blockers.push(`INTEGRITY: ${result.pdfFinalization.failed} required PDF(s) could not be finalized from a validated source`);
+    }
+    if (result.pdfValidation.failed > 0) {
+      blockers.push(`readiness gate: ${result.pdfValidation.failed} auto-finalized PDF(s) failed canonical validation` + namedRejections(result.pdfValidation));
+    }
+    return blockers;
+  }
   if (result.sourceRepair.remaining > 0) {
     blockers.push(`source grounding incomplete: ${result.sourceRepair.remaining} requirement(s) still have no current source trace`);
   }
   if (result.validation.failed > 0) {
-    blockers.push(`readiness gate: ${result.validation.failed} document(s) failed canonical validation`);
+    blockers.push(`readiness gate: ${result.validation.failed} document(s) failed canonical validation` + namedRejections(result.validation));
   }
   if (result.validation.pending > 0) {
     blockers.push(`readiness gate: ${result.validation.pending} document(s) are still unvalidated`);
@@ -100,13 +217,42 @@ export function evaluateAutoFinalizeConvergence(
     blockers.push(`AUTHORITY: ${result.exportRepair.manualRequired} document(s) need manual attention and cannot be repaired automatically`);
   }
   if (result.pdfValidation.failed > 0) {
-    blockers.push(`readiness gate: ${result.pdfValidation.failed} auto-finalized PDF(s) failed canonical validation`);
+    blockers.push(`readiness gate: ${result.pdfValidation.failed} auto-finalized PDF(s) failed canonical validation` + namedRejections(result.pdfValidation));
   }
   if (result.pdfValidation.pending > 0) {
     blockers.push(`readiness gate: ${result.pdfValidation.pending} auto-finalized PDF(s) are still unvalidated`);
   }
+  // The canonical export gate, consulted at the end of the run.
+  //
+  // Every check above could pass while the gate that actually decides whether a
+  // ZIP can be produced said no: the job was recorded SUCCEEDED, the owner was
+  // told the pipeline had converged, no further automatic stage ran, and the
+  // download was then refused — a silent dead end at the last stage.
+  //
+  // This must be the FINAL verdict, not the snapshot the repair stage returns.
+  // `exportRepair.finalExportReady` is computed part-way through, before
+  // canonical validation has run, so freshly regenerated documents are still
+  // PENDING when it is taken and it reports blockers that the very next stage
+  // clears. Reading it here would fail every ordinary successful run.
+  // Optional-chained: this evaluator is exported and is called with hand-built
+  // results in its own suites. A caller that never ran the check asserts
+  // nothing about readiness rather than crashing on a missing field.
+  if (result.finalReadiness?.evaluated && !result.finalReadiness.ok) {
+    blockers.push(
+      `readiness gate: the export readiness check refuses this package — ${result.finalReadiness.documentBlockers ?? 0} document blocker(s) and ${result.finalReadiness.tenderLevelBlockers ?? 0} tender-level blocker(s) remain${(result.finalReadiness.categories ?? []).length > 0 ? `: ${result.finalReadiness.categories.join(", ")}` : ""}`,
+    );
+  }
   if (result.packageReconciliation.missing > 0) {
-    blockers.push(`INTEGRITY: package reconciliation incomplete — ${result.packageReconciliation.missing} of ${result.packageReconciliation.requiredTotal} required file(s) are not in the package`);
+    // Name WHY the package is still short. A shortfall that survives the
+    // automatic generation stage is either a file the app must not invent (an
+    // official original) or a fail-closed gate — reporting the count alone left
+    // the owner with a number and no next step.
+    const reason = result.missingFileGeneration.blocked
+      ? ` — automatic generation could not run: ${result.missingFileGeneration.blocked}`
+      : result.missingFileGeneration.planned > 0
+        ? ` — ${result.missingFileGeneration.planned} awaiting the tender-issued original`
+        : "";
+    blockers.push(`INTEGRITY: package reconciliation incomplete — ${result.packageReconciliation.missing} of ${result.packageReconciliation.requiredTotal} required file(s) are not in the package${reason}`);
   }
   return blockers;
 }
@@ -127,14 +273,67 @@ export async function runAutoFinalizeAfterGeneration(
     ok: true,
     sourceRepair: { checked: 0, repaired: 0, remaining: 0 },
     exportRepair: { repaired: 0, skipped: 0, manualRequired: 0 },
-    validation: { validated: 0, failed: 0, pending: 0 },
+    finalReadiness: { evaluated: false, ok: false, documentBlockers: 0, tenderLevelBlockers: 0, categories: [] },
+    validation: { validated: 0, failed: 0, pending: 0, rejected: [] },
     pdfFinalization: { finalized: 0, skipped: 0, failed: 0 },
-    pdfValidation: { validated: 0, failed: 0, pending: 0 },
+    pdfValidation: { validated: 0, failed: 0, pending: 0, rejected: [] },
+    coverageReconciliation: { refreshed: false, requirementsChecked: 0 },
     packageReconciliation: { requiredTotal: 0, missing: 0 },
+    missingFileGeneration: { generated: 0, planned: 0, skipped: 0, blocked: null },
     formReuse: { reused: 0, stillMissing: 0 },
     blockers: [],
     warning: null,
   };
+
+  // Step -1: retire documents the confirmed plan no longer names.
+  //
+  // lib/engine/outside-plan-documents.ts says the manual control and "the
+  // automatic stage" share this rule, but only the manual routes called it. So
+  // when a rebuilt plan dropped a file — on 2026-09-23 the plan folded the
+  // Cover Letter and Company Profile into the single "Technical Proposal.pdf"
+  // the tender demands — the earlier "Company Profile.docx" stayed GENERATED,
+  // the export gate reported EXTRA_FILES, and no automatic step could clear it.
+  //
+  // Nothing is deleted: rows are SUPERSEDED with the reason, as the manual
+  // control leaves them. A document whose base name matches a planned file is
+  // never touched — "Technical Proposal.docx" is the source the required
+  // "Technical Proposal.pdf" is rendered from in the PDF stage below.
+  try {
+    const { findOutsidePlanDocumentIds, supersedeOutsidePlanDocuments } = await import("../engine/outside-plan-documents");
+    const outside = await findOutsidePlanDocumentIds(prisma, { tenderId, userId });
+    if (!outside.planEmpty && outside.ids.length > 0) {
+      const { getCurrentConfirmedBuildPlan } = await import("../engine/build-plan");
+      const confirmed = await getCurrentConfirmedBuildPlan(prisma, tenderId, userId);
+      const plannedBases = new Set(
+        (confirmed.ok ? confirmed.items : [])
+          .map((item: { exactFileName?: string | null }) => baseNameOf(item.exactFileName ?? ""))
+          .filter(Boolean),
+      );
+      const candidates = await prisma.generatedDocument.findMany({
+        where: { id: { in: outside.ids }, tenderId },
+        select: { id: true, name: true, exactFileName: true },
+      });
+      const retire = candidates
+        .filter((doc) => !plannedBases.has(baseNameOf(doc.exactFileName ?? doc.name ?? "")))
+        .map((doc) => doc.id);
+      const retired = await supersedeOutsidePlanDocuments(prisma, { tenderId, documentIds: retire });
+      if (retired > 0) {
+        await recordStep(jobId, {
+          stepName: "auto-finalize.outside-plan",
+          message: `Retired ${retired} document(s) the confirmed Build Plan no longer names`,
+          status: "SUCCEEDED",
+        });
+      }
+    }
+  } catch (error) {
+    // Fail closed: leaving an extra document in place is reported by the export
+    // gate, which blocks rather than releases.
+    logger.warn("[auto-finalize] outside-plan reconciliation failed", {
+      tenderId,
+      jobId,
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+    });
+  }
 
   // Step 0: reuse tender-issued forms from the uploaded Tender Intake files.
   //
@@ -157,6 +356,60 @@ export async function runAutoFinalizeAfterGeneration(
     });
   } catch (error) {
     logger.warn("[auto-finalize] tender-issued form reuse failed", {
+      tenderId,
+      jobId,
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+    });
+    throw error;
+  }
+
+  // Step 0.5: produce the planned files the package does not yet contain.
+  //
+  // This runs BEFORE the repair, validation and PDF stages so a file created
+  // here is repaired, validated and finalised in the SAME run — otherwise the
+  // chain would create a document and immediately report it unvalidated.
+  //
+  // Runs the same implementation, with the same gates, as
+  // POST /api/tenders/[id]/generate-missing-plan-files. It never invents a file
+  // the app must not produce: a tender-issued form, a priced financial proposal
+  // or an official original is written as a PLANNED row awaiting its original,
+  // and a requirement that states a submission RULE rather than a deliverable
+  // is not in the confirmed plan at all (see
+  // lib/engine/financial-separation-rule.ts).
+  try {
+    await recordStep(jobId, {
+      stepName: "auto-finalize.missing-file-generation",
+      message: "Generating planned files the package does not yet contain",
+      status: "RUNNING",
+    });
+    const { generateMissingPlanFiles } = await import("../engine/missing-plan-file-generation");
+    const generation = await generateMissingPlanFiles({
+      prisma,
+      tenderId,
+      userId,
+      actorLabel: "machine:auto-finalize",
+    });
+    result.missingFileGeneration = {
+      generated: generation.created.length + generation.updated.length + generation.convertedFromPlanned.length,
+      planned: generation.plannedCreated.length,
+      skipped: generation.skipped.length,
+      // NOTHING_MISSING and "nothing could be generated because every target
+      // was skipped for a stated reason" are not blockers of this stage — the
+      // reconciliation step below is the authority on whether the package is
+      // actually short a file, and it names the shortfall once.
+      blocked: generation.ok || generation.code === "NO_PLANNED_FILE_COULD_BE_GENERATED"
+        ? null
+        : `${generation.code}: ${generation.error}`,
+    };
+    await recordStep(jobId, {
+      stepName: "auto-finalize.missing-file-generation.complete",
+      message: result.missingFileGeneration.blocked
+        ? `Missing-file generation blocked: ${result.missingFileGeneration.blocked}`
+        : `Missing planned files: ${result.missingFileGeneration.generated} generated, ${result.missingFileGeneration.planned} awaiting an official original, ${result.missingFileGeneration.skipped} skipped`,
+      status: result.missingFileGeneration.blocked ? "FAILED" : "SUCCEEDED",
+    });
+  } catch (error) {
+    logger.warn("[auto-finalize] missing planned-file generation failed", {
       tenderId,
       jobId,
       errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
@@ -202,6 +455,10 @@ export async function runAutoFinalizeAfterGeneration(
       message: "Auto-repairing export gaps (AI traces, placeholders, pricing leakage)",
       status: "RUNNING",
     });
+    // Positions come from the confirmed plan before anything is validated:
+    // a generator's own default must not decide the package order.
+    const { alignDocumentOrderToPlan } = await import("../engine/align-document-order");
+    await alignDocumentOrderToPlan(prisma, tenderId, userId).catch(() => 0);
     const exportRepair = await runSafeExportRepairs(tenderId, userId);
     result.exportRepair = exportRepair;
     await recordStep(jobId, {
@@ -242,6 +499,58 @@ export async function runAutoFinalizeAfterGeneration(
       errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
     });
     throw error;
+  }
+
+  // Step 3b: refresh requirement coverage against the artifacts that now exist.
+  //
+  // lib/engine/validate.ts already does this, and its comment says doing it
+  // there "covers every path that reaches a verdict, since both POST /validate
+  // and POST /export come through this function". That is not true of this
+  // path: runCanonicalValidation below imports checkFullExportReadiness from
+  // export-readiness and validates documents directly, so the automatic
+  // pipeline — the one the owner automation contract says must need no clicks —
+  // reached the export gate having never refreshed coverage.
+  //
+  // The effect was a tender that cannot be finished. Coverage is computed at
+  // Run Engine time, when a requirement answered by the proposal's own
+  // deliverable has only a PARTIAL build-plan row. Generation then produces the
+  // document, validation passes it, its bytes verify — and the export gate
+  // still reads the engine-time PARTIAL and refuses the ZIP for
+  // MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE. The only way past it was to know to
+  // POST /api/tenders/{id}/requirement-coverage/auto-sync by hand.
+  //
+  // This calls the SAME canonical service, not another coverage rule: it is an
+  // idempotent desired-state sync, so running it on an already-current tender
+  // is a no-op. It cannot manufacture coverage either — a build-plan row only
+  // reaches SUBSTANTIAL when artifactBytesVerified is true, and a generated
+  // document only reaches FULL when it passed validation.
+  try {
+    await recordStep(jobId, {
+      stepName: "auto-finalize.coverage-reconcile",
+      message: "Refreshing requirement coverage against generated artifacts",
+      status: "RUNNING",
+    });
+    const { reconcileAutomaticRequirementCoverage } = await import("../engine/reconcile-automatic-requirement-coverage");
+    const coverage = await reconcileAutomaticRequirementCoverage(prisma, tenderId, userId);
+    result.coverageReconciliation = {
+      refreshed: coverage.ok === true,
+      requirementsChecked: coverage.requirementsChecked ?? 0,
+    };
+    await recordStep(jobId, {
+      stepName: "auto-finalize.coverage-reconcile.complete",
+      message: `Requirement coverage refreshed: ${result.coverageReconciliation.requirementsChecked} requirement(s) checked`,
+      status: "SUCCEEDED",
+    });
+  } catch (error) {
+    // Never fail the run for this. Coverage that could not be refreshed is
+    // simply not refreshed, and the gates below judge what is stored — which
+    // blocks rather than releases, so the failure mode stays closed.
+    logger.warn("[auto-finalize] requirement-coverage reconcile failed; judging stored coverage", {
+      tenderId,
+      jobId,
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+    });
+    result.coverageReconciliation = { refreshed: false, requirementsChecked: 0 };
   }
 
   // Step 4 (Gap 4+5): auto-finalize eligible PDFs from VALIDATED source
@@ -301,6 +610,24 @@ export async function runAutoFinalizeAfterGeneration(
       });
       throw error;
     }
+    // Finalization supersedes the DOCX evidence row and creates new PDF bytes.
+    // Reconcile once more after those bytes pass validation so mandatory
+    // submission rules are judged from the final artifact, not the source row
+    // that was deliberately superseded above.
+    try {
+      const { reconcileAutomaticRequirementCoverage } = await import("../engine/reconcile-automatic-requirement-coverage");
+      const coverage = await reconcileAutomaticRequirementCoverage(prisma, tenderId, userId);
+      result.coverageReconciliation = {
+        refreshed: coverage.ok === true,
+        requirementsChecked: coverage.requirementsChecked ?? 0,
+      };
+    } catch (error) {
+      logger.warn("[auto-finalize] post-PDF requirement-coverage reconcile failed; judging stored coverage", {
+        tenderId,
+        jobId,
+        errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+      });
+    }
   }
 
   // Step 6: reconcile the package against the confirmed plan. Every stage
@@ -333,13 +660,52 @@ export async function runAutoFinalizeAfterGeneration(
   // assumed from "no stage threw". A stage that completes while leaving
   // unresolved grounding, unvalidated documents, an unfinalizable PDF, or
   // manual-only work has not finished the job the user was promised.
+  // Ask the canonical gate whether this package can actually export, now that
+  // every stage has run. This is the same entry point the export-readiness
+  // route and the ZIP download use, so the job and the download cannot reach
+  // opposite conclusions about the same tender.
+  try {
+    const { getFinalSubmissionReadiness } = await import("../engine/final-submission-readiness");
+    // requireFileContent matches the ZIP download exactly. The job and the
+    // download must reach the same conclusion about the same tender, and the
+    // download is the authority that actually produces the archive.
+    const readiness = await getFinalSubmissionReadiness(prisma, { tenderId, userId, requireFileContent: true });
+    // A null verdict means the gate could not evaluate this tender at all.
+    // Convergence then asserts nothing about readiness rather than inventing
+    // either answer.
+    if (readiness) {
+      result.finalReadiness = {
+        evaluated: true,
+        ok: readiness.ok === true,
+        proposalComplete: readiness.proposalComplete === true,
+        ownerAttachmentsOutstanding: readiness.ownerAttachments?.outstanding ?? 0,
+        documentBlockers: readiness.documentBlockers?.length ?? 0,
+        tenderLevelBlockers: readiness.tenderLevelBlockers?.length ?? 0,
+        categories: [
+          ...(readiness.tenderLevelBlockers ?? []),
+          ...(readiness.documentBlockers ?? []),
+        ]
+          .map((blocker) => String((blocker as { category?: unknown }).category ?? "UNKNOWN"))
+          .filter((value, index, all) => all.indexOf(value) === index)
+          .slice(0, 6),
+      };
+    }
+  } catch (error) {
+    logger.warn("[auto-finalize] final readiness evaluation failed; convergence will not assert readiness", {
+      tenderId,
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+    });
+  }
+
   result.blockers = evaluateAutoFinalizeConvergence(result);
   result.ok = result.blockers.length === 0;
 
   await recordStep(jobId, {
     stepName: "auto-finalize.convergence",
     message: result.ok
-      ? "Auto-finalize converged: no outstanding blockers"
+      ? result.finalReadiness.proposalComplete && !result.finalReadiness.ok
+        ? `Proposal complete — manual original attachments required: ${result.finalReadiness.ownerAttachmentsOutstanding ?? 0} original/supporting document(s) for the owner to compile (checklist)`
+        : "Auto-finalize converged: no outstanding blockers"
       : `Auto-finalize did not converge: ${result.blockers.join("; ")}`,
     status: result.ok ? "SUCCEEDED" : "FAILED",
   });
@@ -438,7 +804,7 @@ async function runSafeExportRepairs(
 async function runCanonicalValidation(
   tenderId: string,
   userId: string,
-): Promise<{ validated: number; failed: number; pending: number }> {
+): Promise<CanonicalValidationOutcome> {
   const { checkFullExportReadiness } = await import("../engine/export-readiness");
 
   // Gap B: verify tenant ownership before reading/writing documents.
@@ -449,7 +815,7 @@ async function runCanonicalValidation(
     select: { id: true },
   });
   if (!tender) {
-    return { validated: 0, failed: 0, pending: 0 };
+    return { validated: 0, failed: 0, pending: 0, rejected: [] };
   }
 
   // Load all non-superseded documents with their content for validation.
@@ -468,7 +834,7 @@ async function runCanonicalValidation(
   // does not relax it. A document whose bytes genuinely fail still fails.
   const docs = await prisma.generatedDocument.findMany({
     where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
-    orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
+    orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }],
     select: {
       id: true, name: true, exactFileName: true, exactOrder: true,
       documentType: true, format: true, generationStatus: true,
@@ -520,6 +886,22 @@ async function runCanonicalValidation(
   let validated = 0;
   let failed = 0;
   let pending = 0;
+  // Name every document counted as failed, with the validator's own reasons,
+  // so the blocker says what to fix instead of only how many.
+  const rejectionReasons = new Map<string, string[]>();
+  for (const failure of readiness.failures) {
+    if (!failure.documentId) continue;
+    const actionable = (failure.reasons ?? []).filter((reason) => !isReviewWorkflowReason(reason));
+    if (actionable.length > 0) rejectionReasons.set(failure.documentId, actionable);
+  }
+  const rejected: CanonicalValidationOutcome["rejected"] = [];
+  const recordRejection = (doc: { id: string; exactFileName: string | null; name: string | null }) => {
+    rejected.push({
+      documentId: doc.id,
+      fileName: doc.exactFileName ?? doc.name ?? doc.id,
+      reasons: rejectionReasons.get(doc.id) ?? ["validationStatus was already FAILED from an earlier pass"],
+    });
+  };
 
   for (const doc of docs) {
     // Only auto-validate documents that are currently PENDING (i.e. the
@@ -527,8 +909,31 @@ async function runCanonicalValidation(
     // are already VALIDATED, FAILED, or in a human-review state.
     if (doc.validationStatus !== "PENDING") {
       if (doc.validationStatus === "VALIDATED" || doc.validationStatus === "PASSED") validated++;
-      else if (doc.validationStatus === "FAILED") failed++;
+      else if (doc.validationStatus === "FAILED") { failed++; recordRejection(doc); }
       else pending++;
+      continue;
+    }
+
+    // A fresh PLANNED row is an empty identity, not a deliverable yet — it
+    // has no content for this pass to judge one way or the other. Most
+    // PLANNED rows are already filled in by the missing-plan-file generation
+    // stage that runs earlier in this same job, but a PLANNED row for a
+    // required PDF is deliberately left empty here: PDF finalization (the
+    // stage right after this one, in runAutoFinalizeAfterGeneration) fills
+    // this exact row in place with the rendered bytes. Marking it FAILED
+    // pre-judged a placeholder before finalization had the chance to fill
+    // it, and — because AUTO_FINALIZE's identity is deterministic per
+    // analysis revision — that FAILED verdict, once persisted, stood as a
+    // terminal blocker even after finalization went on to fill and validate
+    // the very same row two stages later in the same run. A PLANNED row
+    // finalization does not end up filling is still caught downstream by
+    // packageReconciliation's "N required file(s) are not in the package"
+    // and by the final export-readiness gate's own
+    // UNGENERATED_PLANNED_DOCUMENTS check, so nothing here lets a
+    // genuinely-missing deliverable through — it only stops this pass from
+    // prejudging one this run has not tried to produce yet.
+    if (doc.generationStatus === "PLANNED") {
+      pending++;
       continue;
     }
 
@@ -541,10 +946,10 @@ async function runCanonicalValidation(
       },
     });
     if (passes) validated++;
-    else failed++;
+    else { failed++; recordRejection(doc); }
   }
 
-  return { validated, failed, pending };
+  return { validated, failed, pending, rejected };
 }
 
 /**
@@ -600,11 +1005,22 @@ async function runPdfFinalization(
   // Load all non-superseded generated documents.
   const docs = await prisma.generatedDocument.findMany({
     where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
+    // exactOrder is selected because the finalized PDF inherits its position
+    // from these rows. Omitting it here is what let a finalized PDF be written
+    // with no position at all — see the comment on inheritedExactOrder below.
+    //
+    // contentSummary is selected for the same reason, one field over. It is the
+    // only record of WHO WROTE the proposal — generate-elite always begins it
+    // with the mode label, naming the provider or the deterministic fallback —
+    // and the finalized PDF replaces the DOCX as the deliverable. Omitting it
+    // left the artifact the client actually receives with no authorship at all.
     select: {
-      id: true, name: true, exactFileName: true, documentType: true,
+      id: true, name: true, exactFileName: true, exactOrder: true,
+      documentType: true, contentSummary: true,
       format: true, generationStatus: true, validationStatus: true,
       reviewStatus: true, fileContent: true, storagePath: true,
       contentSha256: true, contentByteLength: true, integrityStatus: true,
+      updatedAt: true,
     },
   });
 
@@ -612,16 +1028,37 @@ async function runPdfFinalization(
   let skipped = 0;
   let failed = 0;
 
-  for (const requiredName of requiredPdfNames) {
-    // Check if a PDF with this exact name already exists.
-    const existingPdf = docs.find(
-      (d) => d.exactFileName?.toLowerCase() === requiredName.toLowerCase() && d.format === "PDF",
-    );
-    if (existingPdf) {
-      skipped++;
-      continue;
-    }
+  // A tender whose whole submission is one PDF that must contain the annexes
+  // gets its verified Vault originals bound in after the proposal
+  // (annex-bundle.ts). Anything else is unchanged.
+  const { loadAnnexBundlePlan } = await import("../engine/annex-bundle-loader");
+  const { annexBundleIdentity, bindAnnexBundle, readAnnexBundleMarker } = await import("../engine/annex-bundle");
+  const annex = await loadAnnexBundlePlan(tenderId, userId).catch(() => null);
+  const isCombinedFile = (fileName: string) => Boolean(annex?.plan.applies && annex.plan.combinedFileName?.toLowerCase() === fileName.toLowerCase());
+  const plannedBundle = annex ? annexBundleIdentity(annex.plan) : [];
 
+  for (const requiredName of requiredPdfNames) {
+    // Check if the required PDF has actually been PRODUCED.
+    //
+    // This asked whether a row with that name and format PDF exists, which is
+    // not the same question. A required PDF the tender names but nothing has
+    // rendered yet is carried as a PLANNED placeholder row — same exactFileName,
+    // format PDF, no bytes — so the placeholder was mistaken for the finished
+    // file, finalization was skipped, and the very same row was then reported
+    // by canonical validation as CONTROL_RECORD_ONLY and by export readiness as
+    // UNGENERATED_PLANNED_DOCUMENTS. AUTO_FINALIZE could not converge, and the
+    // owner was told to "generate or attach the real final file" for a file the
+    // pipeline had just declined to generate.
+    //
+    // Ask for real bytes instead, using the same GENERATED-and-exportable
+    // predicate the export gate applies. A finalized PDF still short-circuits;
+    // only a placeholder no longer pretends to be one.
+    const existingPdf = docs.find(
+      (d) => d.exactFileName?.toLowerCase() === requiredName.toLowerCase()
+        && d.format === "PDF"
+        && isGenerated(d.generationStatus)
+        && Boolean(d.fileContent || d.storagePath),
+    );
     // Find the matching DOCX source (by base name, ignoring extension).
     const baseName = requiredName.replace(/\.pdf$/i, "");
     const sourceDoc = docs.find((d) => {
@@ -636,6 +1073,16 @@ async function runPdfFinalization(
       skipped++;
       continue;
     }
+    // A combined file is current only when it binds exactly the planned originals.
+    const bundleCurrent = !isCombinedFile(requiredName) || await (async () => {
+      if (!existingPdf?.fileContent) return false;
+      const marker = await readAnnexBundleMarker(Buffer.from(existingPdf.fileContent, "base64"));
+      return (marker?.bound ?? []).join(",") === plannedBundle.join(",");
+    })();
+    if (existingPdf && existingPdf.updatedAt >= sourceDoc.updatedAt && bundleCurrent) {
+      skipped++;
+      continue;
+    }
 
     try {
       const result = await finalizeRequiredPdf({
@@ -647,6 +1094,8 @@ async function runPdfFinalization(
           submissionEmailSubject: tender.submissionEmailSubject,
         },
         company: tender.user?.company,
+        // Resolves the active signature/stamp images for the renderer to draw.
+        ownerUserId: userId,
         sourceDocument: {
           id: sourceDoc.id,
           name: sourceDoc.name,
@@ -688,15 +1137,67 @@ async function runPdfFinalization(
         // hardcoded assertion it replaces: unknown or corrupt bytes now fail
         // closed into the surrounding catch (failed++) instead of being
         // recorded as VERIFIED.
-        const pdfBase64 = result.bytes.toString("base64");
+        let pdfBytes = result.bytes;
+        if (annex && isCombinedFile(requiredName) && annex.plan.parts.length > 0) {
+          const bundled = await bindAnnexBundle(result.bytes, annex.plan, annex.loadOriginal);
+          pdfBytes = bundled.bytes;
+          if (bundled.unreadable.length > 0) {
+            logger.warn("[auto-finalize] annex originals could not be bound", { tenderId, unreadable: bundled.unreadable });
+          }
+        }
+        const pdfBase64 = pdfBytes.toString("base64");
         const { verifiedIntegrityDataFromBase64 } = await import("../engine/persisted-byte-integrity");
         const pdfIntegrity = verifiedIntegrityDataFromBase64({
           fileContent: pdfBase64,
           filename: requiredName,
           claimedMimeType: "application/pdf",
         });
-        await prisma.generatedDocument.create({
-          data: {
+        // Fill the PLANNED row in rather than adding a second one.
+        //
+        // A required PDF the tender names is carried as a PLANNED placeholder
+        // until something renders it, and
+        // GeneratedDocument_tenderId_exactFileName_active_key makes
+        // (tenderId, exactFileName) unique across every non-superseded row. So
+        // creating the finalized PDF beside its own placeholder violated that
+        // constraint, the write threw, and the catch below counted a rendered,
+        // byte-verified PDF as "failed to finalize" — while the untouched
+        // placeholder went on being reported as CONTROL_RECORD_ONLY and
+        // UNGENERATED_PLANNED_DOCUMENTS. The plan row IS the deliverable's
+        // identity; finalization gives it its bytes.
+        const plannedRow = docs.find(
+          (d) => d.exactFileName?.toLowerCase() === requiredName.toLowerCase()
+            && !isGenerated(d.generationStatus)
+            && !d.fileContent
+            && !d.storagePath,
+        );
+        // The finalized PDF must inherit its position in the package.
+        //
+        // exactOrder is not cosmetic: final-zip-scope.ts and the export route
+        // both build the shipped package with
+        // `sort((a, b) => (a.exactOrder ?? MAX_SAFE_INTEGER) - (b.exactOrder ?? …))`,
+        // and export-readiness compares that order against the tender's
+        // exactFileOrder. This object used to omit the field entirely, so on
+        // the create path below a brand-new PDF row was written with no
+        // position at all — null, which sorts LAST — even though the DOCX it
+        // was rendered from carried one.
+        //
+        // Live on tender 08e250af: the Technical Proposal DOCX rows hold
+        // exactOrder=1, the finalized Technical Proposal.pdf held none, so
+        // Company Profile.docx took position 1 and export-readiness raised
+        // "Generated file order does not match tender order near: Technical
+        // Proposal.pdf". That is not only a readiness complaint — the ZIP the
+        // evaluator receives really was ordered that way.
+        //
+        // Order of preference is authority order: the row already holding the
+        // confirmed plan's position for this exact file name, then the DOCX
+        // source (the same deliverable in another format), then whatever the
+        // row being updated already had. All three come from the tender's own
+        // plan; nothing is invented. When none of them has a position, the
+        // field is omitted rather than written as null, so this can only ever
+        // add ordering information, never erase it.
+        const inheritedExactOrder =
+          plannedRow?.exactOrder ?? sourceDoc.exactOrder ?? existingPdf?.exactOrder ?? null;
+        const finalizedPdfData = {
             tenderId,
             name: requiredName,
             exactFileName: requiredName,
@@ -707,11 +1208,69 @@ async function runPdfFinalization(
             validationStatus: "PENDING",
             reviewStatus: "PENDING",
             reviewNotes: "machine:auto-finalize-pdf — rendered from validated DOCX source. Awaiting canonical validation.",
+            ...(inheritedExactOrder != null ? { exactOrder: inheritedExactOrder } : {}),
+            // AUTHORSHIP MUST SURVIVE THE RENDER.
+            //
+            // The DOCX carries the only record of who wrote this proposal:
+            // generate-elite writes contentSummary beginning with the mode
+            // label — the provider that authored it, or the deterministic
+            // fallback. This PDF then replaces that DOCX as the deliverable.
+            //
+            // Without this line the delivered artifact had no authorship at
+            // all. On the 2026-09-15 acceptance run the tender's only visible
+            // document was 'Technical Proposal.pdf' with contentSummary null,
+            // so "was this written by a model?" — the question the whole
+            // benchmark turns on — could not be answered from the product, only
+            // guessed at. Rendering a file into another format does not change
+            // who wrote it.
+            ...(sourceDoc.contentSummary ? { contentSummary: sourceDoc.contentSummary } : {}),
             ...pdfIntegrity,
+        } as const;
+        const targetRow = existingPdf ?? plannedRow;
+        if (targetRow) {
+          await prisma.generatedDocument.update({ where: { id: targetRow.id }, data: finalizedPdfData });
+        } else {
+          await prisma.generatedDocument.create({ data: finalizedPdfData });
+        }
+
+        // The DOCX this PDF was rendered from is an intermediate, not a second
+        // deliverable. Left GENERATED it becomes a file the tender never named:
+        // findExtraGeneratedDocuments counts every GENERATED row outside the
+        // confirmed plan, export readiness reports EXTRA_FILES, and the final
+        // ZIP refuses the package. SUPERSEDED is the status this codebase
+        // already uses for "preserved history, not a current deliverable", and
+        // that same function already excludes it, so the source stays auditable
+        // without being shipped. Only a source that actually produced the
+        // required PDF is superseded; a DOCX the tender itself asked for is
+        // never a PDF source here, so it is untouched.
+        await prisma.generatedDocument.update({
+          where: { id: sourceDoc.id },
+          data: {
+            generationStatus: "SUPERSEDED",
+            reviewNotes: `machine:auto-finalize-pdf — superseded by ${requiredName}, which was rendered from this source.`,
+            updatedAt: new Date(),
           },
+        }).catch((error: unknown) => {
+          logger.warn("[auto-finalize] could not supersede PDF source document", {
+            tenderId,
+            requiredName,
+            errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+          });
         });
         finalized++;
       } else {
+        // Say WHY. The blocker code and its safe public message were dropped
+        // here, so a required PDF that could not be rendered surfaced only as
+        // the generic "could not be finalized from a validated source" and the
+        // actual cause — an unreadable source, an unsupported format, an empty
+        // extraction — was invisible in logs and in the job's own steps.
+        logger.warn("[auto-finalize] required PDF was not finalized", {
+          tenderId,
+          requiredName,
+          sourceDocumentId: sourceDoc.id,
+          blockerCode: result.code,
+          publicMessage: result.publicMessage,
+        });
         failed++;
       }
     } catch (error) {
@@ -726,3 +1285,9 @@ async function runPdfFinalization(
 
   return { finalized, skipped, failed };
 }
+
+/** "Technical Proposal.docx" and "Technical Proposal.pdf" share a base name. */
+function baseNameOf(fileName: string): string {
+  return fileName.trim().toLowerCase().replace(/\.[a-z0-9]{2,5}$/, "").replace(/\s+/g, " ");
+}
+

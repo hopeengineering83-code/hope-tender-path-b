@@ -42,13 +42,19 @@ describe("every provider adapter clamps to the parent deadline", () => {
       for (const line of source.match(re) ?? []) {
         const trimmed = line.trim();
         if (trimmed.startsWith("//") || trimmed.startsWith("*")) continue;
-        if (trimmed.includes("resolveEffectiveTimeoutMs")) continue;
+        if (trimmed.includes("resolveEffectiveTimeoutMs") || trimmed.includes("resolveProviderAttemptTimeoutMs")) continue;
         // Diagnostic output interpolates the static constant into human-readable
         // text ("timed out after 60000ms"). That is the value the adapter was
         // configured with, not a timeout being handed to a provider, so it is
         // outside this assertion's subject. Narrowed deliberately rather than
         // relaxed: a genuine unclamped provider call still fails.
-        if (/\blogger\.|console\./.test(trimmed)) continue;
+        // `note(...)` is the same thing as the logger case above: it records a
+        // human-readable failure reason for the diagnostics card ("timed out
+        // after 60000ms"), which is the value the adapter was CONFIGURED with,
+        // not a timeout handed to a provider. Added when generateWithOpenAI
+        // and generateWithDeepSeek gained the note() helper that every other
+        // OpenAI-shaped adapter already had.
+        if (/\blogger\.|console\.|\bnote\(/.test(trimmed)) continue;
         // Assignment/derivation lines that only compute a local are acceptable
         // provided the local is itself clamped at the call site; those show up
         // as `const x = COND ? A : B;` with no timeout: / signal: on the line.
@@ -79,7 +85,21 @@ describe("every provider adapter clamps to the parent deadline", () => {
     const abortArms = source.match(/setTimeout\(\(\) => controller\.abort\(\),[^)]*\)/g) ?? [];
     assert.ok(abortArms.length >= 3, "expected the fetch-based adapters to arm abort controllers");
     for (const arm of abortArms) {
-      assert.match(arm, /resolveEffectiveTimeoutMs/, `abort site must be clamped: ${arm}`);
+      // resolveProviderAttemptTimeoutMs is the same clamp with a worker ceiling:
+      // it can lengthen a static timeout inside a durable worker but never past
+      // the parent deadline (proved behaviourally in
+      // a-worker-attempt-may-use-its-budget-but-never-pass-its-deadline).
+      // An arm may name the clamped value it computed one line earlier, so the
+      // timeout log can report the limit that was actually applied.
+      if (/controller\.abort\(\), appliedTimeoutMs\)$/.test(arm)) {
+        assert.match(
+          source,
+          /const appliedTimeoutMs = resolve(Effective|ProviderAttempt)TimeoutMs\(/,
+          "appliedTimeoutMs must itself come from the clamp",
+        );
+        continue;
+      }
+      assert.match(arm, /resolve(Effective|ProviderAttempt)TimeoutMs/, `abort site must be clamped: ${arm}`);
     }
   });
 

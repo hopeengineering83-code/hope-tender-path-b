@@ -51,6 +51,8 @@ type Row = {
   hasStoragePath: boolean;
   officialOriginal: boolean;
   recommendedAction: string;
+  /** Target type a reclassification would write, or null when it would be a no-op. */
+  reclassifyTo?: string | null;
 };
 
 type PlanState = "CONFIRMED_BUILD_PLAN" | "EXPLICIT_TENDER_PLAN" | "DERIVED_DRAFT_UNCONFIRMED" | "PLAN_NOT_BUILT" | "REQUIREMENTS_FOUND_PLAN_NOT_BUILT" | "NO_REQUIREMENTS";
@@ -201,7 +203,11 @@ export function SubmissionPlanCompletenessPanel({ tenderId, canMutate = false }:
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.error ?? `Action failed (${res.status})`);
-      setActionMsg(`Done — ${json.detail ?? action}.`);
+      // The route reports changed:false when the action resolved to a no-op.
+      // Saying "Done" there claims work that did not happen.
+      setActionMsg(json.changed === false
+        ? `No change needed — ${json.detail ?? "the document is already in the requested state"}.`
+        : `Done — ${json.detail ?? action}.`);
       await load();
       router.refresh();
     } catch (err) {
@@ -377,7 +383,16 @@ export function SubmissionPlanCompletenessPanel({ tenderId, canMutate = false }:
                   <td className="px-2 py-2">
                     {canAct && row.documentId ? (
                       <div className="flex flex-col gap-1">
-                        <RowActionButton label="Reclassify to plan" busy={busyKey === `${row.documentId}:RECLASSIFY_TO_PLAN`} disabled={busyKey !== null} onClick={() => void runRowAction(row.documentId!, "RECLASSIFY_TO_PLAN")} />
+                        {/* Offered only when it would actually change the stored
+                            type. Most rows normalise to the type they already
+                            have, and offering the action there reported
+                            "reclassified TECHNICAL_PROPOSAL → TECHNICAL_PROPOSAL"
+                            as completed work. */}
+                        {row.reclassifyTo ? (
+                          <RowActionButton label={`Reclassify to ${row.reclassifyTo.replace(/_/g, " ").toLowerCase()}`} busy={busyKey === `${row.documentId}:RECLASSIFY_TO_PLAN`} disabled={busyKey !== null} onClick={() => void runRowAction(row.documentId!, "RECLASSIFY_TO_PLAN")} />
+                        ) : (
+                          <span className="text-[10px] text-slate-400">Type already correct</span>
+                        )}
                         {isOutsidePlan && (
                           <>
                             <RowActionButton label="Mark control / not exportable" busy={busyKey === `${row.documentId}:MARK_NOT_EXPORTABLE`} disabled={busyKey !== null} onClick={() => void runRowAction(row.documentId!, "MARK_NOT_EXPORTABLE")} />

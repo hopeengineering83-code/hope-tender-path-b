@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { databaseFingerprint } from "./database-fingerprint";
 import { prisma, prismaReady } from "./prisma";
 import { checkAiProviderHealth } from "./ai-provider-health-check";
 import { getStorageReadiness } from "./storage";
@@ -75,7 +76,7 @@ async function schemaAgreement(): Promise<SchemaAgreement> {
   return { matches: failingModels.length === 0, failingModels, errorCode };
 }
 
-async function tableStatus(): Promise<Record<string, boolean>> {
+async function tableStatus(): Promise<{ reachable: boolean; tables: Record<string, boolean | null> }> {
   try {
     await prismaReady;
     const rows = await prisma.$queryRaw<Array<{ name: string; exists: boolean }>>`
@@ -91,9 +92,36 @@ async function tableStatus(): Promise<Record<string, boolean>> {
         ('AiJob')
       ) AS t(name)
     `;
-    return Object.fromEntries(rows.map((row) => [row.name, row.exists]));
+    return {
+      reachable: true,
+      tables: Object.fromEntries(rows.map((row) => [row.name, row.exists])),
+    };
   } catch {
-    return Object.fromEntries(CRITICAL_TABLES.map((name) => [name, false]));
+    // "I COULD NOT ASK" IS NOT "THEY ARE MISSING".
+    //
+    // This returned `false` for every critical table on any failure, including
+    // "Can't reach database server". On 2026-09-14 that made /api/health report
+    //
+    //   tables present     = 0/8
+    //   tables NOT present = ['User','Session',...]
+    //
+    // for a Neon endpoint that was merely unreachable. Nothing was missing and
+    // nothing was lost -- but the documented remedy for missing tables is the
+    // provision job, which DROPs and recreates the schema. A false "the schema
+    // is gone" reading points a reader straight at a destructive rebuild of a
+    // database that is fine. (It was only stopped here because the rebuild
+    // could not connect either; a database reachable from one path and not
+    // another would not have been.)
+    //
+    // Unknown is reported as null, never as false. Every consumer in this
+    // repository asserts `=== true` (verify-deployment, verify-production-health,
+    // production-smoke), so an unknown still fails every gate exactly as a
+    // missing table did -- the endpoint stops asserting a fact it does not have,
+    // and nothing becomes more permissive.
+    return {
+      reachable: false,
+      tables: Object.fromEntries(CRITICAL_TABLES.map((name) => [name, null])),
+    };
   }
 }
 
@@ -103,7 +131,9 @@ async function tableStatus(): Promise<Record<string, boolean>> {
  * from one implementation while exposing different amounts of detail.
  */
 async function computeLivenessSnapshot() {
-  const tables = await tableStatus();
+  const { reachable: databaseReachable, tables } = await tableStatus();
+  // `=== true` on purpose: an unknown (null, database unreachable) is not an
+  // existing table. The gate is exactly as strict as before.
   const allCriticalTablesExist = CRITICAL_TABLES.every((name) => tables[name] === true);
   // Asked separately from table existence, because the two fail differently:
   // a table can be present and still reject every query the client makes.
@@ -126,8 +156,29 @@ async function computeLivenessSnapshot() {
   // one — sign-in fails outright — so schema disagreement counts with missing
   // tables, not with the optional subsystems below it.
   const databaseUsable = allCriticalTablesExist && schema.matches;
-  const ok = databaseUsable && aiHealth.healthy && storageHealth.ready;
-  const status = ok ? "healthy" : databaseUsable ? "degraded" : "unhealthy";
+  // `aiHealth.healthy` now means "a provider has completed a real AI Analyze
+  // extraction in this process", which a freshly-started serverless instance
+  // cannot have done yet. Gating `ok` on it would make /api/health flap to
+  // ok:false on every cold start of a perfectly working deployment — noise, not
+  // truth. What `ok` needs is that the AI subsystem is not BROKEN, i.e. the
+  // active chain has at least one provider that may be contacted. The stronger
+  // verified-capability claim is carried separately in `aiRuntimeVerified` and
+  // is what production readiness gates on.
+  const aiUsable = aiHealth.state !== "unhealthy";
+  const ok = databaseUsable && aiUsable && storageHealth.ready;
+  // "unreachable" is reported distinctly from "unhealthy". Both are not-ok and
+  // both are 503 -- nothing is relaxed -- but they call for opposite actions:
+  // an unreachable database needs the server back (or nothing at all, if it is
+  // merely asleep), while a reachable one missing its tables needs migrations.
+  // Collapsing them into one word is what made an unreachable Neon endpoint
+  // read as a wiped schema.
+  const status = ok
+    ? "healthy"
+    : databaseUsable
+      ? "degraded"
+      : databaseReachable
+        ? "unhealthy"
+        : "database-unreachable";
 
   // HTTP 200 when the DB is reachable (even if AI providers or durable
   // storage are not configured — the app is "degraded" but still serving
@@ -142,7 +193,7 @@ async function computeLivenessSnapshot() {
   // reason: the deployment cannot serve a login, so a monitor must not see 200.
   const httpStatus = databaseUsable ? 200 : 503;
 
-  return { tables, allCriticalTablesExist, schema, databaseUsable, aiHealth, storageHealth, ok, status, httpStatus };
+  return { tables, databaseReachable, allCriticalTablesExist, schema, databaseUsable, aiHealth, aiUsable, storageHealth, ok, status, httpStatus };
 }
 
 /**
@@ -176,10 +227,23 @@ export async function livenessResponse() {
       release: process.env.VERCEL_GIT_COMMIT_SHA || "unknown",
       deploymentId: process.env.VERCEL_DEPLOYMENT_ID || "unknown",
       tables: snapshot.tables,
+      // Whether the database answered at all. Without this, `tables` alone
+      // cannot distinguish "this table is missing" from "I could not ask", and
+      // the two have opposite remedies -- one needs a schema rebuild, the other
+      // needs nothing but the server coming back.
+      databaseReachable: snapshot.databaseReachable,
       // Named plainly so the reason is actionable without a log dive: when this
       // is false the database is behind the deployed code and the fix is to run
       // the pending migrations, not to wait and retry.
       schemaMatchesDeployedCode: snapshot.schema.matches,
+      // Which database this deployment is bound to, as a one-way fingerprint
+      // of host and database name — never the URL, the user or the password.
+      // A deployment keeps the DATABASE_URL it was built with, so after the
+      // setting changes two deployments of the same commit can sit on
+      // different databases and answer this endpoint identically. Without a
+      // fingerprint the only way to tell them apart was to read the connection
+      // string, which must never be printed.
+      databaseFingerprint: databaseFingerprint(),
       timestamp: new Date().toISOString(),
     },
     { status: snapshot.httpStatus, headers: { "Cache-Control": "no-store" } },
@@ -206,8 +270,18 @@ export async function detailedLivenessPayload() {
     deploymentId: process.env.VERCEL_DEPLOYMENT_ID || "unknown",
     deploymentUrl: process.env.VERCEL_URL || "unknown",
     tables: snapshot.tables,
+    // Same reason as the public payload: an ADMIN reading this is the person
+    // most likely to reach for the rebuild job, so they must be able to tell an
+    // unreachable database from a missing schema.
+    databaseReachable: snapshot.databaseReachable,
     schema: snapshot.schema,
+    databaseFingerprint: databaseFingerprint(),
     aiProviders: aiHealth,
+    // The strong claim, kept separate from `ok`: a provider has completed a real
+    // AI Analyze extraction on this instance. Production readiness gates on
+    // this; `ok` only requires that the chain is not broken.
+    aiRuntimeVerified: aiHealth.state === "healthy",
+    aiState: aiHealth.state,
     storage: storageHealth,
     // Effective non-secret runtime configuration, so source, tests and the
     // deployed effective settings can be reconciled by an admin.
@@ -217,8 +291,29 @@ export async function detailedLivenessPayload() {
       adaptiveBatchSizeAvailable: true,
       preFilterLimit: PRE_FILTER_LIMIT,
       engineInvocationSoftDeadlineMs: 40_000,
-      providerOrder: aiHealth.configuredProviders ?? [],
+      providerOrder: aiHealth.eligibleProviders ?? [],
+      activeChain: aiHealth.activeChain,
     },
+    scheduler: schedulerReadiness(),
     timestamp: new Date().toISOString(),
+  };
+}
+
+/**
+ * Whether the unattended queue can run on this deployment — booleans only,
+ * never a value. Vercel Cron calls /api/ai-jobs/run-next every minute with
+ * `Authorization: Bearer $CRON_SECRET`, and both cron routes refuse a missing
+ * or short (< 16 characters) secret, so without it every scheduled drain is
+ * a 401 and work waits for a browser. Vercel runs crons only on the
+ * Production deployment; on a Preview this reports configuration, not
+ * scheduled execution.
+ */
+export function schedulerReadiness(env: Record<string, string | undefined> = process.env) {
+  const cronSecret = env.CRON_SECRET ?? "";
+  const workerSecret = env.AI_JOBS_WORKER_SECRET ?? "";
+  return {
+    cronSecretConfigured: cronSecret.length >= 16,
+    workerSecretConfigured: workerSecret.length >= 16,
+    vercelCronRunsHere: (env.VERCEL_ENV ?? "") === "production",
   };
 }

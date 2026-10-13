@@ -100,8 +100,8 @@ describe("override lookup — pure logic", () => {
 });
 
 describe("TenderIntakeDetailPanel — every missing-fact push site checks the override lookup", () => {
-  it("deadline", () => {
-    assert.match(src, /!si\.deadlineDisplay && !tender\.deadline && !isResolvedByOverride\(overrides, "deadline"\)/);
+  it("deadline is not a push site: an unstated deadline is not required (ABSENT_TENDER_FACT_IS_NOT_REQUIRED)", () => {
+    assert.doesNotMatch(src, /effectiveMissingFacts\.push\(\{ key: "deadline"/);
   });
   it("submissionMethod", () => {
     assert.match(src, /\(!si\.method \|\| si\.method === "Unknown"\) && !tender\.submissionMethod && !isResolvedByOverride\(overrides, "submissionMethod"\)/);

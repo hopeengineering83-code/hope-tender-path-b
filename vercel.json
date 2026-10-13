@@ -11,6 +11,14 @@
   },
   "crons": [
     {
+      "path": "/api/ai-jobs/run-next",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/ai-analyze-retry",
+      "schedule": "*/5 * * * *"
+    },
+    {
       "path": "/api/cron/deadline-alerts",
       "schedule": "0 8 * * *"
     },

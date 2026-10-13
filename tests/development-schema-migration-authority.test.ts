@@ -28,8 +28,11 @@ describe("development database schema authority", () => {
 
   it("production remains migration-owned and does not enable request-time schema mutation", () => {
     const prisma = read("lib/prisma.ts");
-    assert.match(prisma, /if \(process\.env\.NODE_ENV !== "production"\) return true;/);
-    assert.match(prisma, /return envFlag\("ENABLE_RUNTIME_SCHEMA_BOOTSTRAP"\);/);
+    // Production never mutates unless explicitly opted in; the policy's shape
+    // is asserted here and its behaviour in
+    // tests/runtime-bootstrap-never-touches-a-remote-database.test.ts.
+    assert.match(prisma, /if \(process\.env\.NODE_ENV === "production"\) return false;/);
+    assert.match(prisma, /envFlag\("ENABLE_RUNTIME_SCHEMA_BOOTSTRAP"\)/);
     assert.match(prisma, /Run "prisma migrate deploy"/);
   });
 });

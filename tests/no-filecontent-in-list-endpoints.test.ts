@@ -62,11 +62,24 @@ describe("Large fields excluded from list/dashboard endpoints", () => {
     assert.ok(src.length > 0, "final submission readiness helper must exist");
     assert.match(src, /const shouldLoadFileContent = opts\.requireFileContent \?\? false/);
     assert.match(src, /fileContent:\s*shouldLoadFileContent/);
-    assert.doesNotMatch(
-      src,
-      /fileContent:\s*true/,
-      "final submission readiness must not unconditionally select generatedDocument.fileContent",
-    );
+
+    // The tender-wide projection must stay conditional — that is the blob-size
+    // property this test exists for. A separate, id-scoped load is not the same
+    // thing: the quality gate must read the bytes of the documents it is about
+    // to judge, and scoring a row whose content was deliberately not selected
+    // produced "3 generated document(s) failed the quality gate" about
+    // documents the Document Validator scores 100/100, because no content was
+    // consulted at all. Forbidding the literal `fileContent: true` anywhere in
+    // the module would forbid reading bytes even for a handful of rows, which
+    // is not what "exclude large fields from list endpoints" means.
+    for (const match of src.matchAll(/fileContent:\s*true/g)) {
+      const window = src.slice(Math.max(0, match.index - 400), match.index);
+      assert.match(
+        window,
+        /where:\s*\{\s*id:\s*\{\s*in:/,
+        "any explicit fileContent load must be scoped to an explicit list of document ids",
+      );
+    }
   });
 
   it("tender detail page reuses precomputed generation readiness instead of rendering a second DB query", () => {

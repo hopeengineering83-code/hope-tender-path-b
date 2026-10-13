@@ -31,7 +31,7 @@ import { logger } from "../observability";
  *     prohibitions (defensive cap; real tenders have ≤ 12)
  */
 
-import { generateWithFallback, isAIEnabled } from "../ai";
+import { generateWithFallback, isAIEnabled, runAsAdvisory } from "../ai";
 import { getComprehensionCache } from "./comprehension-cache";
 
 export type EvaluationCriterion = {
@@ -326,7 +326,7 @@ export function formatComprehensionForPrompt(comp: DeepTenderComprehension): str
  * The shared `generateWithFallback` implementation keeps Claude/Anthropic
  * last so Anthropic rate limits do not block earlier providers.
  */
-export async function extractDeepTenderComprehension(tenderText: string): Promise<DeepTenderComprehension | null> {
+async function extractDeepTenderComprehensionImpl(tenderText: string): Promise<DeepTenderComprehension | null> {
   if (!isAIEnabled()) return null;
   const text = (tenderText ?? "").trim();
   if (text.length < 200) {
@@ -362,4 +362,17 @@ export async function extractDeepTenderComprehension(tenderText: string): Promis
   }
   cache.set(text, parsed);
   return parsed;
+}
+
+/**
+ * Optional deep comprehension. Advisory: this module's own failure path logs
+ * "comprehension skipped, falling through to regex analyzer", and generate-elite
+ * logs "extractor returned null — falling through to regex analyser". Work that
+ * degrades to a regex analyser has not earned three attempts at a rate-limited
+ * provider the mandatory section writer needs moments later.
+ */
+export async function extractDeepTenderComprehension(
+  tenderText: string,
+): Promise<DeepTenderComprehension | null> {
+  return runAsAdvisory(() => extractDeepTenderComprehensionImpl(tenderText));
 }

@@ -17,6 +17,7 @@
 //   COPILOT_DEEP_ANALYSIS   — async tender copilot Q&A (frees the request for follow-up actions)
 //   PROFILE_FACT_EXTRACTION — async pure-regex fact harvest from company/project/tender prose
 
+import { finalPackageStatus } from "./engine/final-submission-readiness";
 import { recordStep, type JobType } from "./ai-jobs";
 import { resolveProposalNarrativeText } from "./engine/proposal-narrative-resolver";
 import { checkEnginePostconditions } from "./engine/engine-postconditions";
@@ -431,13 +432,21 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
       void recordStep(ctx.jobId, { stepName: "proposal.heartbeat", message: "Generation running — waiting for AI section responses", status: "RUNNING" }).catch(() => {});
     }, 10_000);
     try {
-      await generateTenderDocuments(ctx.tenderId, ctx.userId);
+      // DURABLE WORKER CONTEXT. This handler runs inside
+      // app/api/ai-jobs/run-next (maxDuration 300), not the 60s synchronous
+      // generate route, so the writer gets the worker's budget. Declaring it
+      // here is what stops a 60s-route figure starving a 300s worker.
+      // The invocation's real end, not a fresh 300s: run-next may have run
+      // ENGINE_RUN in this same invocation first (see writerBudgetWithin).
+      const platformDeadlineAt = typeof ctx.input?.platformDeadlineAt === "number" ? ctx.input.platformDeadlineAt : undefined;
+      await generateTenderDocuments(ctx.tenderId, ctx.userId, { execution: "durable-worker", deadlineAt: platformDeadlineAt });
     } finally {
       clearInterval(heartbeat);
     }
 
     await recordStep(ctx.jobId, { stepName: "proposal.letterhead", message: "Applying active Company Vault letterhead branding", status: "RUNNING" });
-    const letterheadAppliedCount = await applyActiveUploadedLetterheadToTenderDocuments(ctx.tenderId, ctx.userId);
+    const letterheadOutcome = await applyActiveUploadedLetterheadToTenderDocuments(ctx.tenderId, ctx.userId);
+    const letterheadAppliedCount = letterheadOutcome.applied;
 
     await prisma.tender.update({ where: { id: ctx.tenderId }, data: { stage: "GENERATION" } }).catch(() => {});
 
@@ -449,13 +458,17 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
 
     await recordStep(ctx.jobId, {
       stepName: "proposal.complete",
-      message: `Generated ${generated.length} document(s) (${generated.map((d) => d.documentType).join(", ") || "none"}); letterhead applied to ${letterheadAppliedCount} file(s)`,
+      // The reason rides along with the count: "letterhead applied to 0
+      // file(s)" on its own is what made this undiagnosable.
+      message: `Generated ${generated.length} document(s) (${generated.map((d) => d.documentType).join(", ") || "none"}); letterhead applied to ${letterheadAppliedCount} file(s)`
+        + (letterheadOutcome.reason ? ` — ${letterheadOutcome.reason}` : ""),
       status: "SUCCEEDED",
     });
     return {
       generatedDocumentIds: generated.map((d) => d.id),
       documentTypes: generated.map((d) => d.documentType),
       letterheadAppliedCount,
+      letterheadSkipReason: letterheadOutcome.reason,
     };
   },
 
@@ -845,13 +858,23 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
       throw new Error(`AUTO_FINALIZE_NOT_CONVERGED — ${result.blockers.join("; ")}`);
     }
 
+    const ownerAttachmentsRequired = result.finalReadiness.proposalComplete === true && result.finalReadiness.ok !== true;
     await recordStep(ctx.jobId, {
       stepName: "auto-finalize.complete",
-      message: `Auto-finalize complete: ${summary}`,
+      message: ownerAttachmentsRequired
+        ? `Proposal complete — manual original attachments required (${result.finalReadiness.ownerAttachmentsOutstanding ?? 0}): ${summary}`
+        : `Auto-finalize complete: ${summary}`,
       status: "SUCCEEDED",
     });
 
-    return result as unknown as Record<string, unknown>;
+    // The package status is the export gate's verdict, the one the download
+    // and the checklist read — never inferred from the run having converged.
+    // A run that could not evaluate the gate claims nothing.
+    const verdict = result.finalReadiness?.evaluated ? result.finalReadiness : null;
+    return {
+      ...(result as unknown as Record<string, unknown>),
+      packageStatus: verdict ? finalPackageStatus(verdict) : null,
+    };
   },
 };
 

@@ -128,13 +128,14 @@ describe("metadata completeness — placeholder blocking", () => {
     assert.equal(result.invalidFields.length, 0, "no invalid fields expected");
   });
 
-  it("blocks when deadline is missing", () => {
+  it("a deadline the tender does not state is advisory (ABSENT_TENDER_FACT_IS_NOT_REQUIRED)", () => {
     const result = assessTenderMetadataCompleteness({
       ...PASSING_INPUT,
       deadline: null,
     });
     assert.equal(result.blockingForGeneration, false);
-    assert.ok(result.missingCritical.some((f) => f.field === "deadline"));
+    assert.ok(!result.missingCritical.some((f) => f.field === "deadline"));
+    assert.ok(result.missingNonCritical.some((f) => f.field === "deadline"));
   });
 
   it("blocks when no requirements extracted", () => {

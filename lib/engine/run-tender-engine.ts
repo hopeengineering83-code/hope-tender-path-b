@@ -16,7 +16,7 @@ import type { MatchPerspective } from "./ai-multi-perspective-matcher";
 import { inferSector } from "./proposal-intelligence";
 import { classifyTenderRequirement } from "./requirement-categories";
 import { REMATCH_TIMEOUT_MS } from "../timeout-config";
-import { canUseVaultRecord } from "../vault-review-provenance";
+import { canUseVaultRecord, VAULT_SOURCE_DOCUMENT_SELECT } from "../vault-review-provenance";
 import { loadDurableCompanySupportRecords } from "../prisma-schema-compatibility";
 import { selectCanonicalTenderFiles } from "../tender/canonical-source-files";
 import { getTenderReleaseSnapshot } from "./tender-release-snapshot";
@@ -157,17 +157,29 @@ export async function runTenderEngine(
       experts: {
         where: { deletedAt: null },
         include: {
-          sourceDocument: {
-            select: { id: true, companyId: true, extractedText: true, contentSha256: true, contentByteLength: true, integrityStatus: true },
-          },
+          // Selected through the shared constant, not by hand. This list used
+          // to omit `metadata`, so sourceExtractionRevision() fell back to
+          // "revision:1" while the stored provenance said "revision:6" — the
+          // revision a document reaches after being re-extracted. Every
+          // machine-SOURCE_VERIFIED expert and project therefore failed
+          // checkMatchingEligibility, scored 0, and was never selected: the
+          // engine reported NO_SELECTED_SOURCE_VERIFIED_EXPERTS_AFTER_ENGINE
+          // for a vault full of verified evidence.
+          sourceDocument: { select: VAULT_SOURCE_DOCUMENT_SELECT },
         },
       },
       projects: {
         where: { deletedAt: null },
         include: {
-          sourceDocument: {
-            select: { id: true, companyId: true, extractedText: true, contentSha256: true, contentByteLength: true, integrityStatus: true },
-          },
+          // Selected through the shared constant, not by hand. This list used
+          // to omit `metadata`, so sourceExtractionRevision() fell back to
+          // "revision:1" while the stored provenance said "revision:6" — the
+          // revision a document reaches after being re-extracted. Every
+          // machine-SOURCE_VERIFIED expert and project therefore failed
+          // checkMatchingEligibility, scored 0, and was never selected: the
+          // engine reported NO_SELECTED_SOURCE_VERIFIED_EXPERTS_AFTER_ENGINE
+          // for a vault full of verified evidence.
+          sourceDocument: { select: VAULT_SOURCE_DOCUMENT_SELECT },
         },
       },
       documents: { select: { id: true, category: true, originalFileName: true, extractedText: true } },
@@ -244,7 +256,13 @@ export async function runTenderEngine(
         })),
         exactFileNaming: parseStringArray(tender.exactFileNaming),
         exactFileOrder: parseStringArray(tender.exactFileOrder),
-      };
+        // Carried forward, not dropped: the engine writes this field back to
+        // the tender, and without it every Run Engine erased the evaluation
+        // criteria and weights AI Analyze had extracted — so generation, the
+        // AI rerank, the bid strategy and the pricing model all read a tender
+        // that "states no evaluation weights".
+        evaluationMethodology: tender.evaluationMethodology ?? null,
+      } as typeof analysis;
       progress("engine.analyze", `Reused ${promotedRequirements.length} grounded requirement(s); no duplicate AI extraction call was made`);
     } else {
       // FIX 6: Engine must NEVER re-analyze the tender. The previous code
@@ -321,7 +339,7 @@ export async function runTenderEngine(
       analysis.summary ?? "",
       ...analysis.requirements.slice(0, 8).map((requirement) => `${requirement.title} ${requirement.description}`),
     ].join("\n");
-    const inferredSector = inferSector(sectorSignalText);
+    const inferredSector = inferSector(sectorSignalText, { title: tender.title });
     const sectorForMatching = inferredSector !== "General Consultancy / Engineering"
       ? inferredSector
       : (tender.category || null);
@@ -465,7 +483,7 @@ export async function runTenderEngine(
     });
 
     progress("engine.compliance", "Building compliance matrix and gap analysis");
-    let compliance = buildCompliance(createdRequirements, knowledge, matching);
+    let compliance = buildCompliance(createdRequirements, knowledge, matching, { companyName: company.name, foundingYear: company.foundingYear });
     let evidenceMatchingBlocker: { code: string; message: string } | null = null;
 
     const aiRematchFailed = (!mainEngineAIRematch.aiApplied && mainEngineAIRematch.warning !== null) || rematchSkippedForDeadline;
@@ -533,6 +551,7 @@ export async function runTenderEngine(
         documentType: true,
         exactFileName: true,
         exactOrder: true,
+        format: true,
         generationStatus: true,
         validationStatus: true,
         reviewStatus: true,
@@ -631,18 +650,72 @@ export async function runTenderEngine(
       contentSummary: document.contentSummary,
     }));
 
+    // Every Engine run used to supersede EVERY active GeneratedDocument
+    // unconditionally, whether or not the requirement-derived document plan
+    // it just recomputed still names them — including a document that was
+    // already GENERATED, VALIDATED, and (for a required PDF) already
+    // byte-verified by the auto-finalize PDF conversion step. documentRows
+    // above is never persisted here (only its count is), so nothing rebuilt
+    // what this step just destroyed until a later stage (/generate or
+    // generate-missing-plan-files) started over from empty. A tender whose
+    // requirements did not meaningfully change — a routine re-run, an
+    // AUTO_FINALIZE-triggered rearm, an operator re-clicking Run Engine —
+    // paid for that with a full regenerate-then-reconvert cycle every time,
+    // repeatedly burning AI provider quota and never letting AUTO_FINALIZE
+    // converge on a package it had just finished assembling correctly.
+    //
+    // Superseding only the documents this fresh plan no longer names — by
+    // exact, case-insensitive file name, the same identity export readiness
+    // and package reconciliation already key on — keeps the destructive path
+    // for genuine drift (a renamed or removed required file) while leaving an
+    // already-correct document alone. This mirrors the KEEP_AS_PLANNED /
+    // MARK_SUPERSEDED distinction reconcile-generated-docs.ts already applies
+    // on the manual reconciliation route, just inline here where the engine
+    // recomputes its own plan.
+    const currentPlanFileKeys = new Set(
+      documentPlan.documents
+        .map((document) => (document.exactFileName ?? "").trim().toLowerCase())
+        .filter(Boolean),
+    );
+    // A plan item requiring "Technical Proposal.pdf" is generated to
+    // "Technical Proposal.docx" — generate-elite.ts writes the proposal in
+    // the format it actually produces and leaves PDF conversion to the
+    // canonical finalizer, naming the source by the format it is rather than
+    // the format the plan ultimately needs (see its own comment on
+    // proposalFileName for why: a .docx row cannot carry the .pdf name
+    // without failing artifact-identity validation). Matching plan file keys
+    // by exact name alone made this legitimate, necessary DOCX source
+    // "no longer named by the plan" the moment a PDF-format item existed for
+    // it, so it was superseded on every Engine rerun before AUTO_FINALIZE's
+    // PDF-finalization step ever got to convert it — the exact
+    // regenerate-then-reconvert loop this function was fixed to stop, just
+    // one file-extension away from the case already covered.
+    const currentPlanBaseNameKeys = new Set(
+      documentPlan.documents
+        .map((document) => (document.exactFileName ?? "").trim().toLowerCase().replace(/\.[a-z0-9]{2,5}$/, ""))
+        .filter(Boolean),
+    );
+    const documentsToSupersede = activeGeneratedDocuments.filter((document) => {
+      const key = (document.exactFileName ?? document.name ?? "").trim().toLowerCase();
+      if (!key) return true;
+      if (currentPlanFileKeys.has(key)) return false;
+      const baseKey = key.replace(/\.[a-z0-9]{2,5}$/, "");
+      if (document.format === "DOCX" && currentPlanBaseNameKeys.has(baseKey)) return false;
+      return true;
+    });
+
     await prisma.$transaction(async (tx) => {
       const tenderMutationLock = computeTenderMutationLockKey(tenderId);
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(${tenderMutationLock})`;
 
-      if (activeGeneratedDocuments.length > 0) {
+      if (documentsToSupersede.length > 0) {
         await tx.generatedDocument.updateMany({
-          where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
+          where: { tenderId, id: { in: documentsToSupersede.map((document) => document.id) } },
           data: {
             generationStatus: "SUPERSEDED",
             validationStatus: "SUPERSEDED",
             reviewStatus: "SUPERSEDED",
-            reviewNotes: `Superseded by tender engine run ${engineRunId}. Review and comment history was preserved.`,
+            reviewNotes: `Superseded by tender engine run ${engineRunId}: no longer named by the current requirement-derived document plan. Review and comment history was preserved.`,
             updatedAt: new Date(),
           },
         });
@@ -650,11 +723,11 @@ export async function runTenderEngine(
           userId,
           tenderId,
           action: "TENDER_ENGINE_DOCUMENTS_SUPERSEDED",
-          description: `Superseded ${activeGeneratedDocuments.length} generated document(s) before engine rerun for "${tender.title}"`,
+          description: `Superseded ${documentsToSupersede.length} generated document(s) no longer named by the current document plan before engine rerun for "${tender.title}"`,
           metadata: {
             engineRunId,
             supersededAt: new Date().toISOString(),
-            preservedGeneratedDocuments: activeGeneratedDocuments.map((document) => ({
+            preservedGeneratedDocuments: documentsToSupersede.map((document) => ({
               id: document.id,
               name: document.name,
               documentType: document.documentType,
@@ -700,11 +773,17 @@ export async function runTenderEngine(
             `Engine run ID: ${engineRunId}`,
             canReusePromotedAnalysis ? "Engine reused the current manual AI Analyze output; requirement extraction was not repeated." : null,
             Math.max(0, tender.files.length - canonicalFiles.length) > 0 ? `${tender.files.length - canonicalFiles.length} duplicate or alternate source representation(s) were excluded.` : null,
-            activeGeneratedDocuments.length > 0 ? `${activeGeneratedDocuments.length} previous generated document(s) were superseded and preserved.` : null,
+            documentsToSupersede.length > 0 ? `${documentsToSupersede.length} previous generated document(s) no longer named by the current plan were superseded and preserved.` : null,
             "Deterministic matching uses source-verified Company Vault evidence and broad capability/sector equivalence.",
             mainEngineAIRematch.aiApplied ? `Bounded AI reranking assessed ${mainEngineAIRematch.expertAssessments} expert and ${mainEngineAIRematch.projectAssessments} project candidate(s).` : null,
             mainEngineAIRematch.warning ? `AI reranking warning: ${mainEngineAIRematch.warning}` : null,
-            "Analysis source: current AI Analyze output.",
+            // "Analysis source: AI" is the canonical prefix
+            // lib/engine/analysis-source.ts matches on (^analysis source:\s*ai\b).
+            // This line previously read "Analysis source: current AI Analyze
+            // output.", which begins with "current" and so matched neither the
+            // AI nor the regex-fallback pattern — every successful engine run
+            // resolved to UNKNOWN.
+            "Analysis source: AI (current AI Analyze output).",
             hardGaps > 0 ? `${hardGaps} critical evidence gap(s) remain.` : null,
             reviewGaps > 0 ? `${reviewGaps} review item(s) remain.` : null,
             knowledgeReadiness.reviewedExperts > 0 ? `${knowledgeReadiness.reviewedExperts} SOURCE_VERIFIED/REVIEWED expert(s) are eligible.` : null,

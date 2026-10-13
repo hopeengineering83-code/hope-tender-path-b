@@ -55,7 +55,10 @@ function stepFromCanonicalAction(action: string): WorkflowStep {
     case "BUILD_SUBMISSION_PLAN": return "BUILD_SUBMISSION_PLAN";
     case "LINK_VAULT_EVIDENCE": return "MATCH_EVIDENCE";
     case "GENERATE_DOCUMENTS": return "GENERATE_DOCUMENTS";
+    // Everything the App generates is done; the owner compiles originals.
+    case "UPLOAD_SIGNED_ORIGINALS": return "EXPORT_ZIP";
     case "AUTOMATIC_PROCESSING":
+    case "ENTER_OWNER_PRICING":
     case "FIX_EXPORT_BLOCKERS":
     case "VALIDATE_DOCS": return "VALIDATE_DOCS";
     case "EXPORT_READY": return "EXPORT_ZIP";
@@ -148,8 +151,21 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
       }
     : rawDecision;
 
-  const decision = presentTwoActionWorkflowDecision(reconciledRawDecision);
-  if (!decision) return null;
+  const presented = presentTwoActionWorkflowDecision(reconciledRawDecision);
+  if (!presented) return null;
+  // Every App-generated document is complete and only originals the owner
+  // compiles manually remain. That is a finished App job: say so, rather than
+  // "export the submission ZIP", which the App cannot vouch for while the
+  // originals are assembled outside it.
+  const manualOriginalsOnly = presented.currentBlockingStage === "EXPORT_ZIP_READY"
+    && releaseState?.packageStatus === "PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED";
+  const decision = manualOriginalsOnly
+    ? {
+        ...presented,
+        nextRequiredActionLabel: "Proposal complete — attach originals manually",
+        nextRequiredActionReason: `Every document the App generates for this tender is complete. Download the proposal package and attach the ${releaseState?.ownerAttachmentsOutstanding ?? 0} original/supporting document(s) in the Manual Original Attachment Checklist when assembling the final submission.`,
+      }
+    : presented;
 
   const step = stepFromCanonicalAction(decision.nextRequiredAction);
   const blockers = decision.blockerDetails;
@@ -182,8 +198,10 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
           <div className="mt-1"><StatusBadge status={tender.status} /></div>
         </div>
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Readiness score</p>
-          <p className="mt-1">
+          {/* The strict final-submission gate's score — the same number /export
+              reports. It measures the complete submission, originals included. */}
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Submission readiness</p>
+          <p className="mt-1" title={releaseState?.readinessCapReason ?? undefined}>
             {releaseState?.readinessCalculable && releaseState.readinessScore != null ? (
               <span className={`text-2xl font-bold ${tone.text}`}>{releaseState.readinessScore}<span className="text-sm font-normal text-slate-500"> / 100</span></span>
             ) : (
@@ -192,8 +210,13 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
           </p>
         </div>
         <div>
+          {/* Bid fit is a different question (eligibility, team, references,
+              compliance, deadline, commercial), so it is named for what it is. */}
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Bid verdict</p>
           <span className={`mt-1 inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-bold ${verdict.tone}`}>{verdict.label}</span>
+          {releaseState?.readinessCalculable && releaseState.bidScore != null ? (
+            <span className="ml-2 text-xs text-slate-600">Bid fit score {releaseState.bidScore} / 100</span>
+          ) : null}
         </div>
       </div>
 
@@ -252,7 +275,13 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
         </div>
       )}
 
-      {decision.currentBlockingStage === "EXPORT_ZIP_READY" && (
+      {decision.currentBlockingStage === "EXPORT_ZIP_READY" && manualOriginalsOnly && (
+        <div className="mt-3 rounded-lg border border-emerald-200 bg-white px-4 py-2.5 text-sm text-emerald-800">
+          <strong>App-generated documents complete.</strong> Download the proposal package from the checklist below; the originals are compiled by you outside the App, so the App does not claim the assembled submission is complete.
+        </div>
+      )}
+
+      {decision.currentBlockingStage === "EXPORT_ZIP_READY" && !manualOriginalsOnly && (
         <div className="mt-3 rounded-lg border border-emerald-200 bg-white px-4 py-2.5 text-sm text-emerald-800">
           <strong>Ready to download.</strong> Review the Final Package Manifest, then download the exact reconciled ZIP package.
         </div>

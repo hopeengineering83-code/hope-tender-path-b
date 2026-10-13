@@ -59,7 +59,7 @@ function formatDate(d: Date | null | undefined): string {
 
 // ─── PR EE: Markdown cover page ───────────────────────────────────────────
 
-function buildCoverPageBlock(opts: CoverPageOpts): string {
+export function buildCoverPageBlock(opts: CoverPageOpts): string {
   const lines: string[] = [COVER_PAGE_MARKER, ""];
 
   const subject = opts.exactSubjectLine
@@ -153,15 +153,15 @@ export function injectCoverPageAndRfpMeta(
   opts: CoverPageOpts,
 ): CoverPageResult {
   let result = markdown;
-  let coverPageInjected = false;
+  const coverPageInjected = false;
   let rfpMetaInjected = false;
 
-  // PR EE: inject cover page block at the very top.
-  if (!result.includes(COVER_PAGE_MARKER)) {
-    const block = buildCoverPageBlock(opts);
-    result = block + result;
-    coverPageInjected = true;
-  }
+  // No markdown cover page. The rendered document builds its cover from the
+  // same fields, and this block — a top-level heading the section orderer
+  // does not recognise — was moved to the end: run 36074770709 printed the
+  // firm's name and a "Submitted to / Submitted by" table after the
+  // Declaration. buildCoverPageBlock remains for callers that render the
+  // markdown on its own.
 
   // PR II: inject RFP meta bar after subject line in cover letter zone.
   if (!result.includes(RFP_META_MARKER)) {

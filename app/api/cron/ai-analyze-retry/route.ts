@@ -1,3 +1,4 @@
+import { secretMatches } from "../../../../lib/secret-compare";
 import { NextRequest, NextResponse } from "next/server";
 import { logger } from "../../../../lib/observability";
 import { prismaReady } from "../../../../lib/prisma";
@@ -24,8 +25,8 @@ export async function GET(req: NextRequest) {
   const auth = req.headers.get("authorization") ?? "";
   const workerHeader = req.headers.get("x-worker-secret");
 
-  const isCron = Boolean(cronSecret && cronSecret.length >= 16 && auth === `Bearer ${cronSecret}`);
-  const isWorker = Boolean(workerSecret && workerSecret.length >= 16 && workerHeader === workerSecret);
+  const isCron = Boolean(cronSecret && cronSecret.length >= 16 && secretMatches(auth, `Bearer ${cronSecret}`));
+  const isWorker = Boolean(workerSecret && workerSecret.length >= 16 && secretMatches(workerHeader, workerSecret));
   if (!isCron && !isWorker) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

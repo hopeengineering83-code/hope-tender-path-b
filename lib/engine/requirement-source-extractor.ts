@@ -84,6 +84,43 @@ function splitLongBlock(block: string): string[] {
   return chunks.length > 0 ? chunks : [block.slice(0, 900)];
 }
 
+/**
+ * Shorten a source quote while keeping it a VERBATIM SUBSTRING of the source.
+ *
+ * A stored sourceExactQuote is later proved by containment: evidence-grounding's
+ * isGroundedEvidenceInActiveFiles requires
+ * `normalizeForContainment(file.extractedText).includes(normalizeForContainment(quote))`.
+ * Both producers of these quotes used to append a synthetic ellipsis when the
+ * paragraph exceeded the budget:
+ *
+ *     `${paragraph.slice(0, maxQuoteChars - 1).trim()}…`
+ *
+ * That character does not exist in the tender, so containment fails and a
+ * correctly matched requirement is persisted MANDATORY-but-ungrounded. Measured
+ * on this branch: a 502-character clause matched at sourceConfidence 1.0 and
+ * still grounded false, which surfaces as "N mandatory requirement(s) are
+ * missing active source evidence" and blocks Build Plan, generation and export.
+ *
+ * The fix belongs in the producer. Weakening the containment check to tolerate
+ * a trailing ellipsis would let genuinely foreign or invented quotes pass, which
+ * is the control the check exists to enforce.
+ *
+ * Cutting on the last word boundary keeps the quote readable, but only when it
+ * retains most of the budget — a single long unbroken token (a URL, a reference
+ * code, a table row with no spaces) would otherwise discard nearly all the
+ * evidence, so that case takes a hard cut instead. Both branches return a
+ * prefix of the paragraph, and trimEnd only removes trailing characters, so the
+ * result is always a contiguous substring of the source.
+ */
+export function truncateQuoteVerbatim(paragraph: string, maxQuoteChars: number): string {
+  if (paragraph.length <= maxQuoteChars) return paragraph;
+  const head = paragraph.slice(0, maxQuoteChars);
+  // Index of the whitespace that begins the final (possibly cut) word.
+  const lastBreak = head.search(/\s\S*$/);
+  const cut = lastBreak > maxQuoteChars * 0.6 ? head.slice(0, lastBreak) : head;
+  return cut.trimEnd();
+}
+
 /** Exported for regression tests. */
 export function splitIntoParagraphs(text: string): Paragraph[] {
   if (!text.trim()) return [];
@@ -222,9 +259,7 @@ export function extractRequirementSources(opts: {
     }
 
     const best = paragraphs[bestIndex];
-    const exactQuote = best.paragraph.length > options.maxQuoteChars
-      ? `${best.paragraph.slice(0, options.maxQuoteChars - 1).trim()}…`
-      : best.paragraph;
+    const exactQuote = truncateQuoteVerbatim(best.paragraph, options.maxQuoteChars);
 
     return {
       requirementId: requirement.id,

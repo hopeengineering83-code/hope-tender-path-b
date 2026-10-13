@@ -4,6 +4,8 @@ type EmailPayload = {
   to: string;
   subject: string;
   html: string;
+  /** Plain-text alternative; mail clients and spam filters expect one. */
+  text?: string;
 };
 
 export type EmailDeliveryResult = {
@@ -38,7 +40,7 @@ export function isEmailDeliveryConfigured(): boolean {
 }
 
 export async function sendEmail(payload: EmailPayload): Promise<EmailDeliveryResult> {
-  const { to, subject, html } = payload;
+  const { to, subject, html, text } = payload;
   const config = getEmailDeliveryConfig();
 
   if (!config) {
@@ -55,7 +57,7 @@ export async function sendEmail(payload: EmailPayload): Promise<EmailDeliveryRes
       secure: config.port === 465,
       auth: { user: config.user, pass: config.pass },
     });
-    await transporter.sendMail({ from: config.from, to, subject, html });
+    await transporter.sendMail({ from: config.from, to, subject, html, ...(text ? { text } : {}) });
     return { delivered: true };
   } catch (error) {
     logger.error("[email] Delivery failed", {

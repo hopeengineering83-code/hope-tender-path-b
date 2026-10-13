@@ -49,9 +49,9 @@ afterEach(() => {
 
 // 1. Canonical order
 describe("1. canonical provider order", () => {
-  it("is exactly zai → cerebras → mistral → groq → openrouter → gemini → openai → together → deepseek → anthropic", () => {
+  it("is exactly gemini → groq → mistral → zai → openrouter → cerebras → openai → together → deepseek → anthropic", () => {
     assert.deepEqual([...CANONICAL_AI_PROVIDER_ORDER], [
-      "zai", "cerebras", "mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic",
+      "gemini", "groq", "mistral", "zai", "cerebras", "openrouter", "openai", "together", "deepseek", "anthropic",
     ]);
   });
 });
@@ -141,7 +141,11 @@ describe("6. Z.ai general endpoint + configured model", () => {
 describe("7. Cerebras endpoint + max_completion_tokens", () => {
   it("uses the configured endpoint and the cerebras request format", () => {
     assert.equal(getProviderBaseUrl("cerebras"), "https://api.cerebras.ai/v1");
-    assert.equal(getProviderModel("cerebras", "proposal"), "gpt-oss-120b");
+    // gpt-oss-120b is visible to the account but has no quota: the live
+    // capability probe returned HTTP 402 payment_required with param="quota"
+    // from two separate keys. Switched to qwen-3.8-27b, one of the three
+    // models the account actually exposes, on the owner's instruction.
+    assert.equal(getProviderModel("cerebras", "proposal"), "qwen-3.8-27b");
     assert.equal(getProviderEntry("cerebras").requestFormat, "cerebras");
   });
   it("the adapter wires max_completion_tokens (never a generic 16K max_tokens)", () => {
@@ -154,22 +158,21 @@ describe("7. Cerebras endpoint + max_completion_tokens", () => {
 });
 
 // 8 & 9. OpenRouter policy
-describe("8+9. OpenRouter free-model policy", () => {
-  it("rejects openrouter/auto", () => {
+describe("8+9. OpenRouter configured-model policy", () => {
+  it("accepts openrouter/auto when explicitly configured", () => {
     process.env.OPENROUTER_API_KEY = "sk-or-test";
     process.env.OPENROUTER_PROPOSAL_MODEL = "openrouter/auto";
     const v = openRouterModelValidity();
-    assert.equal(v.valid, false);
-    assert.equal(v.reason, "MODEL_UNAVAILABLE");
-    assert.equal(isProviderConfigured("openrouter"), false);
+    assert.equal(v.valid, true);
+    assert.equal(isProviderConfigured("openrouter"), true);
   });
-  it("rejects a model that does not end with :free", () => {
+  it("accepts an explicitly configured model without rewriting its id", () => {
     process.env.OPENROUTER_API_KEY = "sk-or-test";
     process.env.OPENROUTER_PROPOSAL_MODEL = "meta-llama/llama-3.3-70b-instruct";
     const v = openRouterModelValidity();
-    assert.equal(v.valid, false);
-    assert.equal(v.reason, "CONFIGURATION_INVALID");
-    assert.equal(isProviderConfigured("openrouter"), false);
+    assert.equal(v.valid, true);
+    assert.equal(v.model, "meta-llama/llama-3.3-70b-instruct");
+    assert.equal(isProviderConfigured("openrouter"), true);
   });
   it("accepts an explicit :free model", () => {
     process.env.OPENROUTER_API_KEY = "sk-or-test";
@@ -205,8 +208,17 @@ describe("12. provider attempt budget", () => {
   });
   it("generateWithFallback enforces the budget + shared deadline in source", () => {
     const src = readFileSync("lib/ai.ts", "utf8");
-    assert.ok(src.includes("actualAttempts >= MAX_PROVIDER_ATTEMPTS_PER_REQUEST"));
+    // Matched by SHAPE, not spelling. The guard used to read
+    // "actualAttempts >= MAX_PROVIDER_ATTEMPTS_PER_REQUEST" literally; it now
+    // compares against `attemptBudget`, because optional advisory work gets a
+    // smaller provider fan-out than mandatory work. What this test exists to
+    // guarantee — that a budget guard and a shared-deadline guard are both
+    // present — is unchanged, so it is asserted directly instead of through
+    // one particular identifier.
+    assert.match(src, /actualAttempts >= \w+/);
     assert.ok(src.includes("ERROR_HANDLING_RESERVE_MS >= opts.deadlineAt"));
+    // Mandatory work must still be the one that gets the full chain.
+    assert.match(src, /:\s*MAX_PROVIDER_ATTEMPTS_PER_REQUEST;/);
   });
 });
 
@@ -223,7 +235,7 @@ describe("13. ATTEMPT_BUDGET_EXHAUSTED is distinct", () => {
 // 16. Inactive providers remain supported after OpenRouter
 describe("16. inactive providers remain supported after OpenRouter", () => {
   it("all 10 automatic providers in correct order", () => {
-    assert.deepEqual([...CANONICAL_AI_PROVIDER_ORDER], ["zai", "cerebras", "mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"]);
+    assert.deepEqual([...CANONICAL_AI_PROVIDER_ORDER], ["gemini", "groq", "mistral", "zai", "cerebras", "openrouter", "openai", "together", "deepseek", "anthropic"]);
     for (const p of ["zai", "cerebras", "mistral", "together"] as const) {
       assert.ok(getProviderEntry(p), `${p} must remain in the registry for manual use`);
     }
@@ -232,17 +244,40 @@ describe("16. inactive providers remain supported after OpenRouter", () => {
 
 // 17. Existing Mistral/Groq/OpenRouter functionality intact
 describe("17. existing Mistral/Groq/OpenRouter remain intact", () => {
-  it("Mistral keeps its endpoint + models", () => {
+  it("Mistral keeps its endpoint and defaults to its FREE-TIER model", () => {
+    // mistral-large-latest is a paid model, so it was the wrong default for a
+    // zero-paid deployment: rank-3 Mistral would answer every request with a
+    // billing error. The default is now the head of the provider's
+    // freeTierPreference list, so the source default and the live-verified
+    // choice cannot disagree.
     assert.equal(getProviderBaseUrl("mistral"), "https://api.mistral.ai/v1");
-    assert.equal(getProviderModel("mistral", "proposal"), "mistral-large-latest");
+    assert.equal(getProviderModel("mistral", "proposal"), "mistral-small-latest");
     assert.equal(getProviderModel("mistral", "fast"), "ministral-8b-latest");
+    assert.equal(getProviderEntry("mistral").freeTierPreference[0], "mistral-small-latest");
   });
-  it("Groq keeps its endpoint + model", () => {
+
+  it("every free provider's default model is the head of its freeTierPreference", () => {
+    // Guards the class of defect above across all four free providers: a source
+    // default that names a model the free tier does not serve is a provider
+    // that fails on its first request, every time, for a reason no error
+    // message attributes to configuration.
+    for (const provider of ["gemini", "mistral", "zai"] as const) {
+      const entry = getProviderEntry(provider);
+      assert.equal(
+        entry.defaults.proposalModel,
+        entry.freeTierPreference[0],
+        `${provider}: registry default must match the first free-tier preference`,
+      );
+      assert.equal(entry.access, "free");
+    }
+  });
+  it("Groq keeps its endpoint but has no stale runtime model default", () => {
     assert.equal(getProviderBaseUrl("groq"), "https://api.groq.com/openai/v1");
-    assert.equal(getProviderModel("groq", "proposal"), "llama-3.3-70b-versatile");
+    assert.equal(getProviderModel("groq", "proposal", { NODE_ENV: "test" }), "");
+    assert.deepEqual(getProviderEntry("groq").freeTierPreference, ["llama-3.1-8b-instant"]);
   });
-  it("OpenRouter keeps rank 5 among the working providers", () => {
-    assert.equal(getProviderEntry("openrouter").rank, 5);
+  it("OpenRouter has owner-required rank 6 after Cerebras", () => {
+    assert.equal(getProviderEntry("openrouter").rank, 6);
     assert.equal(providerDisplayName("openrouter"), "OpenRouter");
   });
 });

@@ -1,3 +1,5 @@
+import { verifiedIntegrityDataFromBase64 } from "../../../../../lib/engine/persisted-byte-integrity";
+import { isCapabilityStatementDocName, isCompanyProfileDocName } from "../../../../../lib/engine/document-type-normalizer";
 import { NextResponse } from "next/server";
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
@@ -91,12 +93,38 @@ async function makeSupportDocx(tenderTitle: string, title: string, sections: Arr
   return buffer.toString("base64");
 }
 
+/** Drop a trailing ".ext" without a regular expression. */
+function stripFileExtension(fileName: string): string {
+  const dot = fileName.lastIndexOf(".");
+  if (dot <= 0 || dot === fileName.length - 1) return fileName;
+  for (const ch of fileName.slice(dot + 1)) {
+    const alphanumeric = (ch >= "a" && ch <= "z") || (ch >= "A" && ch <= "Z") || (ch >= "0" && ch <= "9");
+    if (!alphanumeric) return fileName;
+  }
+  return fileName.slice(0, dot);
+}
+
 function classifySupportDoc(docName: string): SupportDocKind {
-  const name = docName.toLowerCase();
+  // Separators are normalised to spaces before matching.
+  //
+  // Every pattern below is written with literal spaces ("company profile",
+  // "work plan", "project reference", "key staff"), but a tender names its
+  // required files with hyphens or underscores — "02-Company-Profile.docx" is
+  // the form tenders actually mandate. Matching the raw name meant that file
+  // matched nothing and fell through to GENERIC, which is not a
+  // company-produced kind, so the confirmed plan's Company Profile was never
+  // written from company evidence. A company profile is a document the firm
+  // writes, not a form the client issues.
+  const name = docName.toLowerCase().replace(/[-_.]+/g, " ").replace(/\s+/g, " ").trim();
   if (/\bexpert|\bcv\b|personnel|key staff/.test(name)) return "EXPERT_CV";
   if (/(experience|portfolio).*?(project|reference)|project reference|past performance/.test(name)) return "PROJECT_REFERENCES";
   if (/methodology|work plan|technical approach/.test(name)) return "METHODOLOGY";
-  if (/company profile|capability statement/.test(name)) return "COMPANY_PROFILE";
+  // The ONE company-profile rule, shared with the reconciler via
+  // lib/engine/document-type-normalizer.ts. Two separately-written patterns
+  // disagreed on the names tenders actually mandate ("02-Company-Profile.docx"
+  // matched here but not there; "Firm Profile" the reverse), which is the
+  // one-rule-in-two-places shape that produced the pricing-detector bug.
+  if (isCompanyProfileDocName(docName)) return "COMPANY_PROFILE";
   if (/financial|audited|turnover|bank/.test(name)) return "FINANCIAL_PLACEHOLDER";
   if (/legal|registration|licensing|tax/.test(name)) return "LEGAL_PLACEHOLDER";
   if (/declaration|certificate|compliance evidence/.test(name)) return "DECLARATION_PLACEHOLDER";
@@ -126,7 +154,38 @@ function supportSections(docName: string, context: { tenderTitle: string; requir
     { title: "Technical Methodology — Tender Requirements Addressed", lines: context.requirements.slice(0, 14) },
     { title: "Work Plan", lines: ["Each tender scope item is mapped to a deliverable, a responsible expert, a quality-review gate, and a submission milestone.", "Senior technical review and final compliance verification are applied before each deliverable issue.", "The detailed methodology, phasing, and deliverables are presented in the main Technical Proposal document; this support file is the methodology cover for package indexing."] },
   ];
-  if (kind === "COMPANY_PROFILE") return [{ title: "Company Profile and Capability Statement — Tender Alignment", lines: context.requirements.slice(0, 12) }, { title: "Capability Evidence", lines: [...context.experts.slice(0, 8), ...context.projects.slice(0, 8)].filter(Boolean) }];
+  if (kind === "COMPANY_PROFILE") {
+    // A tender may require a Company Profile AND a Capability Statement as two
+    // separate deliverables. Both are company-written, so both classify the
+    // same way — and both used to be written from this one layout, so the
+    // package shipped two files identical apart from the filename echoed
+    // inside them. An evaluator opening the Capability Statement found the
+    // Company Profile.
+    //
+    // A capability statement answers "what has this firm proven it can do", so
+    // it leads with the evidence and maps requirements to it. The profile
+    // leads with the requirement alignment and cites evidence in support. The
+    // classification rule is untouched; only the layout differs.
+    if (isCapabilityStatementDocName(docName)) {
+      const evidence = [...context.experts.slice(0, 10), ...context.projects.slice(0, 10)].filter(Boolean);
+      return [
+        {
+          title: "Demonstrated Capability — Source-Verified Evidence",
+          // No claim is made about evidence that does not exist. Asserting that
+          // material is "attached separately" when nothing was linked would be
+          // a fabricated statement in a submitted document.
+          lines: evidence.length
+            ? evidence
+            : ["No source-verified expert or project evidence has been linked to this tender yet, so this statement is limited to the requirement mapping below."],
+        },
+        { title: "Requirements This Capability Addresses", lines: context.requirements.slice(0, 12) },
+      ];
+    }
+    return [
+      { title: "Company Profile and Capability Statement — Tender Alignment", lines: context.requirements.slice(0, 12) },
+      { title: "Capability Evidence", lines: [...context.experts.slice(0, 8), ...context.projects.slice(0, 8)].filter(Boolean) },
+    ];
+  }
   if (kind === "SECTOR_TECHNICAL_SCOPE") return [{ title: "Tender Scope Items Addressed in This Package", lines: context.requirements.slice(0, 16) }, { title: "Linked Evidence", lines: [...context.experts.slice(0, 6), ...context.projects.slice(0, 6)].filter(Boolean) }];
   if (kind === "FINANCIAL_PLACEHOLDER") return [{ title: "Required Original Documents", lines: ["Audited financial statements for the years specified in the tender.", "Tax / VAT certificates valid at submission date.", "Bank reference letter or proof of liquid capacity if requested by the tender.", "Annual turnover declaration in the format the tender prescribes."] }, { title: "Insertion Instructions", lines: placeholderIntro() }, { title: "No Financial Offer Included", lines: ["This is a TECHNICAL submission. No financial offer, fee schedule, rate, or price is included in this file or anywhere in the technical package."] }];
   if (kind === "LEGAL_PLACEHOLDER") return [{ title: "Required Original Documents", lines: ["Business registration certificate.", "Tax Identification Number (TIN) certificate.", "VAT registration certificate.", "Trade / professional licence valid at submission date.", "Sector-specific authority registration (e.g., Construction Authority grade certificate).", "Any other eligibility documents the tender prescribes."] }, { title: "Insertion Instructions", lines: placeholderIntro() }];
@@ -211,6 +270,19 @@ async function fillPlannedSupportDocuments(tenderId: string, userId: string, pla
         where: { id: doc.id },
         data: {
           fileContent,
+          // Record byte integrity with the same canonical helper every other
+          // writer uses. Without it the row keeps integrityStatus UNKNOWN and
+          // no contentSha256, and the export path — which re-verifies persisted
+          // bytes — refuses the document with
+          // FILE_BYTES_NOT_VERIFIED: PERSISTED_BYTE_INTEGRITY_MISMATCH. A
+          // document this function wrote could therefore never be exported;
+          // lib/engine/missing-plan-file-generation.ts already records it here,
+          // and the two writers disagreeing is what left the gap.
+          ...verifiedIntegrityDataFromBase64({
+            fileContent,
+            filename: doc.exactFileName ?? doc.name ?? title,
+            claimedMimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          }),
           generationStatus: "GENERATED",
           validationStatus: "PENDING",
           reviewStatus: "PENDING",
@@ -283,7 +355,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const tender = await prisma.tender.findFirst({
     where: { id, userId },
     include: {
-      requirements: true,
+      requirements: { orderBy: [{ createdAt: "asc" }, { id: "asc" }] },
       files: {
         select: { id: true, originalFileName: true, extractedText: true, extractionScore: true, totalPages: true, extractedPages: true, ocrPages: true, failedPages: true, deletionStatus: true },
       },
@@ -1097,18 +1169,74 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   advanceJob(job.id, "FETCH");
 
   try {
-    const plannedRecordCount = 0;
-    // Full Generate Docs is not allowed to mutate the submission plan. Missing
-    // plan rows are blocked above so repeated generation cannot create duplicate
-    // active document records or silently expand the final-export scope.
+    // Materialise a row for every CONFIRMED plan file that has none.
+    //
+    // Full Generate Docs must not invent scope, and it does not: the only files
+    // created here are ones the owner already confirmed, and
+    // findMissingGeneratedDocuments — the same reconciliation the response
+    // below already reports with — decides which are absent. Creating nothing
+    // was the bug. fillPlannedSupportDocuments only ever UPDATES existing rows,
+    // so a confirmed slot with no row was never written from company evidence.
+    //
+    // What filled it instead was worse than nothing: AUTO_FINALIZE's
+    // generateMissingPlanFiles fallback created the row with
+    // narrativeDraftContent — an internal worksheet reading "Draft technical
+    // response … Reviewer completion checklist … Replace this draft with the
+    // final generated narrative before marking READY_FOR_EXPORT" — which then
+    // passed validation and shipped to the procuring entity as the company
+    // profile, carrying no company information at all.
+    //
+    // With the row present, the Company Profile is classified as a
+    // company-produced kind and written from the vault's own evidence, and the
+    // fallback finds nothing missing to invent.
+    let plannedRecordCount = 0;
+    if (explicitSubmissionScope) {
+      const existingForPlan = await prisma.generatedDocument.findMany({
+        where: { tenderId: id, generationStatus: { not: "SUPERSEDED" } },
+        select: { id: true, name: true, exactFileName: true, exactOrder: true, documentType: true, format: true, generationStatus: true },
+      });
+      for (const missing of findMissingGeneratedDocuments(submissionPlan, existingForPlan)) {
+        const alreadyPresent = existingForPlan.some(
+          (doc) => (doc.exactFileName ?? doc.name ?? "").trim().toLowerCase() === missing.exactFileName.trim().toLowerCase(),
+        );
+        if (alreadyPresent) continue;
+        try {
+          await prisma.generatedDocument.create({
+            data: {
+              tenderId: id,
+              name: stripFileExtension(missing.exactFileName),
+              documentType: missing.documentType ?? "SUPPORTING_DOCUMENT",
+              format: missing.format ?? "DOCX",
+              exactFileName: missing.exactFileName,
+              exactOrder: missing.exactOrder ?? null,
+              generationStatus: "PLANNED",
+              validationStatus: "PENDING",
+              reviewStatus: "PENDING",
+              contentSummary: `Planned submission file ${missing.exactFileName} from the confirmed build plan.`,
+            },
+          });
+          plannedRecordCount += 1;
+        } catch (createErr) {
+          // P2002 = the partial unique index caught a concurrent creator for
+          // the same plan file. Converge: the row now exists, which is what
+          // this loop wanted.
+          if ((createErr as { code?: string })?.code !== "P2002") throw createErr;
+        }
+      }
+      if (plannedRecordCount > 0) warnings.push(`${plannedRecordCount} confirmed plan file(s) had no document record and were created for generation.`);
+    }
     advanceJob(job.id, "AI_GENERATE");
-    await time("generate.tender_documents", () => generateTenderDocuments(id, userId), { tenderId: id });
+    await time("generate.tender_documents", () => generateTenderDocuments(id, userId, { execution: "sync-route" }), { tenderId: id });
     advanceJob(job.id, "SAVE");
     const supportDocumentCount = await time("generate.fill_support_docs", () => fillPlannedSupportDocuments(id, userId, plannedFileKeys), { tenderId: id });
     if (supportDocumentCount > 0) warnings.push(explicitSubmissionScope ? `${supportDocumentCount} planned package document(s) were generated or marked for original replacement.` : `${supportDocumentCount} remaining package document(s) were generated or marked for original replacement.`);
     advanceJob(job.id, "LETTERHEAD");
-    const letterheadAppliedCount = await applyActiveUploadedLetterheadToTenderDocuments(id, userId);
+    const letterhead = await applyActiveUploadedLetterheadToTenderDocuments(id, userId);
+    const letterheadAppliedCount = letterhead.applied;
     if (letterheadAppliedCount > 0) warnings.push(`Uploaded Word letterhead applied to ${letterheadAppliedCount} generated DOCX file(s).`);
+    // A zero used to be silent. An owner who uploaded a letterhead and never
+    // saw it on their documents had nothing to act on.
+    else if (letterhead.reason) warnings.push(`Letterhead not applied. ${letterhead.reason}`);
     // Auto-apply company signature and stamp images (user uploads all company
     // documents — the App uses them automatically, no human approval needed).
     const { signatureApplied, stampApplied } = await applyActiveSignatureAndStampToTenderDocuments(id, userId);

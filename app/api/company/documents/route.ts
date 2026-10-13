@@ -53,6 +53,9 @@ export async function GET(req: Request) {
     select: {
       id: true, fileName: true, originalFileName: true, mimeType: true,
       size: true, category: true, createdAt: true, storagePath: true, aiExtractionStatus: true,
+      // Whether the original can be bound into a combined submission file
+      // (annex-bundle.ts needs a verified PDF).
+      integrityStatus: true, detectedFormat: true,
     },
   });
 

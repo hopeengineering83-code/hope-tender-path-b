@@ -1,3 +1,8 @@
+import { isAwaitingOwnerPricing, isFinancialProposalFile, OWNER_PRICING_ACTION } from "./owner-pricing-stop";
+import { resolveArtifactQualitySchema, resolvePackageRole } from "./artifact-quality-schema";
+import { requiresEvidenceOfType } from "./mandatory-evidence-requirement";
+import { looksLikeEncodedBytes } from "./encoded-content";
+import { findRenderedArtifactHygieneFailures } from "./client-text-hygiene";
 import { prisma, prismaReady } from "../prisma";
 import { getStorageAdapter } from "../storage";
 import { isValidClientName, containsMetadataPlaceholder } from "./metadata-validators";
@@ -11,7 +16,8 @@ import {
   isValidationPassed,
   type DocumentOutputState,
 } from "./document-output-state";
-import { containsPricingLeakage } from "./pricing-hygiene";
+import { containsPricingLeakage, pricingLeakageFinding } from "./pricing-hygiene";
+import { hasSourceEvaluationCriteria } from "./evaluation-criteria-presence";
 import { checkExportFileByteReadiness } from "./export-byte-readiness";
 import { detectSubmissionPackageMode } from "./submission-package-mode";
 import { assessExtractionQualityPerPage } from "../extraction-quality";
@@ -19,6 +25,8 @@ import { resolveCanonicalAnalysisSource } from "./analysis-source";
 import { isEmailSubmissionMethod, isPhysicalSubmissionMethod } from "./submission-method-policy";
 import { validateGeneratedDocumentQuality } from "../document-generation/generated-document-quality-validator";
 import { buildTenderDocumentContext, type TenderDocumentGenerationContext } from "../document-generation/tender-document-context";
+import { generatedDocumentVisibleText } from "./generated-document-text";
+import { COVER_DETAIL_STYLE, COVER_STYLE, TOC_HEADING_STYLE } from "./docx-paragraph-styles";
 
 export type ExportReadyDocument = {
   id: string;
@@ -116,9 +124,8 @@ function visibleXmlText(xml: string): string {
     // note below requires; it adds whitespace only.
     .replace(/<\/w:(p|tr|tc)>/g, "\n")
     .replace(/<[^>]+>/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
+    // One pass (see decodeXmlEntities): "&amp;lt;" is the text "&lt;", not "<".
+    .replace(/&(amp|lt|gt);/g, (_match, name: string) => (name === "amp" ? "&" : name === "lt" ? "<" : ">"))
     // Collapse runs of spaces/tabs, and runs of blank lines, without letting
     // either swallow the other.
     .replace(/[^\S\n]+/g, " ")
@@ -268,8 +275,51 @@ function walkTableToMarkdown(tblXml: string): string {
   return rows.join("\n");
 }
 
-function visibleXmlTextStructured(xml: string): string {
+/**
+ * What a paragraph IS, read from its own properties.
+ *
+ * The walk used to read runs only, so every heading, list item, contents
+ * title and cover line came out as a plain line of text. The PDF is rendered
+ * from this markdown, and it showed: "SECTION A: COMPANY PROFILE" and "A.1
+ * Company Overview" drawn at body size in body colour, no section opening a
+ * page, bullets without bullets, the DOCX cover block printed again as the
+ * first lines of page 2 beneath the PDF's own cover. The DOCX carried all of
+ * it as paragraph styles (Heading1-6, list numbering, TOCHeading, the cover
+ * styles in docx-paragraph-styles.ts); only this reader discarded it.
+ */
+type ParagraphRole =
+  | { kind: "heading"; level: number }
+  | { kind: "list"; level: number }
+  | { kind: "tocTitle" }
+  | { kind: "cover" }
+  | { kind: "coverDetail" }
+  | { kind: "body" };
+
+function paragraphRole(pXml: string): ParagraphRole {
+  const pPr = /<w:pPr>([\s\S]*?)<\/w:pPr>/.exec(pXml)?.[1] ?? "";
+  const style = /<w:pStyle w:val="([^"]+)"/.exec(pPr)?.[1] ?? "";
+  const heading = /^Heading([1-6])$/i.exec(style);
+  if (heading) return { kind: "heading", level: Number(heading[1]) };
+  if (style === TOC_HEADING_STYLE) return { kind: "tocTitle" };
+  if (style === COVER_STYLE) return { kind: "cover" };
+  if (style === COVER_DETAIL_STYLE) return { kind: "coverDetail" };
+  if (/<w:numPr>/.test(pPr) || /^List(?:Paragraph|Bullet\d?)$/.test(style)) {
+    const ilvl = Number(/<w:ilvl w:val="(\d+)"/.exec(pPr)?.[1] ?? "0");
+    return { kind: "list", level: Math.min(ilvl, 8) };
+  }
+  return { kind: "body" };
+}
+
+export interface DocxProposalParts {
+  /** The body as markdown: headings, lists, tables and the contents marker. */
+  markdown: string;
+  /** Cover-page facts the PDF cover prints (registration, signatory, dates). */
+  coverDetails: string[];
+}
+
+function visibleXmlProposalParts(xml: string): DocxProposalParts {
   const out: string[] = [];
+  const coverDetails: string[] = [];
   const bodyMatch = xml.match(/<w:body>([\s\S]*?)<\/w:body>/);
   const body = bodyMatch ? bodyMatch[1] : xml;
   const re = /<w:(p|tbl|sectPr)([\s>][\s\S]*?)<\/w:\1>/g;
@@ -288,28 +338,55 @@ function visibleXmlTextStructured(xml: string): string {
       continue;
     }
     if (tag === "p") {
+      const role = paragraphRole(inner);
       const line = walkParagraphToMarkdown(inner);
-      out.push(line);
+      switch (role.kind) {
+        case "cover":
+          break;
+        case "coverDetail":
+          if (line) coverDetails.push(line.replace(/\*+/g, "").trim());
+          break;
+        case "tocTitle":
+          out.push("", "# Table of Contents", "");
+          break;
+        case "heading":
+          if (line) out.push("", `${"#".repeat(role.level)} ${line.replace(/\*+/g, "").trim()}`, "");
+          break;
+        case "list":
+          if (line) out.push(`${"  ".repeat(role.level)}- ${line}`);
+          break;
+        default:
+          out.push(line);
+      }
     }
   }
-  return out
+  const markdown = out
     .join("\n")
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+  return { markdown, coverDetails };
 }
 
 export async function extractDocxMarkdownText(
   value: string | null | undefined,
   filename: string,
 ): Promise<string | null> {
+  return (await extractDocxProposalParts(value, filename))?.markdown ?? null;
+}
+
+/** The DOCX body as markdown plus the cover facts, for the PDF renderer. */
+export async function extractDocxProposalParts(
+  value: string | null | undefined,
+  filename: string,
+): Promise<DocxProposalParts | null> {
   if (!maybeBase64Docx(value, filename) || !value) return null;
   try {
     const buffer = Buffer.from(value, "base64");
     const JSZip = (await import("jszip")).default;
     const zip = await JSZip.loadAsync(buffer);
     const documentXml = await zip.file("word/document.xml")?.async("string");
-    return documentXml ? visibleXmlTextStructured(documentXml) : null;
+    return documentXml ? visibleXmlProposalParts(documentXml) : null;
   } catch {
     return null;
   }
@@ -339,7 +416,7 @@ export async function extractDocxVisibleText(value: string | null | undefined, f
 }
 
 export function documentHygieneIssues(text: string | null | undefined, doc?: Pick<ExportReadyDocument, "name" | "exactFileName" | "documentType" | "format">): string[] {
-  if (!text || !looksLikePlainText(text)) return [];
+  if (!text || looksLikeEncodedBytes(text) || !looksLikePlainText(text)) return [];
   const issues: string[] = [];
   if (/\b(as an ai|ai language model|chatgpt|claude|gemini|prompt|generated by ai|deterministic fallback|bid-team action|submission note:)\b/i.test(text)) {
     issues.push("AI/meta-preparation trace text is present");
@@ -347,10 +424,43 @@ export function documentHygieneIssues(text: string | null | undefined, doc?: Pic
   if (/\[(insert|add|fill|placeholder|todo|tbd|name of|date here|signature here|stamp here)[^\]]*\]/i.test(text) || /\b(TODO|TBD|FIXME|PLACEHOLDER)\b/i.test(text)) {
     issues.push("Placeholder or unresolved drafting instruction is present");
   }
-  if (containsPricingLeakage(text, doc)) {
-    issues.push("Possible financial/pricing language appears in a technical document");
+  // The message quotes what matched. It used to say only "Possible
+  // financial/pricing language appears in a technical document" — a HIGH,
+  // fail-closed finding on a 35-page proposal with no word to search for and
+  // no way to tell it from a false positive. Two AUTO_FINALIZE failures in a
+  // row were diagnosed by guessing which sentence tripped it, and the first
+  // guess was wrong. Same trigger, same severity, same score impact; the
+  // leading phrase is unchanged so the callers that classify on
+  // /pricing language/i still match.
+  const pricingFinding = pricingLeakageFinding(text, doc);
+  if (pricingFinding) {
+    issues.push(
+      pricingFinding.spansFragmentBoundary
+        ? `Possible financial/pricing language appears in a technical document: no single sentence contains it — the ${pricingFinding.rule} match spans a fragment boundary near "${pricingFinding.fragment}"`
+        : `Possible financial/pricing language appears in a technical document: ${pricingFinding.rule} in "${pricingFinding.fragment}"`,
+    );
   }
   return issues;
+}
+
+/**
+ * Machine-writing failures in the text of a FINISHED artifact.
+ *
+ * Deliberately NOT part of documentHygieneIssues: that function is called both
+ * on rendered visible text and on Markdown source, and "# Technical Proposal"
+ * is a defect in the first and correct syntax in the second. Only callers that
+ * know they hold rendered bytes may apply this.
+ *
+ * A delivered proposal carried ten literal "#### ..." lines because the DOCX
+ * renderer understood only three heading levels. No existing rule saw them:
+ * every one of them looks for forbidden VOCABULARY, and this is a failure of
+ * SYNTAX.
+ */
+export function renderedArtifactHygieneIssues(text: string | null | undefined): string[] {
+  if (!text || looksLikeEncodedBytes(text) || !looksLikePlainText(text)) return [];
+  return findRenderedArtifactHygieneFailures(text).map(
+    (finding) => `Machine-writing failure (${finding.kind}) in client-facing text: "${finding.excerpt}"`,
+  );
 }
 
 export function isReadyForFinalExport(doc: ExportReadyDocument): boolean {
@@ -401,7 +511,7 @@ export function checkExportReadiness(docs: ExportReadyDocument[], opts: { requir
     const reasons: string[] = [];
     const state = deriveDocumentOutputState(doc);
     if ((EXPORT_BLOCKING_STATES as readonly DocumentOutputState[]).includes(state)) {
-      const blockReason = exportBlockReason(state);
+      const blockReason = exportBlockReason(state, doc);
       if (blockReason) reasons.push(`[${state}] ${blockReason}`);
     } else if (state !== "READY_FOR_EXPORT") {
       if (!isGenerated(doc.generationStatus)) reasons.push(`generationStatus is ${doc.generationStatus}, expected GENERATED`);
@@ -438,7 +548,8 @@ export async function checkDocxHygieneReadiness(docs: ExportReadyDocument[]): Pr
       }
     }
     const text = await extractDocxVisibleText(content, fileName);
-    const reasons = documentHygieneIssues(text, doc).map((issue) => `${issue} inside DOCX visible text`);
+    const reasons = [...documentHygieneIssues(text, doc), ...renderedArtifactHygieneIssues(text)]
+      .map((issue) => `${issue} inside DOCX visible text`);
     if (reasons.length > 0) failures.push({ documentId: doc.id, name: doc.name, fileName, reasons });
   }
   return failures;
@@ -477,27 +588,79 @@ export function exportReadinessError(failures: ExportReadinessFailure[], tenderL
   return out.length === 0 ? "" : out.join("\n\n");
 }
 
-export function filePlanBlockersFromLists(docs: ExportReadyDocument[], exactFileNaming: string | null | undefined, exactFileOrder: string | null | undefined): NonNullable<ExportReadinessResult["tenderLevelBlockers"]> {
+export function filePlanBlockersFromLists(
+  docs: ExportReadyDocument[],
+  exactFileNaming: string | null | undefined,
+  exactFileOrder: string | null | undefined,
+  // Names the confirmed Build Plan also requires, beyond the tender's raw
+  // exactFileNaming/exactFileOrder text. That text is frequently a PARTIAL
+  // naming instruction — it names the primary Technical Proposal file and
+  // says nothing about a cover letter or annex, leaving those to the bidder.
+  // The confirmed Build Plan is the authoritative, comprehensive required-file
+  // scope: it is compiled from this same text PLUS whatever documents the
+  // tender's own mandatory requirements demand. Without this, a legitimately
+  // required, plan-confirmed document the raw text never named was reported
+  // "extra" and permanently blocked export/auto-finalize — permanently
+  // because exactFileNaming never changes, so no later run could clear it.
+  additionalAllowedNames: Iterable<string> = [],
+): NonNullable<ExportReadinessResult["tenderLevelBlockers"]> {
   const blockers: NonNullable<ExportReadinessResult["tenderLevelBlockers"]> = [];
   const requiredNames = parseRequiredFileList(exactFileNaming);
   const requiredOrder = parseRequiredFileList(exactFileOrder);
-  const actualNames = docs.map((doc) => documentFileName(doc)).filter(Boolean);
+  const additionalAllowedNameList = Array.from(additionalAllowedNames);
+  // PDF finalization deliberately retains its DOCX source so the generated
+  // proposal remains editable. When the confirmed delivery name is the PDF,
+  // that source is workspace material, not a second package attachment.
+  const requiredDeliveryNames = [...requiredNames, ...additionalAllowedNameList];
+  const deliveryDocs = docs.filter((doc) => {
+    const name = documentFileName(doc);
+    const base = normalizeFileName(name).replace(/\.[a-z0-9]+$/i, "");
+    return !docs.some((candidate) => {
+      const candidateName = documentFileName(candidate);
+      if (candidate === doc || normalizeFileName(candidateName).replace(/\.[a-z0-9]+$/i, "") !== base) return false;
+      return requiredDeliveryNames.some((required) => normalizeFileName(required) === normalizeFileName(candidateName));
+    });
+  });
+  const actualNames = deliveryDocs.map((doc) => documentFileName(doc)).filter(Boolean);
   const actualNameSet = new Set(actualNames.map(normalizeFileName));
+  const allowedExtraNameSet = new Set(additionalAllowedNameList.map(normalizeFileName));
 
   const missingNames = requiredNames.filter((name) => !actualNameSet.has(normalizeFileName(name)));
   if (missingNames.length > 0) blockers.push({ category: "FILE_NAMING", severity: "HIGH", title: `Missing required generated file name(s): ${missingNames.slice(0, 5).join(", ")}${missingNames.length > 5 ? ` and ${missingNames.length - 5} more` : ""}`, recommendedAction: "Generate or rename documents to match the tender's exact required file names before final export." });
-  const extraFiles = actualNames.filter((name) => requiredNames.length > 0 && !requiredNames.some((required) => normalizeFileName(required) === normalizeFileName(name)));
+  // An artifact the app materialized for its own assembly is not a stray
+  // client file. A section draft named after one of its submission's own
+  // sections is internal: it must be kept OUT of the package, not turned into
+  // a blocker against a package whose one required file already passed. An
+  // unplanned artifact that is NOT a recognizable component still blocks —
+  // hiding a genuinely unauthorized client-facing file would be worse than
+  // the contradiction this fixes.
+  const internalComponentNames = new Set(
+    deliveryDocs
+      .filter((doc) => resolvePackageRole({
+        documentName: doc.name,
+        fileName: documentFileName(doc),
+        documentType: doc.documentType,
+        requiredSectionsByType: DEFAULT_REQUIRED_SECTIONS_BY_TYPE,
+        plannedDeliveryNames: requiredDeliveryNames,
+      }).role === "INTERNAL_COMPONENT")
+      .map((doc) => normalizeFileName(documentFileName(doc))),
+  );
+  const extraFiles = actualNames.filter((name) =>
+    requiredNames.length > 0
+    && !requiredNames.some((required) => normalizeFileName(required) === normalizeFileName(name))
+    && !allowedExtraNameSet.has(normalizeFileName(name))
+    && !internalComponentNames.has(normalizeFileName(name)));
   if (extraFiles.length > 0) blockers.push({ category: "EXTRA_FILES", severity: "HIGH", title: `Generated package contains non-required file(s): ${extraFiles.slice(0, 5).join(", ")}${extraFiles.length > 5 ? ` and ${extraFiles.length - 5} more` : ""}`, recommendedAction: "Remove extra generated files not listed in the tender's exact file naming instructions before final export." });
 
   if (requiredOrder.length > 0) {
-    const orderedActual = [...docs].sort((a, b) => (a.exactOrder ?? 9999) - (b.exactOrder ?? 9999)).map((doc) => normalizeFileName(documentFileName(doc)));
+    const orderedActual = [...deliveryDocs].sort((a, b) => (a.exactOrder ?? 9999) - (b.exactOrder ?? 9999)).map((doc) => normalizeFileName(documentFileName(doc)));
     const mismatches = requiredOrder.map((name, index) => ({ name, expected: normalizeFileName(name), actual: orderedActual[index] ?? "" })).filter((row) => row.actual && row.expected !== row.actual);
     if (mismatches.length > 0) blockers.push({ category: "FILE_ORDER", severity: "HIGH", title: `Generated file order does not match tender order near: ${mismatches.slice(0, 3).map((m) => m.name).join(", ")}`, recommendedAction: "Reorder the generated documents/export package to match the tender's required attachment order." });
   }
 
   // Duplicate exactOrder detection — two documents with the same position
   // value would produce an undefined submission order for the evaluator.
-  const orderValues = docs.map((d) => d.exactOrder).filter((v): v is number => v != null);
+  const orderValues = deliveryDocs.map((d) => d.exactOrder).filter((v): v is number => v != null);
   const orderSeen = new Map<number, number>();
   for (const v of orderValues) orderSeen.set(v, (orderSeen.get(v) ?? 0) + 1);
   const duplicateOrders = [...orderSeen.entries()].filter(([, count]) => count > 1).map(([v]) => v);
@@ -600,7 +763,13 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
   // Accept procuringEntityName as fallback — older tenders may have it set without clientName.
   // Use EFFECTIVE values (override ?? raw) so a USER_EDITED clientName override is respected.
   const effectiveExportClientName = effectiveValue("clientName", tender.clientName) || effectiveValue("procuringEntityName", tender.procuringEntityName);
-  if (!isValidClientName(effectiveExportClientName) && !isOverridden("clientName")) blockers.push(tenderBlocker("CLIENT_NAME_REQUIRED", "Client/procuring entity name is missing or invalid. Edit Tender Details to enter the exact official procuring entity name.", "Edit Tender Detail and enter the exact official procuring entity name."));
+  // Owner policy ABSENT_TENDER_FACT_IS_NOT_REQUIRED: a tender that does not
+  // name its client is not blocked — the proposal is addressed generically. A
+  // client name that IS present but invalid still blocks: it would put a
+  // wrong name on the bid.
+  if (!(effectiveExportClientName ?? "").trim()) {
+    advisoryWarnings.push({ category: "CLIENT_NAME_NOT_STATED", severity: "MEDIUM" as const, title: "The tender does not state a client/procuring entity name, so the proposal is addressed without one.", recommendedAction: "No action needed. Add the client name in Tender Details if you know it." });
+  } else if (!isValidClientName(effectiveExportClientName) && !isOverridden("clientName")) blockers.push(tenderBlocker("CLIENT_NAME_REQUIRED", "Client/procuring entity name is invalid. Edit Tender Details to enter the exact official procuring entity name.", "Edit Tender Detail and enter the exact official procuring entity name."));
 
   // ── Extraction quality blocker ────────────────────────────────────────────
   if (tender.files && tender.files.some(f => (f as { extractionScore?: number | null }).extractionScore !== null && ((f as { extractionScore: number }).extractionScore) < 20)) {
@@ -766,13 +935,17 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
   const effMethod = effectiveValue("submissionMethod", tender.submissionMethod);
   const effEmails = effectiveValue("submissionEmails", tender.submissionEmails);
   const effAddress = effectiveValue("submissionAddress", tender.submissionAddress);
+  // Owner policy ABSENT_TENDER_FACT_IS_NOT_REQUIRED: a submission method the
+  // tender does not state is not required — advisory only. The endpoint a
+  // STATED email method depends on still blocks: without it the package
+  // cannot be delivered.
   if (!effMethod) {
-    blockers.push(tenderBlocker(
-      "SUBMISSION_METHOD_MISSING",
-      "Submission method has not been extracted or confirmed — the package may be submitted incorrectly.",
-      "Run AI Analyze or manually enter the submission method in Tender Detail before exporting.",
-      "HIGH",
-    ));
+    advisoryWarnings.push({
+      category: "SUBMISSION_METHOD_NOT_STATED",
+      severity: "MEDIUM" as const,
+      title: "The tender does not state a submission method, so none is required by the package.",
+      recommendedAction: "No action needed. Deliver the package as the client instructs.",
+    });
   } else {
     if (isEmailSubmissionMethod(effMethod) && !effEmails) {
       blockers.push(tenderBlocker(
@@ -810,8 +983,24 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
   if (effDeadline) {
     const now = new Date();
     if (effDeadline < now) {
-      const daysAgo = Math.round((now.getTime() - effDeadline.getTime()) / (1000 * 60 * 60 * 24));
-      advisoryWarnings.push({ category: "DEADLINE_PASSED", severity: "HIGH" as const, title: `Submission deadline passed ${daysAgo} day${daysAgo === 1 ? "" : "s"} ago (${effDeadline.toISOString().slice(0, 10)}). Late submissions are typically rejected by evaluators.`, recommendedAction: "Confirm whether a deadline extension was granted. If the tender closed, mark it as lost/withdrawn rather than exporting." });
+      // COUNT CALENDAR DAYS, AGAINST THE DATE THIS SENTENCE PRINTS.
+      //
+      // This was Math.round() over an elapsed duration, which contradicts the
+      // date in its own sentence and can contradict the fact it is reporting:
+      //
+      //   deadline 2026-08-25, read 2026-09-22 14:35Z -> 28.6 days elapsed
+      //   -> "passed 29 days ago (2026-08-25)", which is 28 days on a calendar
+      //
+      //   deadline yesterday 23:00, read today 01:00  -> 0.08 days elapsed
+      //   -> "passed 0 days ago", for a deadline that has passed
+      //
+      // The printed date is the UTC date, so the count is taken between UTC
+      // day boundaries and the two agree by construction. A deadline that
+      // passed earlier the same day is said so rather than counted as zero.
+      // The gate itself is unchanged: still `effDeadline < now`, still a HIGH
+      // advisory, never a hard blocker.
+      const passedWhen = describeDeadlinePassed(effDeadline, now);
+      advisoryWarnings.push({ category: "DEADLINE_PASSED", severity: "HIGH" as const, title: `Submission deadline passed ${passedWhen} (${effDeadline.toISOString().slice(0, 10)}). Late submissions are typically rejected by evaluators.`, recommendedAction: "Confirm whether a deadline extension was granted. If the tender closed, mark it as lost/withdrawn rather than exporting." });
     }
   }
 
@@ -839,7 +1028,7 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
   // Per Pillar 6: EVALUATION_CRITERIA_MISSING and EVALUATION_CRITERIA_NOT_EXTRACTED
   // are merged into one non-blocking advisory. Only block if the tender
   // explicitly contains an unreadable scoring section.
-  if (!tender.evaluationMethodology) {
+  if (!hasSourceEvaluationCriteria(tender)) {
     advisoryWarnings.push({
       category: "EVALUATION_CRITERIA_ADVISORY",
       severity: "LOW" as const,
@@ -851,19 +1040,21 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
   if ((tender.readinessScore ?? 0) <= 0 || /^(ANALYZED|AI_ANALYZED|AI_ANALYSIS_PARTIAL|FALLBACK_DRAFT_CREATED|ANALYSIS_REQUIRES_REVIEW|DRAFT)$/i.test(tender.status) || /^(ANALYSIS|TENDER_INTAKE)$/i.test(tender.stage)) blockers.push(tenderBlocker("FULL_PROPOSAL_NOT_READY", `Tender is still at ${tender.status}/${tender.stage} with workflow progress ${tender.readinessScore ?? 0}.`, "Follow the canonical current action. Safe generation, validation and finalization continue automatically after successful Run Engine."));
   if (hasStrategyOnlySignals(tender.files)) blockers.push(tenderBlocker("OFFICIAL_SOURCE_REQUIRED", "Uploaded source appears to be strategy/market-intelligence only, not an official RFP/ToR/forms package.", "Upload the official tender source package before final export."));
 
-  const requiresExperts = tender.requirements.some((r) => r.requirementType === "EXPERT");
-  const requiresProjects = tender.requirements.some((r) => r.requirementType === "PROJECT_EXPERIENCE");
+  // Only a MANDATORY/CRITICAL row makes missing evidence an export blocker
+  // (mandatory-evidence-requirement.ts).
+  const requiresExperts = requiresEvidenceOfType(tender.requirements, ["EXPERT"]);
+  const requiresProjects = requiresEvidenceOfType(tender.requirements, ["PROJECT_EXPERIENCE"]);
   const reviewedSelectedExperts = tender.expertMatches.filter((m) => m.expert.trustLevel === "REVIEWED" || m.expert.trustLevel === "SOURCE_VERIFIED" || m.expert.trustLevel === "AI_DRAFT").length;
   const reviewedSelectedProjects = tender.projectMatches.filter((m) => m.project.trustLevel === "REVIEWED" || m.project.trustLevel === "SOURCE_VERIFIED" || m.project.trustLevel === "AI_DRAFT").length;
   if (requiresExperts && reviewedSelectedExperts === 0) blockers.push(tenderBlocker("NO_SELECTED_REVIEWED_EXPERTS", "Tender requires experts but no selected reviewed expert matches exist.", "Run Engine and select/review expert matches before export."));
   if (requiresProjects && reviewedSelectedProjects === 0) blockers.push(tenderBlocker("NO_SELECTED_REVIEWED_PROJECTS", "Tender requires project references but no selected reviewed project matches exist.", "Run Engine and select/review project matches before export."));
 
   const mandatoryReqIds = tender.requirements.filter((r) => String(r.priority ?? "").toUpperCase() === "MANDATORY").map((r) => r.id);
-  const [complianceRows, totalExpertMatches, totalProjectMatches, plannedDocCount, coveredMandatoryIds] = await Promise.all([
+  const [complianceRows, totalExpertMatches, totalProjectMatches, plannedDocRows, coveredMandatoryIds] = await Promise.all([
     prisma.complianceMatrix.count({ where: { tenderId } }),
     prisma.tenderExpertMatch.count({ where: { tenderId } }),
     prisma.tenderProjectMatch.count({ where: { tenderId } }),
-    prisma.generatedDocument.count({ where: { tenderId, generationStatus: "PLANNED" } }),
+    prisma.generatedDocument.findMany({ where: { tenderId, OR: [{ generationStatus: "PLANNED" }, { reviewStatus: "REPLACE_WITH_ORIGINAL" }] }, select: { exactFileName: true, name: true, documentType: true, reviewStatus: true, generationStatus: true } }),
     mandatoryReqIds.length > 0
       ? prisma.complianceMatrix.findMany({
           where: { tenderId, requirementId: { in: mandatoryReqIds }, supportLevel: { in: ["FULL", "SUBSTANTIAL"] } },
@@ -893,12 +1084,38 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
   }
   if (requiresExperts && totalExpertMatches === 0) blockers.push(tenderBlocker("NO_TENDER_SPECIFIC_EXPERT_MATCHES", "No tender-specific expert match rows exist.", "Run Engine to create expert matches from the reviewed vault."));
   if (requiresProjects && totalProjectMatches === 0) blockers.push(tenderBlocker("NO_TENDER_SPECIFIC_PROJECT_MATCHES", "No tender-specific project match rows exist.", "Run Engine to create project matches from the reviewed vault."));
-  if (plannedDocCount > 0) blockers.push(tenderBlocker("UNGENERATED_PLANNED_DOCUMENTS", `${plannedDocCount} required submission document(s) are planned but not yet generated — the ZIP package would be incomplete.`, "Planned documents are generated automatically. Tender-issued forms are sourced from uploaded Tender Intake files.", "HIGH"));
+  const plannedOnly = plannedDocRows.filter((row) => row.generationStatus === "PLANNED");
+  const plannedDocCount = plannedOnly.length;
+  if (plannedDocCount > 0) {
+    // A financial proposal waiting for prices is completed by the owner, not
+    // by the generator (owner-pricing-stop.ts). The planned placeholder and
+    // the pricing control row can be separate rows of the same file.
+    const tenderAwaitsPricing = plannedDocRows.some((row) => isAwaitingOwnerPricing(row));
+    const awaitingPricing = plannedOnly.filter((row) => isAwaitingOwnerPricing(row)
+      || (tenderAwaitsPricing && isFinancialProposalFile(`${row.exactFileName ?? ""} ${row.name ?? ""}`, String(row.documentType ?? ""))));
+    const action = awaitingPricing.length === plannedDocCount
+      ? OWNER_PRICING_ACTION
+      : awaitingPricing.length > 0
+        ? `Planned documents are generated automatically. ${OWNER_PRICING_ACTION}`
+        : "Planned documents are generated automatically. Tender-issued forms are sourced from uploaded Tender Intake files.";
+    blockers.push(tenderBlocker("UNGENERATED_PLANNED_DOCUMENTS", `${plannedDocCount} required submission document(s) are planned but not yet generated — the ZIP package would be incomplete.`, action, "HIGH"));
+  }
 
   const ungroundedMandatory = tender.requirements.filter((req) => req.priority === "MANDATORY" && !req.sectionReference && !req.sourceTenderFileId && !req.sourcePageNumber && !req.sourceExactQuote && (req.sourceConfidence ?? 0) <= 0);
   if (ungroundedMandatory.length > 0) blockers.push(tenderBlocker("SOURCE_REFERENCES_MISSING", `${ungroundedMandatory.length} mandatory requirement(s) lack source/page/quote traceability.`, "Run source extraction and review mandatory requirement references before export.", "HIGH"));
 
-  blockers.push(...filePlanBlockersFromLists(docs, tender.exactFileNaming, tender.exactFileOrder));
+  // Look up the confirmed Build Plan (if any) so its file names are never
+  // flagged as "extra" by the narrower text-only check below — see the
+  // comment on filePlanBlockersFromLists for why the two can legitimately
+  // disagree, and why the Build Plan is the authoritative one.
+  const { getCurrentConfirmedBuildPlan } = await import("./build-plan");
+  const confirmedBuildPlanForFileNaming = await getCurrentConfirmedBuildPlan(prisma, tenderId, tender.userId).catch(
+    () => ({ ok: false as const, blocker: "" }),
+  );
+  const buildPlanFileNames = confirmedBuildPlanForFileNaming.ok
+    ? confirmedBuildPlanForFileNaming.items.map((item) => item.exactFileName)
+    : [];
+  blockers.push(...filePlanBlockersFromLists(docs, tender.exactFileNaming, tender.exactFileOrder, buildPlanFileNames));
 
   const highOpen = await prisma.evaluatorObjection.findMany({ where: { tenderId, status: "OPEN", severity: "HIGH" }, select: { id: true, title: true, severity: true, category: true, recommendedAction: true }, take: 20 });
   for (const o of highOpen) blockers.push({ category: `EVALUATOR_${o.category}`, severity: o.severity, title: o.title, recommendedAction: o.recommendedAction });
@@ -965,20 +1182,38 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
 export async function checkFullExportReadiness(opts: { tenderId: string; docs: ExportReadyDocument[]; requireFileContent?: boolean }): Promise<ExportReadinessResult> {
   const perDoc = checkExportReadiness(opts.docs, { requireFileContent: opts.requireFileContent });
   const docxHygieneFailures = await checkDocxHygieneReadiness(opts.docs);
-  // Byte readiness can only be judged when the caller actually loaded the
-  // bytes. Callers passing requireFileContent=false select document METADATA
-  // ONLY (see getFinalSubmissionReadiness), so fileContent is undefined on
-  // every row — and running the check anyway reported MISSING_FILE_BYTES for
-  // every document, including ones holding several KB of verified content. The
-  // ZIP download takes exactly that path, so the final package was refused on
-  // evidence that was never fetched.
+  // Run the byte/identity check ALWAYS. requireFileContent only decides whether
+  // ABSENT bytes are themselves a failure.
   //
-  // This does not weaken the package: the ZIP path now requests the content
-  // (so this check runs on real bytes), and assembly independently re-reads and
-  // verifies every file before writing the archive.
-  const byteFailures = opts.requireFileContent
-    ? await checkExportFileByteReadiness(opts.docs)
-    : [];
+  // Two separate defects met here. The first: callers passing
+  // requireFileContent=false select document METADATA ONLY (see
+  // getFinalSubmissionReadiness), so running the byte check reported
+  // MISSING_FILE_BYTES for every row, including ones holding several KB of
+  // verified content — the ZIP download takes exactly that path, so the package
+  // was refused on evidence never fetched. The fix at the time was to skip the
+  // whole check on that flag.
+  //
+  // That created the second: the flag conflates "must bytes be present" with
+  // "were bytes loaded". auto-finalize's runCanonicalValidation SELECTS
+  // fileContent and passes false, so the single pass that decides
+  // validationStatus never inspected the bytes it was holding, and a
+  // "Technical Proposal.pdf" declared DOCX containing DOCX bytes was marked
+  // VALIDATED and became export-ready.
+  //
+  // Skipping was also justified by "assembly independently re-reads and
+  // verifies every file before writing the archive". Assembly re-read and
+  // verified the HASH round-trip, which by construction cannot notice a
+  // mislabelled file — so that justification was load-bearing and false. It is
+  // true now (final-zip-assembly resolves artifact identity per entry), but the
+  // check belongs here regardless: a mislabelled artifact must fail validation,
+  // not merely fail to be packaged.
+  //
+  // Metadata-only callers stay unaffected: with requireBytes false a row with
+  // no bytes is not reported as missing, only its labels are cross-checked.
+  const byteFailures = await checkExportFileByteReadiness(
+    opts.docs,
+    opts.requireFileContent === true,
+  );
   const failures = mergeFailures(perDoc.failures, docxHygieneFailures, byteFailures);
   const tenderReadiness = await checkTenderLevelExportBlockers(opts.tenderId, opts.docs);
   return { ok: failures.length === 0 && tenderReadiness.blockers.length === 0, failures, tenderLevelBlockers: tenderReadiness.blockers, advisoryWarnings: tenderReadiness.advisoryWarnings };
@@ -1013,9 +1248,9 @@ export async function checkDocumentQualityGate(
 ): Promise<ExportReadinessFailure[]> {
   const failures: ExportReadinessFailure[] = [];
   for (const doc of docs) {
-    // Determine the visible text to validate. For base64 DOCX content we
-    // must extract the visible text from the DOCX zip — otherwise the
-    // quality gate would silently skip all generated DOCX files (their
+    // Determine the visible text to validate. For base64 DOCX/PDF content we
+    // must extract the visible text from the actual container — otherwise the
+    // quality gate would silently skip generated artifacts (their
     // fileContent is base64, not plain text, so looksLikePlainText returns
     // false and the `continue` below would skip the quality check entirely).
     // Per spec rule 6: validation must not approve empty content, placeholder
@@ -1023,19 +1258,72 @@ export async function checkDocumentQualityGate(
     // enforces these checks, so it MUST run on the extracted visible text.
     let text: string | null = doc.fileContent ?? null;
     const fileName = documentFileName(doc);
-    if (text && !looksLikePlainText(text)) {
-      // Try to extract visible text from base64 DOCX. If extraction fails
-      // (corrupt zip, not a DOCX, etc.), fall back to null — the quality
-      // gate will skip the doc but the DOCX hygiene check
-      // (checkDocxHygieneReadiness) will still run and catch issues.
-      const extracted = await extractDocxVisibleText(text, fileName);
+    // looksLikePlainText ACCEPTS base64 — it is printable ASCII full of
+    // letters — so this branch was skipped for base64 content and the quality
+    // gate ran its placeholder, AI-trace and pricing patterns over encoded
+    // bytes. That is the same coin-flip that randomly rejected a clean
+    // Technical-Proposal.pdf for "Placeholder or unresolved drafting
+    // instruction is present". Encoded bytes must go through DOCX extraction
+    // or not be scanned at all.
+    if (text && (looksLikeEncodedBytes(text) || !looksLikePlainText(text))) {
+      const extracted = await generatedDocumentVisibleText({ ...doc, exactFileName: fileName });
       if (extracted) text = extracted;
-      else continue; // Not a DOCX or extraction failed — skip quality gate
+      else {
+        // A client-visible narrative artifact that cannot be opened cannot be
+        // called validated. Binary forms and spreadsheets have their own byte
+        // and package conformance checks; this fail-closed rule is limited to
+        // narrative proposal outputs.
+        if (/\.(docx|pdf)$/i.test(fileName) && /proposal|technical|methodology|expression of interest|\beoi\b/i.test(`${doc.documentType ?? ""} ${doc.name}`)) {
+          failures.push({
+            documentId: doc.id,
+            name: doc.name,
+            fileName,
+            reasons: ["[QUALITY GATE] Generated narrative document bytes could not be opened for visible-text validation."],
+          });
+        }
+        continue;
+      }
     }
-    if (!text || !looksLikePlainText(text)) continue;
+    if (!text || looksLikeEncodedBytes(text) || !looksLikePlainText(text)) continue;
 
-    const documentType = doc.documentType ?? "";
-    const requiredSections = requiredSectionsByType[documentType] ?? [];
+    // A cover/transmittal letter is routinely persisted with a generic
+    // documentType (TECHNICAL, TECHNICAL_PROPOSAL — whatever the confirmed
+    // Build Plan item or the main proposal writer used), because
+    // DEFAULT_REQUIRED_SECTIONS_BY_TYPE has no COVER_LETTER key of its own.
+    // Looking it up by that field then ran a real, correctly-written business
+    // letter against the full Technical Proposal's section list (Work Plan,
+    // Team Composition, Compliance Matrix, ...), which no one-page letter can
+    // ever satisfy. Recognizing it by name first — the same signal
+    // lib/engine/document-quality-gate.ts already uses for this exact
+    // document kind — routes it to its own, letter-appropriate check instead.
+    // WHICH SCHEMA DOES THIS ARTIFACT ANSWER TO?
+    //
+    // Looking the section list up by documentType alone asked a single
+    // methodology narrative to contain a Cover Letter, a Work Plan, a Team
+    // Composition and a Compliance Matrix, because the complete proposal and
+    // its own sections are all persisted as TECHNICAL_PROPOSAL. The
+    // cover-letter re-route that used to live here was the same bug fixed for
+    // one document kind; resolveArtifactQualitySchema generalizes it from the
+    // section table itself, so no filename or sector is hard-coded.
+    const schema = resolveArtifactQualitySchema({
+      documentName: doc.name,
+      fileName,
+      documentType: doc.documentType,
+      requiredSectionsByType,
+    });
+    const documentType = schema.role === "COMPONENT" && schema.matchedSectionTitle === "Cover Letter"
+      ? "COVER_LETTER"
+      : (doc.documentType ?? "");
+    // The whole-submission table is a generic default, not this tender's
+    // instructions. A heading it lists ("Submission Checklist", "Technical
+    // Approach and Methodology") is required here only when the tender itself
+    // names it; otherwise a feasibility-study ToR that asks for a "proposed
+    // methodology" and no checklist failed this check while every export gate
+    // passed the same document. Structure is still judged by the canonical
+    // quality gate (lib/engine/document-quality-gate.ts).
+    const requiredSections = schema.role === "COMPONENT"
+      ? schema.requiredSections
+      : schema.requiredSections.filter((section) => tenderNamesSection(section, ctx, mandatoryRequirements));
     const result = validateGeneratedDocumentQuality(
       text,
       documentType,
@@ -1095,9 +1383,47 @@ export async function checkFullExportReadinessWithQualityGate(opts: {
   };
 }
 
-const DEFAULT_REQUIRED_SECTIONS_BY_TYPE: Record<string, string[]> = {
+const sectionWords = (value: string) => value.toLowerCase().replace(/&/g, " and ").replace(/[^a-z0-9]+/g, " ").trim();
+
+/** Whether the tender's own extracted instructions name this section. */
+export function tenderNamesSection(
+  section: string,
+  ctx: Pick<TenderDocumentGenerationContext, "scopeOfServices" | "deliverables" | "evaluationCriteria" | "mandatoryRequirements" | "requiredDocuments">,
+  mandatoryRequirements: readonly string[] = [],
+): boolean {
+  const wanted = sectionWords(section);
+  if (!wanted) return false;
+  const tenderText = sectionWords([
+    ...(ctx.scopeOfServices ?? []),
+    ...(ctx.deliverables ?? []),
+    ...(ctx.evaluationCriteria ?? []),
+    ...(ctx.mandatoryRequirements ?? []),
+    ...(ctx.requiredDocuments ?? []),
+    ...mandatoryRequirements,
+  ].join(" \n "));
+  return ` ${tenderText} `.includes(` ${wanted} `);
+}
+
+export const DEFAULT_REQUIRED_SECTIONS_BY_TYPE: Record<string, string[]> = {
   TECHNICAL_PROPOSAL: ["Cover Letter", "Understanding of the Assignment", "Technical Approach and Methodology", "Work Plan", "Team Composition", "Compliance Matrix", "Submission Checklist"],
   EXPRESSION_OF_INTEREST: ["Cover Letter", "Expression of Interest", "Company Profile", "Understanding of the Assignment", "Submission Checklist"],
   QUOTATION: ["Quotation Cover Letter", "Price Schedule", "Submission Checklist"],
   FINANCIAL_PROPOSAL: ["Financial Proposal", "Price Schedule"],
 };
+
+/**
+ * How long ago a passed deadline passed, phrased for the owner.
+ *
+ * The caller prints the deadline's UTC date in the same sentence, so the count
+ * is taken between UTC day boundaries and the two agree by construction.
+ * Exported so the arithmetic can be exercised directly: it was previously
+ * inline and unreachable from a test without a database.
+ *
+ * `daysAgo` is retained as the name of the count -- it is what the readiness
+ * gate's own guards look for.
+ */
+export function describeDeadlinePassed(effDeadline: Date, now: Date): string {
+  const startOfUtcDay = (value: Date) => Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate());
+  const daysAgo = Math.round((startOfUtcDay(now) - startOfUtcDay(effDeadline)) / (1000 * 60 * 60 * 24));
+  return daysAgo <= 0 ? "earlier today" : `${daysAgo} day${daysAgo === 1 ? "" : "s"} ago`;
+}

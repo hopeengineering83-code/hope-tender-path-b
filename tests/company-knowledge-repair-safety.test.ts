@@ -51,7 +51,11 @@ describe("company knowledge repair safety and diagnostics", () => {
 
   it("sanitizes provider errors before storing extraction warnings", () => {
     assert.match(aiExtractor, /function sanitizeProviderMessage/);
-    assert.match(aiExtractor, /\[REDACTED_KEY\]/);
+    // Delegates to the shared redactor rather than carrying its own pattern
+    // list. The combined regex that used to live here covered sk-, AIza and
+    // Bearer, missing Groq's gsk_, Cerebras' csk_, DeepSeek's dsk- and Google's
+    // AQ format — all of which this deployment uses.
+    assert.match(aiExtractor, /redactSecrets\(/);
     assert.match(aiExtractor, /sanitizeProviderMessage\(error instanceof Error/);
   });
 

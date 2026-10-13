@@ -1,4 +1,5 @@
 import type { PrismaClient } from "@prisma/client";
+import { requiresEvidenceOfType } from "./engine/mandatory-evidence-requirement";
 import { getTenderGenerationReadinessStrict } from "./tender-generation-readiness-strict";
 import { assessMatchingQuality } from "./matching-quality";
 import { getCompanyIngestionReadiness } from "./company-ingestion-readiness";
@@ -7,8 +8,61 @@ import { filterFinalExportCandidateDocuments } from "./engine/document-output-st
 import { getCurrentConfirmedBuildPlan, type BuildPlanItem } from "./engine/build-plan";
 import { computeTenderReadinessState } from "./tender-readiness-state";
 import { buildCanonicalModulePayload, computeCanonicalModuleStates, type CanonicalModuleStatePayload } from "./engine/canonical-readiness-state";
-import { detectAnalysisSourceWithApproval } from "./engine/analysis-source";
+import { resolveCanonicalAnalysisSource } from "./engine/analysis-source";
 import { canUseVaultRecord, VAULT_REVIEW_CONSUMER_SELECT, type ReviewRecordState } from "./vault-review-provenance";
+import { getCanonicalTenderWorkflowDecision } from "./engine/canonical-workflow-decision";
+import { getFinalSubmissionReadiness, packageDownloadQueries, type FinalPackageStatus } from "./engine/final-submission-readiness";
+
+/**
+ * Readiness codes that a tender form awaiting the owner's signed original
+ * also raises (the form is a planned file the App cannot finish). When only
+ * these remain, the strict final-submission gate decides whether the
+ * proposal is complete.
+ */
+const FORM_ORIGINAL_SHORTFALL_CODES = new Set(["MISSING_PLANNED_FILES", "MISSING_TENDER_FORM_FIELDS"]);
+
+type FinalSubmissionVerdict = {
+  packageStatus: FinalPackageStatus;
+  summary: { strictTwoEnvelope: boolean; envelopeBreakdown: Record<"TECHNICAL" | "FINANCIAL" | "ADMIN", number> };
+};
+
+/**
+ * Fold the strict final-submission gate's verdict into the readiness blockers.
+ *
+ * The gate is consulted only when the checks before it found the package done
+ * (no blockers, or only a tender form awaiting the owner's original), because
+ * only then can it change the answer:
+ *
+ *   SUBMISSION_READY                             → blockers unchanged; final ZIP downloads
+ *   PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED → the form shortfall is restated as
+ *                                                  OWNER_ATTACHMENTS_REQUIRED; proposal
+ *                                                  package downloads
+ *   IN_PROGRESS, or the gate unreadable          → FINAL_SUBMISSION_GATE_BLOCKED
+ *
+ * Downloads are the queries the download route serves for that state: one per
+ * non-empty envelope when the tender requires separate sealed envelopes.
+ */
+export async function resolvePackageVerdict(input: {
+  blockers: string[];
+  documentsComplete: boolean;
+  loadFinalSubmission: () => Promise<FinalSubmissionVerdict | null>;
+}): Promise<{ blockers: string[]; packageStatus: FinalPackageStatus; packageDownloads: string[] }> {
+  if (!input.documentsComplete || !input.blockers.every((code) => FORM_ORIGINAL_SHORTFALL_CODES.has(code))) {
+    return { blockers: input.blockers, packageStatus: "IN_PROGRESS", packageDownloads: [] };
+  }
+  const finalSubmission = await input.loadFinalSubmission().catch(() => null);
+  const packageStatus: FinalPackageStatus = finalSubmission?.packageStatus ?? "IN_PROGRESS";
+  if (!finalSubmission || packageStatus === "IN_PROGRESS") {
+    return { blockers: [...input.blockers, "FINAL_SUBMISSION_GATE_BLOCKED"], packageStatus: "IN_PROGRESS", packageDownloads: [] };
+  }
+  const packageDownloads = packageDownloadQueries({ packageStatus, summary: finalSubmission.summary });
+  const blockers = packageStatus === "PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED"
+    // The gate proved the only shortfall is originals the owner supplies
+    // (tender forms included), so that is the reason reported.
+    ? [...input.blockers.filter((code) => !FORM_ORIGINAL_SHORTFALL_CODES.has(code)), "OWNER_ATTACHMENTS_REQUIRED"]
+    : input.blockers;
+  return { blockers, packageStatus, packageDownloads };
+}
 
 export type CanonicalTenderReadiness = {
   readyForAnalysis: boolean;
@@ -18,6 +72,23 @@ export type CanonicalTenderReadiness = {
   readyForSupportPackage: boolean;
   readyForFullProposal: boolean;
   readyForFinalExport: boolean;
+  /**
+   * The strict final-submission gate's package verdict — the one the export
+   * and download routes enforce. SUBMISSION_READY is the only state in which
+   * the final ZIP may be called ready; PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED
+   * means every App-generated document is complete and only originals the
+   * owner compiles manually remain.
+   */
+  packageStatus: FinalPackageStatus;
+  /** Every App-generated document is complete (true in both completed states). */
+  proposalComplete: boolean;
+  /**
+   * The download?… queries that deliver what is downloadable now: the final
+   * ZIP when SUBMISSION_READY, the proposal package (scope=proposal) when only
+   * owner originals remain; one per non-empty envelope when the tender
+   * requires separate sealed envelopes. Empty while work is in progress.
+   */
+  packageDownloads: string[];
   modules: CanonicalModuleStatePayload;
   blockers: string[];
   warnings: string[];
@@ -36,6 +107,8 @@ export type CanonicalTenderReadiness = {
  */
 export type CanonicalReadinessSummary = {
   readyForFinalExport: boolean;
+  packageStatus: FinalPackageStatus;
+  proposalComplete: boolean;
   readyForFullProposal: boolean;
   readyForSupportPackage: boolean;
   blockers: string[];
@@ -65,6 +138,8 @@ export async function getCanonicalReadinessSummary(
   if (!full) return null;
   return {
     readyForFinalExport: full.readyForFinalExport,
+    packageStatus: full.packageStatus,
+    proposalComplete: full.proposalComplete,
     readyForFullProposal: full.readyForFullProposal,
     readyForSupportPackage: full.readyForSupportPackage,
     blockers: full.blockers,
@@ -128,7 +203,18 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
   // readyForFinalExport went true while final-submission-readiness.ts, which
   // filters at line 565 before asking the same question, refused the same
   // tender. Readiness must not promise what the export gate will decline.
-  const missing = findMissingGeneratedDocuments(plan, filterFinalExportCandidateDocuments(tender.generatedDocuments as never));
+  //
+  // Selected ONCE, here, and reused by every count below. The narrowing was
+  // applied only to `missing`, so three sibling call sites went on counting the
+  // raw query result (`generationStatus != SUPERSEDED`, which still admits
+  // QUEUED / STALE / PLANNED / GENERATING / FAILED rows, validationStatus-
+  // SUPERSEDED rows, NOT_EXPORTABLE / REPLACE_WITH_ORIGINAL rows, CONTROL
+  // formats and internal drafts): NO_ACTIVE_GENERATED_DOCUMENTS, hasDocuments
+  // and readyForFinalExport. A tender whose only remaining rows were historical
+  // therefore reported hasDocuments true and satisfied the "documents exist"
+  // half of readyForFinalExport, while the export gate saw zero.
+  const currentDocuments = filterFinalExportCandidateDocuments(tender.generatedDocuments as never) as typeof tender.generatedDocuments;
+  const missing = findMissingGeneratedDocuments(plan, currentDocuments as never);
 
   // Gap 1: detect reused tender-issued forms that are still awaiting manual
   // completion. A reused form carries the machine:tender-issued-form-reuse
@@ -136,6 +222,11 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
   // APPROVED/READY_FOR_EXPORT — that's fabricated human state). It must be
   // completed and signed by a person. The blocker is more specific than
   // MISSING_PLANNED_FILES — it tells the reviewer exactly what to do next.
+  //
+  // Deliberately reads the BROAD list, not currentDocuments: a reused
+  // tender-issued form sits at REPLACE_WITH_ORIGINAL, which the canonical
+  // current-document selection excludes — and a form awaiting completion is
+  // exactly what this blocker exists to report.
   const tenderFormsAwaitingCompletion = tender.generatedDocuments.filter((doc) => {
     const summary = (doc.contentSummary ?? "").toLowerCase();
     const isReusedTenderForm = summary.includes("machine:tender-issued-form-reuse");
@@ -144,13 +235,15 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
     return rev !== "READY_FOR_EXPORT" && rev !== "APPROVED";
   });
 
-  const expertRequirementExists = tender.requirements.some((r) => r.requirementType === "EXPERT");
-  const projectRequirementExists = tender.requirements.some((r) => r.requirementType === "PROJECT_EXPERIENCE");
+  // Only a MANDATORY/CRITICAL row makes missing evidence a readiness blocker
+  // (engine/mandatory-evidence-requirement.ts).
+  const expertRequirementExists = requiresEvidenceOfType(tender.requirements, ["EXPERT"]);
+  const projectRequirementExists = requiresEvidenceOfType(tender.requirements, ["PROJECT_EXPERIENCE"]);
   const reviewedSelectedExperts = tender.expertMatches.filter((m) => m.isSelected && canUseVaultRecord(m.expert as ReviewRecordState, "GENERATION")).length;
   const reviewedSelectedProjects = tender.projectMatches.filter((m) => m.isSelected && canUseVaultRecord(m.project as ReviewRecordState, "GENERATION")).length;
   const unresolvedCriticalGaps = tender.complianceGaps.filter((g) => !g.isResolved && g.severity === "CRITICAL").length;
 
-  const analysisSource = await detectAnalysisSourceWithApproval(client, tenderId, tender);
+  const analysisSource = await resolveCanonicalAnalysisSource(client, tenderId, tender);
   const baseState = computeTenderReadinessState({
     analysisExtractionStatus: tender.analysisExtractionStatus,
     analysisSource,
@@ -163,22 +256,67 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
     requirements: tender.requirements,
     exactFileNaming: tender.exactFileNaming,
     exactFileOrder: tender.exactFileOrder,
-    generatedDocuments: tender.generatedDocuments,
+    generatedDocuments: currentDocuments,
     complianceGaps: tender.complianceGaps,
   });
 
-  const blockers = [
+  // The canonical release decision's own blockers. Without them this summary
+  // answered a narrower question than its name promises: it looked only at
+  // documents and matching, so readyForFinalExport went true while
+  // /export-readiness reported BLOCKED on the same tender at the same moment —
+  // reproduced on a live pipeline drive at 6/12 mandatory FULL/SUBSTANTIAL
+  // coverage, where repair-export-gaps returned
+  // {readyForFinalExport: true, blockers: []} and the canonical surface
+  // returned {ok: false, status: "BLOCKED"}.
+  //
+  // That divergence is what puts an enabled "Download Final ZIP" button on a
+  // screen that is simultaneously printing the coverage blocker. The rule this
+  // file already states twenty lines above — readiness must not promise what
+  // the export gate will decline — now holds against the release decision too,
+  // not just against the document gate.
+  //
+  // Folding the codes in here rather than adding another detector keeps one
+  // authority: readyForFinalExport already requires blockers.length === 0, so
+  // a canonical release blocker turns it false by construction and the reason
+  // travels with it.
+  const canonicalDecision = await getCanonicalTenderWorkflowDecision(client as never, userId, tenderId);
+  const canonicalReleaseBlockers = canonicalDecision?.blockerCodes ?? [];
+
+  let blockers: string[] = [
     ...readiness.fullProposalBlockers.map((b) => b.code),
+    ...canonicalReleaseBlockers,
     ...(matching.state === "VAULT_AWAITS_ENGINE" ? ["ENGINE_NOT_COMPLETED"] : []),
     ...(expertRequirementExists && tender.expertMatches.length === 0 ? ["NO_TENDER_SPECIFIC_EXPERT_MATCHES"] : []),
     ...(projectRequirementExists && tender.projectMatches.length === 0 ? ["NO_TENDER_SPECIFIC_PROJECT_MATCHES"] : []),
     ...(expertRequirementExists && reviewedSelectedExperts === 0 ? ["NO_SELECTED_REVIEWED_EXPERTS"] : []),
     ...(projectRequirementExists && reviewedSelectedProjects === 0 ? ["NO_SELECTED_REVIEWED_PROJECTS"] : []),
-    ...(tender.generatedDocuments.length === 0 ? ["NO_ACTIVE_GENERATED_DOCUMENTS"] : []),
+    ...(currentDocuments.length === 0 ? ["NO_ACTIVE_GENERATED_DOCUMENTS"] : []),
     ...(missing.length > 0 ? ["MISSING_PLANNED_FILES"] : []),
     ...(tenderFormsAwaitingCompletion.length > 0 ? ["MISSING_TENDER_FORM_FIELDS"] : []),
     ...(confirmedPlan.ok ? [] : ["NO_CURRENT_CONFIRMED_BUILD_PLAN"]),
   ];
+
+  // The package verdict. Everything above reads documents, plan, matching and
+  // the workflow decision; none of it knows that the final ZIP also needs the
+  // originals the owner compiles outside the App. That is the strict
+  // final-submission gate's question — the one /export and the download route
+  // enforce — so when the checks above find nothing left but tender forms
+  // awaiting an original, the same gate is asked here and its verdict is the
+  // answer. Without it the Release Status panel read readyForFinalExport and
+  // printed "The final ZIP package is ready" beside a Next Required Action of
+  // "Proposal complete — attach originals manually", while /export refused
+  // the ZIP (Pharo, Preview 2026-10-11).
+  //
+  // Asked only when it can change the answer, so tenders still in progress pay
+  // nothing for it. A gate that cannot be read never reports the ZIP ready.
+  const verdict = await resolvePackageVerdict({
+    blockers,
+    documentsComplete: currentDocuments.length > 0 && confirmedPlan.ok && unresolvedCriticalGaps === 0,
+    loadFinalSubmission: () => getFinalSubmissionReadiness(client, { tenderId, userId }),
+  });
+  blockers = verdict.blockers;
+  const { packageStatus, packageDownloads } = verdict;
+  const proposalComplete = packageStatus !== "IN_PROGRESS";
 
   const nextActions = Array.from(new Set([
     ...readiness.fullProposalBlockers.map((b) => b.nextAction).filter(Boolean) as string[],
@@ -191,7 +329,7 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
     ...baseState,
     hasAnalysis: Boolean(tender.analysisSummary),
     hasRequirements: tender.requirements.length > 0,
-    hasDocuments: tender.generatedDocuments.length > 0,
+    hasDocuments: currentDocuments.length > 0,
     matchingComplete: matching.state !== "VAULT_AWAITS_ENGINE",
     matchingBlocked: blockers.some((code) => code.includes("MATCH") || code.includes("EXPERT") || code.includes("PROJECT")),
     generationServerReady: readiness.fullProposalReady,
@@ -209,7 +347,10 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
     matchingState: matching.state,
     readyForSupportPackage: readiness.supportPackageReady,
     readyForFullProposal: readiness.fullProposalReady,
-    readyForFinalExport: tender.generatedDocuments.length > 0 && missing.length === 0 && tenderFormsAwaitingCompletion.length === 0 && blockers.length === 0 && unresolvedCriticalGaps === 0,
+    readyForFinalExport: currentDocuments.length > 0 && packageStatus === "SUBMISSION_READY" && missing.length === 0 && tenderFormsAwaitingCompletion.length === 0 && blockers.length === 0 && unresolvedCriticalGaps === 0,
+    packageStatus,
+    proposalComplete,
+    packageDownloads,
     modules,
     blockers,
     warnings: readiness.warnings.map((w) => w.code),

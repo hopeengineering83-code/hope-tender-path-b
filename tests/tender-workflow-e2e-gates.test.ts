@@ -210,7 +210,10 @@ describe("Tender Workflow E2E Gates Regression Pack", () => {
       const src = readFileSync(resolve(process.cwd(), "app/api/tenders/[id]/download/route.ts"), "utf8");
 
       assert.ok(src.includes("const canonical = await getFinalSubmissionReadiness"), "Download route must check canonical readiness");
-      assert.ok(src.includes("if (!canonical.ok)"), "Download route must block if canonical readiness is not OK");
+      // The one exception is the proposal-only package: requested explicitly,
+      // and only when every app document is ready and only owner originals remain.
+      assert.ok(src.includes("if (!canonical.ok && !proposalOnly)"), "Download route must block if canonical readiness is not OK");
+      assert.ok(src.includes('const proposalOnly = !canonical.ok && packageScope === "proposal" && canonical.proposalComplete;'), "the proposal-only exception is explicit and gated on proposalComplete");
     });
 
     it("Export route must block on EXTRACTION_QUALITY_INSUFFICIENT", async () => {
@@ -252,7 +255,7 @@ describe("Tender Workflow E2E Gates Regression Pack", () => {
          finalizerSrc.includes("markdown: renderText") || finalizerSrc.includes("markdown: text"),
          "finalizer must pass the extracted visible text (renderText or text) as the PDF body",
        );
-       assert.ok(finalizerSrc.includes("extractDocxMarkdownText"), "finalizer must use the structured markdown extractor for content parity");
+       assert.ok(finalizerSrc.includes("extractDocxProposalParts"), "finalizer must use the structured markdown extractor for content parity");
        assert.ok(!routeSrc.includes("target.contentSummary ?? target.name ?? tender.title"), "PDF route must not fall back to contentSummary/title as PDF body");
     });
   });

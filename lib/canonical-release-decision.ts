@@ -29,31 +29,35 @@
 //          ├─ computeTenderReadinessState
 //          ├─ computeCanonicalModuleStates
 //          ├─ detectAnalysisSourceWithApproval
-//          └─ canUseVaultRecord
+//          ├─ canUseVaultRecord
+//          └─ getFinalSubmissionReadiness  (strict export gate; see below)
 //
-// NOT YET IN THE CHAIN. The previous version of this comment listed the four
-// below as DELEGATEs of this module, as though they were wired. They are not —
-// grep each in lib/canonical-tender-readiness.ts and you get zero hits:
+// THE STRICT EXPORT GATE IS NOW IN THE CHAIN — but only for the question it
+// alone can answer. An earlier version of this comment recorded that
+// checkFullExportReadiness, getFinalSubmissionReadiness and
+// getFinalPackageReadinessModel were NOT reached from here, so
+// `readyToDownload` reflected neither byte integrity, envelope separation,
+// pricing leakage, placeholder/AI-trace scanning, manifest consistency nor the
+// originals the owner compiles outside the App. That gap was not merely
+// prospective: the Release Status panel derived "Ready to download — The final
+// ZIP package is ready" from it on a tender whose /export refused the ZIP with
+// PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED (Pharo, Preview 2026-10-11).
 //
-//   - checkFullExportReadiness                (byte/hygiene gate for the ZIP)
-//   - assertTenderReadyForGenerationAndExport (generation gate)
-//   - getFinalSubmissionReadiness             (export gate)
-//   - getFinalPackageReadinessModel           (package/manifest model)
+// getCanonicalTenderReadiness now asks getFinalSubmissionReadiness — which runs
+// checkFullExportReadiness — whenever its own checks find the package done
+// (or only tender forms awaiting originals left), and folds the verdict in:
 //
-// This changes what `readyToDownload` below is allowed to mean. It is derived
-// only from the readiness computation above, so it does NOT reflect byte
-// integrity, envelope separation, pricing leakage, placeholder/AI-trace
-// scanning or manifest consistency.
+//   SUBMISSION_READY                             → readyForFinalExport may be true
+//   PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED → OWNER_ATTACHMENTS_REQUIRED,
+//                                                  status PROPOSAL_COMPLETE_…
+//   anything else, or the gate unreadable        → FINAL_SUBMISSION_GATE_BLOCKED
 //
-// Nothing is harmed today: the actual archive owner
-// (/api/tenders/[id]/download?type=zip) runs its own gates and never reads
-// this decision. The hazard is prospective, and the old comment pointed
-// straight at it by instructing that the ZIP gate route through here. Doing
-// that while these four remain unwired would silently drop the byte gate and
-// report an unvalidated archive as downloadable.
-//
-// Wire checkFullExportReadiness (at minimum) into the chain BEFORE any export
-// or download path consumes readyToDownload.
+// So READY_TO_DOWNLOAD now requires the strict gate's SUBMISSION_READY. What is
+// still NOT reached from here: the readiness call reads byte metadata
+// (requireFileContent=false), not the bytes themselves, and
+// getFinalPackageReadinessModel's manifest is not consulted. The archive owner
+// (/api/tenders/[id]/download?type=zip) therefore still runs its own gate with
+// requireFileContent=true and never reads this decision — keep it that way.
 //
 // Real consumers today:
 //   - app/api/tenders/[id]/readiness/route.ts  (reports the decision)
@@ -73,8 +77,16 @@ export type CanonicalReleaseDecision = {
   readiness: CanonicalTenderReadiness | null;
   /** The five-status classification. UI renders this as plain text. */
   status: ReleaseStatus;
-  /** True iff the final ZIP is ready to download. */
+  /** True iff the final ZIP is ready to download (strict gate: SUBMISSION_READY). */
   readyToDownload: boolean;
+  /**
+   * True iff every App-generated document is complete — in SUBMISSION_READY
+   * and in PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED. The proposal package
+   * (download?type=zip&scope=proposal) is offered on this, never the final ZIP.
+   */
+  proposalComplete: boolean;
+  /** The strict final-submission gate's package verdict. */
+  packageStatus: CanonicalTenderReadiness["packageStatus"];
   /** True iff the workflow is processing automatically (no blocker). */
   processing: boolean;
   /** True iff a genuine source blocker exists (user must upload). */
@@ -112,6 +124,8 @@ export async function getCanonicalReleaseDecision(
     readiness,
     status,
     readyToDownload: status === "READY_TO_DOWNLOAD",
+    proposalComplete: status === "READY_TO_DOWNLOAD" || status === "PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED",
+    packageStatus: readiness.packageStatus,
     processing: status === "PROCESSING_AUTOMATICALLY",
     sourceBlocked: status === "GENUINE_SOURCE_BLOCKED",
     legalReleaseRequired: status === "LEGAL_RELEASE_REQUIRED",

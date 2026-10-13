@@ -31,6 +31,15 @@ import {
   checkDocumentQualityGate,
   checkFullExportReadinessWithQualityGate,
 } from "../lib/engine/export-readiness";
+import { PDFDocument, StandardFonts } from "pdf-lib";
+
+async function makePdfBase64(text: string): Promise<string> {
+  const pdf = await PDFDocument.create();
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const page = pdf.addPage([612, 792]);
+  page.drawText(text, { x: 48, y: 730, size: 10, font, maxWidth: 520, lineHeight: 14 });
+  return Buffer.from(await pdf.save()).toString("base64");
+}
 
 const read = (p: string) => readFileSync(p, "utf8");
 
@@ -113,6 +122,26 @@ describe("1-3. Quality-gate enforcer", () => {
     }, []);
     assert.equal(failures.length, 0, "must NOT block clean content");
   });
+
+  it("4. reopens finalized PDF bytes and blocks client-visible AI traces", async () => {
+    const ctx = makeContext();
+    const docs = [{
+      id: "pdf1",
+      name: "Technical Proposal",
+      exactFileName: "Technical Proposal.pdf",
+      documentType: "TECHNICAL_PROPOSAL",
+      format: "PDF",
+      generationStatus: "GENERATED",
+      validationStatus: "PASSED",
+      reviewStatus: "READY_FOR_EXPORT",
+      fileContent: await makePdfBase64("Technical Proposal. As an AI, TODO: Bid-Team to confirm this submission."),
+      storagePath: null,
+      contentMimeType: "application/pdf",
+    }];
+    const failures = await checkDocumentQualityGate(docs, ctx, {}, []);
+    assert.ok(failures.length > 0, "visible blockers inside real PDF bytes must fail the canonical quality gate");
+    assert.ok(failures.some((failure) => failure.reasons.some((reason) => /As an AI|AI-generated/i.test(reason))));
+  });
 });
 
 // ─── 4-5. Conceptual service-stream methodologies ───────────────────────────
@@ -173,13 +202,18 @@ describe("4-5. Conceptual service-stream methodologies", () => {
 // ─── 6-7. Wiring tests ──────────────────────────────────────────────────────
 
 describe("6-7. Wiring tests", () => {
-  it("6. generate-elite.ts imports classifyTender and buildServiceStreamMethodologyBlock", () => {
+  // The service-stream methodology block used to be injected into Section C
+  // of the fallback as well. It restated, stream by stream, the work Section
+  // C's scope-by-scope plan already assigns to each of the tender's own scope
+  // items, so the same proposal described its method twice in two different
+  // shapes. Section C is now built from the tender's scope items alone; the
+  // classification still decides which streams apply and is still passed on.
+  it("6. generate-elite.ts classifies the tender and passes its streams on, without a second methodology block", () => {
     const src = read("lib/engine/generate-elite.ts");
     assert.ok(src.includes('from "./tender-classification"'), "must import classifyTender");
     assert.ok(src.includes("classifyTender("), "must call classifyTender");
-    assert.ok(src.includes("buildServiceStreamMethodologyBlock"), "must import buildServiceStreamMethodologyBlock");
     assert.ok(src.includes("serviceStreams: detectedServiceStreams"), "must pass serviceStreams to fallbackProposalMarkdown");
-    assert.ok(src.includes("buildServiceStreamMethodologyBlock(params.serviceStreams)"), "must inject methodology block in Section C");
+    assert.ok(!src.includes("buildServiceStreamMethodologyBlock(params.serviceStreams)"), "Section C carries one methodology, from the tender's scope items");
   });
 
   it("7. validate route imports checkFullExportReadinessWithQualityGate and buildTenderDocumentContext", () => {

@@ -342,13 +342,15 @@ describe("PATH 3: All AI providers unavailable — REGEX_FALLBACK_UNAPPROVED", (
   it("fallback-diagnostics classifier redacts API keys from the message (no raw key leakage)", () => {
     const d = buildAnalysisFallbackDiagnostics("Auth error: sk-ant-api03-real-key-1234567890abcdef");
     assert.doesNotMatch(d.message, /sk-ant-api03/);
-    assert.match(d.message, /\[REDACTED\]/);
+    // The shared redactor writes [KEY_REDACTED]; the inline patterns this
+    // replaced wrote [REDACTED]. What matters is that the key is gone.
+    assert.match(d.message, /REDACTED/);
   });
 
   it("fallback-diagnostics classifier redacts Gemini keys (AIza...)", () => {
     const d = buildAnalysisFallbackDiagnostics("Invalid key: AIzaSyABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789");
     assert.doesNotMatch(d.message, /AIzaSyAB/);
-    assert.match(d.message, /\[REDACTED\]/);
+    assert.match(d.message, /REDACTED/);
   });
 
   it("fallback-diagnostics classifier redacts Bearer tokens", () => {

@@ -1,23 +1,32 @@
-// Preview builds must never migrate the database they share with Production.
+// Preview builds never mutate a database automatically. Any Preview migration
+// requires explicit, fingerprint-bound maintenance against a proven isolated
+// Preview database.
 //
 // WHY THIS FILE EXISTS
 // --------------------
-// In this deployment the Preview environment uses the SAME DATABASE_URL as
-// Production. A preview build that ran migrations would therefore migrate the
-// Production database from an unmerged branch — advancing the schema ahead of
-// the code Production is actually running.
+// A preview build runs from an unmerged branch. If it migrated whatever
+// database its DATABASE_URL happens to point at, it would advance that schema
+// ahead of the code actually deployed against it — and a build has no way to
+// prove, from inside itself, which database that is.
 //
-// That is not a theoretical hazard here. Two committed migrations, applied
-// together, hash every TenderShare token and then NULL the plaintext column:
+// That is not a theoretical hazard. Two committed migrations, applied together,
+// hash every TenderShare token and then NULL the plaintext column:
 //
 //   20260817120000  UPDATE "TenderShare" SET "tokenHash" = encode(digest("token", 'sha256'), 'hex')
 //   20260817140000  UPDATE "TenderShare" SET "token" = NULL WHERE "tokenHash" IS NOT NULL ...
 //
-// while the code on main resolves a share with
-// `prisma.tenderShare.findUnique({ where: { token } })`. Applying those
-// migrations to the shared database before that code ships would break every
-// existing share link. Schema and code have to advance together, which means
-// through a Production deployment — never from a preview.
+// while code that has not yet shipped the hashed-token lookup still resolves a
+// share with `prisma.tenderShare.findUnique({ where: { token } })`. Applying
+// those migrations ahead of that code would break every existing share link.
+// Schema and code have to advance together.
+//
+// An earlier revision of this header asserted, as current environment truth,
+// that Preview and Production share one DATABASE_URL. Preview and Production
+// are separate databases today, and that stale claim caused later sessions to
+// reason about the wrong hazard. The correct invariant does not depend on the
+// answer: an automatic build must not migrate, because it cannot establish
+// which database it holds. Deliberate maintenance can, by proving the target
+// database's fingerprint before it mutates anything.
 //
 // So the skip is deliberate, and ALLOW_PREVIEW_DB_MIGRATIONS is deliberately
 // not set for this project. These tests pin the two properties that keep the

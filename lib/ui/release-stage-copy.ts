@@ -118,7 +118,13 @@ export type ReleasePresentationStage =
   | "LEGAL_RELEASE_BLOCKER"
   /** 10. Security or integrity failure. */
   | "SECURITY_INTEGRITY_FAILURE"
-  /** 11 + 12. Final ZIP is ready to download. */
+  /**
+   * Every App-generated document is complete; only originals the owner
+   * compiles outside the App remain. The proposal package downloads; the
+   * final ZIP is NOT claimed ready.
+   */
+  | "PROPOSAL_COMPLETE"
+  /** 11 + 12. Final ZIP is ready to download (strict gate: SUBMISSION_READY). */
   | "EXPORT_READY";
 
 export type ReleaseStageInput = {
@@ -160,6 +166,7 @@ export function resolveReleasePresentationStage(input: ReleaseStageInput): Relea
   if (input.status === "FAILED_SECURITY_OR_INTEGRITY") return "SECURITY_INTEGRITY_FAILURE";
   if (input.status === "STATUS_UNAVAILABLE") return "STATUS_UNAVAILABLE";
   if (input.status === "READY_TO_DOWNLOAD") return "EXPORT_READY";
+  if (input.status === "PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED") return "PROPOSAL_COMPLETE";
   if (input.status === "LEGAL_RELEASE_REQUIRED") return "LEGAL_RELEASE_BLOCKER";
 
   // Proven work beats every inference below it.
@@ -301,6 +308,13 @@ export function releaseStageCopy(
         label: "Security or integrity failure",
         explanation:
           "A security or integrity failure occurred. The package cannot be downloaded. Contact support with the request ID.",
+      };
+
+    case "PROPOSAL_COMPLETE":
+      return {
+        label: "Proposal complete — attach originals manually",
+        explanation:
+          "Every document the App generates for this tender is complete. Download the proposal package below and attach the original/supporting documents listed in the Manual Original Attachment Checklist when you assemble the submission. The App does not claim the externally assembled submission is complete.",
       };
 
     case "EXPORT_READY":

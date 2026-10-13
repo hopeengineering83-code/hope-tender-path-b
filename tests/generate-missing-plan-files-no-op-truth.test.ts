@@ -19,7 +19,12 @@ import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 
-const ROUTE = readFileSync("app/api/tenders/[id]/generate-missing-plan-files/route.ts", "utf8");
+// The implementation of this route now lives in
+// lib/engine/missing-plan-file-generation.ts so the auto-finalize worker can
+// run the same code with the same gates. Read both halves of the path — the
+// assertions here are about what the path does, not which file holds it.
+const ROUTE = readFileSync("app/api/tenders/[id]/generate-missing-plan-files/route.ts", "utf8")
+  + readFileSync("lib/engine/missing-plan-file-generation.ts", "utf8");
 const BUTTON = readFileSync("components/generate-missing-plan-files-button.tsx", "utf8");
 
 describe("A no-op generation run is reported as a failure with reasons", () => {
@@ -39,23 +44,35 @@ describe("A no-op generation run is reported as a failure with reasons", () => {
   });
 
   it("refuses success when nothing changed", () => {
+    // The service decides (ok:false, status 422, coded reason); the route maps
+    // that onto the HTTP response. Both halves are asserted so neither can drop
+    // the refusal.
     assert.match(ROUTE, /if \(changedCount === 0\) \{/);
     assert.match(ROUTE, /code: "NO_PLANNED_FILE_COULD_BE_GENERATED"/);
+    assert.match(ROUTE, /ok: false, status: 422/);
     assert.match(ROUTE, /success: false/);
-    assert.match(ROUTE, /\{ status: 422 \}/);
+    assert.match(ROUTE, /\{ status: result\.status \}/);
   });
 
   it("returns the per-target skip reasons rather than only a count", () => {
-    const block = ROUTE.slice(ROUTE.indexOf("if (changedCount === 0)"), ROUTE.indexOf("return NextResponse.json({\n    success: true,"));
-    // Every per-target list the caller needs to act on must be present. Matched
-    // by name rather than as one object literal so the set can grow without
-    // failing a test whose point is that the lists are returned at all.
-    const files = block.match(/files: \{([^}]+)\}/)?.[1] ?? "";
-    assert.ok(files.length > 0, "the failure response must return the per-target file lists");
+    // The no-change result carries every per-target list, and the route hands
+    // them all to the caller under `files`. Matched by name rather than as one
+    // object literal so the set can grow without failing a test whose point is
+    // that the lists are returned at all.
+    const block = ROUTE.slice(ROUTE.indexOf("if (changedCount === 0)"));
     for (const list of ["created", "updated", "convertedFromPlanned", "plannedCreated", "skipped"]) {
-      assert.ok(files.includes(list), `the failure response must return the ${list} list (files: {${files}})`);
+      assert.ok(
+        new RegExp(`\\b${list}\\b`).test(block),
+        `the failure result must carry the ${list} list`,
+      );
     }
     assert.match(block, /nextAction: skipped\.length > 0 \? "REVIEW_SKIPPED_TARGETS" : "RUN_ENGINE"/);
+    // The route must forward them rather than collapsing to a bare count.
+    const files = ROUTE.match(/const files = \{([\s\S]*?)\};/)?.[1] ?? "";
+    assert.ok(files.length > 0, "the route must build the per-target file lists for the caller");
+    for (const list of ["created", "updated", "convertedFromPlanned", "plannedCreated", "skipped"]) {
+      assert.ok(files.includes(list), `the response must return the ${list} list (files: {${files}})`);
+    }
   });
 
   it("distinguishes 'nothing was missing' from 'nothing could be done'", () => {
@@ -66,7 +83,7 @@ describe("A no-op generation run is reported as a failure with reasons", () => {
   });
 
   it("keeps the success path for runs that did change something", () => {
-    assert.match(ROUTE, /return NextResponse\.json\(\{\n    success: true,\n    created: created\.length,/);
+    assert.match(ROUTE, /return NextResponse\.json\(\{\n    success: true,\n    created: result\.created\.length,/);
   });
 });
 

@@ -19,7 +19,8 @@
 
 import { getStorageAdapter } from "../storage";
 import { validateFileSignature } from "./export-format-policy";
-import { extractDocxVisibleText, documentHygieneIssues } from "./export-readiness";
+import { documentHygieneIssues } from "./export-readiness";
+import { generatedDocumentVisibleText } from "./generated-document-text";
 import { assessGeneratedDocumentQuality } from "./document-quality-gate";
 import { containsPricingLeakage } from "./pricing-hygiene";
 import { isFinalExportCandidateDocument } from "./document-output-state";
@@ -49,7 +50,7 @@ export type StorageAuditResult = {
   byteSignatureOk: boolean | null;
   fileSizeBytes: number | null;
   skippedLargeFile: boolean;
-  docxVisibleTextInspectable: boolean;
+  visibleTextInspectable: boolean;
   // Issue flags — no body text
   aiTraceIssue: boolean;
   placeholderIssue: boolean;
@@ -125,7 +126,7 @@ export async function auditStorageBackedDocument(
       byteSignatureOk: null,
       fileSizeBytes: null,
       skippedLargeFile: false,
-      docxVisibleTextInspectable: false,
+      visibleTextInspectable: false,
       aiTraceIssue: false,
       placeholderIssue: false,
       bidTeamToConfirmIssue: false,
@@ -155,7 +156,7 @@ export async function auditStorageBackedDocument(
       byteSignatureOk: sig?.ok ?? null,
       fileSizeBytes,
       skippedLargeFile: true,
-      docxVisibleTextInspectable: false,
+      visibleTextInspectable: false,
       aiTraceIssue: false,
       placeholderIssue: false,
       bidTeamToConfirmIssue: false,
@@ -180,13 +181,27 @@ export async function auditStorageBackedDocument(
   const byteSignatureOk = sigResult.ok;
 
   // ── Extract visible text ────────────────────────────────────────────────
+  //
+  // Read through the canonical reader, which opens DOCX *and* PDF bytes.
+  // This used to call extractDocxVisibleText, whose maybeBase64Docx() guard
+  // returns null for anything that is not an OPC package. The final deliverable
+  // of a completed run is a PDF, so this audit saw no text at all for exactly
+  // the artifact it exists to judge: quality came back null, the score
+  // defaulted to 0 and the status to DRAFT_ONLY, while export-readiness — which
+  // does read the PDF — reported READY with zero blockers. Two release surfaces
+  // disagreeing about the same bytes is worse than either verdict alone.
   let visibleText: string | null = null;
-  let docxVisibleTextInspectable = false;
+  let visibleTextInspectable = false;
   try {
-    visibleText = await extractDocxVisibleText(base64Content, fileName);
-    docxVisibleTextInspectable = visibleText !== null;
+    visibleText = await generatedDocumentVisibleText({
+      fileContent: base64Content,
+      exactFileName: fileName,
+      name: fileName,
+      contentMimeType: null,
+    });
+    visibleTextInspectable = visibleText !== null;
   } catch {
-    docxVisibleTextInspectable = false;
+    visibleTextInspectable = false;
   }
 
   // ── Hygiene and quality checks ──────────────────────────────────────────
@@ -283,7 +298,7 @@ export async function auditStorageBackedDocument(
     byteSignatureOk,
     fileSizeBytes,
     skippedLargeFile: false,
-    docxVisibleTextInspectable,
+    visibleTextInspectable,
     aiTraceIssue,
     placeholderIssue,
     bidTeamToConfirmIssue,

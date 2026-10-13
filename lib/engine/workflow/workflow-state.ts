@@ -99,12 +99,17 @@ export async function getCanonicalTenderWorkflowState(
   userId: string,
   tenderId: string
 ): Promise<CanonicalWorkflowState> {
+  // Every column except stored bytes and extracted text. The tender page polls
+  // this every few seconds; selecting the bodies made one poll download every
+  // tender file and every generated document ever written for the tender,
+  // superseded ones included (~12 MB for an ordinary tender), and exhausted the
+  // database's monthly transfer allowance within a day of normal use.
   const tender = await prisma.tender.findFirst({
     where: { id: tenderId, userId },
     include: {
-      files: true,
+      files: { omit: { fileContent: true, extractedText: true } },
       requirements: true,
-      generatedDocuments: true,
+      generatedDocuments: { omit: { fileContent: true } },
       complianceGaps: true,
     },
   });
@@ -112,6 +117,33 @@ export async function getCanonicalTenderWorkflowState(
   if (!tender) {
     throw new Error("Tender not found");
   }
+
+  // Byte presence and the format signature, without the body: what
+  // document-output-state needs to classify a document (it reads the first
+  // 12 base64 characters to tell a PDF from a DOCX).
+  // A client that ignores `omit` still hands back the body; take its head
+  // directly and query only for rows that came back without one.
+  const loadedBody = (doc: object): string | null => {
+    const body = (doc as { fileContent?: unknown }).fileContent;
+    return typeof body === "string" ? body : null;
+  };
+  // A client without raw SQL (a minimal test double) reads as before: rows
+  // without a body are rows without bytes.
+  const needHeads = tender.generatedDocuments.some((doc) => loadedBody(doc) === null)
+    && typeof (prisma as { $queryRaw?: unknown }).$queryRaw === "function";
+  const heads = needHeads
+    ? await prisma.$queryRaw<Array<{ id: string; head: string | null }>>`
+        SELECT id, left("fileContent", 16) AS head
+        FROM "GeneratedDocument"
+        WHERE "tenderId" = ${tenderId}
+      `
+    : [];
+  const headById = new Map(heads.map((row) => [row.id, row.head]));
+  const generatedDocuments = tender.generatedDocuments.map((doc) => {
+    const body = loadedBody(doc);
+    const head = body !== null ? body.slice(0, 16) : headById.get(doc.id) ?? null;
+    return { ...doc, fileContentHead: head, hasInlineFileContent: Boolean(head && head.trim()) };
+  });
 
   const readiness = computeTenderReadinessState(tender as any);
 
@@ -132,7 +164,7 @@ export async function getCanonicalTenderWorkflowState(
     ...readiness,
     hasAnalysis: analysisSource !== "UNKNOWN",
     hasRequirements: tender.requirements.length > 0,
-    hasDocuments: tender.generatedDocuments.length > 0,
+    hasDocuments: generatedDocuments.length > 0,
     analysisIsApprovedFallback,
   } as any);
 
@@ -159,7 +191,7 @@ export async function getCanonicalTenderWorkflowState(
   const untracedMandatory = mandatoryRequirements.filter(r => !traced(r as any));
   const completeTraceability = mandatoryRequirements.length > 0 && untracedMandatory.length === 0;
 
-  const planValidation = validateGeneratedDocsAgainstPlan(plan, tender.generatedDocuments);
+  const planValidation = validateGeneratedDocsAgainstPlan(plan, generatedDocuments);
   const hasUnresolvedCriticalGaps = tender.complianceGaps.some(g => !g.isResolved && g.severity === "CRITICAL");
 
   // Determine stage and next action

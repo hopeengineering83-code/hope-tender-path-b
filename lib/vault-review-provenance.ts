@@ -24,6 +24,28 @@ export type ReviewSourceDocument = {
   metadata?: string | null;
 };
 
+/**
+ * Every source-document field the runtime authority reads.
+ *
+ * Exported because a caller that hand-lists these gets a silent wrong answer
+ * rather than a type error: omit `metadata` and sourceExtractionRevision()
+ * falls back to "revision:1", which stops matching the stored provenance as
+ * soon as a document has been re-extracted once. The record is then reported
+ * NO_DURABLE_PROVENANCE — machine-verified evidence the owner uploaded,
+ * refused by the engine, with a "Provenance required" label and nothing they
+ * can do about it. Select through this constant, not by hand.
+ */
+export const VAULT_SOURCE_DOCUMENT_SELECT = {
+  id: true,
+  fileName: true,
+  companyId: true,
+  extractedText: true,
+  contentSha256: true,
+  contentByteLength: true,
+  integrityStatus: true,
+  metadata: true,
+} as const;
+
 const VAULT_REVIEW_AUTHORITY_SELECT = {
   companyId: true,
   trustLevel: true,
@@ -31,18 +53,7 @@ const VAULT_REVIEW_AUTHORITY_SELECT = {
   reviewedAt: true,
   reviewNotes: true,
   sourceDocumentId: true,
-  sourceDocument: {
-    select: {
-      id: true,
-      fileName: true,
-      companyId: true,
-      extractedText: true,
-      contentSha256: true,
-      contentByteLength: true,
-      integrityStatus: true,
-      metadata: true,
-    },
-  },
+  sourceDocument: { select: VAULT_SOURCE_DOCUMENT_SELECT },
 } as const;
 
 export const VAULT_REVIEW_CONSUMER_SELECT = {
@@ -95,6 +106,38 @@ export const VAULT_REVIEW_CONSUMER_SELECT = {
     expiryDate: true,
   },
 } as const;
+
+const VAULT_SOURCE_DOCUMENT_STATUS_SELECT = { ...VAULT_SOURCE_DOCUMENT_SELECT, extractedText: false } as const;
+
+/**
+ * The expert and project records of VAULT_REVIEW_CONSUMER_SELECT for a polled
+ * status read: the source document comes without its text, which
+ * fillVaultSourceText then supplies through the stored-text cache instead of
+ * downloading it on every poll. The authority checks receive exactly the same
+ * fields.
+ */
+export const VAULT_REVIEW_STATUS_SELECT = {
+  EXPERT: { ...VAULT_REVIEW_CONSUMER_SELECT.EXPERT, sourceDocument: { select: VAULT_SOURCE_DOCUMENT_STATUS_SELECT } },
+  PROJECT: { ...VAULT_REVIEW_CONSUMER_SELECT.PROJECT, sourceDocument: { select: VAULT_SOURCE_DOCUMENT_STATUS_SELECT } },
+  LEGAL: { ...VAULT_REVIEW_CONSUMER_SELECT.LEGAL, sourceDocument: { select: VAULT_SOURCE_DOCUMENT_STATUS_SELECT } },
+  FINANCIAL: { ...VAULT_REVIEW_CONSUMER_SELECT.FINANCIAL, sourceDocument: { select: VAULT_SOURCE_DOCUMENT_STATUS_SELECT } },
+  COMPLIANCE: { ...VAULT_REVIEW_CONSUMER_SELECT.COMPLIANCE, sourceDocument: { select: VAULT_SOURCE_DOCUMENT_STATUS_SELECT } },
+} as const;
+
+/** A record read with VAULT_REVIEW_STATUS_SELECT, once fillVaultSourceText has run. */
+export type WithSourceText<R> = R extends { sourceDocument: infer D }
+  ? Omit<R, "sourceDocument"> & { sourceDocument: (NonNullable<D> & { extractedText: string | null }) | null }
+  : R;
+/** Type the records fillVaultSourceText has filled. */
+export function withSourceText<R>(records: R[]): Array<WithSourceText<R>> {
+  return records as unknown as Array<WithSourceText<R>>;
+}
+
+/** Supply the source text of records read with VAULT_REVIEW_STATUS_SELECT. */
+export async function fillVaultSourceText(db: unknown, records: ReadonlyArray<{ sourceDocument?: { id: string } | null } | null | undefined>): Promise<void> {
+  const { fillStoredText } = await import("./stored-text-cache");
+  await fillStoredText(db, "CompanyDocument", records.map((record) => record?.sourceDocument as { id: string; extractedText?: string | null } | null | undefined));
+}
 
 type VaultReviewAuthorityRecord = {
   companyId: string;
@@ -1246,4 +1289,54 @@ export function redactVaultText(value: string | null | undefined, maxLength = 22
     .trim();
   if (redacted.length > boundedLength) redacted = `${redacted.slice(0, boundedLength - 1).trimEnd()}…`;
   return redacted;
+}
+
+/**
+ * The elements of an expert's `disciplines` / `sectors` / `certifications`
+ * that this expert's OWN source document actually supports.
+ *
+ * WHY
+ * ---
+ * A delivered proposal presented one General Manager as practising
+ * Architecture, Urban Planning, Structural Engineering, Civil Engineering,
+ * Geotechnical Engineering, Electrical Engineering, Mechanical Engineering,
+ * Quantity Surveying, Materials Engineering and Highway Engineering — ten
+ * professions for one person. An evaluator reads that as a firm's service list
+ * pasted under an individual's name, and it damages the credibility of every
+ * other claim in the document.
+ *
+ * The app already knew which of those were unsupported: the same tender's
+ * readiness payload carried "Expert \"...\" is source-verified on identity but
+ * 2 inferred field(s) are unverified: disciplines[6], sectors[6]. Do not cite
+ * these fields as authoritative in the final package." Nothing acted on it —
+ * the renderers printed the stored array whole.
+ *
+ * Per-element provenance is exactly the authority needed, so this returns the
+ * verified elements in their original order and drops the inferred ones. It
+ * does NOT reorder, rewrite, normalise or re-title anything: source-verified
+ * values stay byte-identical, and this is a presentation-boundary filter.
+ *
+ * FALLBACK: provenance written before per-element evidence existed carries no
+ * "disciplines[0]"-shaped field at all. Filtering against it would blank every
+ * list on every expert, so when the payload shows no per-element evidence for
+ * ANY of the three lists, the stored list is returned unchanged and the record
+ * is left to the whole-record trust level, exactly as before.
+ */
+export function sourceVerifiedListElements(
+  record: ReviewRecordState,
+  listField: "disciplines" | "sectors" | "certifications",
+): string[] {
+  const stored = parseStoredStringList((record as Record<string, unknown>)[listField]);
+  if (stored.length === 0) return [];
+
+  const payload = parseStoredSourceVerification(record.reviewNotes) ?? parseStoredReviewProvenance(record.reviewNotes);
+  if (!payload) return stored;
+
+  const evidenceFields = new Set(payload.evidence.map((item) => item.field));
+  const carriesPerElementEvidence = [...evidenceFields].some((field) =>
+    /^(?:disciplines|sectors|certifications)\[\d+\]$/.test(field),
+  );
+  if (!carriesPerElementEvidence) return stored;
+
+  return stored.filter((_value, index) => evidenceFields.has(`${listField}[${index}]`));
 }

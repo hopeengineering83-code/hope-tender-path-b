@@ -1,3 +1,4 @@
+import { generatedDocumentVisibleText } from "../../../../../lib/engine/generated-document-text";
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
@@ -14,6 +15,7 @@ import { reportError, logger } from "../../../../../lib/observability";
 import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engine/generation-readiness-gate";
 import { resolveTenderOperationGate } from "../../../../../lib/engine/tender-operation-gate";
 import { getCurrentConfirmedBuildPlan } from "../../../../../lib/engine/build-plan";
+import { getFinalSubmissionReadiness, packageDownloadQueries } from "../../../../../lib/engine/final-submission-readiness";
 import { inferType as inferRequirementType } from "../../../../../lib/engine/analysis";
 
 /**
@@ -219,15 +221,42 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
         }
       } catch { /* invalid legacy JSON is ignored; canonical gates remain fail-closed */ }
     }
+    // The two sources above are frequently PARTIAL: a per-requirement
+    // exactFileName is only populated for the requirement the tender's naming
+    // text explicitly names (here, just the Technical Proposal), and
+    // exactFileNaming/exactFileOrder carry the same narrow text. The confirmed
+    // Build Plan is the authoritative, comprehensive file list — compiled from
+    // that same text PLUS whatever documents the tender's own mandatory
+    // requirements demand (a cover letter, an annex) — so a document the
+    // Build Plan confirms but the narrower sources never named was reported
+    // EXTRA_DOCUMENT_NOT_IN_MANIFEST and MISSING_REQUIRED_SECTION by Authority
+    // Review below, permanently: exactFileNaming never changes, so no later
+    // run could clear either blocker.
+    const manifestBuildPlan = await getCurrentConfirmedBuildPlan(prisma, id, userId);
+    if (manifestBuildPlan.ok) {
+      for (const item of manifestBuildPlan.items) {
+        if (item.exactFileName?.trim()) {
+          manifestEntries.push({ exactFileName: item.exactFileName, documentType: item.documentType ?? "TENDER_REQUIRED_FILE" });
+        }
+      }
+    }
 
-    const authorityDocuments: DocumentInput[] = generatedDocuments.map((document) => ({
-      id: document.id,
-      name: document.name ?? "",
-      documentType: document.documentType ?? "TENDER_REQUIRED_FILE",
-      contentSummary: document.contentSummary ?? undefined,
-      reviewNotes: (document as Record<string, unknown>).reviewNotes as string | undefined,
-      exactFileName: document.exactFileName ?? undefined,
-    }));
+    // Judge the documents by their own bytes. Passing only contentSummary and
+    // reviewNotes made this gate read the generator's audit prose instead of
+    // the deliverable, so a run that reported auto-injecting sections blocked
+    // export as though the proposal said it. One shared reader is used by the
+    // download, export and authority-review paths so they cannot disagree.
+    const authorityDocuments: DocumentInput[] = await Promise.all(
+      generatedDocuments.map(async (document) => ({
+        id: document.id,
+        name: document.name ?? "",
+        documentType: document.documentType ?? "TENDER_REQUIRED_FILE",
+        contentSummary: document.contentSummary ?? undefined,
+        reviewNotes: (document as Record<string, unknown>).reviewNotes as string | undefined,
+        exactFileName: document.exactFileName ?? undefined,
+        documentText: await generatedDocumentVisibleText(document as { fileContent?: string | null }),
+      })),
+    );
     // Required sections are the tender's exactly-named submission files, NOT
     // the tender title. runAuthorityReview asks whether some generated
     // document's name or documentType CONTAINS each section string, and no file
@@ -273,7 +302,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       }, { status: 409 });
     }
 
-    const reviewBuildPlan = await getCurrentConfirmedBuildPlan(prisma, id, userId);
+    const reviewBuildPlan = manifestBuildPlan;
     const reviewOperationGate = resolveTenderOperationGate({
       tender: {
         id: tender.id,
@@ -308,10 +337,35 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       }, { status: 422 });
     }
 
+    // The package verdict comes from the strict final-submission gate — the one
+    // the download route enforces — never from the preflight above alone. The
+    // preflight passed a tender whose originals the owner compiles outside the
+    // App, and this route answered "readyToDownload: true … Download the Final
+    // ZIP" while /download?type=zip refused that ZIP (Pharo, Preview
+    // 2026-10-11). A complete proposal is not a final ZIP.
+    const finalSubmission = await getFinalSubmissionReadiness(prisma, { tenderId: tender.id, userId });
+    if (!finalSubmission?.ok) {
+      const proposalComplete = finalSubmission?.proposalComplete === true;
+      const proposalPackages = finalSubmission && proposalComplete ? packageDownloadQueries(finalSubmission) : [];
+      return NextResponse.json({
+        error: finalSubmission?.message ?? "Export readiness could not be confirmed.",
+        code: "EXPORT_READINESS_BLOCKED",
+        readyToDownload: false,
+        packageStatus: finalSubmission?.packageStatus ?? "IN_PROGRESS",
+        proposalComplete,
+        ...(proposalPackages.length > 0 ? { proposalPackage: proposalPackages[0], proposalPackages } : {}),
+        ownerAttachmentsOutstanding: finalSubmission?.ownerAttachments?.outstanding ?? 0,
+        tenderLevelBlockers: finalSubmission?.tenderLevelBlockers ?? [],
+        advisoryWarnings: finalSubmission?.advisoryWarnings ?? [],
+      }, { status: 409 });
+    }
+
     const generatedFileNames = generatedDocuments
       .sort((left, right) => (left.exactOrder ?? Number.MAX_SAFE_INTEGER) - (right.exactOrder ?? Number.MAX_SAFE_INTEGER))
       .map((document) => document.exactFileName ?? document.name);
-    const downloadUrl = `/api/tenders/${id}/download?type=zip`;
+    // One archive per sealed envelope when the tender requires separate ones.
+    const downloadUrls = packageDownloadQueries(finalSubmission).map((query) => `/api/tenders/${id}/download${query}`);
+    const downloadUrl = downloadUrls[0] ?? `/api/tenders/${id}/download?type=zip`;
 
     await logAction({
       userId,
@@ -330,7 +384,9 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     return NextResponse.json({
       success: true,
       readyToDownload: true,
+      packageStatus: finalSubmission.packageStatus,
       downloadUrl,
+      downloadUrls,
       fileList: generatedFileNames,
       packageName: `${tender.title} Submission Package`,
       format: "ZIP",

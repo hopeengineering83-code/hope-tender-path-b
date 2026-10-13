@@ -176,7 +176,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       },
       generatedDocuments: {
         where: { generationStatus: { not: "SUPERSEDED" } },
-        orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
+        orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }],
         select: { id: true, name: true, exactFileName: true, generationStatus: true, validationStatus: true, reviewStatus: true, documentType: true, format: true, exactOrder: true, storagePath: true },
       },
     },
@@ -342,7 +342,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // before rebuilding the DOCX. All other batch fetches exclude fileContent.
   const refreshedAll = await prisma.generatedDocument.findMany({
     where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
-    orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
+    orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }],
     select: {
       id: true,
       tenderId: true,
@@ -470,7 +470,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     processed += 1;
   }
 
-  await applyActiveUploadedLetterheadToTenderDocuments(tenderId, actor.id);
+  // Outcome was discarded here. Keep it named so the reason is available
+  // rather than thrown away at the one call site that never reported it.
+  const letterheadOutcome = await applyActiveUploadedLetterheadToTenderDocuments(tenderId, actor.id);
+  void letterheadOutcome;
   // Auto-apply company signature and stamp images after letterhead
   await applyActiveSignatureAndStampToTenderDocuments(tenderId, actor.id);
   // The readiness check verifies actual bytes and persisted integrity
@@ -479,7 +482,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // failures for documents that were just verified above.
   const finalAll = await prisma.generatedDocument.findMany({
     where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
-    orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
+    orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }, { id: "asc" }],
     select: {
       id: true,
       tenderId: true,
@@ -515,5 +518,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // checkFullExportReadiness above is the byte/hygiene gate; this is the
   // canonical resolver the UI reads from /readiness. Both must agree.
   const canonicalReadiness = await getCanonicalReadinessSummary(prisma, actor.id, tenderId);
-  return NextResponse.json({ success: true, status: readiness.ok ? "COMPLETED" : "IN_PROGRESS", processedCount: processed, remainingCount: Math.max(0, candidates.length - processed), nextAction: readiness.ok ? "EXPORT_READY" : "AUTOMATIC_PROCESSING", readinessOk: readiness.ok, warning, canonicalReadiness });
+  const exportReady = readiness.ok && canonicalReadiness?.readyForFinalExport === true;
+  // Only owner originals left: the App's work is COMPLETED, and the final ZIP
+  // is still not called ready — the proposal package is what downloads.
+  const proposalComplete = exportReady || canonicalReadiness?.packageStatus === "PROPOSAL_COMPLETE_OWNER_ATTACHMENTS_REQUIRED";
+  return NextResponse.json({ success: true, status: proposalComplete ? "COMPLETED" : "IN_PROGRESS", processedCount: processed, remainingCount: Math.max(0, candidates.length - processed), nextAction: exportReady ? "EXPORT_READY" : proposalComplete ? "DOWNLOAD_PROPOSAL_PACKAGE" : "AUTOMATIC_PROCESSING", readinessOk: exportReady, byteReadinessOk: readiness.ok, packageStatus: canonicalReadiness?.packageStatus ?? "IN_PROGRESS", proposalComplete, warning, canonicalReadiness });
 }

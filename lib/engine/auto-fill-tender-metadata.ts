@@ -6,7 +6,7 @@
 
 import type { PrismaClient } from "@prisma/client";
 import { inferTenderMetadata } from "./tender-metadata";
-import { isValidClientName, isPlaceholderClientName } from "./metadata-validators";
+import { isValidClientName, isPlaceholderClientName, containsMetadataPlaceholder, containsMetadataScaffolding } from "./metadata-validators";
 import {
   extractReference,
   extractDeadline,
@@ -90,9 +90,24 @@ function primaryFileName(files: TenderFileForAutoFill[]): string {
   return files[0]?.originalFileName ?? files[0]?.fileName ?? "tender";
 }
 
+/**
+ * Fields that make up the AI Analyze input (tender-analysis-content.ts hashes
+ * title + description + intakeSummary + source text). Writing any of them
+ * after an analysis marks that analysis stale and demands a new AI Analyze.
+ */
+export const ANALYSIS_INPUT_FIELDS = ["title", "description", "intakeSummary"] as const;
+
 export async function autoFillTenderMetadata(
   tender: TenderForAutoFill,
   prisma: PrismaClient,
+  options?: {
+    /**
+     * Leave the analysis-input fields untouched. Used when refilling facts
+     * after an analysis already exists (Run Engine): filling an empty
+     * description there would silently invalidate the owner's AI Analyze.
+     */
+    preserveAnalysisInputs?: boolean;
+  },
 ): Promise<MetadataAutoFillResult> {
   const combinedText = combineExtractedText(tender.files);
   if (combinedText.trim().length < 500) {
@@ -215,6 +230,10 @@ export async function autoFillTenderMetadata(
   function trySecondPassScalar<T>(field: string, current: T | null | undefined, extracted: T | null | undefined): void {
     if (!shouldFillScalar(field, current)) return;
     if (extracted === null || extracted === undefined) return;
+    // A string the gate would refuse is not a fact. "Tender Reference: Not
+    // provided" yielded "Not", which then blocked the Build Plan as a
+    // placeholder; the same test the gate applies decides here.
+    if (typeof extracted === "string" && (containsMetadataPlaceholder(extracted) || containsMetadataScaffolding(extracted))) return;
     patch[field] = extracted as unknown;
     filled.push(field);
   }
@@ -271,6 +290,16 @@ export async function autoFillTenderMetadata(
     if (r.found) trySecondPassScalar("evaluationMethodology", tender.evaluationMethodology, r.methodologyText);
   }
 
+  if (options?.preserveAnalysisInputs) {
+    for (const field of ANALYSIS_INPUT_FIELDS) {
+      if (field in patch) {
+        delete patch[field];
+        const at = filled.indexOf(field);
+        if (at >= 0) filled.splice(at, 1);
+        skipped.push(field);
+      }
+    }
+  }
   if (Object.keys(patch).length > 0) {
     await prisma.tender.update({ where: { id: tender.id }, data: patch });
   }

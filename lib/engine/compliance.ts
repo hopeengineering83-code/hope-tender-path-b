@@ -1,4 +1,25 @@
+import { requiresSubmittedFinancialProposal } from "./submission-plan-classifier";
 import type { CompanyKnowledgeSnapshot, ComplianceResult, MatchingResult, RequirementDraft } from "./types";
+import { isPackagingOrFormatRequirement, isSubmissionInstructionRequirement } from "./packaging-requirement-rule";
+import { assessMandatoryQualifications, decidingAssessment, formatQualificationAssessment, QUALIFICATION_NOT_MET, QUALIFICATION_NOT_PROVEN } from "./mandatory-qualification-check";
+import { eligibilitySubjectOf } from "./eligibility-subject";
+
+/**
+ * The evidence family that answers a requirement. An ELIGIBILITY row is
+ * answered by what it names, not by its category: "Availability of a
+ * multidisciplinary team" by the selected experts, "proven experience" by the
+ * project references, "understanding of the regulations" by the proposal —
+ * the registration record only when it asks for a registration.
+ */
+function evidenceTypeOf(req: RequirementDraft): string {
+  if (req.requirementType !== "ELIGIBILITY") return req.requirementType;
+  switch (eligibilitySubjectOf(`${req.title ?? ""} ${req.description ?? ""}`)) {
+    case "TEAM": return "EXPERT";
+    case "EXPERIENCE": return "PROJECT_EXPERIENCE";
+    case "UNDERSTANDING": return "METHODOLOGY";
+    default: return req.requirementType;
+  }
+}
 
 function clamp01(value: number): number { return Math.max(0, Math.min(1, value)); }
 
@@ -61,6 +82,32 @@ const REQUIREMENT_MATCH_STOP_WORDS = new Set([
 ]);
 
 export function findRequirementSupportDocument(knowledge: CompanyKnowledgeSnapshot, requirement: RequirementDraft) {
+  // A vault document cannot prove a rule about the submission itself.
+  //
+  // This function matches on bare token overlap: up to 8 terms of 4+
+  // characters from the requirement, against the category, filename and FULL
+  // extracted text of each vault document, first one with any 2 hits wins.
+  // No scoring, no ranking, no relevance floor, and until now no notion of
+  // whether the KIND of document could answer the KIND of requirement.
+  //
+  // Live on tender 08e250af that produced, for two mandatory requirements:
+  //
+  //   Email Submission Only        -> Expert CVS.pdf.txt
+  //   Required Email Subject Line  -> Expert CVS.pdf.txt
+  //
+  // Every CV carries an email address, so "email" plus one more ordinary word
+  // is enough. The owner is then shown a CV as the evidence for "the bid must
+  // be emailed", which is false traceability, and it is this function that
+  // wrote it. Generic to any tender naming a submission channel.
+  //
+  // Skipping these requirements changes no gate: the caller's strength is
+  // `draftingEvidenceExists ? 0.75 : 0.4`, a boolean that also reads selected
+  // expert/project evidence, so removing a bogus document match does not by
+  // itself move coverage either way. It removes a false claim, nothing more.
+  if (isPackagingOrFormatRequirement(requirement) || isSubmissionInstructionRequirement(requirement)) {
+    return undefined;
+  }
+
   const terms = `${requirement.title} ${requirement.description}`
     .toLowerCase()
     .match(/[a-z0-9]{4,}/g)
@@ -127,6 +174,7 @@ export function buildCompliance(
   requirementIds: Array<{ id: string; requirement: RequirementDraft }>,
   knowledge: CompanyKnowledgeSnapshot,
   matching: MatchingResult,
+  firm: { companyName?: string | null; foundingYear?: number | null; now?: Date } = {},
 ): ComplianceResult {
   const selectedExperts = matching.expertMatches.filter((match) => match.isSelected);
   const selectedProjects = matching.projectMatches.filter((match) => match.isSelected);
@@ -167,6 +215,19 @@ export function buildCompliance(
   const matrices: ComplianceResult["matrices"] = [];
   const gaps: ComplianceResult["gaps"] = [];
 
+  // A record of the right kind is not proof of a stated figure: a turnover
+  // threshold, a count of similar assignments of a stated value, or years in
+  // business are checked against the figures on file (see
+  // mandatory-qualification-check.ts). Usable financial records only, as
+  // loaded; every project, with the ones matched as similar marked.
+  const selectedProjectIds = new Set(selectedProjects.map(({ projectId }) => projectId));
+  const qualificationEvidence = {
+    companyName: firm.companyName,
+    foundingYear: firm.foundingYear,
+    financialRecords: knowledge.financialRecords,
+    projects: knowledge.projects.map((project) => ({ ...project, selected: selectedProjectIds.has(project.id) })),
+  };
+
   for (const item of requirementIds) {
     const req = item.requirement;
     let supportStrength = 0;
@@ -177,8 +238,9 @@ export function buildCompliance(
     let evidenceReference: string | undefined;
 
     const requirementDocument = findRequirementSupportDocument(knowledge, req);
+    const evidenceFamily = evidenceTypeOf(req);
 
-    if (req.requirementType === "EXPERT") {
+    if (evidenceFamily === "EXPERT") {
       const denominator = Math.max(req.requiredQuantity || 1, 1);
       const strongSelected = selectedExperts.length;
       const seniorRelevant = highScoringExperts.length;
@@ -193,7 +255,7 @@ export function buildCompliance(
         .map((match) => nameOrId(expertNameById, match.expertId))
         .slice(0, 3)
         .join(", ") || undefined;
-    } else if (req.requirementType === "PROJECT_EXPERIENCE") {
+    } else if (evidenceFamily === "PROJECT_EXPERIENCE") {
       const denominator = Math.max(req.requiredQuantity || 1, 1);
       const strongSelected = selectedProjects.length;
       const seniorRelevant = highScoringProjects.length;
@@ -208,7 +270,7 @@ export function buildCompliance(
         .map((match) => nameOrId(projectNameById, match.projectId))
         .slice(0, 3)
         .join(", ") || undefined;
-    } else if (["LEGAL", "ELIGIBILITY", "REGISTRATION"].includes(req.requirementType)) {
+    } else if (["LEGAL", "ELIGIBILITY", "REGISTRATION"].includes(evidenceFamily)) {
       supportStrength = legalCount > 0 ? 1 : 0;
       supportStatus = supportStrength >= 0.75 ? "SUPPORTED" : supportStrength > 0 ? "EVIDENCE_PENDING_REVIEW" : "UNSUPPORTED";
       evidenceSummary = legalCount > 0 ? `${legalCount} relevant legal/company registration evidence source(s) available.` : "No relevant legal/company registration evidence was found in the Company Vault.";
@@ -219,6 +281,19 @@ export function buildCompliance(
         knowledge.legalRecords[0]?.title,
         legalDocument?.originalFileName,
       );
+    } else if (req.requirementType === "FINANCIAL" && requiresSubmittedFinancialProposal(req.title, `${req.title ?? ""} ${req.description ?? ""}`.toLowerCase())) {
+      // "The Financial Proposal shall be submitted …" asks for a deliverable,
+      // priced from the owner's pricing workbook — not for financial-capacity
+      // evidence. Checking it against audited statements in the Company Vault
+      // raised a CRITICAL gap that no price could ever clear, so a priced
+      // package still could not be exported. The package gate keeps the
+      // financial file non-exportable until it is priced.
+      supportStrength = 0.75;
+      supportStatus = "EVIDENCE_PENDING_REVIEW";
+      evidenceSummary = "Answered by the financial proposal, priced from the owner's pricing workbook. The package is not exportable until it is priced.";
+      evidenceType = "PROPOSAL_RESPONSE";
+      evidenceSource = "Owner pricing workbook";
+      evidenceReference = undefined;
     } else if (["FINANCIAL", "FINANCIAL_CAPACITY"].includes(req.requirementType)) {
       supportStrength = financialCount > 0 ? 1 : 0;
       supportStatus = supportStrength >= 0.75 ? "SUPPORTED" : supportStrength > 0 ? "EVIDENCE_PENDING_REVIEW" : "UNSUPPORTED";
@@ -249,7 +324,7 @@ export function buildCompliance(
       evidenceType = supportStrength >= 1 ? "COMPANY_DOCUMENT" : "UNMAPPED";
       evidenceSource = supportStrength >= 1 ? "Company profile/support documents" : "No company profile found";
       evidenceReference = profileDocument?.originalFileName;
-    } else if (isProposalResponseRequirement(req.requirementType)) {
+    } else if (isProposalResponseRequirement(evidenceFamily)) {
       const draftingEvidenceExists = Boolean(requirementDocument) || selectedEvidenceCount > 0;
       // This engine stage has no generated-document input. It must not claim
       // that a proposal response exists or grant FULL coverage merely because
@@ -281,6 +356,20 @@ export function buildCompliance(
         ?? (selectedProjects[0] ? nameOrId(projectNameById, selectedProjects[0].projectId) : undefined);
     }
 
+    const qualification = decidingAssessment(assessMandatoryQualifications(req, qualificationEvidence, firm.now));
+    const strengthBeforeQualification = supportStrength;
+    if (qualification?.verdict === "FAIL") {
+      supportStrength = 0;
+      supportStatus = "UNSUPPORTED";
+      evidenceSummary = formatQualificationAssessment(qualification);
+    } else if (qualification?.verdict === "CONDITIONAL_PASS") {
+      supportStrength = Math.min(supportStrength, 0.6);
+      supportStatus = supportStrength > 0 ? "PARTIAL" : "UNSUPPORTED";
+      evidenceSummary = formatQualificationAssessment(qualification);
+    } else if (qualification) {
+      evidenceSummary = `${evidenceSummary} ${formatQualificationAssessment(qualification)}`;
+    }
+
     matrices.push({
       requirementTitle: req.title,
       requirementId: item.id,
@@ -293,15 +382,30 @@ export function buildCompliance(
       notes: req.priority === "MANDATORY" && supportStrength < 1 ? "Senior review required; generation is allowed when proposal response/evidence exists." : undefined,
     });
 
-    if (req.priority === "MANDATORY" && supportStrength < 0.5) {
+    if (qualification && qualification.verdict !== "PASS") {
+      // The owner's decision, stated: what the tender requires, what is on
+      // file, what is missing. A figure that falls short — or no evidence at
+      // all — blocks final export; a figure that cannot yet be confirmed asks
+      // for the evidence named.
+      const blocks = qualification.verdict === "FAIL" || strengthBeforeQualification < 0.5;
       gaps.push({
         requirementId: item.id,
-        severity: nonCriticalRequirement(req.requirementType) ? "HIGH" : "CRITICAL",
+        severity: blocks ? "CRITICAL" : "HIGH",
+        title: `${req.title} — ${qualification.verdict === "FAIL" ? QUALIFICATION_NOT_MET : QUALIFICATION_NOT_PROVEN}`,
+        description: formatQualificationAssessment(qualification),
+        mitigationPlan: qualification.verdict === "FAIL"
+          ? "Upload genuine evidence that meets the stated figure (for example a joint-venture partner's records, where the tender allows joint ventures), or decide not to bid. The proposal does not state this requirement as met."
+          : `Upload the evidence named as missing: ${qualification.missing}`,
+      });
+    } else if (req.priority === "MANDATORY" && supportStrength < 0.5) {
+      gaps.push({
+        requirementId: item.id,
+        severity: nonCriticalRequirement(evidenceFamily) ? "HIGH" : "CRITICAL",
         title: `${req.title} — evidence gap`,
         description: `${req.description} Current evidence status: ${supportStatus}. ${evidenceSummary}`,
         mitigationPlan: "Upload evidence, review matching candidates, or confirm manual proposal coverage before export.",
       });
-    } else if (req.priority === "MANDATORY" && supportStrength < 0.9 && !nonCriticalRequirement(req.requirementType)) {
+    } else if (req.priority === "MANDATORY" && supportStrength < 0.9 && !nonCriticalRequirement(evidenceFamily)) {
       gaps.push({
         requirementId: item.id,
         severity: "MEDIUM",

@@ -59,11 +59,14 @@ describe("Canonical field-state resolver", () => {
     );
   });
 
-  it("NOT_APPLICABLE for always-critical fields returns BLOCKED", () => {
+  // Superseded: "NOT_APPLICABLE for always-critical fields returns BLOCKED".
+  // Owner policy ABSENT_TENDER_FACT_IS_NOT_REQUIRED: a fact the tender does not
+  // state may be marked not applicable for every field, critical or not.
+  it("NOT_APPLICABLE is accepted for every field (ABSENT_TENDER_FACT_IS_NOT_REQUIRED)", () => {
     const src = read("lib/engine/canonical-field-state.ts");
     assert.ok(
-      src.includes('override?.fieldState === "NOT_APPLICABLE"') && src.includes("NEVER_NOT_APPLICABLE") && src.includes('"BLOCKED"'),
-      "NOT_APPLICABLE for always-critical fields must return BLOCKED",
+      src.includes('if (override?.fieldState === "NOT_APPLICABLE") {\n      status = "NOT_APPLICABLE";') && !src.includes("NEVER_NOT_APPLICABLE"),
+      "NOT_APPLICABLE resolves to NOT_APPLICABLE, with no field exempted",
     );
   });
 

@@ -1,4 +1,5 @@
 import { logger } from "../../../../../lib/observability";
+import { sourceGroundedExactFileName } from "../../../../../lib/engine/source-grounded-file-name";
 import { NextResponse } from "next/server";
 import crypto from "crypto";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
@@ -41,6 +42,7 @@ import {
   stagePartialResult,
 } from "../../../../../lib/ai-analyze-promotion";
 import { recordAiUsage } from "../../../../../lib/ai-usage-tracker";
+import { getProviderModel } from "../../../../../lib/ai-provider-registry";
 import { resolveTenderOperationGate } from "../../../../../lib/engine/tender-operation-gate";
 import { syncPersistedTenderFactsToLedger } from "../../../../../lib/engine/tender-facts-ledger-service";
 
@@ -790,6 +792,7 @@ async function handleStreamingAnalyze(
                       tenderId: id,
                       provider,
                       useCase: "extraction",
+                      model: getProviderModel(provider, "extraction"),
                       latencyMs,
                       success,
                       failureCategory: failureCategory ?? null,
@@ -859,6 +862,7 @@ async function handleStreamingAnalyze(
                 notes: tenderRecord.notes,
                 ...sourceFileIds,
                 existingContactDetailsSourceJson: (tenderRecord as any).contactDetailsSourceJson ?? null,
+                sourceFiles: tenderRecord.files.filter((f) => f.deletionStatus === "ACTIVE"),
               });
 
               // Atomic TOCTOU guard: re-verify inside the transaction that no newer
@@ -887,7 +891,7 @@ async function handleStreamingAnalyze(
                     data: {
                       tenderId: id, title: req.title, description: req.description,
                       requirementType: req.requirementType, priority: req.priority,
-                      exactFileName: req.exactFileName ?? null, requiredQuantity: req.requiredQuantity ?? null,
+                      exactFileName: sourceGroundedExactFileName(req.exactFileName, tenderRecord.files.filter((f) => (f.deletionStatus ?? "ACTIVE") === "ACTIVE").map((f) => f.extractedText)), requiredQuantity: req.requiredQuantity ?? null,
                       pageLimit: req.pageLimit ?? null, restrictions: req.restrictions ?? null,
                       sectionReference: req.sectionReference ?? null,
                       sourceSectionHeading: req.sourceSectionHeading || req.sectionReference || null,
@@ -1772,6 +1776,7 @@ async function unreachableLegacySynchronousPath(
                   tenderId: id,
                   provider,
                   useCase: "extraction",
+                  model: getProviderModel(provider, "extraction"),
                   latencyMs,
                   success,
                   failureCategory: failureCategory ?? null,
@@ -1826,6 +1831,7 @@ async function unreachableLegacySynchronousPath(
             notes: tenderRecord.notes,
             ...sourceFileIdsNonStream,
             existingContactDetailsSourceJson: (tenderRecord as any).contactDetailsSourceJson ?? null,
+            sourceFiles: tenderRecord.files.filter((f) => f.deletionStatus === "ACTIVE"),
           });
 
           // Atomic TOCTOU guard: same pattern as streaming path.
@@ -1853,7 +1859,7 @@ async function unreachableLegacySynchronousPath(
                   description: req.description,
                   requirementType: req.requirementType,
                   priority: req.priority,
-                  exactFileName: req.exactFileName ?? null,
+                  exactFileName: sourceGroundedExactFileName(req.exactFileName, tenderRecord.files.filter((f) => (f.deletionStatus ?? "ACTIVE") === "ACTIVE").map((f) => f.extractedText)),
                   requiredQuantity: req.requiredQuantity ?? null,
                   pageLimit: req.pageLimit ?? null,
                   restrictions: req.restrictions ?? null,
