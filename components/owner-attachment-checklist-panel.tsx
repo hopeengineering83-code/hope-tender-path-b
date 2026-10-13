@@ -28,6 +28,7 @@ const STATUS_LABEL: Record<string, string> = {
 
 const VAULT_LABEL: Record<string, string> = {
   VERIFIED_PDF_ORIGINAL: "In Vault (verified PDF)",
+  VERIFIED_FOR_SOME_EXPERTS_ONLY: "In Vault for only some of the selected experts",
   HELD_NOT_VERIFIED_PDF: "In Vault, not as a verified PDF original",
   NOT_IN_VAULT: "Not in Vault",
   NOT_APPLICABLE: "Tender form",

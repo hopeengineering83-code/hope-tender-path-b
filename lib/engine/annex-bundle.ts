@@ -62,7 +62,16 @@ export type AnnexBundleInput = {
    * by name at all.
    */
   companyExpertNames?: readonly string[];
+  /**
+   * Each selected expert's name with their own source document, paired, so a
+   * kind that needs every selected expert's original (their certificates)
+   * is satisfied only when each of them has one. Without it the kind is not
+   * checked per expert.
+   */
+  selectedExperts?: readonly SelectedExpert[];
 };
+
+export type SelectedExpert = { fullName: string | null; sourceDocumentId: string | null };
 
 export type AnnexBundlePart = { kind: string; documents: AnnexVaultDocument[] };
 export type AnnexBundleMissing = { kind: string; reason: string };
@@ -81,6 +90,11 @@ type KindRule = {
   select: (doc: AnnexVaultDocument, input: AnnexBundleInput) => boolean;
   /** Why it is missing when nothing answers it. */
   missingReason: string;
+  /**
+   * The selected experts the given originals leave without one, for a kind
+   * every selected expert needs. One expert's licence is not another's.
+   */
+  uncovered?: (docs: readonly AnnexVaultDocument[], input: AnnexBundleInput) => string[];
 };
 
 const name = (doc: AnnexVaultDocument) => doc.originalFileName.toLowerCase();
@@ -201,6 +215,10 @@ const KIND_RULES: Record<string, KindRule> = {
       && (input.selectedExpertSourceDocumentIds.includes(doc.id)
         || (input.companyExpertNames !== undefined && expertFiledUnder(doc.originalFileName, input.selectedExpertNames ?? [], input.companyExpertNames) !== null)),
     missingReason: "no verified professional licence / certificate PDF linked to the selected experts (file it under the expert's full name)",
+    uncovered: (docs, input) => (input.selectedExperts ?? [])
+      .filter((expert) => !docs.some((doc) => (expert.sourceDocumentId !== null && doc.id === expert.sourceDocumentId)
+        || (expert.fullName !== null && input.companyExpertNames !== undefined && expertFiledUnder(doc.originalFileName, [expert.fullName], input.companyExpertNames) !== null)))
+      .map((expert) => expert.fullName ?? "an unnamed expert"),
   },
   "Client reference and completion letters for the cited projects": {
     select: (doc, input) => input.selectedProjectSourceDocumentIds.includes(doc.id),
@@ -224,10 +242,15 @@ export function isVerifiedPdf(doc: AnnexVaultDocument): boolean {
 }
 
 /** The Vault documents that answer one annex kind (verified or not). Empty for a kind with no rule. */
-export function vaultCandidatesForKind(kind: string, input: Pick<AnnexBundleInput, "vaultDocuments" | "selectedExpertSourceDocumentIds" | "selectedProjectSourceDocumentIds" | "selectedExpertNames" | "companyExpertNames">): AnnexVaultDocument[] {
+export function vaultCandidatesForKind(kind: string, input: Pick<AnnexBundleInput, "vaultDocuments" | "selectedExpertSourceDocumentIds" | "selectedProjectSourceDocumentIds" | "selectedExpertNames" | "companyExpertNames" | "selectedExperts">): AnnexVaultDocument[] {
   const rule = KIND_RULES[kind];
   if (!rule) return [];
   return input.vaultDocuments.filter((doc) => rule.select(doc, input as AnnexBundleInput));
+}
+
+/** The selected experts the given originals of a kind leave without one (empty when the kind is not per expert). */
+export function kindCoverageGaps(kind: string, docs: readonly AnnexVaultDocument[], input: Pick<AnnexBundleInput, "vaultDocuments" | "selectedExpertSourceDocumentIds" | "selectedProjectSourceDocumentIds" | "selectedExpertNames" | "companyExpertNames" | "selectedExperts">): string[] {
+  return KIND_RULES[kind]?.uncovered?.(docs, input as AnnexBundleInput) ?? [];
 }
 
 /** Kinds only the owner can produce: they must be signed. */
@@ -255,14 +278,19 @@ export function planAnnexBundle(input: AnnexBundleInput): AnnexBundlePlan {
       seen.add(key);
       return true;
     });
-    if (usable.length > 0) {
+    // A kind every selected expert needs is bound only when each has one;
+    // otherwise all of it stays the owner's to insert.
+    const gaps = usable.length > 0 && rule.uncovered ? rule.uncovered(usable, input) : [];
+    if (usable.length > 0 && gaps.length === 0) {
       parts.push({ kind, documents: usable });
     } else {
       missing.push({
         kind,
-        reason: candidates.length > 0
-          ? "the Company Vault holds it, but not as an integrity-verified PDF original"
-          : rule.missingReason,
+        reason: gaps.length > 0
+          ? `no verified original filed under ${gaps.join(", ")} (each selected expert needs their own)`
+          : candidates.length > 0
+            ? "the Company Vault holds it, but not as an integrity-verified PDF original"
+            : rule.missingReason,
       });
     }
   }

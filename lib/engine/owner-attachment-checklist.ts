@@ -21,14 +21,14 @@
 import { prisma as defaultPrisma } from "../prisma";
 import { COMPANY_DOCUMENT_PENDING_DELETE_MARKER } from "../company-document-durable-deletion";
 import { tenderAnnexPolicy } from "./annex-policy";
-import { isOwnerSignedKind, isVerifiedPdf, vaultCandidatesForKind, readAnnexBundleMarker, type AnnexVaultDocument } from "./annex-bundle";
+import { isOwnerSignedKind, isVerifiedPdf, kindCoverageGaps, vaultCandidatesForKind, readAnnexBundleMarker, type AnnexVaultDocument, type SelectedExpert } from "./annex-bundle";
 import { combinedSubmissionFileName } from "./annex-bundle-loader";
 import { isAwaitingOwnerPricing } from "./owner-pricing-stop";
 import { parseStringArray, inferEnvelope } from "./submission-plan";
 import { classifySubmissionPlanItem } from "./submission-plan-classifier";
 
 export type AttachmentCopyType = "ORIGINAL" | "CERTIFIED_COPY" | "SCANNED_COPY" | "COPY" | "NOT_STATED";
-export type AttachmentVaultStatus = "VERIFIED_PDF_ORIGINAL" | "HELD_NOT_VERIFIED_PDF" | "NOT_IN_VAULT" | "NOT_APPLICABLE";
+export type AttachmentVaultStatus = "VERIFIED_PDF_ORIGINAL" | "VERIFIED_FOR_SOME_EXPERTS_ONLY" | "HELD_NOT_VERIFIED_PDF" | "NOT_IN_VAULT" | "NOT_APPLICABLE";
 
 export type OwnerAttachmentItem = {
   order: number;
@@ -77,6 +77,8 @@ export type ChecklistInput = {
   selectedExpertNames?: string[];
   /** Full names of every expert of the firm (see AnnexBundleInput.companyExpertNames). */
   companyExpertNames?: string[];
+  /** The selected experts, name and source document paired (see AnnexBundleInput.selectedExperts). */
+  selectedExperts?: SelectedExpert[];
   /** Rows awaiting a tender-issued original (REPLACE_WITH_ORIGINAL), pricing excluded. */
   formsAwaitingOriginal: Array<{ fileName: string; documentType?: string | null }>;
   /** Content hashes bound into the delivered combined file (its marker). */
@@ -211,10 +213,14 @@ export function buildOwnerAttachmentChecklist(input: ChecklistInput): OwnerAttac
     const stampRequired = /\b(?:stamp(?:ed)?|seal(?:ed)?)\b/i.test(clause);
     const candidates = vaultCandidatesForKind(kind, input);
     const verified = candidates.filter((d) => isVerifiedPdf(d));
-    const vaultStatus: AttachmentVaultStatus = verified.length > 0 ? "VERIFIED_PDF_ORIGINAL" : candidates.length > 0 ? "HELD_NOT_VERIFIED_PDF" : "NOT_IN_VAULT";
+    // A kind every selected expert needs is the Vault's only when each has one.
+    const gaps = verified.length > 0 ? kindCoverageGaps(kind, verified, input) : [];
+    const vaultStatus: AttachmentVaultStatus = verified.length > 0
+      ? (gaps.length > 0 ? "VERIFIED_FOR_SOME_EXPERTS_ONLY" : "VERIFIED_PDF_ORIGINAL")
+      : candidates.length > 0 ? "HELD_NOT_VERIFIED_PDF" : "NOT_IN_VAULT";
     const envelope = envelopeOf(reqText);
     const annexNo = index + 1;
-    const packaged = mode === "COMBINED_FILE" && verified.length > 0 && verified.every((d) => bound.has(d.contentSha256 || d.id));
+    const packaged = mode === "COMBINED_FILE" && vaultStatus === "VERIFIED_PDF_ORIGINAL" && verified.every((d) => bound.has(d.contentSha256 || d.id));
     const qualifiers = [signatureRequired ? "signed" : "", stampRequired ? "stamped" : ""].filter(Boolean).join(" and ");
     const what = `${qualifiers ? `${qualifiers} ` : ""}${COPY_PHRASE[copyType]} of ${clause.replace(/^(?:a\s+|the\s+)?(?:scanned|certified|notari[sz]ed|attested)?\s*cop(?:y|ies)\s+of\s+/i, "")}`;
     const location = mode === "COMBINED_FILE"
@@ -227,6 +233,10 @@ export function buildOwnerAttachmentChecklist(input: ChecklistInput): OwnerAttac
       ownerAction = mode === "COMBINED_FILE"
         ? `The Company Vault holds it (${verified.map((d) => d.originalFileName).join(", ")}); it is bound into "${combined}" when the package is next finalized.`
         : `Attach the ${what} — the Company Vault holds ${verified.map((d) => `"${d.originalFileName}"`).join(", ")} — to the ${location.toLowerCase()}.`;
+    } else if (vaultStatus === "VERIFIED_FOR_SOME_EXPERTS_ONLY") {
+      ownerAction = mode === "COMBINED_FILE"
+        ? `Insert the ${what} for every selected expert into "${combined}" as Annex ${annexNo} when assembling the file: the Company Vault holds none filed under ${gaps.join(", ")}, so none is bound automatically.`
+        : `Attach the ${what} for every selected expert to the ${location.toLowerCase()}: the Company Vault holds ${verified.map((d) => `"${d.originalFileName}"`).join(", ")}, but none filed under ${gaps.join(", ")}.`;
     } else {
       ownerAction = mode === "COMBINED_FILE"
         ? `Insert the ${what} into "${combined}" as Annex ${annexNo} when assembling the file${copiesOf(clause) ? ` (${copiesOf(clause)} copies)` : ""}.${ownerSigned ? "" : " Optional: if you choose to store a verified PDF of it in the Company Vault, the App can bind it in automatically."}`
@@ -328,6 +338,7 @@ export async function loadOwnerAttachmentChecklist(tenderId: string, userId: str
     selectedProjectSourceDocumentIds: tender.projectMatches.map((m: any) => m.project?.sourceDocumentId).filter(Boolean),
     selectedExpertNames: tender.expertMatches.map((m: any) => m.expert?.fullName).filter(Boolean),
     companyExpertNames,
+    selectedExperts: tender.expertMatches.map((m: any) => ({ fullName: m.expert?.fullName ?? null, sourceDocumentId: m.expert?.sourceDocumentId ?? null })),
     formsAwaitingOriginal: tender.generatedDocuments
       .filter((d: any) => String(d.reviewStatus ?? "").toUpperCase() === "REPLACE_WITH_ORIGINAL" && !isAwaitingOwnerPricing(d))
       .map((d: any) => ({ fileName: d.exactFileName ?? d.name, documentType: d.documentType })),

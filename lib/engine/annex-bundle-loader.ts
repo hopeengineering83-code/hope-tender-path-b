@@ -83,6 +83,7 @@ export async function loadAnnexBundlePlan(tenderId: string, userId: string, db: 
     selectedProjectSourceDocumentIds: tender.projectMatches.map((m: any) => m.project?.sourceDocumentId).filter(Boolean),
     selectedExpertNames: tender.expertMatches.map((m: any) => m.expert?.fullName).filter(Boolean),
     companyExpertNames,
+    selectedExperts: tender.expertMatches.map((m: any) => ({ fullName: m.expert?.fullName ?? null, sourceDocumentId: m.expert?.sourceDocumentId ?? null })),
   });
   const loadOriginal = async (doc: AnnexVaultDocument): Promise<Buffer | null> => {
     const row = byId.get(doc.id);

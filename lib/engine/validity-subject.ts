@@ -31,7 +31,8 @@ const OFFER_LABEL_IN_MATCH = new RegExp(String.raw`^${OFFER_NOUN}\s+valid`, "i")
 // "Validity of the bids: 90 days", "validity period for proposals".
 const OFFER_OF_IN_MATCH = new RegExp(String.raw`^valid(?:ity)?(?:\s+period)?\s+(?:of|for)\s+(?:(?:the|each|all|any)\s+)?${OFFER_NOUN}\b`, "i");
 // "Proposals shall remain valid", "The offer shall be valid", "Offers are valid".
-const OFFER_SUBJECT_BEFORE = new RegExp(String.raw`\b${OFFER_NOUN}\s+${MODALS}$`, "i");
+// A participle may follow the offer ("The bids submitted shall remain valid").
+const OFFER_SUBJECT_BEFORE = new RegExp(String.raw`\b${OFFER_NOUN}\s+(?:(?:submitted|received|offered|quoted|tendered)\s+)?${MODALS}$`, "i");
 // A sentence whose subject is the offer ("Bids must …", "The bid shall …").
 const OFFER_OPENING = new RegExp(String.raw`^\s*["“(]?(?:(?:the|each|every|all|any|a|an)\s+)?${OFFER_NOUN}\s+(?:shall|must|will|should|is|are)\b`, "i");
 // "… and (shall) remain valid for N days": a predicate coordinated after another.

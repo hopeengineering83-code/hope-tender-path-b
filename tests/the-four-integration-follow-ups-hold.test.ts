@@ -34,6 +34,7 @@ describe("1. a separately stored certificate counts for the selected expert", ()
     selectedProjectSourceDocumentIds: [],
     selectedExpertNames: ["Eng. Abebe Kebede Tessema"],
     companyExpertNames: ["Eng. Abebe Kebede Tessema", "Selam Haile", "Abebe Kebede Girma"],
+    selectedExperts: [{ fullName: "Eng. Abebe Kebede Tessema", sourceDocumentId: "cv-abebe" }],
   };
 
   it("the combined file binds the certificate filed under the selected expert's name, and only that one", () => {
@@ -53,6 +54,7 @@ describe("1. a separately stored certificate counts for the selected expert", ()
       selectedProjectSourceDocumentIds: [],
       selectedExpertNames: ["Eng. Abebe Kebede Tessema"],
       companyExpertNames: input.companyExpertNames,
+      selectedExperts: input.selectedExperts,
       formsAwaitingOriginal: [],
       boundHashes: [],
     });
@@ -104,6 +106,44 @@ describe("1. a separately stored certificate counts for the selected expert", ()
     assert.ok(expertFiledUnder("Mohammed_Ahmed_Hassan_Licence.pdf", ["Mohammed Ahmed Hassan"], ["Mohammed Ahmed", "Mohammed Ahmed Hassan"]), "a shorter name inside the winner's is not another person in the file");
   });
 
+  it("one selected expert's certificate does not answer for another's", () => {
+    const two = {
+      ...input,
+      selectedExpertSourceDocumentIds: ["cv-abebe", "cv-selam"],
+      selectedExpertNames: ["Eng. Abebe Kebede Tessema", "Selam Haile"],
+      selectedExperts: [
+        { fullName: "Eng. Abebe Kebede Tessema", sourceDocumentId: "cv-abebe" },
+        { fullName: "Selam Haile", sourceDocumentId: "cv-selam" },
+      ],
+      vaultDocuments: input.vaultDocuments.filter((d) => d.id !== "cert-other"),
+    };
+    const plan = planAnnexBundle(two);
+    assert.ok(!plan.parts.some((p) => p.kind === CERTIFICATES), "nothing bound while an expert is uncovered");
+    const gap = plan.missing.find((m) => m.kind === CERTIFICATES);
+    assert.ok(gap && /Selam Haile/.test(gap.reason), JSON.stringify(plan.missing));
+
+    const list = buildOwnerAttachmentChecklist({
+      requirements: [{ id: "r1", title: "Supporting documents", description: ATTACH, requirementType: "SUBMISSION_RULE", priority: "MANDATORY" }],
+      declaredFileNames: ["Technical Proposal.pdf"],
+      vaultDocuments: two.vaultDocuments,
+      selectedExpertSourceDocumentIds: two.selectedExpertSourceDocumentIds,
+      selectedProjectSourceDocumentIds: [],
+      selectedExpertNames: two.selectedExpertNames,
+      companyExpertNames: two.companyExpertNames,
+      selectedExperts: two.selectedExperts,
+      formsAwaitingOriginal: [],
+      boundHashes: ["sha-cert-abebe"],
+    });
+    const item = list.items.find((i) => i.kind === CERTIFICATES);
+    assert.ok(item);
+    assert.equal(item.vault.status, "VERIFIED_FOR_SOME_EXPERTS_ONLY");
+    assert.equal(item.status, "OWNER_TO_ATTACH", "never shown as packaged");
+    assert.match(item.ownerAction, /Selam Haile/);
+
+    const both = planAnnexBundle({ ...two, vaultDocuments: input.vaultDocuments });
+    assert.deepEqual(both.parts.find((p) => p.kind === CERTIFICATES)?.documents.map((d) => d.id), ["cert-abebe", "cert-other"], "each expert covered: both bound");
+  });
+
   it("without the firm's expert list nothing is bound by name", () => {
     const plan = planAnnexBundle({ ...input, companyExpertNames: undefined });
     assert.ok(plan.missing.some((m) => m.kind === CERTIFICATES));
@@ -143,6 +183,7 @@ describe("4. the tender's validity is the offer's, never a bid security's", () =
     ["Validity: 120 days for the bid security. Proposal validity: 90 days.", 90],
     ["Validity: 90 days.", null],
     ["Prices quoted shall remain valid for 60 days.", 60],
+    ["The bids submitted shall remain valid for 60 days.", 60],
     ["Validity: 60 days for the proposal.", 60],
     ["Validity: 120 days for the bid security.", null],
     ["Bid prices shall remain valid for 75 days.", 75],
