@@ -9,7 +9,8 @@
 // and the tender detail showed. This is the one rule they share.
 //
 // A figure is the offer's only when the tender says so: the offer is named
-// on the validity ("Proposal validity: 90 days", "the validity of the bids"),
+// on the validity ("Proposal validity: 90 days", "the validity of the bids",
+// "Validity: 60 days for the proposal"),
 // or is the subject it is predicated of ("Bids shall remain valid for 90
 // days", "The bid shall be signed and remain valid for 90 days" when no
 // security is named before the "and"). A security named right after the
@@ -38,6 +39,8 @@ const COORDINATED_PREDICATE = /\band\s+(?:(?:shall|must|will|should|is\s+to|are\
 // "120 days for the bid security", "… of the performance guarantee": a security
 // named in a phrase directly after the figure.
 const SECURITY_QUALIFIER = new RegExp(String.raw`^\s*(?:for|of|on|under|covering)\s+(?:(?:the|its|a|an|any|each|such)\s+)?(?:[A-Za-z-]+\s+){0,2}?` + SECURITY_WORD.source, "i");
+// "60 days for the proposal", "… of all bids": the offer named right after it.
+const OFFER_QUALIFIER = new RegExp(String.raw`^\s*(?:for|of)\s+(?:(?:the|its|a|an|any|each|all|every)\s+)?${OFFER_NOUN}\b`, "i");
 
 // Only a full stop, exclamation or question mark followed by the start of a
 // new sentence ends one — never one closing a common abbreviation, a month, an
@@ -78,7 +81,9 @@ export function isOfferValidity(text: string, index: number, length: number): bo
   const sentence = window.slice(sentenceStart);
   const before = window.slice(sentenceStart, index - start);
   const match = text.slice(index, index + length);
-  if (SECURITY_QUALIFIER.test(text.slice(index + length, index + length + 120))) return false;
+  const after = text.slice(index + length, index + length + 120);
+  if (SECURITY_QUALIFIER.test(after)) return false;
+  if (OFFER_QUALIFIER.test(after)) return true;
   // The offer named on the validity, or the subject it is predicated of.
   if (OFFER_LABEL_IN_MATCH.test(match) || OFFER_OF_IN_MATCH.test(match) || OFFER_LABEL_BEFORE.test(before) || OFFER_SUBJECT_BEFORE.test(before)) return true;
   // A coordinated predicate of a sentence whose subject is the offer — unless

@@ -126,11 +126,14 @@ const nameParts = (fullName: string) => {
  *
  * Every part of the expert's name must appear in the file name as a whole
  * word, as often as the name has it (titles and accents aside), and no other
- * expert of the firm may fit the file as well: "Mohammed_Ahmed_Hassan_Licence.pdf" is not Mohammed Ahmed
- * Ali's, and when the firm also has a Mohammed Ahmed Hassan it is not
- * Mohammed Ahmed's either — the fullest name that fits wins, and a tie binds
- * nothing, as does a name two of the firm's experts share. A one-word name
- * binds nothing. A licence bound to the wrong person
+ * expert of the firm may fit the file as well: "Mohammed_Ahmed_Hassan_Licence.pdf"
+ * is not Mohammed Ahmed Ali's, and when the firm also has a Mohammed Ahmed
+ * Hassan it is not Mohammed Ahmed's either — the fullest name that fits wins,
+ * and a tie binds nothing, as does a name two of the firm's experts share.
+ * Every other name that fits must be part of the winner's ("Mohammed Ahmed"
+ * in "Mohammed Ahmed Hassan"): a file that also names someone else
+ * ("John_Doe_and_Jane_Roe_Certificates.pdf") is not one expert's. A one-word
+ * name binds nothing. A licence bound to the wrong person
  * would be submitted as evidence for the wrong expert, so every doubt leaves
  * the original to the owner.
  */
@@ -154,7 +157,13 @@ export function expertFiledUnder(fileName: string, selectedExperts: readonly str
   if (fits.length === 0) return null;
   const fullest = Math.max(...fits.map((name) => name.split(" ").length));
   const best = fits.filter((name) => name.split(" ").length === fullest);
-  return best.length === 1 && people.get(best[0]!) === 1 && selected.has(best[0]!) ? best[0]! : null;
+  if (best.length !== 1 || people.get(best[0]!) !== 1 || !selected.has(best[0]!)) return null;
+  const winner = best[0]!.split(" ");
+  const within = (name: string) => {
+    const parts = name.split(" ");
+    return parts.every((part) => winner.filter((w) => w === part).length >= parts.filter((p) => p === part).length);
+  };
+  return fits.every(within) ? best[0]! : null;
 }
 
 // Keyed by the names tenderAnnexPolicy returns (annex-policy.ts ANNEX_KINDS).

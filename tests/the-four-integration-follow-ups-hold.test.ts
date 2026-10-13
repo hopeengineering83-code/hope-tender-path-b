@@ -100,6 +100,8 @@ describe("1. a separately stored certificate counts for the selected expert", ()
     assert.equal(expertFiledUnder("John_Neil_Licence.pdf", ["John O'Neil"], ["John O'Neil"]), null, "an apostrophe joins: O'Neil is not Neil");
     assert.ok(expertFiledUnder("John_ONeil_Licence.pdf", ["John O'Neil"], ["John O'Neil"]), "a file name sanitised to ONeil");
     assert.ok(expertFiledUnder("John O’Neil licence.pdf", ["John O'Neil"], ["John O'Neil"]), "a typographic apostrophe");
+    assert.equal(expertFiledUnder("John_Michael_Doe_and_Jane_Roe_Certificates.pdf", ["John Michael Doe"], ["John Michael Doe", "Jane Roe"]), null, "a file that also names another expert is not one expert's");
+    assert.ok(expertFiledUnder("Mohammed_Ahmed_Hassan_Licence.pdf", ["Mohammed Ahmed Hassan"], ["Mohammed Ahmed", "Mohammed Ahmed Hassan"]), "a shorter name inside the winner's is not another person in the file");
   });
 
   it("without the firm's expert list nothing is bound by name", () => {
@@ -141,6 +143,8 @@ describe("4. the tender's validity is the offer's, never a bid security's", () =
     ["Validity: 120 days for the bid security. Proposal validity: 90 days.", 90],
     ["Validity: 90 days.", null],
     ["Prices quoted shall remain valid for 60 days.", 60],
+    ["Validity: 60 days for the proposal.", 60],
+    ["Validity: 120 days for the bid security.", null],
     ["Bid prices shall remain valid for 75 days.", 75],
     ["The exchange rate shall remain valid for 30 days.", null],
     ["Proposals must be submitted in English. They shall remain valid for 90 days.", null],
