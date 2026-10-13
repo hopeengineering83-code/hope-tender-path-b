@@ -1012,7 +1012,10 @@ function documentNameFrom(phrase: string): string | null {
 
   // It must read as a document: either it carries a document noun, or the
   // source Title-Cased it, which is how tenders name their bespoke instruments.
-  const titleCased = /^(?:[A-Z][\w'&./-]*)(?:\s+(?:of|for|and|the|to|in|on|de|du)?\s*[A-Z][\w'&./-]*)+$/.test(name);
+  // Each gap is whitespace with at most one connector word in it, split one
+  // way only: "\s+(?:of)?\s*" let two spaces split two ways per gap, so a
+  // 90-character name that failed took seconds (CodeQL, exponential backtracking).
+  const titleCased = /^(?:[A-Z][\w'&./-]*)(?:\s+(?:(?:of|for|and|the|to|in|on|de|du)\s+)?[A-Z][\w'&./-]*)+$/.test(name);
   if (!DOCUMENT_NOUN.test(name) && !titleCased) return null;
 
   return name;

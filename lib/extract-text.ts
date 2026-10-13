@@ -299,15 +299,14 @@ function reconstructPositionedPageText(items: PositionedTextItem[]): string {
 
 // ─── HTML entity decoding (for mammoth DOCX output) ──────────────────────────
 
+// One pass: decoding "&amp;" first and then "&lt;" turned the literal text
+// "&amp;lt;" into "<" instead of "&lt;". Each entity is decoded once and its
+// output never re-scanned.
+const ENTITY_TEXT: Record<string, string> = { nbsp: " ", amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'", apos: "'" };
+const decodeNamedEntities = (s: string, names: RegExp) => (s ?? "").replace(names, (_match, name: string) => ENTITY_TEXT[name]!);
+
 function decodeHtmlEntities(s: string): string {
-  return (s ?? "")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&apos;/g, "'");
+  return decodeNamedEntities(s, /&(nbsp|amp|lt|gt|quot|#39|apos);/g);
 }
 
 async function extractPdfWithPdfParse(buffer: Buffer): Promise<{ text: string; pages: number }> {
@@ -1300,12 +1299,7 @@ async function extractXlsx(buffer: Buffer, fileName: string): Promise<string> {
 // ECMA-376 (2006) edition.
 
 function decodeXmlEntities(s: string): string {
-  return (s ?? "")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'");
+  return decodeNamedEntities(s, /&(amp|lt|gt|quot|apos);/g);
 }
 
 // Extract the text content of a single table cell XML fragment.
