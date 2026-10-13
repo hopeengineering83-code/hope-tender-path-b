@@ -89,7 +89,9 @@ const name = (doc: AnnexVaultDocument) => doc.originalFileName.toLowerCase();
 // as titles only when written with their full stop ("Eng. Abebe").
 const TITLES = new Set(["dr", "mr", "mrs", "ms", "miss", "prof", "engr", "ato"]);
 const DOTTED_TITLES = /^\s*(?:(?:w\/ro|eng|engr|arch|ir|dr|mr|mrs|ms|prof|ato)\.\s*)+/i;
-const nameWords = (text: string) => text.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").split(/[^a-z0-9]+/).filter(Boolean);
+// An apostrophe joins, never splits: "O'Neil" is "oneil", as a file name
+// sanitised to "ONeil" spells it — never a dropped "o" and a bare "neil".
+const nameWords = (text: string) => text.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/['’‘`]/g, "").split(/[^a-z0-9]+/).filter(Boolean);
 
 // Titles are dropped only from the front of a name. Credentials are part of a
 // stored name only after a comma ("Dr. John Doe, Ph.D.", "Jane Roe, PE"): a

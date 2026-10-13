@@ -20,7 +20,9 @@
 // closed, never open.
 
 const SECURITY_WORD = /\b(?:securit(?:y|ies)|securing\s+declaration|guarantees?|bonds?|insurance|warrant(?:y|ies)|EMD|earnest\s+money(?:\s+deposit)?)\b/i;
-const OFFER_NOUN = String.raw`(?:proposals?|bids?|offers?|tenders?|quotations?)(?!\s+(?:securit|securing|guarantee|bond))`;
+// The offer, or its prices ("Prices quoted shall remain valid", "bid prices",
+// "rates quoted") — never a bare "rate", which may be an exchange rate.
+const OFFER_NOUN = String.raw`(?:(?:(?:quoted|offered|tendered|bid|proposal|offer)\s+(?:prices?|rates?))|prices?(?:\s+(?:quoted|offered|tendered))?|rates?\s+(?:quoted|offered|tendered)|proposals?|bids?|offers?|tenders?|quotations?)(?!\s+(?:securit|securing|guarantee|bond))`;
 const MODALS = String.raw`(?:(?:shall|must|will|should|is|are|to)\s+){1,2}(?:remain\s+|be\s+)?`;
 // "Proposal validity: 90 days", "bid validity period of 75 days".
 const OFFER_LABEL_BEFORE = new RegExp(String.raw`\b${OFFER_NOUN}\s+$`, "i");
