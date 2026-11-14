@@ -147,15 +147,18 @@ export async function authenticateServiceRequest(req: Request, scope: string, no
   return { ok: true, grantId: grant.id, userId: grant.userId, expiresAt: grant.expiresAt };
 }
 
-/** The ONLY tender fields the service route may read. Adding a field here is a security change. */
+/**
+ * The ONLY tender fields the service route may read. Adding a field here is a security change.
+ * readinessScore is deliberately absent: the Tender App itself no longer shows it, because the
+ * persisted score is not a valid workflow-stage or progress metric (Issue #1134).
+ */
 export const TENDER_STATUS_SELECT = {
-  id: true, title: true, reference: true, status: true, stage: true, deadline: true,
-  readinessScore: true, updatedAt: true,
+  id: true, title: true, reference: true, status: true, stage: true, deadline: true, updatedAt: true,
 } as const;
 
 export type TenderStatusItem = {
   id: string; title: string; reference: string | null; status: string; stage: string;
-  deadline: string | null; readinessScore: number; updatedAt: string;
+  deadline: string | null; updatedAt: string;
   latestJob: { type: string; status: string; updatedAt: string } | null;
 };
 
@@ -200,7 +203,6 @@ export async function readTenderStatus(userId: string, now = new Date()) {
     status: tender.status,
     stage: tender.stage,
     deadline: tender.deadline?.toISOString() ?? null,
-    readinessScore: tender.readinessScore,
     updatedAt: tender.updatedAt.toISOString(),
     latestJob: latest.get(tender.id) ?? null,
   }));

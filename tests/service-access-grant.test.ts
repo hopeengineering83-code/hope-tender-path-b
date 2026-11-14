@@ -66,6 +66,6 @@ describe("grant view", () => {
 describe("the service read surface", () => {
   it("selects exactly the minimal tender fields (adding one is a reviewed security change)", () => {
     assert.deepEqual(Object.keys(TENDER_STATUS_SELECT).sort(),
-                     ["deadline", "id", "readinessScore", "reference", "stage", "status", "title", "updatedAt"]);
+                     ["deadline", "id", "reference", "stage", "status", "title", "updatedAt"]);
   });
 });

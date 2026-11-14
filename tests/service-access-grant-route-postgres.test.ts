@@ -161,7 +161,7 @@ describe("read-only service grant (real PostgreSQL)", () => {
     assert.equal(body.total, 2);
     assert.deepEqual(body.tenders[0].latestJob.status, "RUNNING");
     assert.deepEqual(Object.keys(body.tenders[0]).sort(),
-                     ["deadline", "id", "latestJob", "readinessScore", "reference", "stage", "status", "title", "updatedAt"]);
+                     ["deadline", "id", "latestJob", "reference", "stage", "status", "title", "updatedAt"]);
     const text = JSON.stringify(body);
     for (const marker of SECRET_MARKERS) assert.ok(!text.includes(marker), `leaked ${marker}`);
     assert.ok(!text.includes(tenders.OtherTenant) && !text.includes("OtherTenant"), "cross-tenant leak");

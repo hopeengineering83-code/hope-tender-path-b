@@ -21,8 +21,8 @@ To stop access, tap **Revoke**. It takes effect on the agent's next request.
 | Audience | `hope-one-agent` (also enforced by a database CHECK) |
 | Scope | `tenders:status:read` (also enforced by a database CHECK) |
 | Route | `GET /api/service/v1/tender-status` with `Authorization: Bearer hsa_…` |
-| Returns | Up to 50 tenders, soonest deadline first: `id, title (≤160), reference (≤80), status, stage, deadline, readinessScore, updatedAt` and the latest job's `type, status, updatedAt`. Also counts by status, the total, and whether the list was truncated. |
-| Never returns | Client names or contacts, budget, currency, pricing, notes, descriptions, analysis text, files, documents, or job input, output or error text. The field list is pinned by a unit test (`TENDER_STATUS_SELECT`). |
+| Returns | Up to 50 tenders, soonest deadline first: `id, title (≤160), reference (≤80), status, stage, deadline, updatedAt` and the latest job's `type, status, updatedAt`. Also counts by status, the total, and whether the list was truncated. |
+| Never returns | `readinessScore` (not a valid progress metric, Issue #1134), client names or contacts, budget, currency, pricing, notes, descriptions, analysis text, files, documents, or job input, output or error text. The field list is pinned by a unit test (`TENDER_STATUS_SELECT`). |
 | Lifetime | Required expiry, at most 90 days (also a database CHECK). Revocation is immediate. At most 5 active grants per user. |
 | Storage | Only `SHA-256(token)`; the token has 256 bits of entropy, like `TenderShare` and password-reset tokens. |
 | Limits | 30 reads per minute per token. Refused attempts are limited to 20 per 10 minutes per client address. Both are durable (`RateLimitBucket`) and fail closed in production. |
