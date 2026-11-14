@@ -35,6 +35,7 @@ model User {
   submissionPlansCreated    SubmissionPlanRevision[]      @relation("SubmissionPlanCreatedBy")
   submissionPlansConfirmed  SubmissionPlanRevision[]      @relation("SubmissionPlanConfirmedBy")
   evidenceDecisionsReviewed RequirementEvidenceDecision[] @relation("RequirementEvidenceReviewer")
+  serviceAccessGrants       ServiceAccessGrant[]
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
 
@@ -1677,4 +1678,27 @@ model PlanBStaging {
 
   @@index([companyId])
   @@index([originalFileName])
+}
+
+// Revocable, tenant-bound, read-only service access for a named client (first: HOPE ONE AGENT).
+// A grant belongs to exactly one user (the tenant); every read made with it is limited to that
+// user's tenders. Only the SHA-256 of the 256-bit token is stored (tokenHash), as for TenderShare
+// and password-reset tokens. Expiry is mandatory; revocation is immediate. See
+// lib/service-access.ts and docs/integrations/SERVICE_ACCESS_GRANT.md.
+model ServiceAccessGrant {
+  id         String    @id @default(uuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String    @unique
+  audience   String
+  scope      String
+  label      String?
+  createdAt  DateTime  @default(now())
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  lastUsedAt DateTime?
+  useCount   Int       @default(0)
+
+  @@index([userId])
+  @@index([expiresAt])
 }
