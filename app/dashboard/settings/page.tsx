@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import ServiceAccessPanel from "./service-access-panel";
 import {
   SETTINGS_PRESENTATION_SEMANTICS,
   type SettingsPresentationSemantics,
@@ -258,6 +259,8 @@ export default function SettingsPage() {
           {saving ? "Saving and confirming…" : "Save presentation defaults"}
         </button>
       </form>
+
+      <ServiceAccessPanel />
     </div>
   );
 }
