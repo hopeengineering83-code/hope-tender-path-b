@@ -97,8 +97,9 @@ export async function PATCH(
   if (data.description !== undefined) updateData.description = data.description;
   if (data.requirementType !== undefined) updateData.requirementType = data.requirementType;
   if (data.priority !== undefined) updateData.priority = data.priority;
-  if (data.linkedProposalSection !== undefined) updateData.linkedProposalSection = data.linkedProposalSection;
-  if (data.linkedCompanyEvidenceId !== undefined) updateData.linkedCompanyEvidenceId = data.linkedCompanyEvidenceId;
+  // linkedProposalSection / linkedCompanyEvidenceId are NOT TenderRequirement columns; putting them
+  // in the update made Prisma reject the whole request ("Unknown argument"). They go to the audit
+  // metadata below instead.
   if (data.exactFileName !== undefined) updateData.exactFileName = data.exactFileName;
   if (data.exactOrder !== undefined) updateData.exactOrder = data.exactOrder;
   if (data.pageLimit !== undefined) updateData.pageLimit = data.pageLimit;
@@ -122,6 +123,8 @@ export async function PATCH(
     metadata: {
       tenderId,
       updatedFields: Object.keys(data),
+      ...(data.linkedProposalSection !== undefined ? { linkedProposalSection: data.linkedProposalSection } : {}),
+      ...(data.linkedCompanyEvidenceId !== undefined ? { linkedCompanyEvidenceId: data.linkedCompanyEvidenceId } : {}),
     },
   });
 
