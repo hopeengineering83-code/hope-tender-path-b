@@ -129,8 +129,9 @@ export async function POST(
       sourcePageNumber: null,
       sourceExtractionMethod: "MANUAL",
       sourceConfidence: 0,
-      linkedProposalSection: data.linkedProposalSection ?? null,
-      linkedCompanyEvidenceId: data.linkedCompanyEvidenceId ?? null,
+      // linkedProposalSection / linkedCompanyEvidenceId are NOT TenderRequirement columns.
+      // Writing them made Prisma reject every valid manual create ("Unknown argument").
+      // They are kept as the owner's provenance in the audit metadata below instead.
       exactFileName: data.exactFileName ?? null,
       exactOrder: data.exactOrder ?? null,
       pageLimit: data.pageLimit ?? null,
@@ -152,6 +153,8 @@ export async function POST(
       sourceOrigin: data.sourceOrigin,
       reason: data.reason,
       sourceGrounded: false,
+      ...(data.linkedProposalSection != null ? { linkedProposalSection: data.linkedProposalSection } : {}),
+      ...(data.linkedCompanyEvidenceId != null ? { linkedCompanyEvidenceId: data.linkedCompanyEvidenceId } : {}),
     },
     requestId,
   });
