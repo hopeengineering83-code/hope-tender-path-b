@@ -1090,6 +1090,35 @@ export async function bootstrap(client: PrismaClient): Promise<void> {
     "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`);
 
+  // Revocable, tenant-bound, read-only service access (lib/service-access.ts). Mirrors migration
+  // 20261113180000_service_access_grants exactly, CHECK constraints included, so a bootstrapped
+  // database refuses the same unknown audiences/scopes, malformed hashes and over-long lifetimes.
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "ServiceAccessGrant" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "userId" TEXT NOT NULL,
+    "tokenHash" TEXT NOT NULL,
+    "audience" TEXT NOT NULL,
+    "scope" TEXT NOT NULL,
+    "label" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "expiresAt" TIMESTAMP(3) NOT NULL,
+    "revokedAt" TIMESTAMP(3),
+    "lastUsedAt" TIMESTAMP(3),
+    "useCount" INTEGER NOT NULL DEFAULT 0,
+    CONSTRAINT "ServiceAccessGrant_tokenHash_format" CHECK ("tokenHash" ~ '^[0-9a-f]{64}$'),
+    CONSTRAINT "ServiceAccessGrant_audience_known" CHECK ("audience" IN ('hope-one-agent')),
+    CONSTRAINT "ServiceAccessGrant_scope_known" CHECK ("scope" IN ('tenders:status:read')),
+    CONSTRAINT "ServiceAccessGrant_expiry_bounded"
+      CHECK ("expiresAt" > "createdAt" AND "expiresAt" <= "createdAt" + INTERVAL '90 days'),
+    CONSTRAINT "ServiceAccessGrant_label_length" CHECK ("label" IS NULL OR char_length("label") <= 120),
+    CONSTRAINT "ServiceAccessGrant_useCount_nonnegative" CHECK ("useCount" >= 0),
+    CONSTRAINT "ServiceAccessGrant_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id")
+      ON DELETE CASCADE ON UPDATE CASCADE
+  )`);
+  await client.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "ServiceAccessGrant_tokenHash_key" ON "ServiceAccessGrant"("tokenHash")`);
+  await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "ServiceAccessGrant_userId_idx" ON "ServiceAccessGrant"("userId")`);
+  await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "ServiceAccessGrant_expiresAt_idx" ON "ServiceAccessGrant"("expiresAt")`);
+
   // OBS-004 — per-tenant AI cost monitoring. Stores only safe metadata
   // (provider, use case, token counts, latency, failure category). Never
   // stores API keys, prompts, or responses.
