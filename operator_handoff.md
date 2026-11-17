@@ -47,6 +47,7 @@ Never claim a fix is complete unless the stated tests passed.
 | Claude Code (Fable 5) | `claude/pdf-finalization-safety-fos70j` (PR #1034) | Required-PDF finalization safety: pdf-finalizer rewrite, ZIP required-format hard gate, finalize-pdf route | lib/engine/workflow/pdf-finalizer.ts, download route (zip gate + type=pdf), app/api/tenders/[id]/finalize-pdf/ | Open, CI running | Await Hope's review |
 | GLM (Super Z) | `fix/buildplan-document-generation-pipeline` (PR #1030) | Backend pipeline: bulk-review gates, validate fail-closed, DOCX visible-text extraction, OUTSIDE_PLAN_DOCUMENTS blocker | bulk-review, validate, export-readiness.ts, document-quality-validator.ts, final-submission-readiness.ts, download route | Open, CI green | Await Hope's review |
 | Codex | `codex/add-route-driven-verification-tests` (PR #1031) | Normalize panel readiness payloads with shared public envelope | lib/engine/public-readiness-envelope.ts, lifecycle/readiness-score/generation-readiness/export-readiness/workflow-status routes | Open | Await Hope's review |
+| Claude Code | `claude/ci-postgres16-client` (draft PR) | CI only: keep the integration job's PostgreSQL client on the postgres:16 service's major so the backup/restore rehearsal runs (owner-approved 17 Nov) | .github/workflows/ci.yml (verify job runner + client guard step), tests/ci-postgres-client-compatibility.test.ts | Draft, not merged | Await Hope's review |
 | GLM (Super Z) | `fix/main-app-gaps-dead-code-contradictions` (this PR) | Real bugs: orchestrator metadata branch, dead code, format-policy fallback, document-output-state regex, stale docs | tender-lifecycle-orchestrator.ts, download route, export-format-policy.ts, document-output-state.ts, runtime-readiness-facts.ts, generation-readiness-gate.ts, CLAUDE.md, AGENTS.md | Open | Await Hope's review |
 
 ### Lock rules
@@ -73,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 ## Session Log
 
 <!-- Add newest entry at the top. -->
+
+### 2026-11-17 UTC — Claude Code (CI: PostgreSQL 16 client for the backup/restore rehearsal)
+
+- **Branch / PR:** `claude/ci-postgres16-client` / draft PR; base `05a9470` (`origin/main`). Owner-approved 17 Nov (PR #1311 comment and HOPE ONE AGENT Issue #39 decision): separate scoped draft PR; no merge, no Production, no Neon access.
+- **Scope:** since mid-Nov `ubuntu-latest` is Ubuntu 26.04, whose `pg_dump` (17+) always writes `SET transaction_timeout`; the `postgres:16` service rejects it with `ON_ERROR_STOP=1`, so the three tests in `tests/backup-restore-rehearsal-executed.test.ts` were cancelled on every PR (seen on #1311: 10,163–10,167 pass, 0 fail, 3 cancelled). Fix: the `verify` job runs on `ubuntu-24.04` (PostgreSQL 16 client, as every green run up to 13 Oct), plus a step "Require PostgreSQL 16 client tools" that fails before the tests if `pg_dump`/`psql`/`createdb`/`dropdb` are not 16. The service image, `DATABASE_URL`, Neon-isolation contract and the rehearsal test are unchanged (no output filtering, `ON_ERROR_STOP=1` kept).
+- **Files changed:** `.github/workflows/ci.yml`, `tests/ci-postgres-client-compatibility.test.ts` (new: pinned runner, guard before tests, rehearsal not softened), `operator_handoff.md`.
+- **Tests actually run** (local PostgreSQL 16, `RUN_DB_INTEGRATION=true`): the new contract test + `ci-neon-isolation-regression`, `ci-evidence-completeness`, `controlled-recovery-ci-routing`, `backup-restore-rehearsal-executed` — 20/20. Guard step exercised locally: PostgreSQL 16 tools → exit 0; a `pg_dump` 18 first on PATH → `::error::` and exit 1. CI proof is the PR's own run.
+- **Known risks / assumptions:** relies on the GitHub `ubuntu-24.04` image keeping the PostgreSQL 16 client (the guard turns any change into a clear failure). The separate dependency-audit check stays red until the dependency PR lands.
+- **Next action:** confirm the PR's CI run executes and passes all three rehearsal tests; Hope reviews.
+- **Merge status:** not reviewed — draft; do not merge without Hope's approval.
 
 ### 2026-08-18 UTC — Claude Code (dependency advisory blocking CI *and* Vercel Preview)
 

@@ -55,7 +55,13 @@ permissions:
 jobs:
   verify:
     name: Migrations, integrity, typecheck, lint, tests, build, and authenticated isolation
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: the backup/restore rehearsal (tests/backup-restore-rehearsal-executed)
+    # restores a `pg_dump` made with the runner's client into the postgres:16 service below. On the
+    # Ubuntu 26.04 image (ubuntu-latest from Nov 2026) pg_dump is 17+, which always writes
+    # `SET transaction_timeout`, a setting PostgreSQL 16 rejects, so all three tests were cancelled.
+    # Ubuntu 24.04 ships the PostgreSQL 16 client; the step "Require PostgreSQL 16 client tools"
+    # fails loudly if that ever changes. Keep this runner and the service image on the same major.
+    runs-on: ubuntu-24.04
     timeout-minutes: 55
     services:
       postgres:
@@ -208,6 +214,18 @@ jobs:
           --log test-results/lint.log
           --
           npm run lint
+
+      - name: Require PostgreSQL 16 client tools (the service is postgres:16)
+        run: |
+          set -eu
+          for tool in pg_dump psql createdb dropdb; do
+            version="$("$tool" --version)"
+            echo "$version"
+            case "$version" in
+              *" 16."*) ;;
+              *) echo "::error::$tool is not PostgreSQL 16 ($version). A newer pg_dump writes settings (transaction_timeout) that the postgres:16 service rejects, so the backup/restore rehearsal cannot run."; exit 1 ;;
+            esac
+          done
 
       - name: Unit and database integration tests
         run: >-
