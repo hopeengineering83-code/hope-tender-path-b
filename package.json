@@ -54,17 +54,17 @@
     "docx": "^9.5.1",
     "jszip": "^3.10.1",
     "mammoth": "^1.12.0",
-    "next": "15.5.22",
+    "next": "15.5.29",
     "next-intl": "^4.13.0",
-    "nodemailer": "9.0.1",
+    "nodemailer": "10.6.0",
     "pdf-lib": "^1.17.1",
     "pdf-parse": "^2.4.5",
     "pdf2json": "^3.2.0",
     "pdfjs-dist": "5.4.296",
     "react": "19.0.0",
     "react-dom": "19.0.0",
-    "undici": "^8.10.0",
-    "zod": "^3.22.4"
+    "undici": "^8.12.4",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.3",
@@ -79,7 +79,7 @@
     "autoprefixer": "^10.4.19",
     "eslint": "^9.39.4",
     "eslint-config-next": "^15.5.18",
-    "happy-dom": "^20.10.6",
+    "happy-dom": "^21.0.4",
     "prisma": "^6.19.3",
     "tailwindcss": "^3.4.1",
     "tsx": "^4.22.4",
@@ -89,9 +89,12 @@
     "postcss": "8.5.23",
     "rimraf": "^5.0.5",
     "glob": "^13.0.6",
-    "sharp": "0.35.3",
+    "sharp": "0.35.5",
     "nanoid": "^5.1.16",
     "js-yaml": ">=4.3.1",
-    "deepmerge-ts": "^8.0.1"
+    "deepmerge-ts": "^8.0.1",
+    "@vercel/cli-config": {
+      "zod": "$zod"
+    }
   }
 }
