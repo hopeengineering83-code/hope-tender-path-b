@@ -49,6 +49,7 @@ Never claim a fix is complete unless the stated tests passed.
 | Codex | `codex/add-route-driven-verification-tests` (PR #1031) | Normalize panel readiness payloads with shared public envelope | lib/engine/public-readiness-envelope.ts, lifecycle/readiness-score/generation-readiness/export-readiness/workflow-status routes | Open | Await Hope's review |
 | Claude Code | `claude/ci-postgres16-client` (draft PR) | CI only: keep the integration job's PostgreSQL client on the postgres:16 service's major so the backup/restore rehearsal runs (owner-approved 17 Nov) | .github/workflows/ci.yml (verify job runner + client guard step), tests/ci-postgres-client-compatibility.test.ts | Draft, not merged | Await Hope's review |
 | Claude Code | `claude/dependency-security-2026-11` (draft PR) | Dependency security: clear the high/critical audit (next 15.5.29, nodemailer 10.6.0, undici 8.12.4, zod 4.6.7, sharp 0.35.5, happy-dom 21.0.4 dev; nested @vercel/cli-config zod and @vercel/blob undici) (owner-approved 17 Nov) | package.json, package-lock.json, tests/zod4-validated-routes-postgres.test.ts, tests/email-smtp-roundtrip.test.ts | Draft, not merged | Await Hope's review |
+| Claude Code | `claude/fix-manual-requirement-create` (draft PR) | Manual requirement create/edit no longer write two non-existent TenderRequirement columns (owner-approved 17 Nov) | app/api/tenders/[id]/requirements/route.ts (POST data + audit metadata), app/api/tenders/[id]/requirements/[requirementId]/route.ts (PATCH update + audit metadata), tests/manual-requirement-create-postgres.test.ts | Draft, not merged | Await Hope's review |
 | GLM (Super Z) | `fix/main-app-gaps-dead-code-contradictions` (this PR) | Real bugs: orchestrator metadata branch, dead code, format-policy fallback, document-output-state regex, stale docs | tender-lifecycle-orchestrator.ts, download route, export-format-policy.ts, document-output-state.ts, runtime-readiness-facts.ts, generation-readiness-gate.ts, CLAUDE.md, AGENTS.md | Open | Await Hope's review |
 
 ### Lock rules
@@ -75,6 +76,18 @@ Never claim a fix is complete unless the stated tests passed.
 ## Session Log
 
 <!-- Add newest entry at the top. -->
+
+### 2026-11-17 UTC — Claude Code (fix: valid manual requirement create/edit were rejected by Prisma)
+
+- **Branch / PR:** `claude/fix-manual-requirement-create` / draft PR; base `05a9470` (`origin/main`). Owner-approved 17 Nov (HOPE ONE AGENT Issue #39, comment 6948823868, action 3): separate narrowly scoped draft; no merge, no Production, no migration.
+- **Defect (found by #1313's Zod 4 route test, pre-existing on `main` with Zod 3):** `POST /api/tenders/[id]/requirements` always passed `linkedProposalSection` and `linkedCompanyEvidenceId` to `prisma.tenderRequirement.create`, and the edit route put them in `update` when sent — but `TenderRequirement` has neither column (they exist only in the request schemas and in `lib/engine/requirement-categories.ts` classification output). Prisma rejected every valid manual create ("Unknown argument `linkedProposalSection`"), and every edit that sent either field; validation had already passed. `tsc` did not catch it (the create/update input types are unions).
+- **Fix (no schema change):** stop writing the two non-columns to the model; when a client sends them, keep them as provenance in the route's existing `logAction` audit metadata (create: alongside `sourceOrigin`, `reason`, `sourceGrounded: false`; edit: alongside `updatedFields`). Request schemas unchanged, so existing callers keep working. Manual provenance is unchanged: no source quote/file/page, `MANUAL` method, confidence 0, never source-grounded, reason/origin rebuilt from the audit log by GET.
+- **Not changed (noted):** the edit route still writes an edited `reason` as `sourceExactQuote = "[MANUAL] …"` (the legacy pattern GET still reads); unifying that with the create route's audit-metadata model is a separate decision.
+- **Files changed:** both route files above, `tests/manual-requirement-create-postgres.test.ts` (new), `operator_handoff.md`.
+- **Tests actually run** (local PostgreSQL 16, `RUN_DB_INTEGRATION=true`, fresh migrated DB): new test **6/6** with the fix; with `main`'s routes **5 fail** with "Unknown argument `linkedProposalSection`" (the invalid-input case passes on both). Covers valid create + manual provenance, the two hints recorded in audit metadata and not on the row, GET provenance rebuilt from the audit log, edit including the hints, tenant isolation (other account → 404, no write), invalid input refused before any write; cleanup uses the app's transaction-local tender-deletion context. `npx tsc --noEmit` 0; eslint 0.
+- **Known risks / assumptions:** none to data — no migration, no column change; callers that sent the two hints now get 200 instead of a 500.
+- **Next action:** Hope reviews.
+- **Merge status:** not reviewed — draft; do not merge without Hope's approval.
 
 ### 2026-11-17 UTC — Claude Code (dependency security: audit high/critical cleared, Zod 3 → 4)
 
