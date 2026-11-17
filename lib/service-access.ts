@@ -15,7 +15,7 @@
 import { createHash, randomBytes } from "crypto";
 import { logAction } from "./audit";
 import { prisma, prismaReady } from "./prisma";
-import { rateLimitPersistent, type RateLimitConfig } from "./rate-limit";
+import { rateLimitPeek, rateLimitPersistent, type RateLimitConfig } from "./rate-limit";
 import { getClientIp } from "./request-ip";
 
 export const SERVICE_AUDIENCE = "hope-one-agent";
@@ -26,10 +26,19 @@ export const SERVICE_GRANT_MAX_ACTIVE_PER_USER = 5;
 export const SERVICE_TENDER_LIMIT = 50;
 const TOKEN_PATTERN = /^hsa_[A-Za-z0-9_-]{43}$/;
 const LABEL_MAX = 120;
-// Per presented token and per client address. A wrong token costs a slot in the address bucket,
-// so guessing is bounded per address on top of the 256-bit search space.
-export const SERVICE_READ_RATE_LIMIT: RateLimitConfig = { limit: 30, windowMs: 60_000 };
+// Order of the limits (authenticateServiceRequest):
+//   1. SERVICE_PREAUTH_RATE_LIMIT, per client address, on every request: one durable bucket per
+//      address, never per presented token, before anything token-specific is written or looked up.
+//   2. SERVICE_DENIED_RATE_LIMIT, refused attempts per client address: checked read-only before the
+//      grant lookup and counted after a refusal, so an address that keeps presenting unknown tokens
+//      gets no further lookups until its window ends.
+//   3. SERVICE_READ_RATE_LIMIT, per GRANT (by id), only after a usable grant was found: only real
+//      grants ever get a bucket, so rotating invented tokens cannot create durable rows.
+// The client address comes from lib/request-ip.ts: on Vercel, x-forwarded-for is set by Vercel
+// itself, which overwrites any value a client sends; elsewhere it is ignored unless TRUST_PROXY=true.
+export const SERVICE_PREAUTH_RATE_LIMIT: RateLimitConfig = { limit: 30, windowMs: 60_000 };
 export const SERVICE_DENIED_RATE_LIMIT: RateLimitConfig = { limit: 20, windowMs: 10 * 60_000 };
+export const SERVICE_READ_RATE_LIMIT: RateLimitConfig = { limit: 30, windowMs: 60_000 };
 const LAST_USED_WRITE_INTERVAL_MS = 60_000;
 
 export type GeneratedServiceToken = { token: string; tokenHash: string };
@@ -103,6 +112,17 @@ function denied(status: 401 | 403 | 429, error: string, retryAfter?: number): Se
   return { ok: false, status, error, retryAfter };
 }
 
+function tooMany(resetAt: number): ServiceAuthResult {
+  return denied(429, "Too many requests", Math.max(1, Math.ceil((resetAt - Date.now()) / 1000)));
+}
+
+/** A refused attempt: counted against the client address, answered with the same 401 every time. */
+async function refuse(address: string): Promise<ServiceAuthResult> {
+  const limited = await rateLimitPersistent(`service-denied:${address}`, SERVICE_DENIED_RATE_LIMIT);
+  if (!limited.allowed) return tooMany(limited.resetAt);
+  return denied(401, "Service authorization required");
+}
+
 /**
  * Authenticate a service request for `scope`. Fail-closed: a missing, malformed, unknown,
  * revoked or expired token, a deleted tenant, or a grant without this scope/audience is refused.
@@ -110,27 +130,25 @@ function denied(status: 401 | 403 | 429, error: string, retryAfter?: number): Se
  */
 export async function authenticateServiceRequest(req: Request, scope: string, now = new Date()): Promise<ServiceAuthResult> {
   const address = getClientIp(req);
+  // 1. Pre-authentication, per client address: nothing token-specific is written or read before it.
+  const preauth = await rateLimitPersistent(`service-preauth:${address}`, SERVICE_PREAUTH_RATE_LIMIT);
+  if (!preauth.allowed) return tooMany(preauth.resetAt);
+  // 2. An address that already used up its refused attempts gets no lookup at all (read-only check).
+  const refusals = await rateLimitPeek(`service-denied:${address}`, SERVICE_DENIED_RATE_LIMIT);
+  if (refusals.exhausted) return tooMany(refusals.resetAt);
   const token = parseServiceBearer(req.headers.get("authorization"));
-  if (!token) {
-    const limited = await rateLimitPersistent(`service-denied:${address}`, SERVICE_DENIED_RATE_LIMIT);
-    if (!limited.allowed) return denied(429, "Too many requests", Math.ceil((limited.resetAt - Date.now()) / 1000));
-    return denied(401, "Service authorization required");
-  }
-  const tokenHash = hashServiceToken(token);
-  const perToken = await rateLimitPersistent(`service-read:${tokenHash}`, SERVICE_READ_RATE_LIMIT);
-  if (!perToken.allowed) return denied(429, "Too many requests", Math.ceil((perToken.resetAt - Date.now()) / 1000));
+  if (!token) return refuse(address);
   await prismaReady;
   const grant = await prisma.serviceAccessGrant.findUnique({
-    where: { tokenHash },
+    where: { tokenHash: hashServiceToken(token) },
     select: { id: true, userId: true, audience: true, scope: true, expiresAt: true, revokedAt: true, lastUsedAt: true,
               user: { select: { deletedAt: true } } },
   });
   const usable = grant && !grant.revokedAt && grant.expiresAt > now && !grant.user.deletedAt;
-  if (!usable) {
-    const limited = await rateLimitPersistent(`service-denied:${address}`, SERVICE_DENIED_RATE_LIMIT);
-    if (!limited.allowed) return denied(429, "Too many requests", Math.ceil((limited.resetAt - Date.now()) / 1000));
-    return denied(401, "Service authorization required");
-  }
+  if (!usable) return refuse(address);
+  // 3. Per grant, keyed by its id: only real grants ever get a bucket.
+  const perGrant = await rateLimitPersistent(`service-read:${grant.id}`, SERVICE_READ_RATE_LIMIT);
+  if (!perGrant.allowed) return tooMany(perGrant.resetAt);
   if (grant.audience !== SERVICE_AUDIENCE || grant.scope !== scope) {
     await logAction({ userId: grant.userId, action: "SERVICE_GRANT_DENIED", entityType: "ServiceAccessGrant",
                       entityId: grant.id, description: "Service grant used outside its scope",

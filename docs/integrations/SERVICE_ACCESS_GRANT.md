@@ -25,7 +25,7 @@ To stop access, tap **Revoke**. It takes effect on the agent's next request.
 | Never returns | `readinessScore` (not a valid progress metric, Issue #1134), client names or contacts, budget, currency, pricing, notes, descriptions, analysis text, files, documents, or job input, output or error text. The field list is pinned by a unit test (`TENDER_STATUS_SELECT`). |
 | Lifetime | Required expiry, at most 90 days (also a database CHECK). Revocation is immediate. At most 5 active grants per user. |
 | Storage | Only `SHA-256(token)`; the token has 256 bits of entropy, like `TenderShare` and password-reset tokens. |
-| Limits | 30 reads per minute per token. Refused attempts are limited to 20 per 10 minutes per client address. Both are durable (`RateLimitBucket`) and fail closed in production. |
+| Limits | In this order, all durable (`RateLimitBucket`) and failing closed in production: (1) **30 requests per minute per client address**, counted before anything token-specific is written or looked up; (2) **20 refused attempts per 10 minutes per client address**, checked read-only before the grant lookup, so a client spraying invented tokens stops reaching the grant table; (3) **30 reads per minute per grant**, keyed by the grant's id, so only real grants ever get a bucket. The client address is the one Vercel writes into `x-forwarded-for` (Vercel overwrites any value a client sends); off Vercel it is ignored unless `TRUST_PROXY=true`. |
 | Audit | Issuing, revoking and any out-of-scope use are written to `AuditLog`. Use is recorded on the grant at most once a minute (`lastUsedAt`, `useCount`). |
 | Errors | Missing, malformed, unknown, revoked or expired tokens and deleted tenants all get the same `401`, so the response can't be used to probe tokens. |
 

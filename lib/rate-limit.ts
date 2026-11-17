@@ -76,6 +76,36 @@ export async function rateLimitPersistent(key: string, cfg: RateLimitConfig): Pr
   }
 }
 
+/**
+ * Read-only check of a persistent bucket: has it already reached its limit in the current window?
+ * It never inserts or updates a row, so it is safe to call before anything is known about a caller
+ * (for example before a credential lookup). Like rateLimitPersistent it fails closed in production:
+ * if the limiter store cannot be read, the bucket counts as exhausted.
+ */
+export async function rateLimitPeek(key: string, cfg: RateLimitConfig): Promise<{ exhausted: boolean; resetAt: number }> {
+  try {
+    await prismaReady;
+    const rows = await prisma.$queryRaw<Array<{ count: number; resetAt: Date }>>`
+      SELECT "count", "resetAt" FROM "RateLimitBucket" WHERE "keyHash" = ${hashKey(key)} AND "resetAt" > NOW()
+    `;
+    const row = rows[0];
+    if (!row) return { exhausted: false, resetAt: 0 };
+    return { exhausted: Number(row.count) >= cfg.limit, resetAt: new Date(row.resetAt).getTime() };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes("42501") || message.includes("permission denied")) throw error;
+    const production = process.env.NODE_ENV === "production" || Boolean(process.env.VERCEL_ENV);
+    const emergencyFailOpen = process.env.RATE_LIMIT_ALLOW_DEGRADED === "true";
+    if (production && !emergencyFailOpen) {
+      logger.error("[rate-limit] Persistent limiter unavailable; request denied:", { detail: message.slice(0, 120) });
+      return { exhausted: true, resetAt: Date.now() + Math.min(cfg.windowMs, 60_000) };
+    }
+    const bucket = buckets.get(key);
+    const live = Boolean(bucket) && Date.now() < (bucket as Bucket).resetAt;
+    return { exhausted: live && (bucket as Bucket).tokens <= 0, resetAt: live ? (bucket as Bucket).resetAt : 0 };
+  }
+}
+
 if (typeof setInterval !== "undefined") {
   const handle = setInterval(() => {
     const now = Date.now();

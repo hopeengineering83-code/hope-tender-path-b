@@ -10,6 +10,7 @@ import { after, before, describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import { prisma, prismaReady } from "../lib/prisma";
+import { hashServiceToken } from "../lib/service-access";
 
 if (process.env.RUN_DB_INTEGRATION !== "true") {
   console.error("FATAL: RUN_DB_INTEGRATION=true is required for service access grant route tests.");
@@ -66,10 +67,13 @@ type Routes = {
 };
 let routes: Routes;
 const run = randomUUID().slice(0, 8);
+// Invented client addresses, unique per run (IPv6 documentation prefix), so durable limiter buckets
+// left by an earlier run within the same window can never decide this run's answers.
+const addr = (n: number) => `2001:db8:${run.slice(0, 4)}:${run.slice(4, 8)}::${n.toString(16)}`;
 const users: Record<string, string> = {};
 const tenders: Record<string, string> = {};
 
-async function read(token: string | null, address = "203.0.113.10") {
+async function read(token: string | null, address = addr(10)) {
   const headers: Record<string, string> = { "x-forwarded-for": address };
   if (token !== null) headers.authorization = `Bearer ${token}`;
   const response = await routes.status.GET(new Request("https://tender.example/api/service/v1/tender-status", { headers }));
@@ -175,8 +179,8 @@ describe("read-only service grant (real PostgreSQL)", () => {
   });
 
   it("refuses missing, malformed and unknown tokens identically", async () => {
-    const answers = await Promise.all([read(null, "203.0.113.20"), read("not-a-token", "203.0.113.21"),
-                                       read(`hsa_${"A".repeat(43)}`, "203.0.113.22")]);
+    const answers = await Promise.all([read(null, addr(20)), read("not-a-token", addr(21)),
+                                       read(`hsa_${"A".repeat(43)}`, addr(22))]);
     for (const answer of answers) {
       assert.equal(answer.status, 401);
       assert.deepEqual(answer.body, { error: "Service authorization required" });
@@ -199,9 +203,9 @@ describe("read-only service grant (real PostgreSQL)", () => {
 
   it("can be revoked only by its owner; revocation applies to the next request", async () => {
     assert.equal(await revoke("other", ownerGrantId), 404);       // someone else's id looks missing
-    assert.equal((await read(ownerToken, "203.0.113.30")).status, 200);
+    assert.equal((await read(ownerToken, addr(30))).status, 200);
     assert.equal(await revoke("owner", ownerGrantId), 200);
-    assert.equal((await read(ownerToken, "203.0.113.31")).status, 401);
+    assert.equal((await read(ownerToken, addr(31))).status, 401);
     assert.equal(await revoke("owner", ownerGrantId), 404);       // already revoked
     assert.ok(await prisma.auditLog.findFirst({ where: { entityId: ownerGrantId, action: "SERVICE_GRANT_REVOKED" } }));
   });
@@ -210,11 +214,11 @@ describe("read-only service grant (real PostgreSQL)", () => {
     const created = await issue("owner", { days: 1 });
     await prisma.$executeRaw`UPDATE "ServiceAccessGrant" SET "createdAt" = NOW() - INTERVAL '3 days',
                              "expiresAt" = NOW() - INTERVAL '1 second' WHERE id = ${created.body.grant.id}`;
-    assert.equal((await read(created.body.token, "203.0.113.40")).status, 401);
+    assert.equal((await read(created.body.token, addr(40))).status, 401);
     const goneGrant = await issue("gone");
-    assert.equal((await read(goneGrant.body.token, "203.0.113.41")).status, 200);
+    assert.equal((await read(goneGrant.body.token, addr(41))).status, 200);
     await prisma.user.update({ where: { id: users.gone }, data: { deletedAt: new Date() } });
-    assert.equal((await read(goneGrant.body.token, "203.0.113.42")).status, 401);
+    assert.equal((await read(goneGrant.body.token, addr(42))).status, 401);
   });
 
   it("is issued only to ADMIN or PROPOSAL_MANAGER, bounded in number and lifetime", async () => {
@@ -246,11 +250,55 @@ describe("read-only service grant (real PostgreSQL)", () => {
     for (const attempt of attempts) await assert.rejects(attempt);
   });
 
-  it("rate-limits each token durably", async () => {
+  it("rate-limits each grant durably, whatever address it comes from", async () => {
     const created = await issue("owner");
     const statuses: number[] = [];
-    for (let i = 0; i < 31; i++) statuses.push((await read(created.body.token, "203.0.113.50")).status);
+    for (let i = 0; i < 31; i++) statuses.push((await read(created.body.token, addr(0x500 + i))).status);
     assert.equal(statuses.filter((s) => s === 200).length, 30);
     assert.equal(statuses[30], 429);
+  });
+
+  it("an invented-token spray from one client creates no per-token buckets and stops reaching the grant table", async () => {
+    // Owner review of #1311: a format-valid unknown token used to create a durable bucket keyed by its
+    // hash and a grant lookup BEFORE any per-address limit, so rotating tokens meant one durable insert
+    // each. Now the client address is limited first, and only real grants get a bucket.
+    const sprayer = addr(0x700);
+    const bucketKey = (key: string) => createHash("sha256").update(key).digest("hex");
+    const before = await prisma.rateLimitBucket.count();
+    let lookups = 0;
+    const delegate = prisma.serviceAccessGrant as any;
+    const original = delegate.findUnique;
+    delegate.findUnique = (...args: unknown[]) => { lookups += 1; return original.apply(delegate, args); };
+    const tokens = Array.from({ length: 300 }, () => `hsa_${randomBytes(32).toString("base64url")}`);  // invented
+    const statuses: number[] = [];
+    try {
+      for (const token of tokens) statuses.push((await read(token, sprayer)).status);
+    } finally {
+      delegate.findUnique = original;
+    }
+    assert.ok(statuses.every((s) => s === 401 || s === 429), "an invented token never gets in");
+    assert.equal(statuses.filter((s) => s === 401).length, 20);         // SERVICE_DENIED_RATE_LIMIT
+    assert.deepEqual(statuses.slice(20), new Array(280).fill(429));      // then refused before any lookup
+    assert.equal(lookups, 20, "after the threshold the grant table is not read at all");
+    assert.equal(await prisma.rateLimitBucket.count(), before + 2,        // the address's two buckets, nothing else
+                 "300 invented tokens add only the address's pre-auth and refusal buckets");
+    const perToken = await prisma.rateLimitBucket.count({
+      where: { keyHash: { in: tokens.map((t) => bucketKey(`service-read:${hashServiceToken(t)}`)) } } });
+    assert.equal(perToken, 0, "no durable bucket per presented token");
+    // A real grant keeps working from its own client, and its bucket is keyed by the grant, not the token.
+    const created = await issue("owner");
+    assert.equal((await read(created.body.token, addr(0x701))).status, 200);
+    assert.equal(await prisma.rateLimitBucket.count({ where: { keyHash: bucketKey(`service-read:${created.body.grant.id}`) } }), 1);
+    // The throttled client stays throttled until its window ends, whatever it presents.
+    assert.equal((await read(created.body.token, sprayer)).status, 429);
+  });
+
+  it("limits every request from one client before anything token-specific (pre-authentication)", async () => {
+    const client = addr(0x800);
+    const created = await issue("owner");
+    const statuses: number[] = [];
+    for (let i = 0; i < 31; i++) statuses.push((await read(i % 2 ? null : created.body.token, client)).status);
+    assert.equal(statuses[30], 429, "the 31st request in a minute from one client is refused");
+    assert.ok(statuses.slice(0, 30).every((s) => s === 200 || s === 401));
   });
 });

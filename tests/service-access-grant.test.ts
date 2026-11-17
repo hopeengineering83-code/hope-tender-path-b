@@ -11,6 +11,7 @@ import {
   SERVICE_GRANT_MAX_DAYS,
   TENDER_STATUS_SELECT,
 } from "../lib/service-access";
+import { getClientIp } from "../lib/request-ip";
 
 describe("service access tokens", () => {
   it("are 256-bit, prefixed, and only their SHA-256 is meant for storage", () => {
@@ -67,5 +68,39 @@ describe("the service read surface", () => {
   it("selects exactly the minimal tender fields (adding one is a reviewed security change)", () => {
     assert.deepEqual(Object.keys(TENDER_STATUS_SELECT).sort(),
                      ["deadline", "id", "reference", "stage", "status", "title", "updatedAt"]);
+  });
+});
+
+describe("the client address the service limits are keyed by", () => {
+  const request = (headers: Record<string, string>) => new Request("https://tender.example/api/service/v1/tender-status", { headers });
+  const keys = ["VERCEL", "VERCEL_ENV", "TRUST_PROXY"] as const;
+
+  function withEnv(values: Partial<Record<(typeof keys)[number], string>>, check: () => void) {
+    const saved = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+    try {
+      for (const key of keys) delete process.env[key];
+      Object.assign(process.env, values);
+      check();
+    } finally {
+      for (const key of keys) {
+        if (saved[key] === undefined) delete process.env[key]; else process.env[key] = saved[key];
+      }
+    }
+  }
+
+  it("ignores client-supplied forwarding headers unless a trusted proxy sets them", () => {
+    withEnv({}, () => {
+      assert.equal(getClientIp(request({ "x-forwarded-for": "198.51.100.9", "x-real-ip": "198.51.100.9" })), "unknown");
+    });
+    withEnv({ TRUST_PROXY: "false" }, () => {
+      assert.equal(getClientIp(request({ "x-forwarded-for": "198.51.100.9" })), "unknown");
+    });
+  });
+
+  it("on Vercel uses the address Vercel itself writes (it overwrites x-forwarded-for)", () => {
+    withEnv({ VERCEL: "1" }, () => {
+      assert.equal(getClientIp(request({ "x-forwarded-for": "198.51.100.9, 203.0.113.7" })), "198.51.100.9");
+      assert.equal(getClientIp(request({ "x-forwarded-for": "x".repeat(65) })), "unknown");   // never an unbounded key
+    });
   });
 });
